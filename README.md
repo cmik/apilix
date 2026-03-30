@@ -1,7 +1,3 @@
-<<<<<<< HEAD
-# apilix
-Alternative Platform for Instant Live API eXecution
-=======
 # Apilix — Alternative Platform for Instant Live API eXecution
 
 A lightweight, open-source alternative API testing tool.
@@ -164,4 +160,3 @@ pm.response.json()       // parsed body
 pm.response.text()       // raw body
 pm.response.headers.get("Content-Type")
 ```
->>>>>>> 9c1bd3b (Initial commit)
