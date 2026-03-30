@@ -1,0 +1,343 @@
+import React, { createContext, useContext, useEffect, useReducer, type ReactNode } from 'react';
+import type { AppState, AppAction, AppCollection, AppEnvironment, PostmanItem, RequestTab } from './types';
+
+const STORAGE_KEY = 'apilix_persist';
+
+function ensureIds(items: PostmanItem[]): PostmanItem[] {
+  return items.map(item => ({
+    ...item,
+    id: item.id ?? generateId(),
+    item: item.item ? ensureIds(item.item) : undefined,
+  }));
+}
+
+type PersistedState = Pick<
+  AppState,
+  'collections' | 'environments' | 'activeEnvironmentId' | 'collectionVariables' | 'globalVariables'
+>;
+
+function loadPersisted(): PersistedState | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as PersistedState) : null;
+  } catch {
+    return null;
+  }
+}
+
+const initialState: AppState = {
+  collections: [],
+  environments: [],
+  activeEnvironmentId: null,
+  consoleLogs: [],
+  tabs: [],
+  activeTabId: null,
+  activeRequest: null,
+  response: null,
+  isLoading: false,
+  view: 'request',
+  runnerResults: null,
+  isRunning: false,
+  collectionVariables: {},
+  globalVariables: {},
+};
+
+function appReducer(state: AppState, action: AppAction): AppState {
+  switch (action.type) {
+    case 'ADD_COLLECTION':
+      return { ...state, collections: [...state.collections, { ...action.payload, item: ensureIds(action.payload.item) }] };
+
+    case 'UPDATE_COLLECTION':
+      return {
+        ...state,
+        collections: state.collections.map(c =>
+          c._id === action.payload._id ? { ...action.payload, item: ensureIds(action.payload.item) } : c
+        ),
+      };
+
+    case 'REMOVE_COLLECTION': {
+      const colId = action.payload;
+      const remainingTabs = state.tabs.filter(t => t.collectionId !== colId);
+      let newActiveTabId = state.activeTabId;
+      if (state.activeTabId) {
+        const curTab = state.tabs.find(t => t.id === state.activeTabId);
+        if (curTab?.collectionId === colId) {
+          newActiveTabId = remainingTabs[0]?.id ?? null;
+        }
+      }
+      const newActiveTab = remainingTabs.find(t => t.id === newActiveTabId) ?? null;
+      return {
+        ...state,
+        collections: state.collections.filter(c => c._id !== colId),
+        tabs: remainingTabs,
+        activeTabId: newActiveTabId,
+        activeRequest: newActiveTab ? { collectionId: newActiveTab.collectionId, item: newActiveTab.item } : null,
+        response: newActiveTab?.response ?? null,
+      };
+    }
+
+    case 'ADD_ENVIRONMENT':
+      return { ...state, environments: [...state.environments, action.payload] };
+
+    case 'REMOVE_ENVIRONMENT':
+      return {
+        ...state,
+        environments: state.environments.filter(e => e._id !== action.payload),
+        activeEnvironmentId:
+          state.activeEnvironmentId === action.payload ? null : state.activeEnvironmentId,
+      };
+
+    case 'UPDATE_ENVIRONMENT':
+      return {
+        ...state,
+        environments: state.environments.map(e =>
+          e._id === action.payload._id ? action.payload : e
+        ),
+      };
+
+    case 'SET_ACTIVE_ENV':
+      return { ...state, activeEnvironmentId: action.payload };
+
+    case 'SET_ACTIVE_REQUEST':
+      return { ...state, activeRequest: action.payload, response: null };
+
+    case 'OPEN_TAB': {
+      const { collectionId, item } = action.payload;
+      const existing = state.tabs.find(
+        t => t.collectionId === collectionId && t.item.id === item.id
+      );
+      if (existing) {
+        return {
+          ...state,
+          activeTabId: existing.id,
+          activeRequest: { collectionId, item: existing.item },
+          response: existing.response,
+          isLoading: existing.isLoading,
+        };
+      }
+      const newTab: RequestTab = {
+        id: generateId(),
+        collectionId,
+        item,
+        response: null,
+        isLoading: false,
+      };
+      return {
+        ...state,
+        tabs: [...state.tabs, newTab],
+        activeTabId: newTab.id,
+        activeRequest: { collectionId, item },
+        response: null,
+        isLoading: false,
+      };
+    }
+
+    case 'CLOSE_TAB': {
+      const tabId = action.payload;
+      const idx = state.tabs.findIndex(t => t.id === tabId);
+      const newTabs = state.tabs.filter(t => t.id !== tabId);
+      let newActiveTabId = state.activeTabId;
+      if (state.activeTabId === tabId) {
+        const newIdx = Math.min(idx, newTabs.length - 1);
+        newActiveTabId = newTabs[newIdx]?.id ?? null;
+      }
+      const newActiveTab = newTabs.find(t => t.id === newActiveTabId) ?? null;
+      return {
+        ...state,
+        tabs: newTabs,
+        activeTabId: newActiveTabId,
+        activeRequest: newActiveTab ? { collectionId: newActiveTab.collectionId, item: newActiveTab.item } : null,
+        response: newActiveTab?.response ?? null,
+        isLoading: newActiveTab?.isLoading ?? false,
+      };
+    }
+
+    case 'SET_ACTIVE_TAB': {
+      const tab = state.tabs.find(t => t.id === action.payload);
+      if (!tab) return state;
+      return {
+        ...state,
+        activeTabId: action.payload,
+        activeRequest: { collectionId: tab.collectionId, item: tab.item },
+        response: tab.response,
+        isLoading: tab.isLoading,
+      };
+    }
+
+    case 'SET_TAB_RESPONSE': {
+      const { tabId, response } = action.payload;
+      const updatedTabs = state.tabs.map(t => t.id === tabId ? { ...t, response } : t);
+      return {
+        ...state,
+        tabs: updatedTabs,
+        response: state.activeTabId === tabId ? response : state.response,
+      };
+    }
+
+    case 'SET_TAB_LOADING': {
+      const { tabId, loading } = action.payload;
+      const updatedTabs = state.tabs.map(t => t.id === tabId ? { ...t, isLoading: loading } : t);
+      return {
+        ...state,
+        tabs: updatedTabs,
+        isLoading: state.activeTabId === tabId ? loading : state.isLoading,
+      };
+    }
+
+    case 'UPDATE_TAB_ITEM': {
+      const { tabId, item } = action.payload;
+      const updatedTabs = state.tabs.map(t => t.id === tabId ? { ...t, item } : t);
+      return { ...state, tabs: updatedTabs };
+    }
+
+    case 'SET_RESPONSE':
+      return { ...state, response: action.payload };
+
+    case 'SET_LOADING':
+      return { ...state, isLoading: action.payload };
+
+    case 'SET_VIEW':
+      return { ...state, view: action.payload };
+
+    case 'SET_RUNNER_RESULTS':
+      return { ...state, runnerResults: action.payload };
+
+    case 'SET_RUNNING':
+      return { ...state, isRunning: action.payload };
+
+    case 'UPDATE_COLLECTION_VARS':
+      return {
+        ...state,
+        collectionVariables: {
+          ...state.collectionVariables,
+          [action.payload.collectionId]: {
+            ...(state.collectionVariables[action.payload.collectionId] || {}),
+            ...action.payload.vars,
+          },
+        },
+      };
+
+    case 'UPDATE_GLOBAL_VARS':
+      return { ...state, globalVariables: { ...state.globalVariables, ...action.payload } };
+
+    case 'ADD_CONSOLE_LOG':
+      return { ...state, consoleLogs: [action.payload, ...state.consoleLogs].slice(0, 500) };
+
+    case 'CLEAR_CONSOLE_LOGS':
+      return { ...state, consoleLogs: [] };
+
+    case 'UPDATE_ACTIVE_ENV_VARS': {
+      if (!state.activeEnvironmentId) return state;
+      const updatedEnvs = state.environments.map(env => {
+        if (env._id !== state.activeEnvironmentId) return env;
+        const updatedValues = env.values.map(v => ({
+          ...v,
+          value: action.payload[v.key] !== undefined ? action.payload[v.key] : v.value,
+        }));
+        const existingKeys = new Set(updatedValues.map(v => v.key));
+        const newEntries = Object.entries(action.payload)
+          .filter(([k]) => !existingKeys.has(k))
+          .map(([key, value]) => ({ key, value, enabled: true }));
+        return { ...env, values: [...updatedValues, ...newEntries] };
+      });
+      return { ...state, environments: updatedEnvs };
+    }
+
+    default:
+      return state;
+  }
+}
+
+// ─── Context ──────────────────────────────────────────────────────────────────
+
+interface AppContextValue {
+  state: AppState;
+  dispatch: React.Dispatch<AppAction>;
+  getActiveEnvironment: () => AppEnvironment | null;
+  getEnvironmentVars: () => Record<string, string>;
+  getCollectionVars: (collectionId: string) => Record<string, string>;
+}
+
+const AppContext = createContext<AppContextValue | null>(null);
+
+export function AppProvider({ children }: { children: ReactNode }) {
+  const [state, dispatch] = useReducer(appReducer, initialState, (base) => {
+    const saved = loadPersisted();
+    if (!saved) return base;
+    return {
+      ...base,
+      collections: (saved.collections ?? base.collections).map(col => ({
+        ...col,
+        item: ensureIds(col.item),
+      })),
+      environments: saved.environments ?? base.environments,
+      activeEnvironmentId: saved.activeEnvironmentId ?? base.activeEnvironmentId,
+      collectionVariables: saved.collectionVariables ?? base.collectionVariables,
+      globalVariables: saved.globalVariables ?? base.globalVariables,
+    };
+  });
+
+  useEffect(() => {
+    const snapshot: PersistedState = {
+      collections: state.collections,
+      environments: state.environments,
+      activeEnvironmentId: state.activeEnvironmentId,
+      collectionVariables: state.collectionVariables,
+      globalVariables: state.globalVariables,
+    };
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+    } catch {
+      // localStorage unavailable or quota exceeded — fail silently
+    }
+  }, [state.collections, state.environments, state.activeEnvironmentId, state.collectionVariables, state.globalVariables]);
+
+  function getActiveEnvironment(): AppEnvironment | null {
+    if (!state.activeEnvironmentId) return null;
+    return state.environments.find(e => e._id === state.activeEnvironmentId) ?? null;
+  }
+
+  function getEnvironmentVars(): Record<string, string> {
+    const env = getActiveEnvironment();
+    if (!env) return {};
+    const vars: Record<string, string> = {};
+    env.values.forEach(v => {
+      if (v.enabled) vars[v.key] = v.value;
+    });
+    return vars;
+  }
+
+  function getCollectionVars(collectionId: string): Record<string, string> {
+    return state.collectionVariables[collectionId] || {};
+  }
+
+  return (
+    <AppContext.Provider value={{ state, dispatch, getActiveEnvironment, getEnvironmentVars, getCollectionVars }}>
+      {children}
+    </AppContext.Provider>
+  );
+}
+
+export function useApp() {
+  const ctx = useContext(AppContext);
+  if (!ctx) throw new Error('useApp must be used inside AppProvider');
+  return ctx;
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+export function generateId(): string {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+export function parseCollectionFile(json: unknown): AppCollection {
+  const col = json as AppCollection;
+  if (!col.info || !col.item) throw new Error('Not a valid Postman collection');
+  return { ...col, _id: generateId() };
+}
+
+export function parseEnvironmentFile(json: unknown): AppEnvironment {
+  const env = json as AppEnvironment;
+  if (!env.name || !Array.isArray(env.values)) throw new Error('Not a valid Postman environment');
+  return { ...env, _id: generateId() };
+}
