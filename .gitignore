@@ -49,3 +49,5 @@ client/.vite/
 
 # Coverage
 coverage/
+.pid_client
+.pid_server
