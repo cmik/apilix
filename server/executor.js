@@ -129,6 +129,14 @@ function buildBody(body, headers, vars) {
       Object.assign(headers, form.getHeaders());
       return form;
     }
+    case 'file': {
+      if (!body.raw) return undefined;
+      const buffer = Buffer.from(body.raw, 'base64');
+      if (!headers['Content-Type'] && !headers['content-type']) {
+        headers['Content-Type'] = 'application/octet-stream';
+      }
+      return buffer;
+    }
     case 'graphql': {
       const payload = { query: body.graphql?.query || '' };
       if (body.graphql?.variables) {

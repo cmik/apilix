@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { PostmanItem, PostmanCollection, RequestResponse, RunnerIteration, ScriptLog } from './types';
+import type { PostmanItem, PostmanCollection, RequestResponse, RunnerIteration, RunnerIterationResult, ScriptLog } from './types';
 
 const api = axios.create({ baseURL: '/api' });
 
@@ -32,6 +32,7 @@ export interface RunPayload {
   collectionVariables: Record<string, string>;
   globals: Record<string, string>;
   delay?: number;
+  iterations?: number;
 }
 
 export async function runCollection(
@@ -47,6 +48,70 @@ export async function runCollection(
     headers: { 'Content-Type': 'multipart/form-data' },
   });
   return response.data;
+}
+
+export interface RunStreamCallbacks {
+  onIterationStart?: (data: { iteration: number; dataRow: Record<string, string> }) => void;
+  onResult?: (data: RunnerIterationResult & { iteration: number }) => void;
+  onIterationEnd?: (data: { iteration: number }) => void;
+  onError?: (error: string) => void;
+  onDone?: () => void;
+}
+
+export async function runCollectionStream(
+  payload: RunPayload,
+  csvFile: File | undefined,
+  callbacks: RunStreamCallbacks,
+): Promise<void> {
+  const formData = new FormData();
+  formData.append('data', JSON.stringify(payload));
+  if (csvFile) {
+    formData.append('csvFile', csvFile);
+  }
+
+  const response = await fetch('/api/run', {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    let msg = `HTTP ${response.status}`;
+    try { msg = JSON.parse(text).error || msg; } catch { /* ignore */ }
+    throw new Error(msg);
+  }
+
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    // Parse SSE events from the buffer
+    const parts = buffer.split('\n\n');
+    buffer = parts.pop()!; // keep incomplete chunk
+
+    for (const part of parts) {
+      let eventType = 'message';
+      let data = '';
+      for (const line of part.split('\n')) {
+        if (line.startsWith('event: ')) eventType = line.slice(7);
+        else if (line.startsWith('data: ')) data = line.slice(6);
+      }
+      if (!data) continue;
+      const parsed = JSON.parse(data);
+      switch (eventType) {
+        case 'iteration-start': callbacks.onIterationStart?.(parsed); break;
+        case 'result': callbacks.onResult?.(parsed); break;
+        case 'iteration-end': callbacks.onIterationEnd?.(parsed); break;
+        case 'error': callbacks.onError?.(parsed.error); break;
+        case 'done': callbacks.onDone?.(); break;
+      }
+    }
+  }
 }
 
 export async function checkHealth(): Promise<boolean> {

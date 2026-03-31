@@ -435,6 +435,7 @@ document.getElementById('filter').addEventListener('input', function(ev) {
 });
 document.getElementById('clearBtn').addEventListener('click', function() {
   logs = []; selId = null; dtab = {}; render();
+  ch.postMessage({ type: 'CLEAR' });
 });
 
 var ch = new BroadcastChannel('apilix-console-v1');
@@ -481,6 +482,18 @@ export default function ConsolePanel({ height, onHeightChange, onClose }: Consol
       ch.postMessage({ type: 'LOGS_UPDATE', logs });
     }
   }, [logs]);
+
+  // Listen for CLEAR from detached window
+  useEffect(() => {
+    const ch = new BroadcastChannel(BROADCAST_CHANNEL);
+    const handler = (ev: MessageEvent) => {
+      if (ev.data && ev.data.type === 'CLEAR') {
+        dispatch({ type: 'CLEAR_CONSOLE_LOGS' });
+      }
+    };
+    ch.addEventListener('message', handler);
+    return () => { ch.removeEventListener('message', handler); ch.close(); };
+  }, [dispatch]);
 
   // Close the broadcast channel on unmount
   useEffect(() => {

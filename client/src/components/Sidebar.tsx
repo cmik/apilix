@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useApp } from '../store';
+import { useApp, generateId } from '../store';
 import CollectionTree from './CollectionTree';
 import ImportModal from './ImportModal';
 
@@ -7,19 +7,40 @@ export default function Sidebar() {
   const { state, dispatch } = useApp();
   const [showImport, setShowImport] = useState(false);
   const [filter, setFilter] = useState('');
+  const [newCollectionId, setNewCollectionId] = useState<string | null>(null);
 
   return (
     <div className="w-full bg-slate-900 flex flex-col h-full overflow-hidden">
       {/* Brand */}
       <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
         <span className="font-bold text-xl tracking-widest" style={{color: '#a8b2bd', background: 'linear-gradient(90deg, #8a9bb0, #c8d6e0, #8a9bb0)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text'}}>APILIX</span>
-        <button
-          onClick={() => setShowImport(true)}
-          title="Import collection / environment"
-          className="px-2 py-1 bg-orange-600 hover:bg-orange-500 text-white text-xs rounded font-medium transition-colors"
-        >
-          + Import
-        </button>
+        <div className="flex gap-1.5">
+          <button
+            onClick={() => {
+              const id = generateId();
+              dispatch({
+                type: 'ADD_COLLECTION',
+                payload: {
+                  _id: id,
+                  info: { name: 'New Collection', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
+                  item: [],
+                },
+              });
+              setNewCollectionId(id);
+            }}
+            title="Create new collection"
+            className="px-2 py-1 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 text-xs rounded font-medium transition-colors"
+          >
+            + New
+          </button>
+          <button
+            onClick={() => setShowImport(true)}
+            title="Import collection / environment"
+            className="px-2 py-1 bg-orange-600 hover:bg-orange-500 text-white text-xs rounded font-medium transition-colors"
+          >
+            Import
+          </button>
+        </div>
       </div>
 
       {/* Nav buttons */}
@@ -68,7 +89,7 @@ export default function Sidebar() {
           )}
         </div>
       </div>
-      <CollectionTree filter={filter} />
+      <CollectionTree filter={filter} renamingCollectionId={newCollectionId} onRenamingDone={() => setNewCollectionId(null)} />
 
       {showImport && <ImportModal onClose={() => setShowImport(false)} />}
     </div>

@@ -43,6 +43,9 @@ function itemToEditState(item: PostmanItem) {
     authApiKeyValue: (req.auth?.apikey ?? []).find(b => b.key === 'value')?.value ?? '',
     preRequestScript: getScript(item, 'prerequest'),
     testScript: getScript(item, 'test'),
+    bodyGraphqlQuery: req.body?.graphql?.query ?? '',
+    bodyGraphqlVariables: req.body?.graphql?.variables ?? '',
+    bodyFile: null as File | null,
   };
 }
 
@@ -190,6 +193,10 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
   );
   const [dirty, setDirty] = useState(false);
   const [activeRequestTab, setActiveRequestTab] = useState<Tab>('Params');
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [importMode, setImportMode] = useState<'curl' | 'raw'>('curl');
+  const [importError, setImportError] = useState('');
 
   // Swap edit state when active tab changes
   useEffect(() => {
@@ -289,6 +296,16 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
       ? resolveInheritedAuth(col?.item ?? [], activeReq.item.id ?? '', col?.auth)
       : buildAuth(edit);
 
+    // Read binary file as base64 if applicable
+    let binaryBase64: string | undefined;
+    if (edit.bodyMode === 'file' && edit.bodyFile) {
+      const ab = await edit.bodyFile.arrayBuffer();
+      const bytes = new Uint8Array(ab);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      binaryBase64 = btoa(binary);
+    }
+
     // Build the item from current edit state
     const item: PostmanItem = {
       ...activeReq.item,
@@ -298,9 +315,10 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
         header: edit.headers,
         body: edit.bodyMode !== 'none' ? {
           mode: edit.bodyMode as NonNullable<NonNullable<PostmanItem['request']>['body']>['mode'],
-          raw: edit.bodyMode === 'raw' ? edit.bodyRaw : undefined,
+          raw: edit.bodyMode === 'raw' ? edit.bodyRaw : edit.bodyMode === 'file' ? (binaryBase64 ?? '') : undefined,
           urlencoded: edit.bodyMode === 'urlencoded' ? edit.bodyUrlEncoded : undefined,
           formdata: edit.bodyMode === 'formdata' ? edit.bodyFormData : undefined,
+          graphql: edit.bodyMode === 'graphql' ? { query: edit.bodyGraphqlQuery, variables: edit.bodyGraphqlVariables || undefined } : undefined,
           options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as 'json' | 'text' } } : undefined,
         } : undefined,
         auth: resolvedAuth,
@@ -390,8 +408,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
           mode: edit.bodyMode as NonNullable<NonNullable<PostmanItem['request']>['body']>['mode'],
           raw: edit.bodyMode === 'raw' ? edit.bodyRaw : undefined,
           urlencoded: edit.bodyMode === 'urlencoded' ? edit.bodyUrlEncoded : undefined,
-          formdata: edit.bodyMode === 'formdata' ? edit.bodyFormData : undefined,
-          options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as 'json' | 'text' } } : undefined,
+          formdata: edit.bodyMode === 'formdata' ? edit.bodyFormData : undefined,          graphql: edit.bodyMode === 'graphql' ? { query: edit.bodyGraphqlQuery, variables: edit.bodyGraphqlVariables || undefined } : undefined,          options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as 'json' | 'text' } } : undefined,
         } : undefined,
         auth: buildAuth(edit),
       },
@@ -402,6 +419,44 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
     // Mark clean in cache
     cacheRef.current.set(activeTab.id, { edit, dirty: false });
     setDirty(false);
+  }
+
+  function handleImport() {
+    const parsed = importMode === 'curl'
+      ? parseCurlCommand(importText)
+      : parseRawHttp(importText);
+    if (!parsed) {
+      setImportError('Could not parse the input. Please check the format and try again.');
+      return;
+    }
+    setEdit(e => {
+      if (!e) return e;
+      const url = parsed.url ?? e.url;
+      const next: EditState = {
+        ...e,
+        method: parsed.method ?? e.method,
+        url,
+        queryParams: url ? extractQueryParamsFromString(url) : e.queryParams,
+        headers: parsed.headers ?? e.headers,
+        bodyRaw: parsed.bodyRaw ?? e.bodyRaw,
+        bodyMode: (parsed.bodyMode ?? e.bodyMode) as EditState['bodyMode'],
+        bodyRawLang: parsed.bodyRawLang ?? e.bodyRawLang,
+        bodyFormData: parsed.bodyFormData ?? e.bodyFormData,
+        bodyUrlEncoded: parsed.bodyUrlEncoded ?? e.bodyUrlEncoded,
+      };
+      if (parsed.authType && parsed.authType !== 'inherit') {
+        return {
+          ...next,
+          authType: parsed.authType as EditState['authType'],
+          authBasicUser: parsed.authBasicUser ?? e.authBasicUser,
+          authBasicPass: parsed.authBasicPass ?? e.authBasicPass,
+        };
+      }
+      return next;
+    });
+    setShowImportDialog(false);
+    setImportText('');
+    setImportError('');
   }
 
   return (
@@ -443,6 +498,13 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
             placeholder="https://api.example.com/endpoint"
             className="flex-1 bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-orange-500"
           />
+          <button
+            onClick={() => { setImportText(''); setImportError(''); setShowImportDialog(true); }}
+            title="Import from cURL or Raw HTTP"
+            className="px-3 py-2 bg-slate-700 hover:bg-slate-600 border border-slate-500 text-slate-400 hover:text-slate-200 text-xs rounded transition-colors shrink-0 whitespace-nowrap"
+          >
+            Import
+          </button>
           {dirty && (
             <button
               onClick={handleSave}
@@ -502,8 +564,8 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
 
         {activeRequestTab === 'Body' && (
           <div className="flex flex-col gap-3">
-            <div className="flex gap-3 flex-wrap">
-              {(['none', 'raw', 'urlencoded', 'formdata'] as const).map(m => (
+            <div className="flex items-center gap-3 flex-wrap">
+              {(['none', 'raw', 'urlencoded', 'formdata', 'graphql', 'file'] as const).map(m => (
                 <label key={m} className="flex items-center gap-1.5 cursor-pointer">
                   <input
                     type="radio"
@@ -513,7 +575,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
                     onChange={() => setEdit(x => x ? { ...x, bodyMode: m } : x)}
                     className="accent-orange-500"
                   />
-                  <span className="text-sm text-slate-300">{m}</span>
+                  <span className="text-sm text-slate-300">{m === 'file' ? 'binary' : m}</span>
                 </label>
               ))}
               {edit.bodyMode === 'raw' && (
@@ -527,15 +589,48 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
                   ))}
                 </select>
               )}
+              {edit.bodyMode === 'raw' && (
+                <button
+                  onClick={() => {
+                    try {
+                      let formatted = edit.bodyRaw;
+                      if (edit.bodyRawLang === 'json') {
+                        formatted = JSON.stringify(JSON.parse(edit.bodyRaw), null, 2);
+                      } else if (edit.bodyRawLang === 'xml' || edit.bodyRawLang === 'html') {
+                        let indent = 0;
+                        formatted = edit.bodyRaw
+                          .replace(/>\s*</g, '>\n<')
+                          .split('\n')
+                          .map(line => {
+                            line = line.trim();
+                            if (!line) return '';
+                            if (line.startsWith('</')) indent = Math.max(indent - 1, 0);
+                            const pad = '  '.repeat(indent);
+                            if (line.startsWith('<') && !line.startsWith('</') && !line.startsWith('<?') && !line.endsWith('/>') && !/<\/[^>]+>$/.test(line)) indent++;
+                            return pad + line;
+                          })
+                          .filter(Boolean)
+                          .join('\n');
+                      }
+                      if (formatted !== edit.bodyRaw) {
+                        setEdit(x => x ? { ...x, bodyRaw: formatted } : x);
+                      }
+                    } catch { /* ignore parse errors */ }
+                  }}
+                  className="ml-auto text-xs text-slate-500 hover:text-orange-400 transition-colors"
+                >
+                  Beautify
+                </button>
+              )}
             </div>
             {edit.bodyMode === 'raw' && (
               <textarea
                 value={edit.bodyRaw}
                 onChange={e => setEdit(x => x ? { ...x, bodyRaw: e.target.value } : x)}
-                rows={10}
-                className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-y"
-                placeholder={edit.bodyRawLang === 'json' ? '{\n  "key": "value"\n}' : 'Request body...'}
-                spellCheck={false}
+                  rows={10}
+                  className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-y"
+                  placeholder={edit.bodyRawLang === 'json' ? '{\n  "key": "value"\n}' : 'Request body...'}
+                  spellCheck={false}
               />
             )}
             {edit.bodyMode === 'urlencoded' && (
@@ -549,6 +644,48 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
                 rows={edit.bodyFormData}
                 onChange={v => setEdit(x => x ? { ...x, bodyFormData: v } : x)}
               />
+            )}
+            {edit.bodyMode === 'graphql' && (
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-slate-400 font-medium">Query</label>
+                  <textarea
+                    value={edit.bodyGraphqlQuery}
+                    onChange={e => setEdit(x => x ? { ...x, bodyGraphqlQuery: e.target.value } : x)}
+                    rows={8}
+                    className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-y"
+                    placeholder={"query {\n  ...\n}"}
+                    spellCheck={false}
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-slate-400 font-medium">Variables</label>
+                  <textarea
+                    value={edit.bodyGraphqlVariables}
+                    onChange={e => setEdit(x => x ? { ...x, bodyGraphqlVariables: e.target.value } : x)}
+                    rows={4}
+                    className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-y"
+                    placeholder={'{ "variable": "value" }'}
+                    spellCheck={false}
+                  />
+                </div>
+              </div>
+            )}
+            {edit.bodyMode === 'file' && (
+              <div className="flex flex-col gap-2">
+                <label className="text-xs text-slate-400">Select a file to send as the request body</label>
+                <input
+                  type="file"
+                  onChange={e => setEdit(x => x ? { ...x, bodyFile: e.target.files?.[0] ?? null } : x)}
+                  className="text-sm text-slate-300 file:bg-slate-600 file:border-0 file:rounded file:px-3 file:py-1 file:text-sm file:text-slate-200 file:cursor-pointer file:mr-3 hover:file:bg-slate-500"
+                />
+                {edit.bodyFile && (
+                  <p className="text-xs text-slate-400">
+                    Selected: <span className="text-slate-200">{edit.bodyFile.name}</span>
+                    <span className="ml-2 text-slate-500">({(edit.bodyFile.size / 1024).toFixed(1)} KB)</span>
+                  </p>
+                )}
+              </div>
             )}
           </div>
         )}
@@ -681,8 +818,253 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
           </div>
         )}
       </div>
+
+      {/* Import dialog */}
+      {showImportDialog && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          onClick={e => { if (e.target === e.currentTarget) setShowImportDialog(false); }}
+        >
+          <div className="bg-slate-800 border border-slate-600 rounded-lg shadow-2xl w-full max-w-2xl mx-4 flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
+              <h3 className="text-sm font-semibold text-slate-200">Import Request</h3>
+              <button onClick={() => setShowImportDialog(false)} className="text-slate-500 hover:text-slate-300 text-xl leading-none">×</button>
+            </div>
+            <div className="px-4 py-3 flex flex-col gap-3">
+              <div className="flex gap-1 bg-slate-900 p-1 rounded">
+                {(['curl', 'raw'] as const).map(m => (
+                  <button
+                    key={m}
+                    onClick={() => { setImportMode(m); setImportError(''); }}
+                    className={`flex-1 text-xs px-3 py-1.5 rounded transition-colors font-medium ${
+                      importMode === m ? 'bg-slate-700 text-slate-100' : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {m === 'curl' ? 'cURL' : 'Raw HTTP'}
+                  </button>
+                ))}
+              </div>
+              <textarea
+                autoFocus
+                value={importText}
+                onChange={e => { setImportText(e.target.value); setImportError(''); }}
+                rows={12}
+                spellCheck={false}
+                className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-y"
+                placeholder={importMode === 'curl'
+                  ? "curl -X POST https://api.example.com/users \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"name\": \"Alice\"}'"
+                  : "POST /users HTTP/1.1\nHost: api.example.com\nContent-Type: application/json\n\n{\"name\": \"Alice\"}"}
+              />
+              {importError && <p className="text-xs text-red-400">{importError}</p>}
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setShowImportDialog(false)}
+                  className="px-3 py-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleImport}
+                  className="px-4 py-1.5 bg-orange-600 hover:bg-orange-500 text-white text-sm font-medium rounded transition-colors"
+                >
+                  Import
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+// ─── Import parsers ──────────────────────────────────────────────────────────
+
+function tokenizeCurl(str: string): string[] {
+  const tokens: string[] = [];
+  let i = 0;
+  while (i < str.length) {
+    while (i < str.length && /[ \t]/.test(str[i])) i++;
+    if (i >= str.length) break;
+    const ch = str[i];
+    // ANSI-C quoting: $'...'
+    if (ch === '$' && str[i + 1] === "'") {
+      i += 2;
+      let tok = '';
+      while (i < str.length && str[i] !== "'") {
+        if (str[i] === '\\') {
+          i++;
+          const esc = str[i] ?? '';
+          if (esc === 'n') tok += '\n';
+          else if (esc === 't') tok += '\t';
+          else if (esc === 'r') tok += '\r';
+          else tok += esc;
+        } else {
+          tok += str[i];
+        }
+        i++;
+      }
+      i++;
+      tokens.push(tok);
+    } else if (ch === '"' || ch === "'") {
+      i++;
+      let tok = '';
+      while (i < str.length && str[i] !== ch) {
+        if (str[i] === '\\' && ch === '"') {
+          i++;
+          tok += str[i] ?? '';
+        } else {
+          tok += str[i];
+        }
+        i++;
+      }
+      i++;
+      tokens.push(tok);
+    } else {
+      let tok = '';
+      while (i < str.length && !/[ \t]/.test(str[i])) {
+        tok += str[i];
+        i++;
+      }
+      tokens.push(tok);
+    }
+  }
+  return tokens;
+}
+
+function parseCurlCommand(curlStr: string): Partial<EditState> | null {
+  const normalized = curlStr.trim().replace(/\\\r?\n/g, ' ').replace(/\r?\n/g, ' ');
+  if (!/^curl\s/i.test(normalized)) return null;
+
+  const tokens = tokenizeCurl(normalized.slice(normalized.toLowerCase().indexOf('curl ') + 5));
+  let method = '';
+  let url = '';
+  const headers: Array<{ key: string; value: string }> = [];
+  let bodyRaw = '';
+  let bodyMode: EditState['bodyMode'] = 'none';
+  const bodyFormData: Array<{ key: string; value: string }> = [];
+  const bodyUrlEncoded: Array<{ key: string; value: string }> = [];
+  let authBasicUser = '';
+  let authBasicPass = '';
+  let authType = '';
+
+  // Flags that consume next token but are otherwise ignored
+  const skipWithArg = new Set([
+    '-o', '--output', '--connect-timeout', '--max-time',
+    '--proxy', '-x', '--cert', '--key', '--cacert', '--capath',
+    '-b', '--cookie', '-c', '--cookie-jar', '--resolve',
+  ]);
+
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    // Handle --flag=value syntax
+    let flag = t;
+    let inlineVal: string | undefined;
+    const eqIdx = t.indexOf('=');
+    if (eqIdx > 0 && t.startsWith('-')) {
+      flag = t.slice(0, eqIdx);
+      inlineVal = t.slice(eqIdx + 1);
+    }
+    const nextArg = (): string => {
+      if (inlineVal !== undefined) return inlineVal;
+      return tokens[++i] ?? '';
+    };
+
+    if (flag === '-X' || flag === '--request') {
+      method = nextArg().toUpperCase();
+    } else if (flag === '-H' || flag === '--header') {
+      const h = nextArg();
+      const ci = h.indexOf(':');
+      if (ci !== -1) headers.push({ key: h.slice(0, ci).trim(), value: h.slice(ci + 1).trim() });
+    } else if (flag === '-d' || flag === '--data' || flag === '--data-raw' || flag === '--data-binary' || flag === '--data-ascii') {
+      const val = nextArg();
+      if (!val.startsWith('@')) { bodyRaw = bodyRaw ? bodyRaw + '&' + val : val; bodyMode = 'raw'; }
+    } else if (flag === '--data-urlencode') {
+      const val = nextArg();
+      const ei = val.indexOf('=');
+      if (ei !== -1) { bodyUrlEncoded.push({ key: val.slice(0, ei), value: val.slice(ei + 1) }); bodyMode = 'urlencoded'; }
+      else { bodyRaw = bodyRaw ? bodyRaw + '&' + val : val; bodyMode = 'raw'; }
+    } else if (flag === '-F' || flag === '--form' || flag === '--form-string') {
+      const val = nextArg();
+      const ei = val.indexOf('=');
+      if (ei !== -1) bodyFormData.push({ key: val.slice(0, ei), value: val.slice(ei + 1) });
+      bodyMode = 'formdata';
+    } else if (flag === '-u' || flag === '--user') {
+      const val = nextArg();
+      const ci = val.indexOf(':');
+      authBasicUser = ci !== -1 ? val.slice(0, ci) : val;
+      authBasicPass = ci !== -1 ? val.slice(ci + 1) : '';
+      authType = 'basic';
+    } else if (flag === '-A' || flag === '--user-agent') {
+      headers.push({ key: 'User-Agent', value: nextArg() });
+    } else if (flag === '--url') {
+      url = nextArg();
+    } else if (flag === '--get' || flag === '-G') {
+      method = 'GET';
+    } else if (flag === '--head' || flag === '-I') {
+      method = 'HEAD';
+    } else if (skipWithArg.has(flag) && inlineVal === undefined) {
+      i++; // skip consumed argument
+    } else if (!t.startsWith('-') && !url) {
+      url = t;
+    }
+  }
+
+  if (!url) return null;
+  if (!method) method = bodyMode !== 'none' ? 'POST' : 'GET';
+
+  const ct = headers.find(h => h.key.toLowerCase() === 'content-type')?.value ?? '';
+  const bodyRawLang = ct.includes('json') ? 'json' : ct.includes('xml') ? 'xml' : ct.includes('html') ? 'html' : 'text';
+
+  return {
+    method, url, headers, bodyRaw, bodyMode, bodyFormData, bodyUrlEncoded, bodyRawLang,
+    ...(authType === 'basic' ? { authType, authBasicUser, authBasicPass } : {}),
+  };
+}
+
+function parseRawHttp(rawStr: string): Partial<EditState> | null {
+  const text = rawStr.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  const lines = text.split('\n');
+  if (!lines.length) return null;
+
+  const match = lines[0].trim().match(/^([A-Z]+)\s+(\S+)(?:\s+HTTP\/[\d.]+)?$/i);
+  if (!match) return null;
+
+  const method = match[1].toUpperCase();
+  const path = match[2];
+  const headers: Array<{ key: string; value: string }> = [];
+  let host = '';
+  let i = 1;
+
+  while (i < lines.length && lines[i].trim() !== '') {
+    const ci = lines[i].indexOf(':');
+    if (ci !== -1) {
+      const key = lines[i].slice(0, ci).trim();
+      const value = lines[i].slice(ci + 1).trim();
+      if (key.toLowerCase() === 'host') host = value;
+      else headers.push({ key, value });
+    }
+    i++;
+  }
+  i++; // skip blank separator line
+
+  const body = lines.slice(i).join('\n').trim();
+
+  let url = path;
+  if (host && !path.startsWith('http://') && !path.startsWith('https://')) {
+    const secure = host.endsWith(':443') || host.endsWith(':8443');
+    url = `${secure ? 'https' : 'http'}://${host}${path.startsWith('/') ? path : '/' + path}`;
+  }
+
+  const ct = headers.find(h => h.key.toLowerCase() === 'content-type')?.value ?? '';
+  const bodyRawLang = ct.includes('json') ? 'json' : ct.includes('xml') ? 'xml' : ct.includes('html') ? 'html' : 'text';
+
+  return {
+    method, url, headers,
+    bodyRaw: body,
+    bodyMode: body ? 'raw' : 'none',
+    bodyRawLang,
+  };
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

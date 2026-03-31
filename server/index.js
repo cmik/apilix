@@ -43,7 +43,7 @@ app.post('/api/execute', async (req, res) => {
   }
 });
 
-// ─── Run an entire collection (optionally with CSV) ────────────────────────────
+// ─── Run an entire collection (optionally with CSV) — SSE streaming ───────────
 
 app.post('/api/run', upload.single('csvFile'), async (req, res) => {
   try {
@@ -73,14 +73,25 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
       return res.json({ results: [] });
     }
 
-    const allIterations = [];
+    // Switch to SSE streaming
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    });
+
+    const sendEvent = (event, data) => {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
     const delayMs = Math.min(parseInt(delay, 10) || 0, 5000);
 
     for (let i = 0; i < dataRows.length; i++) {
       const dataRow = dataRows[i];
       let currentEnv = { ...(environment || {}) };
       let currentCollVars = { ...(collectionVariables || {}) };
-      const iterResults = [];
+
+      sendEvent('iteration-start', { iteration: i + 1, dataRow });
 
       for (const item of requests) {
         const result = await executeRequest(item, {
@@ -95,7 +106,8 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
         if (result.updatedEnvironment) currentEnv = result.updatedEnvironment;
         if (result.updatedCollectionVariables) currentCollVars = result.updatedCollectionVariables;
 
-        iterResults.push({
+        const resultData = {
+          iteration: i + 1,
           name: item.name,
           method: item.request?.method || 'GET',
           url: typeof item.request?.url === 'string'
@@ -113,20 +125,29 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
           testResults: result.testResults,
           scriptLogs: result.scriptLogs,
           error: result.error,
-        });
+        };
+
+        sendEvent('result', resultData);
 
         if (delayMs > 0) {
           await new Promise(resolve => setTimeout(resolve, delayMs));
         }
       }
 
-      allIterations.push({ iteration: i + 1, dataRow, results: iterResults });
+      sendEvent('iteration-end', { iteration: i + 1 });
     }
 
-    return res.json({ results: allIterations });
+    sendEvent('done', {});
+    res.end();
   } catch (err) {
     console.error('Run error:', err);
-    return res.status(500).json({ error: err.message });
+    // If headers already sent, send error as SSE event
+    if (res.headersSent) {
+      res.write(`event: error\ndata: ${JSON.stringify({ error: err.message })}\n\n`);
+      res.end();
+    } else {
+      return res.status(500).json({ error: err.message });
+    }
   }
 });
 

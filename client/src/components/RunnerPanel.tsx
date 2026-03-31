@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useApp } from '../store';
-import { runCollection } from '../api';
+import { runCollectionStream } from '../api';
 import type { RunnerIteration, RunnerIterationResult, PostmanItem } from '../types';
 import { applyInheritedAuth } from '../utils/treeHelpers';
 
@@ -14,16 +14,17 @@ function getAllRequestIds(items: PostmanItem[]): string[] {
   }, []);
 }
 
-function filterItems(items: PostmanItem[], selectedIds: Set<string>): PostmanItem[] {
-  return items.reduce<PostmanItem[]>((acc, item) => {
+/** Flatten all request items into an id → item map */
+function flattenRequestItems(items: PostmanItem[]): Map<string, PostmanItem> {
+  const map = new Map<string, PostmanItem>();
+  for (const item of items) {
     if (item.item) {
-      const filteredChildren = filterItems(item.item, selectedIds);
-      if (filteredChildren.length > 0) acc.push({ ...item, item: filteredChildren });
-    } else if (item.request && item.id && selectedIds.has(item.id)) {
-      acc.push(item);
+      for (const [k, v] of flattenRequestItems(item.item)) map.set(k, v);
+    } else if (item.request && item.id) {
+      map.set(item.id, item);
     }
-    return acc;
-  }, []);
+  }
+  return map;
 }
 
 // ─── Request Selection Tree ───────────────────────────────────────────────────
@@ -239,6 +240,7 @@ export default function RunnerPanel() {
   const { state, dispatch, getEnvironmentVars, getCollectionVars } = useApp();
   const [selectedCollectionId, setSelectedCollectionId] = useState<string>('');
   const [selectedRequestIds, setSelectedRequestIds] = useState<Set<string>>(new Set());
+  const [executionOrder, setExecutionOrder] = useState<string[]>([]);
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
   const [csvPreviewRows, setCsvPreviewRows] = useState<string[][]>([]);
@@ -250,24 +252,33 @@ export default function RunnerPanel() {
   const [error, setError] = useState<string | null>(null);
   const [configOpen, setConfigOpen] = useState(true);
   const csvRef = useRef<HTMLInputElement>(null);
+  const dragItemRef = useRef<number | null>(null);
+  const dragOverRef = useRef<number | null>(null);
 
   const selectedCollection = state.collections.find(c => c._id === selectedCollectionId);
 
   // Auto-select all requests when collection changes
   useEffect(() => {
     if (selectedCollection) {
-      setSelectedRequestIds(new Set(getAllRequestIds(selectedCollection.item)));
+      const allIds = getAllRequestIds(selectedCollection.item);
+      setSelectedRequestIds(new Set(allIds));
+      setExecutionOrder(allIds);
     } else {
       setSelectedRequestIds(new Set());
+      setExecutionOrder([]);
     }
   }, [selectedCollectionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function toggleRequest(id: string) {
     setSelectedRequestIds(prev => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
+    setExecutionOrder(prev =>
+      prev.includes(id) ? prev.filter(oid => oid !== id) : [...prev, id]
+    );
   }
 
   function toggleFolder(ids: string[], checked: boolean) {
@@ -276,14 +287,42 @@ export default function RunnerPanel() {
       ids.forEach(id => checked ? next.add(id) : next.delete(id));
       return next;
     });
+    if (checked) {
+      setExecutionOrder(prev => {
+        const existing = new Set(prev);
+        return [...prev, ...ids.filter(id => !existing.has(id))];
+      });
+    } else {
+      const removeSet = new Set(ids);
+      setExecutionOrder(prev => prev.filter(oid => !removeSet.has(oid)));
+    }
   }
 
   function selectAll() {
-    if (selectedCollection) setSelectedRequestIds(new Set(getAllRequestIds(selectedCollection.item)));
+    if (selectedCollection) {
+      const allIds = getAllRequestIds(selectedCollection.item);
+      setSelectedRequestIds(new Set(allIds));
+      setExecutionOrder(allIds);
+    }
   }
 
   function deselectAll() {
     setSelectedRequestIds(new Set());
+    setExecutionOrder([]);
+  }
+
+  function handleDragEnd() {
+    const from = dragItemRef.current;
+    const to = dragOverRef.current;
+    dragItemRef.current = null;
+    dragOverRef.current = null;
+    if (from === null || to === null || from === to) return;
+    setExecutionOrder(prev => {
+      const next = [...prev];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
   }
 
   async function handleCsvChange(file: File | null) {
@@ -321,52 +360,73 @@ export default function RunnerPanel() {
       const envVars = getEnvironmentVars();
       const collVars = getCollectionVars(selectedCollectionId);
 
-      const filteredItems = selectedRequestIds.size > 0
-        ? filterItems(selectedCollection.item, selectedRequestIds)
-        : selectedCollection.item;
-      const processedItems = applyInheritedAuth(filteredItems, selectedCollection.auth);
-      const result = await runCollection(
+      // Apply inherited auth on the full tree, then extract items in execution order
+      const authResolvedItems = applyInheritedAuth(selectedCollection.item, selectedCollection.auth);
+      const itemMap = flattenRequestItems(authResolvedItems);
+      const orderedItems = executionOrder
+        .filter(id => selectedRequestIds.has(id))
+        .map(id => itemMap.get(id))
+        .filter((item): item is PostmanItem => !!item);
+
+      const streamingResults: RunnerIteration[] = [];
+      let currentIteration: RunnerIteration | null = null;
+
+      await runCollectionStream(
         {
-          collection: { ...selectedCollection, item: processedItems },
+          collection: { ...selectedCollection, item: orderedItems },
           environment: envVars,
           collectionVariables: collVars,
           globals: state.globalVariables,
           delay,
           iterations: csvFile ? undefined : iterations,
         },
-        csvFile ?? undefined
-      );
+        csvFile ?? undefined,
+        {
+          onIterationStart(data) {
+            currentIteration = { iteration: data.iteration, dataRow: data.dataRow, results: [] };
+            streamingResults.push(currentIteration);
+            setResults([...streamingResults]);
+            setConfigOpen(false);
+          },
+          onResult(data) {
+            const { iteration: _iter, ...resultData } = data;
+            if (currentIteration) {
+              currentIteration.results.push(resultData as RunnerIterationResult);
+              setResults([...streamingResults]);
+            }
 
-      setResults(result.results);
-      setConfigOpen(false);
-
-      // Log every executed request to the console
-      result.results.forEach(iter => {
-        iter.results.forEach(r => {
-          dispatch({
-            type: 'ADD_CONSOLE_LOG',
-            payload: {
-              id: Date.now().toString(36) + Math.random().toString(36).slice(2),
-              timestamp: Date.now(),
-              method: r.method,
-              url: r.resolvedUrl ?? r.url,
-              requestHeaders: Object.entries(r.requestHeaders ?? {}).map(([key, value]) => ({ key, value })),
-              requestBody: r.requestBody,
-              scriptLogs: r.scriptLogs ?? [],
-              response: {
-                status: r.status,
-                statusText: r.statusText,
-                responseTime: r.responseTime,
-                headers: r.headers ?? {},
-                body: r.body ?? '',
-                size: r.size ?? 0,
-                testResults: r.testResults,
-                error: r.error,
+            // Log to console in real-time
+            dispatch({
+              type: 'ADD_CONSOLE_LOG',
+              payload: {
+                id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+                timestamp: Date.now(),
+                method: data.method,
+                url: data.resolvedUrl ?? data.url,
+                requestHeaders: Object.entries(data.requestHeaders ?? {}).map(([key, value]) => ({ key, value: String(value) })),
+                requestBody: data.requestBody,
+                scriptLogs: data.scriptLogs ?? [],
+                response: {
+                  status: data.status,
+                  statusText: data.statusText,
+                  responseTime: data.responseTime,
+                  headers: data.headers ?? {},
+                  body: data.body ?? '',
+                  size: data.size ?? 0,
+                  testResults: data.testResults,
+                  error: data.error,
+                },
               },
-            },
-          });
-        });
-      });
+            });
+          },
+          onError(errorMsg) {
+            setError(errorMsg);
+          },
+          onDone() {
+            // final state is already set via streaming
+          },
+        },
+      );
     } catch (e) {
       setError((e as Error).message);
     }
@@ -471,6 +531,57 @@ export default function RunnerPanel() {
             </div>
           </div>
         )}
+
+        {/* Execution order */}
+        {selectedCollection && executionOrder.length > 1 && (() => {
+          const itemMap = flattenRequestItems(selectedCollection.item);
+          return (
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-slate-400 font-medium">
+                  Execution Order
+                  <span className="ml-1.5 text-slate-500">
+                    (drag to reorder)
+                  </span>
+                </label>
+                <button
+                  onClick={() => setExecutionOrder(getAllRequestIds(selectedCollection.item).filter(id => selectedRequestIds.has(id)))}
+                  className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+                >
+                  Reset Order
+                </button>
+              </div>
+              <div className="bg-slate-700/40 border border-slate-600 rounded px-1 py-1 max-h-52 overflow-y-auto">
+                {executionOrder.map((id, idx) => {
+                  const item = itemMap.get(id);
+                  if (!item) return null;
+                  const method = item.request?.method ?? 'GET';
+                  const methodColor = METHOD_COLORS[method] ?? 'text-slate-400';
+                  return (
+                    <div
+                      key={id}
+                      draggable
+                      onDragStart={() => { dragItemRef.current = idx; }}
+                      onDragEnter={() => { dragOverRef.current = idx; }}
+                      onDragOver={e => e.preventDefault()}
+                      onDragEnd={handleDragEnd}
+                      className="flex items-center gap-2 py-1.5 px-2 hover:bg-slate-600/30 rounded cursor-grab active:cursor-grabbing select-none"
+                    >
+                      <span className="text-slate-600 text-xs shrink-0 w-5 text-right">{idx + 1}.</span>
+                      <svg className="w-3.5 h-3.5 text-slate-600 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                        <circle cx="9" cy="5" r="1.5" /><circle cx="15" cy="5" r="1.5" />
+                        <circle cx="9" cy="12" r="1.5" /><circle cx="15" cy="12" r="1.5" />
+                        <circle cx="9" cy="19" r="1.5" /><circle cx="15" cy="19" r="1.5" />
+                      </svg>
+                      <span className={`text-xs font-bold w-14 shrink-0 ${methodColor}`}>{method}</span>
+                      <span className="text-sm text-slate-300 truncate">{item.name}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
 
         <div className="flex flex-col gap-3">
           {/* CSV upload */}

@@ -314,12 +314,12 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
 
 // --- CollectionNode ---
 
-function CollectionNode({ collection }: { collection: AppCollection }) {
+function CollectionNode({ collection, startRenaming, onRenamingDone }: { collection: AppCollection; startRenaming?: boolean; onRenamingDone?: () => void }) {
   const { dispatch } = useApp();
   const [open, setOpen] = useState(true);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
-  const [renaming, setRenaming] = useState(false);
-  const [renameVal, setRenameVal] = useState(collection.info.name);
+  const [renaming, setRenaming] = useState(!!startRenaming);
+  const [renameVal, setRenameVal] = useState(startRenaming ? '' : collection.info.name);
   const [showSettings, setShowSettings] = useState(false);
   const [newItemId, setNewItemId] = useState<string | null>(null);
 
@@ -338,6 +338,7 @@ function CollectionNode({ collection }: { collection: AppCollection }) {
       });
     }
     setRenaming(false);
+    onRenamingDone?.();
   }
 
   function handleAddFolder() {
@@ -408,7 +409,7 @@ function CollectionNode({ collection }: { collection: AppCollection }) {
           <span className="text-xs shrink-0">{open ? '▾' : '▸'}</span>
           <span className="shrink-0">📚</span>
           {renaming
-            ? <InlineRename value={renameVal} onChange={setRenameVal} onConfirm={commitRename} onCancel={() => setRenaming(false)} />
+            ? <InlineRename value={renameVal} onChange={setRenameVal} onConfirm={commitRename} onCancel={() => { setRenaming(false); onRenamingDone?.(); }} />
             : <span className="truncate">{collection.info.name}</span>
           }
         </button>
@@ -496,9 +497,11 @@ function Highlight({ text, query }: { text: string; query: string }) {
 
 interface CollectionTreeProps {
   filter?: string;
+  renamingCollectionId?: string | null;
+  onRenamingDone?: () => void;
 }
 
-export default function CollectionTree({ filter = '' }: CollectionTreeProps) {
+export default function CollectionTree({ filter = '', renamingCollectionId, onRenamingDone }: CollectionTreeProps) {
   const { state, dispatch } = useApp();
   const trimmed = filter.trim();
 
@@ -574,7 +577,12 @@ export default function CollectionTree({ filter = '' }: CollectionTreeProps) {
   return (
     <div className="flex-1 overflow-y-auto py-1">
       {state.collections.map(col => (
-        <CollectionNode key={col._id} collection={col} />
+        <CollectionNode
+          key={col._id}
+          collection={col}
+          startRenaming={col._id === renamingCollectionId}
+          onRenamingDone={onRenamingDone}
+        />
       ))}
     </div>
   );

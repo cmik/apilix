@@ -329,14 +329,15 @@ export default function App() {
           </div>
         )}
 
-        {/* Console panel (above status bar) */}
-        {consoleOpen && (
+        {/* Console panel (above status bar) — always mounted so the BroadcastChannel
+            keeps broadcasting to a detached window even when the inline panel is closed */}
+        <div style={consoleOpen ? undefined : { display: 'none' }}>
           <ConsolePanel
             height={consoleHeight}
             onHeightChange={setConsoleHeight}
             onClose={() => setConsoleOpen(false)}
           />
-        )}
+        </div>
       </div>
       </div>
 
