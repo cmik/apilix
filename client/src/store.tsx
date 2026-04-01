@@ -213,6 +213,13 @@ function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, tabs: ordered };
     }
 
+    case 'REORDER_COLLECTIONS': {
+      const ordered = action.payload
+        .map(id => state.collections.find(c => c._id === id))
+        .filter((c): c is NonNullable<typeof c> => c !== undefined);
+      return { ...state, collections: ordered };
+    }
+
     case 'SET_RESPONSE':
       return { ...state, response: action.payload };
 

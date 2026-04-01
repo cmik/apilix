@@ -449,7 +449,14 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
 
 // --- CollectionNode ---
 
-function CollectionNode({ collection, startRenaming, onRenamingDone }: { collection: AppCollection; startRenaming?: boolean; onRenamingDone?: () => void }) {
+function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging, onDragStart, onDragEnd }: {
+  collection: AppCollection;
+  startRenaming?: boolean;
+  onRenamingDone?: () => void;
+  isDragging?: boolean;
+  onDragStart?: (e: React.DragEvent) => void;
+  onDragEnd?: () => void;
+}) {
   const { dispatch } = useApp();
   const collapseSignal = useContext(CollapseCtx);
   const expandSignal = useContext(ExpandCtx);
@@ -544,8 +551,13 @@ function CollectionNode({ collection, startRenaming, onRenamingDone }: { collect
   ];
 
   return (
-    <div className="mb-1">
-      <div className="flex items-center group">
+    <div className={`mb-1 transition-opacity ${isDragging ? 'opacity-40' : ''}`}>
+      <div
+        className="flex items-center group"
+        draggable={!!onDragStart}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+      >
         <button
           onClick={() => !renaming && setOpen(o => !o)}
           className="flex items-center gap-1.5 flex-1 min-w-0 text-left px-2 py-1.5 hover:bg-slate-700/50 rounded text-sm font-medium text-slate-200"
@@ -651,6 +663,45 @@ interface CollectionTreeProps {
 export default function CollectionTree({ filter = '', renamingCollectionId, onRenamingDone, collapseSignal = 0, expandSignal = 0, sortAZ = false }: CollectionTreeProps) {
   const { state, dispatch } = useApp();
   const trimmed = filter.trim();
+
+  // ── Collection-level drag state (reordering top-level collections) ───────────
+  const [draggingColIdx, setDraggingColIdx] = useState<number | null>(null);
+  const [colInsertBefore, setColInsertBefore] = useState<number | null>(null);
+
+  function handleColDragStart(e: React.DragEvent, idx: number) {
+    setDraggingColIdx(idx);
+    e.dataTransfer.effectAllowed = 'move';
+    // Don't let the item-level drag state interfere
+    e.stopPropagation();
+  }
+
+  function handleColDragOver(e: React.DragEvent, idx: number) {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const pos = e.clientY < rect.top + rect.height / 2 ? idx : idx + 1;
+    if (pos !== colInsertBefore) setColInsertBefore(pos);
+  }
+
+  function handleColDrop(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (draggingColIdx === null || colInsertBefore === null) return;
+    const cols = state.collections;
+    const newCols = [...cols];
+    const [removed] = newCols.splice(draggingColIdx, 1);
+    const adjustedIdx = colInsertBefore > draggingColIdx ? colInsertBefore - 1 : colInsertBefore;
+    newCols.splice(adjustedIdx, 0, removed);
+    dispatch({ type: 'REORDER_COLLECTIONS', payload: newCols.map(c => c._id) });
+    setDraggingColIdx(null);
+    setColInsertBefore(null);
+  }
+
+  function handleColDragEnd() {
+    setDraggingColIdx(null);
+    setColInsertBefore(null);
+  }
 
   // ── Drag state ───────────────────────────────────────────────────────────────
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -795,24 +846,40 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
       <div
         className="flex-1 overflow-y-auto py-1"
         onDragLeave={(e) => {
-          // Clear drop indicator when leaving the entire sidebar panel
           if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) {
             updateDrop(null, null, null);
+            setColInsertBefore(null);
           }
         }}
-        onDragEnd={endDrag}
+        onDragEnd={() => { endDrag(); handleColDragEnd(); }}
       >
         {(sortAZ
           ? [...state.collections].sort((a, b) => a.info.name.localeCompare(b.info.name))
           : state.collections
-        ).map(col => (
-          <CollectionNode
+        ).map((col, i) => (
+          <div
             key={col._id}
-            collection={col}
-            startRenaming={col._id === renamingCollectionId}
-            onRenamingDone={onRenamingDone}
-          />
+            className="relative"
+            onDragOver={sortAZ ? undefined : (e) => handleColDragOver(e, i)}
+            onDrop={sortAZ ? undefined : handleColDrop}
+          >
+            {!sortAZ && draggingColIdx !== null && colInsertBefore === i && (
+              <div className="h-0.5 bg-orange-500 rounded-full mx-2 pointer-events-none" />
+            )}
+            <CollectionNode
+              key={col._id}
+              collection={col}
+              startRenaming={col._id === renamingCollectionId}
+              onRenamingDone={onRenamingDone}
+              isDragging={!sortAZ && draggingColIdx === i}
+              onDragStart={sortAZ ? undefined : (e) => handleColDragStart(e, i)}
+              onDragEnd={sortAZ ? undefined : handleColDragEnd}
+            />
+          </div>
         ))}
+        {!sortAZ && draggingColIdx !== null && colInsertBefore === state.collections.length && (
+          <div className="h-0.5 bg-orange-500 rounded-full mx-2 pointer-events-none" />
+        )}
       </div>
       </ExpandCtx.Provider>
       </CollapseCtx.Provider>
