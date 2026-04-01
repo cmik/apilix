@@ -10,6 +10,7 @@ export default function Sidebar() {
   const [newCollectionId, setNewCollectionId] = useState<string | null>(null);
   const [collapseSignal, setCollapseSignal] = useState(0);
   const [expandSignal, setExpandSignal] = useState(0);
+  const [sortAZ, setSortAZ] = useState(false);
 
   return (
     <div className="w-full bg-slate-900 flex flex-col h-full overflow-hidden">
@@ -99,24 +100,33 @@ export default function Sidebar() {
 
       {/* Collections header + filter */}
       <div className="flex items-center px-3 py-2 border-b border-slate-700 shrink-0">
-        <span className="text-slate-500 text-xs uppercase tracking-wider">Collections</span>
-        <span className="ml-auto text-slate-600 text-xs">{state.collections.length}</span>
-        <button
-          onClick={() => setExpandSignal(s => s + 1)}
-          title="Expand all"
-          disabled={state.collections.length === 0}
-          className="ml-2 text-slate-500 hover:text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed text-sm leading-none transition-colors"
-        >
-          ⊞
-        </button>
-        <button
-          onClick={() => setCollapseSignal(s => s + 1)}
-          title="Collapse all"
-          disabled={state.collections.length === 0}
-          className="ml-1 text-slate-500 hover:text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed text-sm leading-none transition-colors"
-        >
-          ⊟
-        </button>
+        <span className="text-slate-500 text-xs uppercase tracking-wider">Collections ({state.collections.length})</span>
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            onClick={() => setSortAZ(s => !s)}
+            title={sortAZ ? 'Custom order (drag to reorder)' : 'Sort A→Z'}
+            disabled={state.collections.length === 0}
+            className={`text-xs leading-none transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${sortAZ ? 'text-orange-400 hover:text-orange-300' : 'text-slate-500 hover:text-slate-300'}`}
+          >
+            A↓Z
+          </button>
+          <button
+            onClick={() => setExpandSignal(s => s + 1)}
+            title="Expand all"
+            disabled={state.collections.length === 0}
+            className="text-slate-500 hover:text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed text-sm leading-none transition-colors"
+          >
+            ⊞
+          </button>
+          <button
+            onClick={() => setCollapseSignal(s => s + 1)}
+            title="Collapse all"
+            disabled={state.collections.length === 0}
+            className="text-slate-500 hover:text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed text-sm leading-none transition-colors"
+          >
+            ⊟
+          </button>
+        </div>
       </div>
       <div className="px-3 py-1.5 border-b border-slate-700 shrink-0">
         <div className="relative">
@@ -136,7 +146,7 @@ export default function Sidebar() {
           )}
         </div>
       </div>
-      <CollectionTree filter={filter} renamingCollectionId={newCollectionId} onRenamingDone={() => setNewCollectionId(null)} collapseSignal={collapseSignal} expandSignal={expandSignal} />
+      <CollectionTree filter={filter} renamingCollectionId={newCollectionId} onRenamingDone={() => setNewCollectionId(null)} collapseSignal={collapseSignal} expandSignal={expandSignal} sortAZ={sortAZ} />
 
       {showImport && <ImportModal onClose={() => setShowImport(false)} />}
     </div>

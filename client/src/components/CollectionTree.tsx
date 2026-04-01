@@ -645,9 +645,10 @@ interface CollectionTreeProps {
   onRenamingDone?: () => void;
   collapseSignal?: number;
   expandSignal?: number;
+  sortAZ?: boolean;
 }
 
-export default function CollectionTree({ filter = '', renamingCollectionId, onRenamingDone, collapseSignal = 0, expandSignal = 0 }: CollectionTreeProps) {
+export default function CollectionTree({ filter = '', renamingCollectionId, onRenamingDone, collapseSignal = 0, expandSignal = 0, sortAZ = false }: CollectionTreeProps) {
   const { state, dispatch } = useApp();
   const trimmed = filter.trim();
 
@@ -801,7 +802,10 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
         }}
         onDragEnd={endDrag}
       >
-        {state.collections.map(col => (
+        {(sortAZ
+          ? [...state.collections].sort((a, b) => a.info.name.localeCompare(b.info.name))
+          : state.collections
+        ).map(col => (
           <CollectionNode
             key={col._id}
             collection={col}
