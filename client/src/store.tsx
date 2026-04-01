@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useReducer, type ReactNode } from 'react';
-import type { AppState, AppAction, AppCollection, AppEnvironment, PostmanItem, RequestTab } from './types';
+import type { AppState, AppAction, AppCollection, AppEnvironment, PostmanItem, RequestTab, CookieJar, Cookie } from './types';
 
 const STORAGE_KEY = 'apilix_persist';
 
@@ -11,10 +11,25 @@ function ensureIds(items: PostmanItem[]): PostmanItem[] {
   }));
 }
 
+type PersistedTabRef = { id: string; collectionId: string; itemId: string };
+
 type PersistedState = Pick<
   AppState,
-  'collections' | 'environments' | 'activeEnvironmentId' | 'collectionVariables' | 'globalVariables'
->;
+  'collections' | 'environments' | 'activeEnvironmentId' | 'collectionVariables' | 'globalVariables' | 'cookieJar'
+> & {
+  tabSession?: { tabs: PersistedTabRef[]; activeTabId: string | null };
+};
+
+function findItemInTree(items: PostmanItem[], id: string): PostmanItem | null {
+  for (const item of items) {
+    if (item.id === id) return item;
+    if (item.item) {
+      const found = findItemInTree(item.item, id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
 
 function loadPersisted(): PersistedState | null {
   try {
@@ -40,6 +55,7 @@ const initialState: AppState = {
   isRunning: false,
   collectionVariables: {},
   globalVariables: {},
+  cookieJar: {},
 };
 
 function appReducer(state: AppState, action: AppAction): AppState {
@@ -190,6 +206,13 @@ function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, tabs: updatedTabs };
     }
 
+    case 'REORDER_TABS': {
+      const ordered = action.payload
+        .map(id => state.tabs.find(t => t.id === id))
+        .filter((t): t is NonNullable<typeof t> => t !== undefined);
+      return { ...state, tabs: ordered };
+    }
+
     case 'SET_RESPONSE':
       return { ...state, response: action.payload };
 
@@ -225,6 +248,35 @@ function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'CLEAR_CONSOLE_LOGS':
       return { ...state, consoleLogs: [] };
+
+    case 'UPSERT_DOMAIN_COOKIES': {
+      const { domain, cookies } = action.payload;
+      const existing: Cookie[] = state.cookieJar[domain] ? [...state.cookieJar[domain]] : [];
+      cookies.forEach(c => {
+        const idx = existing.findIndex(e => e.name === c.name);
+        if (idx >= 0) existing[idx] = c;
+        else existing.push(c);
+      });
+      return { ...state, cookieJar: { ...state.cookieJar, [domain]: existing } };
+    }
+
+    case 'DELETE_COOKIE': {
+      const { domain, name } = action.payload;
+      const remaining = (state.cookieJar[domain] ?? []).filter(c => c.name !== name);
+      const jar: CookieJar = { ...state.cookieJar };
+      if (remaining.length === 0) delete jar[domain];
+      else jar[domain] = remaining;
+      return { ...state, cookieJar: jar };
+    }
+
+    case 'CLEAR_DOMAIN_COOKIES': {
+      const jar: CookieJar = { ...state.cookieJar };
+      delete jar[action.payload];
+      return { ...state, cookieJar: jar };
+    }
+
+    case 'SET_COOKIE_JAR':
+      return { ...state, cookieJar: action.payload };
 
     case 'UPDATE_ACTIVE_ENV_VARS': {
       if (!state.activeEnvironmentId) return state;
@@ -264,16 +316,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, initialState, (base) => {
     const saved = loadPersisted();
     if (!saved) return base;
+    const restoredCollections = (saved.collections ?? base.collections).map(col => ({
+      ...col,
+      item: ensureIds(col.item),
+    }));
+
+    let restoredTabs: RequestTab[] = [];
+    let restoredActiveTabId: string | null = null;
+    if (saved.tabSession) {
+      restoredTabs = saved.tabSession.tabs
+        .map(ref => {
+          const col = restoredCollections.find(c => c._id === ref.collectionId);
+          if (!col) return null;
+          const item = findItemInTree(col.item, ref.itemId);
+          if (!item || !item.request) return null;
+          return { id: ref.id, collectionId: ref.collectionId, item, response: null, isLoading: false } as RequestTab;
+        })
+        .filter((t): t is RequestTab => t !== null);
+
+      if (saved.tabSession.activeTabId && restoredTabs.some(t => t.id === saved.tabSession!.activeTabId)) {
+        restoredActiveTabId = saved.tabSession.activeTabId;
+      } else {
+        restoredActiveTabId = restoredTabs[0]?.id ?? null;
+      }
+    }
+
+    const activeTab = restoredTabs.find(t => t.id === restoredActiveTabId) ?? null;
+
     return {
       ...base,
-      collections: (saved.collections ?? base.collections).map(col => ({
-        ...col,
-        item: ensureIds(col.item),
-      })),
+      collections: restoredCollections,
       environments: saved.environments ?? base.environments,
       activeEnvironmentId: saved.activeEnvironmentId ?? base.activeEnvironmentId,
       collectionVariables: saved.collectionVariables ?? base.collectionVariables,
       globalVariables: saved.globalVariables ?? base.globalVariables,
+      cookieJar: saved.cookieJar ?? base.cookieJar,
+      tabs: restoredTabs,
+      activeTabId: restoredActiveTabId,
+      activeRequest: activeTab ? { collectionId: activeTab.collectionId, item: activeTab.item } : null,
     };
   });
 
@@ -284,13 +364,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
       activeEnvironmentId: state.activeEnvironmentId,
       collectionVariables: state.collectionVariables,
       globalVariables: state.globalVariables,
+      cookieJar: state.cookieJar,
+      tabSession: {
+        tabs: state.tabs
+          .filter(t => t.item.id != null)
+          .map(t => ({ id: t.id, collectionId: t.collectionId, itemId: t.item.id! })),
+        activeTabId: state.activeTabId,
+      },
     };
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
     } catch {
       // localStorage unavailable or quota exceeded — fail silently
     }
-  }, [state.collections, state.environments, state.activeEnvironmentId, state.collectionVariables, state.globalVariables]);
+  }, [state.collections, state.environments, state.activeEnvironmentId, state.collectionVariables, state.globalVariables, state.cookieJar, state.tabs, state.activeTabId]);
 
   function getActiveEnvironment(): AppEnvironment | null {
     if (!state.activeEnvironmentId) return null;

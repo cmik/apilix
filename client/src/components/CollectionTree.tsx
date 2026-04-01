@@ -1,9 +1,42 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, createContext, useContext } from 'react';
 import { createPortal } from 'react-dom';
 import type { PostmanItem, AppCollection } from '../types';
 import { useApp } from '../store';
-import { renameItemById, updateItemById, removeItemById, addItemToFolder } from '../utils/treeHelpers';
+import {
+  renameItemById, updateItemById, removeItemById, addItemToFolder, duplicateItem,
+  moveItemInTree, extractItemById, insertItemInTree, isDescendantOf,
+} from '../utils/treeHelpers';
 import ItemSettingsModal from './ItemSettingsModal';
+
+// ─── Drag & Drop Context ──────────────────────────────────────────────────────
+
+type DragPosition = 'before' | 'after' | 'inside';
+
+interface DragContextValue {
+  draggingId: string | null;
+  draggingColId: string | null;
+  dropId: string | null;
+  dropColId: string | null;
+  dropPos: DragPosition | null;
+  startDrag: (id: string, colId: string) => void;
+  endDrag: () => void;
+  updateDrop: (id: string | null, colId: string | null, pos: DragPosition | null) => void;
+  executeDrop: () => void;
+}
+
+const noop = () => {};
+const defaultDragCtx: DragContextValue = {
+  draggingId: null, draggingColId: null,
+  dropId: null, dropColId: null, dropPos: null,
+  startDrag: noop, endDrag: noop, updateDrop: noop, executeDrop: noop,
+};
+
+const DragCtx = createContext<DragContextValue>(defaultDragCtx);
+function useDragCtx() { return useContext(DragCtx); }
+
+// ─── Collapse/Expand-all contexts ───────────────────────────────────────────────
+const CollapseCtx = createContext<number>(0);
+const ExpandCtx = createContext<number>(0);
 
 const METHOD_COLORS: Record<string, string> = {
   GET: 'text-green-400',
@@ -135,12 +168,23 @@ interface ItemNodeProps {
 
 function ItemNode({ item, collectionId, collection, depth, startRenaming }: ItemNodeProps) {
   const { state, dispatch } = useApp();
+  const dragCtx = useDragCtx();
+  const collapseSignal = useContext(CollapseCtx);
+  const expandSignal = useContext(ExpandCtx);
   const [open, setOpen] = useState(true);
+
+  useEffect(() => {
+    if (collapseSignal > 0 && Array.isArray(item.item)) setOpen(false);
+  }, [collapseSignal]);
+  useEffect(() => {
+    if (expandSignal > 0 && Array.isArray(item.item)) setOpen(true);
+  }, [expandSignal]);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState(!!startRenaming);
   const [renameVal, setRenameVal] = useState(item.name);
   const [showSettings, setShowSettings] = useState(false);
   const [newItemId, setNewItemId] = useState<string | null>(null);
+  const rowRef = useRef<HTMLDivElement>(null);
 
   const isFolder = Array.isArray(item.item);
   const isActive =
@@ -196,6 +240,62 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
     dispatch({ type: 'UPDATE_COLLECTION', payload: { ...collection, item: addItemToFolder(collection.item, item.id, newReq) } });
   }
 
+  function handleDuplicate() {
+    if (!item.id) return;
+    dispatch({
+      type: 'UPDATE_COLLECTION',
+      payload: { ...collection, item: duplicateItem(collection.item, item.id) },
+    });
+  }
+
+  // --- Drag & Drop handlers ---
+
+  function handleDragStart(e: React.DragEvent) {
+    if (!item.id || renaming) return;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', item.id);
+    dragCtx.startDrag(item.id, collectionId);
+  }
+
+  function handleDragEnd() {
+    dragCtx.endDrag();
+  }
+
+  function handleDragOver(e: React.DragEvent) {
+    if (!item.id || !dragCtx.draggingId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+
+    if (!rowRef.current) return;
+    const rect = rowRef.current.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    const h = rect.height;
+
+    let pos: DragPosition;
+    if (isFolder) {
+      if (y < h * 0.3) pos = 'before';
+      else if (y > h * 0.7) pos = 'after';
+      else pos = 'inside';
+    } else {
+      pos = y < h * 0.5 ? 'before' : 'after';
+    }
+
+    if (dragCtx.dropId !== item.id || dragCtx.dropColId !== collectionId || dragCtx.dropPos !== pos) {
+      dragCtx.updateDrop(item.id, collectionId, pos);
+    }
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCtx.executeDrop();
+  }
+
+  const isBeingDragged = dragCtx.draggingId === item.id;
+  const isDropTarget = dragCtx.dropId === item.id && dragCtx.dropColId === collectionId;
+  const dropPos = isDropTarget ? dragCtx.dropPos : null;
+
   const menuItems: MenuItem[] = [
     isFolder
       ? { label: 'View settings', icon: '⚙️', onClick: () => setShowSettings(true) }
@@ -216,6 +316,7 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
       icon: '✏️',
       onClick: () => { setRenameVal(item.name); setRenaming(true); },
     },
+    { label: 'Duplicate', icon: '⧉', onClick: handleDuplicate },
     { label: 'Delete', icon: '🗑', danger: true, onClick: handleDelete },
   ];
 
@@ -225,22 +326,42 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
   if (isFolder) {
     return (
       <div>
-        <div
-          className="flex items-center group rounded hover:bg-slate-700/50"
-          style={{ paddingLeft: indentPx }}
-        >
-          <button
-            onClick={() => !renaming && setOpen(o => !o)}
-            className="flex items-center gap-1.5 flex-1 min-w-0 py-1 text-sm text-slate-300"
+        <div className="relative">
+          {dropPos === 'before' && (
+            <div className="absolute top-0 left-2 right-0 h-0.5 bg-orange-500 rounded-full z-10 pointer-events-none" />
+          )}
+          <div
+            ref={rowRef}
+            draggable={!renaming}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+            className={`flex items-center group rounded select-none ${
+              isBeingDragged ? 'opacity-40' : ''
+            } ${
+              dropPos === 'inside'
+                ? 'bg-orange-500/10 ring-1 ring-inset ring-orange-500/60'
+                : 'hover:bg-slate-700/50'
+            }`}
+            style={{ paddingLeft: indentPx, cursor: renaming ? 'default' : 'grab' }}
           >
-            <span className="text-xs text-slate-500 shrink-0">{open ? '▾' : '▸'}</span>
-            <span className="shrink-0">📁</span>
-            {renaming
-              ? <InlineRename value={renameVal} onChange={setRenameVal} onConfirm={commitRename} onCancel={() => setRenaming(false)} />
-              : <span className="truncate">{item.name}</span>
-            }
-          </button>
-          <KebabBtn onClick={openMenu} />
+            <button
+              onClick={() => !renaming && setOpen(o => !o)}
+              className="flex items-center gap-1.5 flex-1 min-w-0 py-1 text-sm text-slate-300"
+            >
+              <span className="text-xs text-slate-500 shrink-0">{open ? '▾' : '▸'}</span>
+              <span className="shrink-0">📁</span>
+              {renaming
+                ? <InlineRename value={renameVal} onChange={setRenameVal} onConfirm={commitRename} onCancel={() => setRenaming(false)} />
+                : <span className="truncate">{item.name}</span>
+              }
+            </button>
+            <KebabBtn onClick={openMenu} />
+          </div>
+          {dropPos === 'after' && (
+            <div className="absolute bottom-0 left-2 right-0 h-0.5 bg-orange-500 rounded-full z-10 pointer-events-none" />
+          )}
         </div>
 
         {open && (
@@ -284,30 +405,44 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
   // -- Request --
   const method = item.request?.method?.toUpperCase() || 'GET';
   return (
-    <div
-      className={`flex items-center group rounded text-sm transition-colors ${
-        isActive ? 'bg-slate-600' : 'hover:bg-slate-700/50'
-      }`}
-      style={{ paddingLeft: indentPx }}
-    >
-      <button
-        className="flex items-center gap-2 flex-1 min-w-0 py-1.5"
-        onClick={() => {
-          if (renaming) return;
-          dispatch({ type: 'OPEN_TAB', payload: { collectionId, item } });
-          dispatch({ type: 'SET_VIEW', payload: 'request' });
-        }}
+    <div className="relative">
+      {dropPos === 'before' && (
+        <div className="absolute top-0 left-2 right-0 h-0.5 bg-orange-500 rounded-full z-10 pointer-events-none" />
+      )}
+      <div
+        ref={rowRef}
+        draggable={!renaming}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+        className={`flex items-center group rounded text-sm transition-colors select-none ${
+          isActive ? 'bg-slate-600' : 'hover:bg-slate-700/50'
+        } ${isBeingDragged ? 'opacity-40' : ''}`}
+        style={{ paddingLeft: indentPx, cursor: renaming ? 'default' : 'grab' }}
       >
-        <span className={`text-xs font-bold w-12 shrink-0 ${METHOD_COLORS[method] || 'text-slate-400'}`}>
-          {method.slice(0, 6)}
-        </span>
-        {renaming
-          ? <InlineRename value={renameVal} onChange={setRenameVal} onConfirm={commitRename} onCancel={() => setRenaming(false)} />
-          : <span className={`truncate ${isActive ? 'text-white' : 'text-slate-300'}`}>{item.name}</span>
-        }
-      </button>
-      <KebabBtn onClick={openMenu} />
-      {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
+        <button
+          className="flex items-center gap-2 flex-1 min-w-0 py-1.5"
+          onClick={() => {
+            if (renaming) return;
+            dispatch({ type: 'OPEN_TAB', payload: { collectionId, item } });
+            dispatch({ type: 'SET_VIEW', payload: 'request' });
+          }}
+        >
+          <span className={`text-xs font-bold w-12 shrink-0 ${METHOD_COLORS[method] || 'text-slate-400'}`}>
+            {method.slice(0, 6)}
+          </span>
+          {renaming
+            ? <InlineRename value={renameVal} onChange={setRenameVal} onConfirm={commitRename} onCancel={() => setRenaming(false)} />
+            : <span className={`truncate ${isActive ? 'text-white' : 'text-slate-300'}`}>{item.name}</span>
+          }
+        </button>
+        <KebabBtn onClick={openMenu} />
+        {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
+      </div>
+      {dropPos === 'after' && (
+        <div className="absolute bottom-0 left-2 right-0 h-0.5 bg-orange-500 rounded-full z-10 pointer-events-none" />
+      )}
     </div>
   );
 }
@@ -316,7 +451,16 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
 
 function CollectionNode({ collection, startRenaming, onRenamingDone }: { collection: AppCollection; startRenaming?: boolean; onRenamingDone?: () => void }) {
   const { dispatch } = useApp();
+  const collapseSignal = useContext(CollapseCtx);
+  const expandSignal = useContext(ExpandCtx);
   const [open, setOpen] = useState(true);
+
+  useEffect(() => {
+    if (collapseSignal > 0) setOpen(false);
+  }, [collapseSignal]);
+  useEffect(() => {
+    if (expandSignal > 0) setOpen(true);
+  }, [expandSignal]);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState(!!startRenaming);
   const [renameVal, setRenameVal] = useState(startRenaming ? '' : collection.info.name);
@@ -499,11 +643,80 @@ interface CollectionTreeProps {
   filter?: string;
   renamingCollectionId?: string | null;
   onRenamingDone?: () => void;
+  collapseSignal?: number;
+  expandSignal?: number;
 }
 
-export default function CollectionTree({ filter = '', renamingCollectionId, onRenamingDone }: CollectionTreeProps) {
+export default function CollectionTree({ filter = '', renamingCollectionId, onRenamingDone, collapseSignal = 0, expandSignal = 0 }: CollectionTreeProps) {
   const { state, dispatch } = useApp();
   const trimmed = filter.trim();
+
+  // ── Drag state ───────────────────────────────────────────────────────────────
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [draggingColId, setDraggingColId] = useState<string | null>(null);
+  const [dropId, setDropId] = useState<string | null>(null);
+  const [dropColId, setDropColId] = useState<string | null>(null);
+  const [dropPos, setDropPos] = useState<DragPosition | null>(null);
+
+  // Refs to always have the latest values without stale-closure issues in executeDrop
+  const latestDragRef = useRef({ draggingId, draggingColId, dropId, dropColId, dropPos });
+  latestDragRef.current = { draggingId, draggingColId, dropId, dropColId, dropPos };
+  const collectionsRef = useRef(state.collections);
+  collectionsRef.current = state.collections;
+
+  function startDrag(id: string, colId: string) {
+    setDraggingId(id);
+    setDraggingColId(colId);
+  }
+
+  function endDrag() {
+    setDraggingId(null);
+    setDraggingColId(null);
+    setDropId(null);
+    setDropColId(null);
+    setDropPos(null);
+  }
+
+  function updateDrop(id: string | null, colId: string | null, pos: DragPosition | null) {
+    setDropId(id);
+    setDropColId(colId);
+    setDropPos(pos);
+  }
+
+  function executeDrop() {
+    const { draggingId: srcId, draggingColId: srcCol, dropId: tgtId, dropColId: tgtCol, dropPos: pos } = latestDragRef.current;
+    if (!srcId || !srcCol || !tgtId || !tgtCol || !pos) { endDrag(); return; }
+    if (srcId === tgtId) { endDrag(); return; }
+
+    const collections = collectionsRef.current;
+
+    if (srcCol === tgtCol) {
+      const col = collections.find(c => c._id === srcCol);
+      if (!col) { endDrag(); return; }
+      // Prevent dragging a folder into one of its own descendants
+      if (pos === 'inside' && isDescendantOf(col.item, srcId, tgtId)) { endDrag(); return; }
+      const newItems = moveItemInTree(col.item, srcId, tgtId, pos);
+      dispatch({ type: 'UPDATE_COLLECTION', payload: { ...col, item: newItems } });
+    } else {
+      // Cross-collection move
+      const srcCollection = collections.find(c => c._id === srcCol);
+      const tgtCollection = collections.find(c => c._id === tgtCol);
+      if (!srcCollection || !tgtCollection) { endDrag(); return; }
+      const { items: newSrcItems, extracted } = extractItemById(srcCollection.item, srcId);
+      if (!extracted) { endDrag(); return; }
+      const newTgtItems = insertItemInTree(tgtCollection.item, extracted, tgtId, pos);
+      dispatch({ type: 'UPDATE_COLLECTION', payload: { ...srcCollection, item: newSrcItems } });
+      dispatch({ type: 'UPDATE_COLLECTION', payload: { ...tgtCollection, item: newTgtItems } });
+    }
+
+    endDrag();
+  }
+
+  const dragCtxValue: DragContextValue = {
+    draggingId, draggingColId, dropId, dropColId, dropPos,
+    startDrag, endDrag, updateDrop, executeDrop,
+  };
+  // ─────────────────────────────────────────────────────────────────────────────
 
   if (state.collections.length === 0) {
     return (
@@ -575,15 +788,30 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
 
   // -- Normal tree view --
   return (
-    <div className="flex-1 overflow-y-auto py-1">
-      {state.collections.map(col => (
-        <CollectionNode
-          key={col._id}
-          collection={col}
-          startRenaming={col._id === renamingCollectionId}
-          onRenamingDone={onRenamingDone}
-        />
-      ))}
-    </div>
+    <DragCtx.Provider value={dragCtxValue}>
+      <CollapseCtx.Provider value={collapseSignal}>
+      <ExpandCtx.Provider value={expandSignal}>
+      <div
+        className="flex-1 overflow-y-auto py-1"
+        onDragLeave={(e) => {
+          // Clear drop indicator when leaving the entire sidebar panel
+          if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) {
+            updateDrop(null, null, null);
+          }
+        }}
+        onDragEnd={endDrag}
+      >
+        {state.collections.map(col => (
+          <CollectionNode
+            key={col._id}
+            collection={col}
+            startRenaming={col._id === renamingCollectionId}
+            onRenamingDone={onRenamingDone}
+          />
+        ))}
+      </div>
+      </ExpandCtx.Provider>
+      </CollapseCtx.Provider>
+    </DragCtx.Provider>
   );
 }

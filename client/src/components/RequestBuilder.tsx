@@ -4,6 +4,7 @@ import { useApp } from '../store';
 import { executeRequest } from '../api';
 import { getUrlDisplay, buildVarMap, resolveVariables } from '../utils/variableResolver';
 import { updateItemById, renameItemById, resolveInheritedAuth } from '../utils/treeHelpers';
+import { parseCurlCommand, buildCurlCommand } from '../utils/curlUtils';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
 
@@ -187,6 +188,9 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
 
   // Per-tab edit state lives in a ref (no store round-trips on every keystroke)
   const cacheRef = useRef<Map<string, TabCache>>(new Map());
+  const urlInputRef = useRef<HTMLInputElement>(null);
+  const _sendRef = useRef<() => void>(() => {});
+  const _saveRef = useRef<() => void>(() => {});
 
   const [edit, setEditRaw] = useState<EditState | null>(() =>
     activeTab ? itemToEditState(activeTab.item) : null
@@ -197,6 +201,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
   const [importText, setImportText] = useState('');
   const [importMode, setImportMode] = useState<'curl' | 'raw'>('curl');
   const [importError, setImportError] = useState('');
+  const [copied, setCopied] = useState(false);
 
   // Swap edit state when active tab changes
   useEffect(() => {
@@ -225,6 +230,21 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
     cacheRef.current.forEach((v, k) => { if (v.dirty) ids.add(k); });
     onDirtyChange(ids);
   }, [dirty, onDirtyChange]);
+
+  // Listen for global keyboard shortcut events from App
+  useEffect(() => {
+    const onSend = () => _sendRef.current();
+    const onSave = () => _saveRef.current();
+    const onFocusUrl = () => { urlInputRef.current?.focus(); urlInputRef.current?.select(); };
+    document.addEventListener('apilix:send', onSend);
+    document.addEventListener('apilix:save', onSave);
+    document.addEventListener('apilix:focusUrl', onFocusUrl);
+    return () => {
+      document.removeEventListener('apilix:send', onSend);
+      document.removeEventListener('apilix:save', onSave);
+      document.removeEventListener('apilix:focusUrl', onFocusUrl);
+    };
+  }, []);
 
   // Wrapper: update edit + cache + dirty in one call
   function setEdit(updater: (prev: EditState) => EditState) {
@@ -333,6 +353,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
         collectionVariables: collVars,
         globals: state.globalVariables,
         collVars: col?.variable ?? [],
+        cookies: state.cookieJar,
       });
 
       dispatch({ type: 'SET_TAB_RESPONSE', payload: { tabId, response: result } });
@@ -360,6 +381,11 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
         dispatch({
           type: 'UPDATE_COLLECTION_VARS',
           payload: { collectionId: activeReq.collectionId, vars: result.updatedCollectionVariables },
+        });
+      }
+      if (result.updatedCookies) {
+        Object.entries(result.updatedCookies).forEach(([domain, cookies]) => {
+          dispatch({ type: 'UPSERT_DOMAIN_COOKIES', payload: { domain, cookies } });
         });
       }
     } catch (err) {
@@ -392,9 +418,36 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
     }
     dispatch({ type: 'SET_TAB_LOADING', payload: { tabId, loading: false } });
   }
+  _sendRef.current = handleSend;
+
+  async function handleCopyCurl() {
+    if (!edit) return;
+    const curl = buildCurlCommand({
+      method: edit.method,
+      url: edit.url,
+      headers: edit.headers,
+      bodyMode: edit.bodyMode,
+      bodyRaw: edit.bodyRaw,
+      bodyFormData: edit.bodyFormData,
+      bodyUrlEncoded: edit.bodyUrlEncoded,
+      authType: edit.authType,
+      authBearer: edit.authBearer,
+      authBasicUser: edit.authBasicUser,
+      authBasicPass: edit.authBasicPass,
+      authApiKeyName: edit.authApiKeyName,
+      authApiKeyValue: edit.authApiKeyValue,
+    });
+    try {
+      await navigator.clipboard.writeText(curl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard may be unavailable in insecure contexts
+    }
+  }
 
   function handleSave() {
-    if (!edit || !activeTab) return;
+    if (!activeTab || !edit) return;
     const col = state.collections.find(c => c._id === activeTab.collectionId);
     if (!col || !activeTab.item.id) return;
     const updatedItem: PostmanItem = {
@@ -420,6 +473,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
     cacheRef.current.set(activeTab.id, { edit, dirty: false });
     setDirty(false);
   }
+  _saveRef.current = handleSave;
 
   function handleImport() {
     const parsed = importMode === 'curl'
@@ -492,6 +546,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
             ))}
           </select>
           <input
+            ref={urlInputRef}
             type="text"
             value={edit.url}
             onChange={e => handleUrlChange(e.target.value)}
@@ -505,10 +560,21 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
           >
             Import
           </button>
+          <button
+            onClick={handleCopyCurl}
+            title="Copy request as cURL command"
+            className={`px-3 py-2 border text-xs rounded transition-colors shrink-0 whitespace-nowrap ${
+              copied
+                ? 'bg-green-700 border-green-600 text-green-100'
+                : 'bg-slate-700 hover:bg-slate-600 border border-slate-500 text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            {copied ? 'Copied!' : 'Copy cURL'}
+          </button>
           {dirty && (
             <button
               onClick={handleSave}
-              title="Save changes to collection"
+              title="Save changes to collection (⌘S / Ctrl+S)"
               className="px-3 py-2 bg-slate-700 hover:bg-slate-600 border border-slate-500 text-slate-200 text-sm rounded transition-colors flex items-center gap-1.5"
             >
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -520,6 +586,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
           <button
             onClick={handleSend}
             disabled={state.isLoading}
+            title="Send request (⌘↵ / Ctrl+↵)"
             className="px-5 py-2 bg-orange-600 hover:bg-orange-500 disabled:bg-orange-900 text-white text-sm font-semibold rounded transition-colors"
           >
             {state.isLoading ? '...' : 'Send'}
@@ -879,148 +946,6 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
 }
 
 // ─── Import parsers ──────────────────────────────────────────────────────────
-
-function tokenizeCurl(str: string): string[] {
-  const tokens: string[] = [];
-  let i = 0;
-  while (i < str.length) {
-    while (i < str.length && /[ \t]/.test(str[i])) i++;
-    if (i >= str.length) break;
-    const ch = str[i];
-    // ANSI-C quoting: $'...'
-    if (ch === '$' && str[i + 1] === "'") {
-      i += 2;
-      let tok = '';
-      while (i < str.length && str[i] !== "'") {
-        if (str[i] === '\\') {
-          i++;
-          const esc = str[i] ?? '';
-          if (esc === 'n') tok += '\n';
-          else if (esc === 't') tok += '\t';
-          else if (esc === 'r') tok += '\r';
-          else tok += esc;
-        } else {
-          tok += str[i];
-        }
-        i++;
-      }
-      i++;
-      tokens.push(tok);
-    } else if (ch === '"' || ch === "'") {
-      i++;
-      let tok = '';
-      while (i < str.length && str[i] !== ch) {
-        if (str[i] === '\\' && ch === '"') {
-          i++;
-          tok += str[i] ?? '';
-        } else {
-          tok += str[i];
-        }
-        i++;
-      }
-      i++;
-      tokens.push(tok);
-    } else {
-      let tok = '';
-      while (i < str.length && !/[ \t]/.test(str[i])) {
-        tok += str[i];
-        i++;
-      }
-      tokens.push(tok);
-    }
-  }
-  return tokens;
-}
-
-function parseCurlCommand(curlStr: string): Partial<EditState> | null {
-  const normalized = curlStr.trim().replace(/\\\r?\n/g, ' ').replace(/\r?\n/g, ' ');
-  if (!/^curl\s/i.test(normalized)) return null;
-
-  const tokens = tokenizeCurl(normalized.slice(normalized.toLowerCase().indexOf('curl ') + 5));
-  let method = '';
-  let url = '';
-  const headers: Array<{ key: string; value: string }> = [];
-  let bodyRaw = '';
-  let bodyMode: EditState['bodyMode'] = 'none';
-  const bodyFormData: Array<{ key: string; value: string }> = [];
-  const bodyUrlEncoded: Array<{ key: string; value: string }> = [];
-  let authBasicUser = '';
-  let authBasicPass = '';
-  let authType = '';
-
-  // Flags that consume next token but are otherwise ignored
-  const skipWithArg = new Set([
-    '-o', '--output', '--connect-timeout', '--max-time',
-    '--proxy', '-x', '--cert', '--key', '--cacert', '--capath',
-    '-b', '--cookie', '-c', '--cookie-jar', '--resolve',
-  ]);
-
-  for (let i = 0; i < tokens.length; i++) {
-    const t = tokens[i];
-    // Handle --flag=value syntax
-    let flag = t;
-    let inlineVal: string | undefined;
-    const eqIdx = t.indexOf('=');
-    if (eqIdx > 0 && t.startsWith('-')) {
-      flag = t.slice(0, eqIdx);
-      inlineVal = t.slice(eqIdx + 1);
-    }
-    const nextArg = (): string => {
-      if (inlineVal !== undefined) return inlineVal;
-      return tokens[++i] ?? '';
-    };
-
-    if (flag === '-X' || flag === '--request') {
-      method = nextArg().toUpperCase();
-    } else if (flag === '-H' || flag === '--header') {
-      const h = nextArg();
-      const ci = h.indexOf(':');
-      if (ci !== -1) headers.push({ key: h.slice(0, ci).trim(), value: h.slice(ci + 1).trim() });
-    } else if (flag === '-d' || flag === '--data' || flag === '--data-raw' || flag === '--data-binary' || flag === '--data-ascii') {
-      const val = nextArg();
-      if (!val.startsWith('@')) { bodyRaw = bodyRaw ? bodyRaw + '&' + val : val; bodyMode = 'raw'; }
-    } else if (flag === '--data-urlencode') {
-      const val = nextArg();
-      const ei = val.indexOf('=');
-      if (ei !== -1) { bodyUrlEncoded.push({ key: val.slice(0, ei), value: val.slice(ei + 1) }); bodyMode = 'urlencoded'; }
-      else { bodyRaw = bodyRaw ? bodyRaw + '&' + val : val; bodyMode = 'raw'; }
-    } else if (flag === '-F' || flag === '--form' || flag === '--form-string') {
-      const val = nextArg();
-      const ei = val.indexOf('=');
-      if (ei !== -1) bodyFormData.push({ key: val.slice(0, ei), value: val.slice(ei + 1) });
-      bodyMode = 'formdata';
-    } else if (flag === '-u' || flag === '--user') {
-      const val = nextArg();
-      const ci = val.indexOf(':');
-      authBasicUser = ci !== -1 ? val.slice(0, ci) : val;
-      authBasicPass = ci !== -1 ? val.slice(ci + 1) : '';
-      authType = 'basic';
-    } else if (flag === '-A' || flag === '--user-agent') {
-      headers.push({ key: 'User-Agent', value: nextArg() });
-    } else if (flag === '--url') {
-      url = nextArg();
-    } else if (flag === '--get' || flag === '-G') {
-      method = 'GET';
-    } else if (flag === '--head' || flag === '-I') {
-      method = 'HEAD';
-    } else if (skipWithArg.has(flag) && inlineVal === undefined) {
-      i++; // skip consumed argument
-    } else if (!t.startsWith('-') && !url) {
-      url = t;
-    }
-  }
-
-  if (!url) return null;
-  if (!method) method = bodyMode !== 'none' ? 'POST' : 'GET';
-
-  const ct = headers.find(h => h.key.toLowerCase() === 'content-type')?.value ?? '';
-  const bodyRawLang = ct.includes('json') ? 'json' : ct.includes('xml') ? 'xml' : ct.includes('html') ? 'html' : 'text';
-
-  return {
-    method, url, headers, bodyRaw, bodyMode, bodyFormData, bodyUrlEncoded, bodyRawLang,
-    ...(authType === 'basic' ? { authType, authBasicUser, authBasicPass } : {}),
-  };
-}
 
 function parseRawHttp(rawStr: string): Partial<EditState> | null {
   const text = rawStr.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();

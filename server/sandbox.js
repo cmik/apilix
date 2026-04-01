@@ -1,6 +1,15 @@
 'use strict';
 
 const vm = require('vm');
+const axios = require('axios');
+const https = require('https');
+
+const httpClient = axios.create({
+  httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+  maxRedirects: 10,
+  timeout: 30000,
+  validateStatus: null,
+});
 
 // ─── Chainable expect ────────────────────────────────────────────────────────
 
@@ -195,7 +204,7 @@ function createExpect(value, negated) {
 
 // ─── pm object factory ───────────────────────────────────────────────────────
 
-function createPm(response, variables, updatedVariables, tests) {
+function createPm(response, variables, updatedVariables, tests, pendingRequests) {
   const makeVarStore = () => ({
     get(key) { return Object.prototype.hasOwnProperty.call(variables, key) ? variables[key] : (updatedVariables[key] !== undefined ? updatedVariables[key] : undefined); },
     set(key, value) { updatedVariables[key] = String(value); },
@@ -236,10 +245,71 @@ function createPm(response, variables, updatedVariables, tests) {
     response: response ? buildResponse(response) : null,
 
     sendRequest(opts, callback) {
-      // Lightweight stub — real implementation would need async support
-      if (typeof callback === 'function') {
-        callback(new Error('pm.sendRequest not supported in APILIX sandbox'));
-      }
+      const promise = (async () => {
+        try {
+          let url, method, reqHeaders, body;
+
+          if (typeof opts === 'string') {
+            url = opts;
+            method = 'GET';
+            reqHeaders = {};
+            body = undefined;
+          } else {
+            url = typeof opts.url === 'object' && opts.url.raw ? opts.url.raw : String(opts.url || '');
+            method = (opts.method || 'GET').toUpperCase();
+            reqHeaders = {};
+            (opts.header || []).forEach(h => {
+              if (h && h.key && !h.disabled) reqHeaders[h.key] = h.value;
+            });
+            // Body: handle Postman-style { mode, raw } or plain string/object
+            if (opts.body) {
+              if (typeof opts.body === 'string') {
+                body = opts.body;
+              } else if (opts.body.mode === 'raw') {
+                body = opts.body.raw || '';
+              } else if (opts.body.mode === 'urlencoded') {
+                const params = new URLSearchParams();
+                (opts.body.urlencoded || []).forEach(p => {
+                  if (!p.disabled) params.append(p.key, p.value);
+                });
+                body = params.toString();
+                if (!reqHeaders['Content-Type'] && !reqHeaders['content-type']) {
+                  reqHeaders['Content-Type'] = 'application/x-www-form-urlencoded';
+                }
+              } else {
+                body = undefined;
+              }
+            }
+          }
+
+          const axiosRes = await httpClient.request({ method, url, headers: reqHeaders, data: body });
+          const bodyStr = typeof axiosRes.data === 'string' ? axiosRes.data : JSON.stringify(axiosRes.data);
+
+          const pmRes = {
+            code: axiosRes.status,
+            status: axiosRes.statusText,
+            responseTime: 0,
+            headers: {
+              get(name) {
+                const key = Object.keys(axiosRes.headers || {}).find(k => k.toLowerCase() === name.toLowerCase());
+                return key ? String(axiosRes.headers[key]) : undefined;
+              },
+            },
+            json() {
+              try {
+                return typeof axiosRes.data === 'string' ? JSON.parse(axiosRes.data) : axiosRes.data;
+              } catch (_) { return null; }
+            },
+            text() { return bodyStr; },
+          };
+
+          if (typeof callback === 'function') callback(null, pmRes);
+        } catch (err) {
+          if (typeof callback === 'function') callback(err, null);
+        }
+      })();
+
+      pendingRequests.push(promise);
     },
   };
 
@@ -303,8 +373,9 @@ async function runScript(code, response, variables) {
   const tests = [];
   const updatedVariables = {};
   const consoleLogs = [];
+  const pendingRequests = [];
 
-  const pm = createPm(response, variables || {}, updatedVariables, tests);
+  const pm = createPm(response, variables || {}, updatedVariables, tests, pendingRequests);
 
   const sandbox = {
     pm,
@@ -347,6 +418,11 @@ async function runScript(code, response, variables) {
     const script = new vm.Script(code, { filename: 'apilix-script.js' });
     const ctx = vm.createContext(sandbox);
     script.runInContext(ctx, { timeout: 5000 });
+
+    // Wait for all pm.sendRequest async callbacks to complete
+    if (pendingRequests.length > 0) {
+      await Promise.all(pendingRequests);
+    }
   } catch (err) {
     tests.push({ name: '__ScriptError__', passed: false, error: err.message });
   }

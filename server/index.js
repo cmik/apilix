@@ -25,7 +25,7 @@ app.get('/api/health', (_req, res) => {
 
 app.post('/api/execute', async (req, res) => {
   try {
-    const { item, environment, collectionVariables, globals, dataRow, collVars } = req.body;
+    const { item, environment, collectionVariables, globals, dataRow, collVars, cookies } = req.body;
     if (!item || !item.request) {
       return res.status(400).json({ error: 'Missing item.request in body' });
     }
@@ -35,6 +35,7 @@ app.post('/api/execute', async (req, res) => {
       globals: globals || {},
       dataRow: dataRow || {},
       collVars: collVars || [],
+      cookies: cookies || {},
     });
     return res.json(result);
   } catch (err) {
@@ -48,7 +49,7 @@ app.post('/api/execute', async (req, res) => {
 app.post('/api/run', upload.single('csvFile'), async (req, res) => {
   try {
     const payload = JSON.parse(req.body.data || '{}');
-    const { collection, environment, collectionVariables, globals, delay } = payload;
+    const { collection, environment, collectionVariables, globals, delay, cookies } = payload;
 
     if (!collection || !collection.item) {
       return res.status(400).json({ error: 'Missing collection in body' });
@@ -90,6 +91,7 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
       const dataRow = dataRows[i];
       let currentEnv = { ...(environment || {}) };
       let currentCollVars = { ...(collectionVariables || {}) };
+      let currentCookies = { ...(cookies || {}) };
 
       sendEvent('iteration-start', { iteration: i + 1, dataRow });
 
@@ -100,11 +102,13 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
           globals: globals || {},
           dataRow,
           collVars: collection.variable || [],
+          cookies: currentCookies,
         });
 
-        // Propagate environment/variable changes to next request in same iteration
+        // Propagate environment/variable/cookie changes to next request in same iteration
         if (result.updatedEnvironment) currentEnv = result.updatedEnvironment;
         if (result.updatedCollectionVariables) currentCollVars = result.updatedCollectionVariables;
+        if (result.updatedCookies) currentCookies = result.updatedCookies;
 
         const resultData = {
           iteration: i + 1,

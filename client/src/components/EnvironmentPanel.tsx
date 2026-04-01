@@ -229,6 +229,27 @@ export default function EnvironmentPanel() {
                   Edit
                 </button>
                 <button
+                  onClick={() => {
+                    const exported = {
+                      id: env._id,
+                      name: env.name,
+                      values: env.values,
+                      _postman_variable_scope: 'environment',
+                    };
+                    const blob = new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${env.name.replace(/[^a-z0-9_\-. ]/gi, '_')}.postman_environment.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="px-2 py-1 text-xs text-slate-400 hover:text-white bg-slate-700 hover:bg-slate-600 rounded transition-colors"
+                  title="Export environment"
+                >
+                  ⬇
+                </button>
+                <button
                   onClick={() => handleDelete(env._id)}
                   className="px-2 py-1 text-xs text-slate-500 hover:text-red-400 border border-slate-600 hover:border-red-500 rounded transition-colors"
                 >

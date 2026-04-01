@@ -105,6 +105,20 @@ export interface PostmanEnvironment {
 
 // ─── App-level Types ──────────────────────────────────────────────────────────
 
+export interface Cookie {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+  expires: string | null;
+  httpOnly: boolean;
+  secure: boolean;
+  sameSite: string;
+  enabled: boolean;
+}
+
+export type CookieJar = Record<string, Cookie[]>;
+
 export interface AppCollection extends PostmanCollection {
   _id: string;
 }
@@ -182,6 +196,7 @@ export interface AppState {
   isRunning: boolean;
   collectionVariables: Record<string, Record<string, string>>;
   globalVariables: Record<string, string>;
+  cookieJar: CookieJar;
 }
 
 export interface RequestTab {
@@ -227,4 +242,9 @@ export type AppAction =
   | { type: 'SET_ACTIVE_TAB'; payload: string }
   | { type: 'SET_TAB_RESPONSE'; payload: { tabId: string; response: RequestResponse | null } }
   | { type: 'SET_TAB_LOADING'; payload: { tabId: string; loading: boolean } }
-  | { type: 'UPDATE_TAB_ITEM'; payload: { tabId: string; item: PostmanItem } };
+  | { type: 'UPDATE_TAB_ITEM'; payload: { tabId: string; item: PostmanItem } }
+  | { type: 'REORDER_TABS'; payload: string[] }
+  | { type: 'UPSERT_DOMAIN_COOKIES'; payload: { domain: string; cookies: Cookie[] } }
+  | { type: 'DELETE_COOKIE'; payload: { domain: string; name: string } }
+  | { type: 'CLEAR_DOMAIN_COOKIES'; payload: string }
+  | { type: 'SET_COOKIE_JAR'; payload: CookieJar };

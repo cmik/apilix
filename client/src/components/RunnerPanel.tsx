@@ -377,6 +377,7 @@ export default function RunnerPanel() {
           environment: envVars,
           collectionVariables: collVars,
           globals: state.globalVariables,
+          cookies: state.cookieJar,
           delay,
           iterations: csvFile ? undefined : iterations,
         },

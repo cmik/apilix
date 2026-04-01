@@ -22,16 +22,26 @@ function Tab({
   tab,
   isActive,
   isDirty,
+  isDragging,
   onActivate,
   onClose,
   onRename,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
 }: {
   tab: RequestTab;
   isActive: boolean;
   isDirty: boolean;
+  isDragging: boolean;
   onActivate: () => void;
   onClose: (e: React.MouseEvent) => void;
   onRename: (newName: string) => void;
+  onDragStart: (e: React.DragEvent) => void;
+  onDragOver: (e: React.DragEvent) => void;
+  onDrop: (e: React.DragEvent) => void;
+  onDragEnd: () => void;
 }) {
   const method = tab.item.request?.method?.toUpperCase() ?? 'GET';
   const methodColor = METHOD_COLORS[method] ?? 'text-slate-400';
@@ -55,10 +65,15 @@ function Tab({
 
   return (
     <div
+      draggable
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
       onClick={renaming ? undefined : onActivate}
-      className={`group relative flex items-center gap-1.5 px-3 py-0 h-full cursor-pointer select-none shrink-0 border-r border-slate-800 transition-colors ${
+      className={`group relative flex items-center gap-1.5 px-3 py-0 h-full cursor-grab select-none shrink-0 border-r border-slate-800 transition-colors ${
         renaming ? 'max-w-[260px]' : 'max-w-[200px]'
-      } ${
+      } ${isDragging ? 'opacity-40' : ''} ${
         isActive
           ? 'bg-slate-850 text-slate-100 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-orange-500'
           : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
@@ -125,42 +140,97 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
   const { state, dispatch } = useApp();
   const { tabs, activeTabId } = state;
 
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [insertBefore, setInsertBefore] = useState<number | null>(null);
+
   if (tabs.length === 0) return null;
 
+  function handleDragStart(e: React.DragEvent, tabId: string) {
+    setDraggingId(tabId);
+    e.dataTransfer.effectAllowed = 'move';
+  }
+
+  function handleDragOver(e: React.DragEvent, tabIndex: number) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const pos = e.clientX < rect.left + rect.width / 2 ? tabIndex : tabIndex + 1;
+    if (pos !== insertBefore) setInsertBefore(pos);
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    if (draggingId === null || insertBefore === null) return;
+    const fromIdx = tabs.findIndex(t => t.id === draggingId);
+    if (fromIdx === -1) { setDraggingId(null); setInsertBefore(null); return; }
+    const newTabs = [...tabs];
+    const [removed] = newTabs.splice(fromIdx, 1);
+    const adjustedIdx = insertBefore > fromIdx ? insertBefore - 1 : insertBefore;
+    newTabs.splice(adjustedIdx, 0, removed);
+    dispatch({ type: 'REORDER_TABS', payload: newTabs.map(t => t.id) });
+    setDraggingId(null);
+    setInsertBefore(null);
+  }
+
+  function handleDragEnd() {
+    setDraggingId(null);
+    setInsertBefore(null);
+  }
+
   return (
-    <div className="flex h-8 bg-slate-900 border-b border-slate-800 overflow-x-auto shrink-0 scrollbar-none">
-      {tabs.map(tab => (
-        <Tab
-          key={tab.id}
-          tab={tab}
-          isActive={tab.id === activeTabId}
-          isDirty={dirtyIds.has(tab.id)}
-          onActivate={() => {
-            if (tab.id !== activeTabId) {
-              dispatch({ type: 'SET_ACTIVE_TAB', payload: tab.id });
-              dispatch({ type: 'SET_VIEW', payload: 'request' });
-            }
-          }}
-          onClose={e => {
-            e.stopPropagation();
-            dispatch({ type: 'CLOSE_TAB', payload: tab.id });
-          }}
-          onRename={newName => {
-            const collection = state.collections.find(c => c._id === tab.collectionId);
-            const itemId = tab.item.id;
-            if (collection && itemId) {
+    <div
+      className="flex h-8 bg-slate-900 border-b border-slate-800 overflow-x-auto shrink-0 scrollbar-none"
+      onDragLeave={e => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) setInsertBefore(null);
+      }}
+    >
+      {tabs.map((tab, i) => (
+        <div key={tab.id} className="relative flex items-stretch shrink-0">
+          {draggingId && insertBefore === i && (
+            <div className="w-0.5 bg-orange-500 self-stretch pointer-events-none shrink-0" />
+          )}
+          <Tab
+            tab={tab}
+            isActive={tab.id === activeTabId}
+            isDirty={dirtyIds.has(tab.id)}
+            isDragging={tab.id === draggingId}
+            onActivate={() => {
+              if (tab.id !== activeTabId) {
+                dispatch({ type: 'SET_ACTIVE_TAB', payload: tab.id });
+                dispatch({ type: 'SET_VIEW', payload: 'request' });
+              }
+            }}
+            onClose={e => {
+              e.stopPropagation();
+              if (dirtyIds.has(tab.id)) {
+                if (!window.confirm('This tab has unsaved changes. Close anyway and discard changes?')) return;
+              }
+              dispatch({ type: 'CLOSE_TAB', payload: tab.id });
+            }}
+            onRename={newName => {
+              const collection = state.collections.find(c => c._id === tab.collectionId);
+              const itemId = tab.item.id;
+              if (collection && itemId) {
+                dispatch({
+                  type: 'UPDATE_COLLECTION',
+                  payload: { ...collection, item: renameItemById(collection.item, itemId, newName) },
+                });
+              }
               dispatch({
-                type: 'UPDATE_COLLECTION',
-                payload: { ...collection, item: renameItemById(collection.item, itemId, newName) },
+                type: 'UPDATE_TAB_ITEM',
+                payload: { tabId: tab.id, item: { ...tab.item, name: newName } },
               });
-            }
-            dispatch({
-              type: 'UPDATE_TAB_ITEM',
-              payload: { tabId: tab.id, item: { ...tab.item, name: newName } },
-            });
-          }}
-        />
+            }}
+            onDragStart={e => handleDragStart(e, tab.id)}
+            onDragOver={e => handleDragOver(e, i)}
+            onDrop={handleDrop}
+            onDragEnd={handleDragEnd}
+          />
+        </div>
       ))}
+      {draggingId && insertBefore === tabs.length && (
+        <div className="w-0.5 bg-orange-500 self-stretch pointer-events-none shrink-0" />
+      )}
     </div>
   );
 }

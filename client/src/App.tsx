@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { useApp } from './store';
-import type { AppEnvironment } from './types';
+import { useApp, generateId } from './store';
+import type { AppEnvironment, PostmanItem } from './types';
 import Sidebar from './components/Sidebar';
 import RequestBuilder from './components/RequestBuilder';
 import ResponseViewer from './components/ResponseViewer';
@@ -9,6 +9,7 @@ import EnvironmentPanel from './components/EnvironmentPanel';
 import ConsolePanel from './components/ConsolePanel';
 import StatusBar from './components/StatusBar';
 import TabBar from './components/TabBar';
+import CookieManagerModal from './components/CookieManagerModal';
 
 // --- Env Quick Panel ---
 
@@ -217,16 +218,88 @@ const DEFAULT_CONSOLE_HEIGHT = 240;
 type ServerStatus = 'checking' | 'online' | 'offline';
 
 export default function App() {
-  const { state } = useApp();
+  const { state, dispatch } = useApp();
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR);
   const [envQuickOpen, setEnvQuickOpen] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [consoleHeight, setConsoleHeight] = useState(DEFAULT_CONSOLE_HEIGHT);
   const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
   const [serverStatus, setServerStatus] = useState<ServerStatus>('checking');
+  const [cookieManagerOpen, setCookieManagerOpen] = useState(false);
   const dragging = useRef(false);
   const startX = useRef(0);
   const startWidth = useRef(0);
+
+  // ── Global keyboard shortcuts ──────────────────────────────────────────────
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (!e.metaKey && !e.ctrlKey) return;
+      const target = e.target as HTMLElement;
+      const inInput =
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable;
+
+      switch (e.key.toLowerCase()) {
+        case 'enter':
+          e.preventDefault();
+          document.dispatchEvent(new CustomEvent('apilix:send'));
+          break;
+        case 's':
+          e.preventDefault();
+          document.dispatchEvent(new CustomEvent('apilix:save'));
+          break;
+        case 'l':
+          e.preventDefault();
+          document.dispatchEvent(new CustomEvent('apilix:focusUrl'));
+          break;
+        case 'n':
+          if (inInput) return;
+          e.preventDefault();
+          {
+            const newId = generateId();
+            const newReq: PostmanItem = {
+              id: newId,
+              name: 'New Request',
+              request: { method: 'GET', url: { raw: '' }, header: [] },
+            };
+            if (state.collections.length > 0) {
+              const firstCol = state.collections[0];
+              dispatch({
+                type: 'UPDATE_COLLECTION',
+                payload: { ...firstCol, item: [...firstCol.item, newReq] },
+              });
+              dispatch({ type: 'OPEN_TAB', payload: { collectionId: firstCol._id, item: newReq } });
+            } else {
+              const colId = generateId();
+              dispatch({
+                type: 'ADD_COLLECTION',
+                payload: {
+                  _id: colId,
+                  info: {
+                    name: 'My Requests',
+                    schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+                  },
+                  item: [newReq],
+                },
+              });
+              dispatch({ type: 'OPEN_TAB', payload: { collectionId: colId, item: newReq } });
+            }
+            dispatch({ type: 'SET_VIEW', payload: 'request' });
+          }
+          break;
+        case 'w':
+          if (inInput) return;
+          e.preventDefault();
+          if (state.activeTabId) {
+            dispatch({ type: 'CLOSE_TAB', payload: state.activeTabId });
+          }
+          break;
+      }
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [state.activeTabId, state.collections, dispatch]);
 
   useEffect(() => {
     let cancelled = false;
@@ -292,6 +365,18 @@ export default function App() {
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* Top bar */}
         <div className="flex items-center justify-end gap-2 px-4 py-2 border-b border-slate-700 bg-slate-900 shrink-0">
+          {/* Cookie manager button */}
+          <button
+            onClick={() => setCookieManagerOpen(o => !o)}
+            title="Cookie Manager"
+            className={`px-2 py-1 rounded text-xs transition-colors border ${
+              cookieManagerOpen
+                ? 'bg-orange-600 border-orange-600 text-white'
+                : 'bg-slate-700 border-slate-600 text-slate-400 hover:text-white hover:border-orange-500'
+            }`}
+          >
+            🍪
+          </button>
           <span className="text-slate-500 text-xs">Environment:</span>
           <EnvironmentSelector />
           {state.activeEnvironmentId && (
@@ -357,6 +442,11 @@ export default function App() {
           ? <EnvQuickPanel env={activeEnv} onClose={() => setEnvQuickOpen(false)} />
           : null;
       })()}
+
+      {/* Cookie manager modal */}
+      {cookieManagerOpen && (
+        <CookieManagerModal onClose={() => setCookieManagerOpen(false)} />
+      )}
     </div>
   );
 }

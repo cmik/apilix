@@ -53,6 +53,117 @@ export function applyInheritedAuth(items: PostmanItem[], inherited: PostmanAuth 
   });
 }
 
+function deepCloneWithNewIds(item: PostmanItem): PostmanItem {
+  const newId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  return {
+    ...item,
+    id: newId,
+    item: item.item ? item.item.map(child => deepCloneWithNewIds(child)) : undefined,
+  };
+}
+
+export function duplicateItem(items: PostmanItem[], itemId: string): PostmanItem[] {
+  const result: PostmanItem[] = [];
+  for (const item of items) {
+    if (item.id === itemId) {
+      result.push(item);
+      const clone = deepCloneWithNewIds(item);
+      result.push({ ...clone, name: `Copy of ${item.name}` });
+    } else if (item.item) {
+      result.push({ ...item, item: duplicateItem(item.item, itemId) });
+    } else {
+      result.push(item);
+    }
+  }
+  return result;
+}
+
+// ─── Drag & Drop Helpers ──────────────────────────────────────────────────────
+
+/** Remove an item by id and return both the modified tree and the extracted item. */
+export function extractItemById(
+  items: PostmanItem[],
+  id: string,
+): { items: PostmanItem[]; extracted: PostmanItem | null } {
+  let extracted: PostmanItem | null = null;
+  function extract(nodes: PostmanItem[]): PostmanItem[] {
+    const result: PostmanItem[] = [];
+    for (const node of nodes) {
+      if (node.id === id) {
+        extracted = node;
+      } else {
+        result.push(node.item ? { ...node, item: extract(node.item) } : node);
+      }
+    }
+    return result;
+  }
+  return { items: extract(items), extracted };
+}
+
+/** Insert newItem before/after targetId, or as last child of targetId (when position='inside'). */
+export function insertItemInTree(
+  items: PostmanItem[],
+  newItem: PostmanItem,
+  targetId: string,
+  position: 'before' | 'after' | 'inside',
+): PostmanItem[] {
+  if (position === 'inside') {
+    return items.map(node => {
+      if (node.id === targetId && Array.isArray(node.item)) {
+        return { ...node, item: [...node.item, newItem] };
+      }
+      if (node.item) return { ...node, item: insertItemInTree(node.item, newItem, targetId, position) };
+      return node;
+    });
+  }
+  const result: PostmanItem[] = [];
+  for (const node of items) {
+    if (node.id === targetId) {
+      if (position === 'before') result.push(newItem, node);
+      else result.push(node, newItem);
+    } else {
+      result.push(node.item ? { ...node, item: insertItemInTree(node.item, newItem, targetId, position) } : node);
+    }
+  }
+  return result;
+}
+
+/** Move sourceId to before/after/inside targetId within the same tree. */
+export function moveItemInTree(
+  items: PostmanItem[],
+  sourceId: string,
+  targetId: string,
+  position: 'before' | 'after' | 'inside',
+): PostmanItem[] {
+  if (sourceId === targetId) return items;
+  const { items: withoutSource, extracted } = extractItemById(items, sourceId);
+  if (!extracted) return items;
+  return insertItemInTree(withoutSource, extracted, targetId, position);
+}
+
+/** Returns true if targetId is a descendant of ancestorId anywhere in the tree. */
+export function isDescendantOf(
+  items: PostmanItem[],
+  ancestorId: string,
+  targetId: string,
+): boolean {
+  function walkChildren(nodes: PostmanItem[]): boolean {
+    for (const node of nodes) {
+      if (node.id === targetId) return true;
+      if (node.item && walkChildren(node.item)) return true;
+    }
+    return false;
+  }
+  function findAncestor(nodes: PostmanItem[]): boolean {
+    for (const node of nodes) {
+      if (node.id === ancestorId) return node.item ? walkChildren(node.item) : false;
+      if (node.item && findAncestor(node.item)) return true;
+    }
+    return false;
+  }
+  return findAncestor(items);
+}
+
 // Walk the collection tree and return the effective (parent) auth for a given request ID.
 // This is the auth the request would inherit if its own auth is set to 'inherit'.
 export function resolveInheritedAuth(

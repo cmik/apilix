@@ -8,6 +8,8 @@ export default function Sidebar() {
   const [showImport, setShowImport] = useState(false);
   const [filter, setFilter] = useState('');
   const [newCollectionId, setNewCollectionId] = useState<string | null>(null);
+  const [collapseSignal, setCollapseSignal] = useState(0);
+  const [expandSignal, setExpandSignal] = useState(0);
 
   return (
     <div className="w-full bg-slate-900 flex flex-col h-full overflow-hidden">
@@ -32,6 +34,35 @@ export default function Sidebar() {
             className="px-2 py-1 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 text-xs rounded font-medium transition-colors"
           >
             + New
+          </button>
+          <button
+            onClick={() => {
+              state.collections.forEach(col => {
+                const exported = {
+                  info: {
+                    name: col.info.name,
+                    schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+                    _postman_id: col._id,
+                  },
+                  item: col.item,
+                  auth: col.auth,
+                  event: col.event,
+                  variable: col.variable,
+                };
+                const blob = new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${col.info.name.replace(/[^a-z0-9_\-. ]/gi, '_')}.postman_collection.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+              });
+            }}
+            title="Export all collections"
+            className="px-2 py-1 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 text-xs rounded font-medium transition-colors"
+            disabled={state.collections.length === 0}
+          >
+            Export
           </button>
           <button
             onClick={() => setShowImport(true)}
@@ -70,6 +101,22 @@ export default function Sidebar() {
       <div className="flex items-center px-3 py-2 border-b border-slate-700 shrink-0">
         <span className="text-slate-500 text-xs uppercase tracking-wider">Collections</span>
         <span className="ml-auto text-slate-600 text-xs">{state.collections.length}</span>
+        <button
+          onClick={() => setExpandSignal(s => s + 1)}
+          title="Expand all"
+          disabled={state.collections.length === 0}
+          className="ml-2 text-slate-500 hover:text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed text-sm leading-none transition-colors"
+        >
+          ⊞
+        </button>
+        <button
+          onClick={() => setCollapseSignal(s => s + 1)}
+          title="Collapse all"
+          disabled={state.collections.length === 0}
+          className="ml-1 text-slate-500 hover:text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed text-sm leading-none transition-colors"
+        >
+          ⊟
+        </button>
       </div>
       <div className="px-3 py-1.5 border-b border-slate-700 shrink-0">
         <div className="relative">
@@ -89,7 +136,7 @@ export default function Sidebar() {
           )}
         </div>
       </div>
-      <CollectionTree filter={filter} renamingCollectionId={newCollectionId} onRenamingDone={() => setNewCollectionId(null)} />
+      <CollectionTree filter={filter} renamingCollectionId={newCollectionId} onRenamingDone={() => setNewCollectionId(null)} collapseSignal={collapseSignal} expandSignal={expandSignal} />
 
       {showImport && <ImportModal onClose={() => setShowImport(false)} />}
     </div>

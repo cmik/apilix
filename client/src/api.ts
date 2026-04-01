@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { PostmanItem, PostmanCollection, RequestResponse, RunnerIteration, RunnerIterationResult, ScriptLog } from './types';
+import type { PostmanItem, PostmanCollection, RequestResponse, RunnerIteration, RunnerIterationResult, ScriptLog, CookieJar } from './types';
 
 const api = axios.create({ baseURL: '/api' });
 
@@ -10,11 +10,13 @@ export interface ExecutePayload {
   globals: Record<string, string>;
   dataRow?: Record<string, string>;
   collVars?: Array<{ key: string; value: string; disabled?: boolean }>;
+  cookies?: CookieJar;
 }
 
 export interface ExecuteResult extends Omit<RequestResponse, never> {
   updatedEnvironment?: Record<string, string>;
   updatedCollectionVariables?: Record<string, string>;
+  updatedCookies?: CookieJar;
   scriptLogs?: ScriptLog[];
   resolvedUrl?: string;
   requestHeaders?: Record<string, string>;
@@ -31,6 +33,7 @@ export interface RunPayload {
   environment: Record<string, string>;
   collectionVariables: Record<string, string>;
   globals: Record<string, string>;
+  cookies?: CookieJar;
   delay?: number;
   iterations?: number;
 }

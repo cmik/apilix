@@ -8,7 +8,7 @@ A lightweight, open-source alternative API testing tool.
 - **Send HTTP requests** (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS)
 - **Query params, Headers, Body** (raw JSON/text, form-data, url-encoded)
 - **Authentication** (Bearer, Basic, API Key)
-- **Pre-request & Test scripts** (`pm.*` Postman-compatible API)
+- **Pre-request & Test scripts** (`pm.*` Postman-compatible API, including `pm.sendRequest()`)
 - **Collection Runner** with CSV data-driven testing and multi-iteration support
 - **Environment variables** with `{{variable}}` substitution
 - **Tabbed request editing** — open multiple requests simultaneously, save changes independently
@@ -159,4 +159,24 @@ pm.response.responseTime // ms
 pm.response.json()       // parsed body
 pm.response.text()       // raw body
 pm.response.headers.get("Content-Type")
+
+// Request chaining — make additional HTTP calls from scripts
+pm.sendRequest("https://api.example.com/token", (err, res) => {
+  if (!err) {
+    pm.environment.set("access_token", res.json().access_token);
+  }
+});
+
+// Full options object (Postman-compatible)
+pm.sendRequest({
+  url: "https://api.example.com/login",
+  method: "POST",
+  header: [{ key: "Content-Type", value: "application/json" }],
+  body: { mode: "raw", raw: JSON.stringify({ user: "admin", pass: "secret" }) }
+}, (err, res) => {
+  pm.environment.set("token", res.json().token);
+});
 ```
+
+`pm.sendRequest` accepts a URL string or a Postman-format options object and provides the callback response with `.code`, `.status`, `.headers.get(name)`, `.json()`, and `.text()`.
+Works in both **pre-request** and **test** scripts. All chained requests complete before the next request in the collection starts.

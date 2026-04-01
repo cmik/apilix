@@ -150,6 +150,57 @@ function buildBody(body, headers, vars) {
   }
 }
 
+// ─── Cookie helpers ──────────────────────────────────────────────────────────
+
+function extractHostname(url) {
+  try { return new URL(url).hostname; } catch { return ''; }
+}
+
+function getCookiesForRequest(cookieJar, url) {
+  if (!cookieJar) return '';
+  const hostname = extractHostname(url);
+  if (!hostname) return '';
+  const pairs = [];
+  Object.entries(cookieJar).forEach(([domain, cookies]) => {
+    const d = domain.replace(/^\./, '');
+    if (hostname === d || hostname.endsWith('.' + d)) {
+      (cookies || []).forEach(c => {
+        if (c.enabled !== false) pairs.push(`${c.name}=${c.value}`);
+      });
+    }
+  });
+  return pairs.join('; ');
+}
+
+function parseSetCookieHeaders(setCookieArray, hostname) {
+  const parsed = [];
+  (setCookieArray || []).forEach(header => {
+    const parts = header.split(';').map(p => p.trim());
+    const [nameValue, ...attrs] = parts;
+    const eqIdx = nameValue.indexOf('=');
+    if (eqIdx === -1) return;
+    const name = nameValue.slice(0, eqIdx).trim();
+    const value = nameValue.slice(eqIdx + 1).trim();
+    let domain = hostname;
+    let path = '/';
+    let expires = null;
+    let httpOnly = false;
+    let secure = false;
+    let sameSite = 'Lax';
+    attrs.forEach(attr => {
+      const lower = attr.toLowerCase();
+      if (lower.startsWith('domain=')) domain = attr.slice(7).replace(/^\./, '');
+      else if (lower.startsWith('path=')) path = attr.slice(5);
+      else if (lower.startsWith('expires=')) expires = attr.slice(8);
+      else if (lower === 'httponly') httpOnly = true;
+      else if (lower === 'secure') secure = true;
+      else if (lower.startsWith('samesite=')) sameSite = attr.slice(9);
+    });
+    parsed.push({ name, value, domain, path, expires, httpOnly, secure, sameSite, enabled: true });
+  });
+  return parsed;
+}
+
 // ─── Main executor ───────────────────────────────────────────────────────────
 
 async function executeRequest(item, context) {
@@ -159,6 +210,7 @@ async function executeRequest(item, context) {
     globals = {},
     dataRow = {},
     collVars = [],
+    cookies = {},
   } = context;
 
   let vars = buildVariables(environment, collectionVariables, globals, dataRow, collVars);
@@ -189,6 +241,10 @@ async function executeRequest(item, context) {
   });
 
   applyAuth(req.auth, headers, vars);
+
+  // Inject cookies from cookie jar
+  const cookieHeader = getCookiesForRequest(cookies, url);
+  if (cookieHeader) headers['Cookie'] = cookieHeader;
 
   const data = buildBody(req.body, headers, vars);
 
@@ -253,6 +309,25 @@ async function executeRequest(item, context) {
       responseHeaders[k] = String(v);
     });
 
+    // Parse Set-Cookie headers and merge into cookie jar
+    const updatedCookies = Object.assign({}, cookies);
+    const setCookieRaw = axiosResponse.headers['set-cookie'];
+    if (setCookieRaw) {
+      const hostname = extractHostname(url);
+      const newCookies = parseSetCookieHeaders(
+        Array.isArray(setCookieRaw) ? setCookieRaw : [setCookieRaw],
+        hostname,
+      );
+      newCookies.forEach(cookie => {
+        const domain = cookie.domain;
+        const existing = updatedCookies[domain] ? [...updatedCookies[domain]] : [];
+        const idx = existing.findIndex(c => c.name === cookie.name);
+        if (idx >= 0) existing[idx] = cookie;
+        else existing.push(cookie);
+        updatedCookies[domain] = existing;
+      });
+    }
+
     return {
       status: axiosResponse.status,
       statusText: axiosResponse.statusText,
@@ -267,6 +342,7 @@ async function executeRequest(item, context) {
       scriptLogs,
       updatedEnvironment: updatedEnv,
       updatedCollectionVariables: updatedCollVars,
+      updatedCookies,
       error: null,
     };
   } catch (err) {
@@ -283,6 +359,7 @@ async function executeRequest(item, context) {
       testResults: [],
       updatedEnvironment: environment,
       updatedCollectionVariables: collectionVariables,
+      updatedCookies: cookies,
       error: err.message,
     };
   }
