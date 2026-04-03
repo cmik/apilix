@@ -43,6 +43,13 @@
   pre {
     tab-size: 2;
   }
+
+  .scrollbar-none {
+    scrollbar-width: none; /* Firefox */
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none; /* Chrome / Safari / Edge */
+  }
 }
 
 /* ─── Markdown preview styles ───────────────────────────────────────────── */
