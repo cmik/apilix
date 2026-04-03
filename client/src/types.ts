@@ -244,7 +244,7 @@ export type AppAction =
   | { type: 'SET_TAB_LOADING'; payload: { tabId: string; loading: boolean } }
   | { type: 'UPDATE_TAB_ITEM'; payload: { tabId: string; item: PostmanItem } }
   | { type: 'REORDER_TABS'; payload: string[] }
-  | { type: 'REORDER_COLLECTIONS'; payload: string[] };
+  | { type: 'REORDER_COLLECTIONS'; payload: string[] }
   | { type: 'UPSERT_DOMAIN_COOKIES'; payload: { domain: string; cookies: Cookie[] } }
   | { type: 'DELETE_COOKIE'; payload: { domain: string; name: string } }
   | { type: 'CLEAR_DOMAIN_COOKIES'; payload: string }
