@@ -1,7 +1,14 @@
 import axios from 'axios';
 import type { PostmanItem, PostmanCollection, RequestResponse, RunnerIteration, RunnerIterationResult, ScriptLog, CookieJar } from './types';
 
-const api = axios.create({ baseURL: '/api' });
+// When loaded via file:// (packaged Electron app), relative /api won't work.
+// The preload script exposes the dynamic server port via window.electronAPI.
+const electronPort = (window as any).electronAPI?.serverPort;
+export const API_BASE = window.location.protocol === 'file:'
+  ? `http://localhost:${electronPort ?? 3001}/api`
+  : '/api';
+
+const api = axios.create({ baseURL: API_BASE });
 
 export interface ExecutePayload {
   item: PostmanItem;
@@ -72,7 +79,7 @@ export async function runCollectionStream(
     formData.append('csvFile', csvFile);
   }
 
-  const response = await fetch('/api/run', {
+  const response = await fetch(`${API_BASE}/run`, {
     method: 'POST',
     body: formData,
   });

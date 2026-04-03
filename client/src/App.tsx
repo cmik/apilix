@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { API_BASE } from './api';
 import { useApp, generateId } from './store';
 import type { AppEnvironment, PostmanItem } from './types';
 import Sidebar from './components/Sidebar';
@@ -305,7 +306,7 @@ export default function App() {
     let cancelled = false;
     async function check() {
       try {
-        const res = await fetch('/api/health', { signal: AbortSignal.timeout(3000) });
+        const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(3000) });
         if (!cancelled) setServerStatus(res.ok ? 'online' : 'offline');
       } catch {
         if (!cancelled) setServerStatus('offline');

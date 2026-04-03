@@ -6,6 +6,7 @@ server/node_modules/
 # Build outputs
 client/dist/
 client/build/
+dist/
 
 # Environment variables
 .env
@@ -56,3 +57,4 @@ coverage/
 
 # GitHub workflows
 .github/
+FEATURES.md

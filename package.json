@@ -1,15 +1,81 @@
 {
   "name": "apilix",
-  "version": "1.0.0",
+  "version": "1.0.0-beta.1",
   "description": "APILIX - Alternative Platform for Instant Live API eXecution",
+  "main": "electron/main.js",
   "scripts": {
     "start": "concurrently -k -p \"[{name}]\" -n \"SERVER,CLIENT\" -c \"bgYellow.bold,bgCyan.bold\" \"npm run server\" \"npm run client\"",
     "server": "node server/index.js",
     "client": "cd client && npm run dev",
     "setup": "npm install && cd server && npm install && cd ../client && npm install",
-    "build": "cd client && npm run build"
+    "build": "cd client && npm run build",
+    "electron": "electron .",
+    "electron:dev": "concurrently -k -p \"[{name}]\" -n \"SERVER,CLIENT,ELECTRON\" -c \"bgYellow.bold,bgCyan.bold,bgMagenta.bold\" \"npm run server\" \"npm run client\" \"wait-on http://localhost:5173 && electron .\"",
+    "dist": "npm run build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:win": "npm run build && electron-builder --win"
   },
   "dependencies": {
     "concurrently": "^8.2.2"
+  },
+  "devDependencies": {
+    "electron": "^41.1.1",
+    "electron-builder": "^26.8.1",
+    "wait-on": "^8.0.0"
+  },
+  "build": {
+    "appId": "com.apilix.app",
+    "productName": "Apilix",
+    "files": [
+      "electron/**/*",
+      "client/dist/**/*",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "server",
+        "to": "server",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "server/node_modules",
+        "to": "server/node_modules"
+      }
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "icon": "public/icon.icns",
+      "category": "public.app-category.developer-tools"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "public/icon.ico"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "public/icon.png"
+    }
   }
 }

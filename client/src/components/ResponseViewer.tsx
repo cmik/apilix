@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import { useApp } from '../store';
 import type { TestResult } from '../types';
 
@@ -39,19 +39,35 @@ function TestResultRow({ result }: { result: TestResult }) {
   );
 }
 
+function escapeRegex(s: string) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function highlightText(text: string, query: string): React.ReactNode {
+  if (!query.trim()) return text;
+  const regex = new RegExp(`(${escapeRegex(query)})`, 'gi');
+  const parts = text.split(regex);
+  return parts.map((part, i) =>
+    i % 2 === 1
+      ? <mark key={i} className="search-match bg-yellow-500/30 text-yellow-200 rounded-sm not-italic">{part}</mark>
+      : part
+  );
+}
+
 type JsonNodeProps = {
   data: unknown;
   name?: string;
   depth: number;
   isLast: boolean;
+  searchQuery?: string;
 };
 
-function JsonNode({ data, name, depth, isLast }: JsonNodeProps) {
+function JsonNode({ data, name, depth, isLast, searchQuery }: JsonNodeProps) {
   const [open, setOpen] = useState(true);
   const paddingLeft = depth * 16;
   const comma = !isLast ? <span className="text-slate-500">,</span> : null;
   const keyEl = name !== undefined
-    ? <><span className="text-amber-300">"{name}"</span><span className="text-slate-500">: </span></>
+    ? <><span className="text-amber-300">"</span><span className="text-amber-300">{searchQuery ? highlightText(name, searchQuery) : name}</span><span className="text-amber-300">"</span><span className="text-slate-500">: </span></>
     : null;
 
   if (data === null) {
@@ -64,7 +80,15 @@ function JsonNode({ data, name, depth, isLast }: JsonNodeProps) {
     return <div style={{ paddingLeft }} className="leading-5">{keyEl}<span className="text-sky-300">{data}</span>{comma}</div>;
   }
   if (typeof data === 'string') {
-    return <div style={{ paddingLeft }} className="leading-5 break-all">{keyEl}<span className="text-emerald-400">"{data}"</span>{comma}</div>;
+    return (
+      <div style={{ paddingLeft }} className="leading-5 break-all">
+        {keyEl}
+        <span className="text-emerald-400">"</span>
+        <span className="text-emerald-400">{searchQuery ? highlightText(data, searchQuery) : data}</span>
+        <span className="text-emerald-400">"</span>
+        {comma}
+      </div>
+    );
   }
 
   if (Array.isArray(data)) {
@@ -90,7 +114,7 @@ function JsonNode({ data, name, depth, isLast }: JsonNodeProps) {
         {open && (
           <>
             {data.map((item, i) => (
-              <JsonNode key={i} data={item} depth={depth + 1} isLast={i === data.length - 1} />
+              <JsonNode key={i} data={item} depth={depth + 1} isLast={i === data.length - 1} searchQuery={searchQuery} />
             ))}
             <div style={{ paddingLeft: paddingLeft + 14 }} className="leading-5">
               <span className="text-slate-300">]</span>{comma}
@@ -125,7 +149,7 @@ function JsonNode({ data, name, depth, isLast }: JsonNodeProps) {
         {open && (
           <>
             {entries.map(([k, v], i) => (
-              <JsonNode key={k} data={v} name={k} depth={depth + 1} isLast={i === entries.length - 1} />
+              <JsonNode key={k} data={v} name={k} depth={depth + 1} isLast={i === entries.length - 1} searchQuery={searchQuery} />
             ))}
             <div style={{ paddingLeft: paddingLeft + 14 }} className="leading-5">
               <span className="text-slate-300">{'}'}</span>{comma}
@@ -139,30 +163,237 @@ function JsonNode({ data, name, depth, isLast }: JsonNodeProps) {
   return null;
 }
 
-function JsonTreeView({ body }: { body: string }) {
+function JsonTreeView({ body, searchQuery }: { body: string; searchQuery?: string }) {
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
   } catch {
     return (
       <pre className="p-3 text-sm font-mono text-slate-200 whitespace-pre-wrap break-all">
-        {body}
+        {searchQuery ? highlightText(body, searchQuery) : body}
       </pre>
     );
   }
   return (
     <div className="p-3 text-sm font-mono text-slate-200">
-      <JsonNode data={parsed} depth={0} isLast={true} />
+      <JsonNode data={parsed} depth={0} isLast={true} searchQuery={searchQuery} />
     </div>
   );
 }
+
+// ── JSONPath evaluator ──────────────────────────────────────────────────────
+function collectAll(node: unknown, key: string, acc: unknown[]) {
+  if (key === '*') {
+    if (Array.isArray(node)) { node.forEach(v => { acc.push(v); collectAll(v, key, acc); }); }
+    else if (node && typeof node === 'object') { Object.values(node as object).forEach(v => { acc.push(v); collectAll(v, key, acc); }); }
+  } else {
+    if (Array.isArray(node)) { node.forEach(v => collectAll(v, key, acc)); }
+    else if (node && typeof node === 'object') {
+      const o = node as Record<string, unknown>;
+      if (key in o) acc.push(o[key]);
+      Object.values(o).forEach(v => collectAll(v, key, acc));
+    }
+  }
+}
+
+function applyJsonPath(root: unknown, expr: string): { value: unknown; error?: string } {
+  const path = expr.trim();
+  if (!path || path === '$') return { value: root };
+  if (!path.startsWith('$')) return { value: undefined, error: 'Expression must start with $' };
+  let current: unknown[] = [root];
+  let i = 1;
+  try {
+    while (i < path.length) {
+      const next: unknown[] = [];
+      if (path[i] === '.') {
+        if (path[i + 1] === '.') {
+          i += 2;
+          let key = '';
+          if (i < path.length && path[i] === '[') {
+            i++;
+            while (i < path.length && path[i] !== ']') key += path[i++];
+            i++;
+            key = key.trim().replace(/^['"]|['"]$/g, '');
+          } else {
+            while (i < path.length && path[i] !== '.' && path[i] !== '[') key += path[i++];
+          }
+          current.forEach(c => collectAll(c, key, next));
+        } else {
+          i++;
+          let key = '';
+          if (i < path.length && path[i] === '*') { i++; key = '*'; }
+          else { while (i < path.length && path[i] !== '.' && path[i] !== '[') key += path[i++]; }
+          if (key === '*') {
+            current.forEach(c => {
+              if (Array.isArray(c)) c.forEach(v => next.push(v));
+              else if (c && typeof c === 'object') Object.values(c as object).forEach(v => next.push(v));
+            });
+          } else {
+            current.forEach(c => {
+              if (c && typeof c === 'object' && !Array.isArray(c)) {
+                const o = c as Record<string, unknown>;
+                if (key in o) next.push(o[key]);
+              }
+            });
+          }
+        }
+      } else if (path[i] === '[') {
+        i++;
+        let inner = '';
+        while (i < path.length && path[i] !== ']') inner += path[i++];
+        i++;
+        inner = inner.trim();
+        if (inner === '*') {
+          current.forEach(c => {
+            if (Array.isArray(c)) c.forEach(v => next.push(v));
+            else if (c && typeof c === 'object') Object.values(c as object).forEach(v => next.push(v));
+          });
+        } else if (/^-?\d+$/.test(inner)) {
+          const idx = parseInt(inner, 10);
+          current.forEach(c => {
+            if (Array.isArray(c)) { const a = idx < 0 ? c.length + idx : idx; if (a >= 0 && a < c.length) next.push(c[a]); }
+          });
+        } else if (/^(-?\d*):(-?\d*)$/.test(inner)) {
+          const [, s, e] = inner.match(/^(-?\d*):(-?\d*)$/)!;
+          current.forEach(c => {
+            if (Array.isArray(c)) {
+              const st = s ? parseInt(s, 10) : 0;
+              const en = e ? parseInt(e, 10) : c.length;
+              const as2 = st < 0 ? Math.max(c.length + st, 0) : Math.min(st, c.length);
+              const ae2 = en < 0 ? Math.max(c.length + en, 0) : Math.min(en, c.length);
+              c.slice(as2, ae2).forEach(v => next.push(v));
+            }
+          });
+        } else if (inner.includes(',')) {
+          inner.split(',').map(p => p.trim().replace(/^['"]|['"]$/g, '')).forEach(p => {
+            if (/^-?\d+$/.test(p)) {
+              const idx = parseInt(p, 10);
+              current.forEach(c => { if (Array.isArray(c)) { const a = idx < 0 ? c.length + idx : idx; if (a >= 0 && a < c.length) next.push(c[a]); } });
+            } else {
+              current.forEach(c => { if (c && typeof c === 'object' && !Array.isArray(c)) { const o = c as Record<string, unknown>; if (p in o) next.push(o[p]); } });
+            }
+          });
+        } else {
+          const key = inner.replace(/^['"]|['"]$/g, '');
+          current.forEach(c => {
+            if (c && typeof c === 'object' && !Array.isArray(c)) {
+              const o = c as Record<string, unknown>;
+              if (key in o) next.push(o[key]);
+            }
+          });
+        }
+      } else { break; }
+      current = next;
+      if (current.length === 0) break;
+    }
+  } catch (e) { return { value: undefined, error: String(e) }; }
+  if (current.length === 0) return { value: null };
+  return { value: current.length === 1 ? current[0] : current };
+}
+// ────────────────────────────────────────────────────────────────────────────
 
 export default function ResponseViewer() {
   const { state } = useApp();
   const [tab, setTab] = useState<RespTab>('Body');
   const [rawMode, setRawMode] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [matchIndex, setMatchIndex] = useState(0);
+  const [copied, setCopied] = useState(false);
+  const [jsonPathExpr, setJsonPathExpr] = useState('');
+  const [jsonPathOpen, setJsonPathOpen] = useState(false);
+  const jsonPathInputRef = useRef<HTMLInputElement>(null);
+
+  const copyBody = () => {
+    if (!response) return;
+    navigator.clipboard.writeText(response.body).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const bodyContentRef = useRef<HTMLDivElement>(null);
 
   const { response, isLoading } = state;
+
+  const jsonPathResult = useMemo(() => {
+    if (!jsonPathExpr.trim() || !response) return null;
+    try {
+      const parsed = JSON.parse(response.body);
+      return applyJsonPath(parsed, jsonPathExpr);
+    } catch {
+      return { value: undefined, error: 'Response is not valid JSON' };
+    }
+  }, [jsonPathExpr, response]);
+
+  const isJson = useMemo(() => {
+    if (!response) return false;
+    try { JSON.parse(response.body); return true; } catch { return false; }
+  }, [response]);
+
+  const totalMatches = useMemo(() => {
+    if (!searchQuery.trim() || !response) return 0;
+    const body = response.body.toLowerCase();
+    const q = searchQuery.toLowerCase();
+    let count = 0;
+    let pos = 0;
+    while (true) {
+      const idx = body.indexOf(q, pos);
+      if (idx === -1) break;
+      count++;
+      pos = idx + 1;
+    }
+    return count;
+  }, [searchQuery, response]);
+
+  // Reset match index when query changes
+  useEffect(() => { setMatchIndex(0); }, [searchQuery]);
+
+  // Global hotkey: Cmd+F / Ctrl+F
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+        e.preventDefault();
+        setTab('Body');
+        setSearchOpen(true);
+        setTimeout(() => searchInputRef.current?.focus(), 50);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
+  // Scroll to current match after render
+  useLayoutEffect(() => {
+    if (!bodyContentRef.current || !searchQuery.trim() || totalMatches === 0) return;
+    const marks = bodyContentRef.current.querySelectorAll<HTMLElement>('mark.search-match');
+    if (marks.length === 0) return;
+    const cur = matchIndex % marks.length;
+    marks.forEach((m, i) => {
+      if (i === cur) {
+        m.style.backgroundColor = 'rgba(234,179,8,0.6)';
+        m.style.outline = '1px solid rgba(234,179,8,0.9)';
+        m.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      } else {
+        m.style.backgroundColor = '';
+        m.style.outline = '';
+      }
+    });
+  }, [matchIndex, searchQuery, totalMatches, rawMode, response]);
+
+  const closeSearch = () => { setSearchOpen(false); setSearchQuery(''); setMatchIndex(0); };
+
+  const handleSearchKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape') {
+      closeSearch();
+    } else if (e.key === 'Enter' && totalMatches > 0) {
+      if (e.shiftKey) {
+        setMatchIndex(i => (i - 1 + totalMatches) % totalMatches);
+      } else {
+        setMatchIndex(i => (i + 1) % totalMatches);
+      }
+    }
+  };
 
   if (isLoading) {
     return (
@@ -237,21 +468,142 @@ export default function ResponseViewer() {
               />
               Raw
             </label>
+            <button
+              onClick={copyBody}
+              className={`text-xs px-1.5 py-0.5 rounded transition-colors ${
+                copied ? 'text-green-400' : 'text-slate-500 hover:text-slate-300'
+              }`}
+              title={copied ? 'Copied!' : 'Copy response body'}
+            >
+              {copied ? '✓' : '⧉'}
+            </button>
+            {isJson && (
+              <button
+                onClick={() => { setJsonPathOpen(o => !o); if (!jsonPathOpen) setTimeout(() => jsonPathInputRef.current?.focus(), 50); }}
+                className={`text-xs px-1.5 py-0.5 rounded transition-colors font-mono ${
+                  jsonPathOpen || jsonPathExpr ? 'text-orange-400 bg-orange-500/10' : 'text-slate-500 hover:text-slate-300'
+                }`}
+                title="Filter by JSONPath"
+              >
+                $.…
+              </button>
+            )}
+            <button
+              onClick={() => { setSearchOpen(o => !o); if (!searchOpen) setTimeout(() => searchInputRef.current?.focus(), 50); }}
+              className={`text-xs px-1.5 py-0.5 rounded transition-colors ${
+                searchOpen ? 'text-orange-400 bg-orange-500/10' : 'text-slate-500 hover:text-slate-300'
+              }`}
+              title="Search in body (⌘F)"
+            >
+              🔍
+            </button>
           </div>
         )}
       </div>
 
+      {/* JSONPath filter bar */}
+      {tab === 'Body' && jsonPathOpen && (
+        <div className="flex items-center gap-2 px-3 py-1.5 border-b border-slate-700 bg-slate-800/80 shrink-0">
+          <span className="text-xs text-slate-500 font-mono shrink-0">$.</span>
+          <input
+            ref={jsonPathInputRef}
+            type="text"
+            value={jsonPathExpr}
+            onChange={e => setJsonPathExpr(e.target.value)}
+            onKeyDown={e => e.key === 'Escape' && setJsonPathOpen(false)}
+            placeholder="e.g. $.data[0].name  or  $..email  or  $.items[*]"
+            className="flex-1 bg-slate-700 text-slate-200 text-xs px-2 py-1 rounded outline-none border border-slate-600 focus:border-orange-500 placeholder-slate-500 font-mono"
+          />
+          {jsonPathExpr.trim() && jsonPathResult && (
+            <span className={`text-xs whitespace-nowrap ${
+              jsonPathResult.error ? 'text-red-400' : 'text-slate-400'
+            }`}>
+              {jsonPathResult.error
+                ? 'Error'
+                : Array.isArray(jsonPathResult.value)
+                  ? `${(jsonPathResult.value as unknown[]).length} result(s)`
+                  : '1 result'}
+            </span>
+          )}
+          {jsonPathExpr && (
+            <button
+              onClick={() => setJsonPathExpr('')}
+              className="text-slate-500 hover:text-slate-200 px-1 text-sm"
+              title="Clear filter"
+            >✕</button>
+          )}
+          <button
+            onClick={() => { setJsonPathOpen(false); }}
+            className="text-slate-500 hover:text-slate-200 px-1 text-xs"
+            title="Close"
+          >✕</button>
+        </div>
+      )}
+
+      {/* Search bar */}
+      {tab === 'Body' && searchOpen && (
+        <div className="flex items-center gap-2 px-3 py-1.5 border-b border-slate-700 bg-slate-800/80 shrink-0">
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            onKeyDown={handleSearchKey}
+            placeholder="Search in body… (Enter ↓  Shift+Enter ↑  Esc close)"
+            className="flex-1 bg-slate-700 text-slate-200 text-xs px-2 py-1 rounded outline-none border border-slate-600 focus:border-orange-500 placeholder-slate-500"
+          />
+          {searchQuery.trim() && (
+            <span className={`text-xs whitespace-nowrap ${
+              totalMatches === 0 ? 'text-red-400' : 'text-slate-400'
+            }`}>
+              {totalMatches === 0 ? 'No matches' : `${matchIndex + 1} / ${totalMatches}`}
+            </span>
+          )}
+          <button
+            onClick={() => totalMatches > 0 && setMatchIndex(i => (i - 1 + totalMatches) % totalMatches)}
+            disabled={totalMatches === 0}
+            className="text-slate-400 hover:text-slate-200 disabled:opacity-30 px-1 text-sm"
+            title="Previous match (Shift+Enter)"
+          >↑</button>
+          <button
+            onClick={() => totalMatches > 0 && setMatchIndex(i => (i + 1) % totalMatches)}
+            disabled={totalMatches === 0}
+            className="text-slate-400 hover:text-slate-200 disabled:opacity-30 px-1 text-sm"
+            title="Next match (Enter)"
+          >↓</button>
+          <button
+            onClick={closeSearch}
+            className="text-slate-500 hover:text-slate-200 px-1 text-sm"
+            title="Close (Esc)"
+          >✕</button>
+        </div>
+      )}
+
       {/* Content */}
-      <div className="flex-1 overflow-auto">
-        {tab === 'Body' && (
-          rawMode ? (
+      <div ref={bodyContentRef} className="flex-1 overflow-auto">
+        {tab === 'Body' && (() => {
+          // JSONPath active and has a result
+          if (jsonPathExpr.trim() && jsonPathResult) {
+            if (jsonPathResult.error) {
+              return <p className="p-4 text-sm text-red-400 font-mono">{jsonPathResult.error}</p>;
+            }
+            const serialized = JSON.stringify(jsonPathResult.value, null, 2) ?? 'null';
+            return rawMode ? (
+              <pre className="p-3 text-sm font-mono text-slate-200 whitespace-pre-wrap break-all">
+                {searchQuery.trim() ? highlightText(serialized, searchQuery) : serialized}
+              </pre>
+            ) : (
+              <JsonTreeView body={serialized} searchQuery={searchQuery.trim() ? searchQuery : undefined} />
+            );
+          }
+          return rawMode ? (
             <pre className="p-3 text-sm font-mono text-slate-200 whitespace-pre-wrap break-all">
-              {response.body}
+              {searchQuery.trim() ? highlightText(response.body, searchQuery) : response.body}
             </pre>
           ) : (
-            <JsonTreeView body={response.body} />
-          )
-        )}
+            <JsonTreeView body={response.body} searchQuery={searchQuery.trim() ? searchQuery : undefined} />
+          );
+        })()}
 
         {tab === 'Headers' && (
           <div className="p-3">

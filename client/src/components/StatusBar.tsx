@@ -69,9 +69,8 @@ export default function StatusBar({
       <div className="flex-1" />
 
       {/* Server status */}
-      <span className={`flex items-center gap-1.5 px-2 font-medium ${serverTextColor}`}>
+      <span className="flex items-center px-2" title={serverLabel}>
         <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${serverDot}`} />
-        {serverLabel}
       </span>
 
       {/* Last response pill */}
