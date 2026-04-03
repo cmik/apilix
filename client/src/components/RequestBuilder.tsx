@@ -29,7 +29,7 @@ function itemToEditState(item: PostmanItem) {
   return {
     method: req.method?.toUpperCase() ?? 'GET',
     url: urlRaw,
-    headers: (req.header ?? []).filter(h => !h.disabled).map(h => ({ ...h })),
+    headers: (req.header ?? []).map(h => ({ ...h })),
     queryParams: extractQueryParams(req.url),
     bodyMode: req.body?.mode ?? 'none',
     bodyRaw: req.body?.raw ?? '',
@@ -63,7 +63,7 @@ function extractQueryParams(url: PostmanRequest['url']): PostmanQueryParam[] {
       })
       .filter(p => p.key);
   }
-  return (url?.query ?? []).filter(q => !q.disabled).map(q => ({ ...q }));
+  return (url?.query ?? []).map(q => ({ ...q }));
 }
 
 function getScript(item: PostmanItem, type: 'prerequest' | 'test'): string {
@@ -81,12 +81,16 @@ function KvTable({
   valuePlaceholder = 'Value',
 }: {
   rows: Array<{ key: string; value: string; disabled?: boolean }>;
-  onChange: (rows: Array<{ key: string; value: string }>) => void;
+  onChange: (rows: Array<{ key: string; value: string; disabled?: boolean }>) => void;
   keyPlaceholder?: string;
   valuePlaceholder?: string;
 }) {
   function update(i: number, field: 'key' | 'value', val: string) {
     const next = rows.map((r, idx) => (idx === i ? { ...r, [field]: val } : r));
+    onChange(next);
+  }
+  function toggle(i: number) {
+    const next = rows.map((r, idx) => (idx === i ? { ...r, disabled: !r.disabled } : r));
     onChange(next);
   }
   function remove(i: number) {
@@ -99,18 +103,27 @@ function KvTable({
   return (
     <div className="flex flex-col gap-1">
       {rows.map((row, i) => (
-        <div key={i} className="flex gap-1">
+        <div key={i} className={`flex gap-1 items-center ${row.disabled ? 'opacity-40' : ''}`}>
+          <input
+            type="checkbox"
+            checked={!row.disabled}
+            onChange={() => toggle(i)}
+            title={row.disabled ? 'Enable' : 'Disable'}
+            className="shrink-0 accent-orange-500 cursor-pointer"
+          />
           <input
             value={row.key}
             onChange={e => update(i, 'key', e.target.value)}
             placeholder={keyPlaceholder}
-            className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-slate-100 focus:outline-none focus:border-orange-500"
+            disabled={row.disabled}
+            className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-slate-100 focus:outline-none focus:border-orange-500 disabled:cursor-not-allowed"
           />
           <input
             value={row.value}
             onChange={e => update(i, 'value', e.target.value)}
             placeholder={valuePlaceholder}
-            className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-slate-100 focus:outline-none focus:border-orange-500"
+            disabled={row.disabled}
+            className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-slate-100 focus:outline-none focus:border-orange-500 disabled:cursor-not-allowed"
           />
           <button onClick={() => remove(i)} className="px-2 text-slate-500 hover:text-red-400 text-lg leading-none">×</button>
         </div>
@@ -282,7 +295,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
   function syncParamsToUrl(params: PostmanQueryParam[]) {
     const baseUrl = edit!.url.split('?')[0];
     const qs = params
-      .filter(p => p.key)
+      .filter(p => p.key && !p.disabled)
       .map(p => `${encodeURIComponent(p.key)}=${encodeURIComponent(p.value ?? '')}`)
       .join('&');
     const newUrl = qs ? `${baseUrl}?${qs}` : baseUrl;
@@ -332,7 +345,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
       request: {
         method: edit.method,
         url: { raw: edit.url },
-        header: edit.headers,
+        header: edit.headers.filter(h => !h.disabled),
         body: edit.bodyMode !== 'none' ? {
           mode: edit.bodyMode as NonNullable<NonNullable<PostmanItem['request']>['body']>['mode'],
           raw: edit.bodyMode === 'raw' ? edit.bodyRaw : edit.bodyMode === 'file' ? (binaryBase64 ?? '') : undefined,
