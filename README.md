@@ -1,6 +1,6 @@
 # Apilix — Alternative Platform for Instant Live API eXecution
 
-A lightweight, open-source alternative API testing tool.
+A lightweight, open-source alternative API testing tool — available as a **desktop app** (macOS, Windows, Linux) or as a local web app.
 
 ## Features
 
@@ -17,77 +17,96 @@ A lightweight, open-source alternative API testing tool.
 
 ---
 
-## Prerequisites
+## Desktop App (Electron)
+
+Pre-built installers are available for:
+
+| Platform | File |
+|---|---|
+| macOS | `Apilix-x.x.x.dmg` |
+| Windows | `Apilix Setup x.x.x.exe` |
+| Linux | `Apilix-x.x.x.AppImage` |
+
+Download the installer for your platform, install, and launch — no Node.js required.
+
+Data (collections, environments) is stored locally in the app profile:
+- **macOS:** `~/Library/Application Support/Apilix/`
+- **Windows:** `%APPDATA%\Apilix\`
+- **Linux:** `~/.config/Apilix/`
+
+---
+
+## Run from Source
+
+### Prerequisites
 
 - **Node.js** v18+
 - **npm** v9+
-- Windows PowerShell 5.1+ (for the helper scripts below)
+
+### Install dependencies
+
+```bash
+npm run setup
+```
+
+### Start (web mode)
+
+```bash
+npm start
+```
+
+- API server: **http://localhost:3001**
+- App: **http://localhost:5173**
+
+### Start (Electron desktop mode)
+
+```bash
+npm run electron:dev
+```
 
 ---
 
-## Setup & Scripts
+## Build Desktop Installers
 
-A set of PowerShell helper scripts lives at the project root for day-to-day operations.
+```bash
+# All platforms
+./build-all.sh
 
-### First-time install
+# Or individually
+npm run dist:mac    # → dist/Apilix-x.x.x.dmg
+npm run dist:win    # → dist/Apilix Setup x.x.x.exe
+```
+
+> Cross-platform builds (e.g. `.exe` on macOS) may require Wine or Docker for some targets.
+
+---
+
+## Helper Scripts
+
+### macOS / Linux
+
+```bash
+./install.sh   # install all dependencies
+./start.sh     # start server + client
+./stop.sh      # stop both services
+./restart.sh   # restart both services
+./status.sh    # check health
+```
+
+### Windows (PowerShell)
 
 ```powershell
 .\install.ps1
-```
-
-Installs all npm dependencies for the root workspace, the server, and the client in one step.
-
-### Start
-
-```powershell
 .\start.ps1
-```
-
-Launches the Express API server (port **3001**) and the Vite dev client (port **5173**) as separate background processes.
-
-- API: **http://localhost:3001**
-- App: **http://localhost:5173**
-
-### Stop
-
-```powershell
 .\stop.ps1
-```
-
-Kills any processes listening on ports 3001 and 5173.
-
-### Restart
-
-```powershell
 .\restart.ps1
-```
-
-Stops both services then starts them again (combines `stop.ps1` + `start.ps1`).
-
-### Status
-
-```powershell
 .\status.ps1
 ```
 
-Checks whether the server and client ports are listening and performs a live health check against `GET /api/health`.
-
----
-
-> **Execution policy note:** if PowerShell blocks unsigned scripts, run once:
+> If PowerShell blocks unsigned scripts, run once:
 > ```powershell
 > Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 > ```
-
----
-
-## Alternative: npm scripts
-
-```bash
-npm run setup   # install all dependencies
-npm start       # start server + client concurrently (uses concurrently)
-npm run build   # production build of the client
-```
 
 ---
 
