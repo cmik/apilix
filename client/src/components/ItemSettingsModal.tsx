@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { marked } from 'marked';
 import type { PostmanAuth, PostmanEvent } from '../types';
 
 type AuthType = PostmanAuth['type'];
@@ -9,7 +10,8 @@ interface Props {
   name: string;
   auth?: PostmanAuth;
   event?: PostmanEvent[];
-  onSave: (auth: PostmanAuth | undefined, event: PostmanEvent[]) => void;
+  description?: string;
+  onSave: (auth: PostmanAuth | undefined, event: PostmanEvent[], description: string) => void;
   onClose: () => void;
 }
 
@@ -30,12 +32,12 @@ function patchEvents(
   return [...others, { listen, script: { type: 'text/javascript', exec: code.split('\n') } }];
 }
 
-export default function ItemSettingsModal({ kind, name, auth, event, onSave, onClose }: Props) {
+export default function ItemSettingsModal({ kind, name, auth, event, description: initialDescription, onSave, onClose }: Props) {
   const initialAuthType: AuthType = SUPPORTED_AUTH.includes(auth?.type ?? 'noauth')
     ? (auth?.type ?? 'noauth')
     : 'noauth';
 
-  const [activeTab, setActiveTab] = useState<'auth' | 'prerequest' | 'tests'>('auth');
+  const [activeTab, setActiveTab] = useState<'auth' | 'prerequest' | 'tests' | 'docs'>('auth');
   const [authType, setAuthType] = useState<AuthType>(initialAuthType);
   const [authBearer, setAuthBearer] = useState((auth?.bearer ?? []).find(b => b.key === 'token')?.value ?? '');
   const [authBasicUser, setAuthBasicUser] = useState((auth?.basic ?? []).find(b => b.key === 'username')?.value ?? '');
@@ -44,6 +46,8 @@ export default function ItemSettingsModal({ kind, name, auth, event, onSave, onC
   const [authApiKeyValue, setAuthApiKeyValue] = useState((auth?.apikey ?? []).find(b => b.key === 'value')?.value ?? '');
   const [preScript, setPreScript] = useState(getScript(event, 'prerequest'));
   const [testScript, setTestScript] = useState(getScript(event, 'test'));
+  const [description, setDescription] = useState(initialDescription ?? '');
+  const [docsMode, setDocsMode] = useState<'edit' | 'preview'>('edit');
 
   function buildAuth(): PostmanAuth | undefined {
     if (authType === 'noauth') return { type: 'noauth' };
@@ -69,7 +73,7 @@ export default function ItemSettingsModal({ kind, name, auth, event, onSave, onC
     let events = event ? [...event] : [];
     events = patchEvents(events, 'prerequest', preScript);
     events = patchEvents(events, 'test', testScript);
-    onSave(buildAuth(), events);
+    onSave(buildAuth(), events, description);
     onClose();
   }
 
@@ -77,6 +81,7 @@ export default function ItemSettingsModal({ kind, name, auth, event, onSave, onC
     { key: 'auth' as const, label: 'Authorization' },
     { key: 'prerequest' as const, label: 'Pre-request Script' },
     { key: 'tests' as const, label: 'Tests' },
+    { key: 'docs' as const, label: 'Documentation' },
   ];
 
   return (
@@ -205,6 +210,41 @@ export default function ItemSettingsModal({ kind, name, auth, event, onSave, onC
                 className="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-y"
                 placeholder={"// pm.test('Status 200', () => pm.expect(pm.response.code).to.equal(200));"}
               />
+            </div>
+          )}
+
+          {/* ── Documentation ── */}
+          {activeTab === 'docs' && (
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-slate-400">Add notes or documentation for this {kind}. Supports Markdown.</p>
+                <div className="flex rounded overflow-hidden border border-slate-600 text-xs">
+                  <button
+                    onClick={() => setDocsMode('edit')}
+                    className={`px-3 py-1 transition-colors ${docsMode === 'edit' ? 'bg-slate-600 text-slate-100' : 'bg-slate-700 text-slate-400 hover:text-slate-200'}`}
+                  >Edit</button>
+                  <button
+                    onClick={() => setDocsMode('preview')}
+                    className={`px-3 py-1 transition-colors ${docsMode === 'preview' ? 'bg-slate-600 text-slate-100' : 'bg-slate-700 text-slate-400 hover:text-slate-200'}`}
+                  >Preview</button>
+                </div>
+              </div>
+              {docsMode === 'edit' ? (
+                <textarea
+                  value={description}
+                  onChange={e => setDescription(e.target.value)}
+                  rows={14}
+                  spellCheck={false}
+                  className="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-y"
+                  placeholder={'# My Collection\n\nDescribe what this collection contains and how to use it.'}
+                />
+              ) : (
+                <div
+                  className="markdown-preview bg-slate-800 border border-slate-600 rounded px-4 py-3 min-h-[200px] text-sm text-slate-200 overflow-auto"
+                  // Content is always user-authored, never from external sources
+                  dangerouslySetInnerHTML={{ __html: description ? marked.parse(description) as string : '<p class="text-slate-600 italic">Nothing to preview.</p>' }}
+                />
+              )}
             </div>
           )}
         </div>

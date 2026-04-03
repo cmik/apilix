@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { marked } from 'marked';
 import type { PostmanItem, PostmanRequest, PostmanHeader, PostmanQueryParam } from '../types';
 import { useApp } from '../store';
 import { executeRequest } from '../api';
@@ -20,7 +21,7 @@ const METHOD_COLORS: Record<string, string> = {
   WS: 'text-cyan-400',
 };
 
-const TABS = ['Params', 'Auth', 'Headers', 'Body', 'Pre-request', 'Tests'] as const;
+const TABS = ['Params', 'Auth', 'Headers', 'Body', 'Pre-request', 'Tests', 'Docs'] as const;
 type Tab = typeof TABS[number];
 
 // ─── Local editable state for a request ─────────────────────────────────────
@@ -49,6 +50,7 @@ function itemToEditState(item: PostmanItem) {
     bodyGraphqlQuery: req.body?.graphql?.query ?? '',
     bodyGraphqlVariables: req.body?.graphql?.variables ?? '',
     bodyFile: null as File | null,
+    description: item.description ?? '',
   };
 }
 
@@ -406,6 +408,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
   const [importMode, setImportMode] = useState<'curl' | 'raw'>('curl');
   const [importError, setImportError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [docsMode, setDocsMode] = useState<'edit' | 'preview'>('edit');
 
   // Swap edit state when active tab changes
   useEffect(() => {
@@ -656,6 +659,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
     if (!col || !activeTab.item.id) return;
     const updatedItem: PostmanItem = {
       ...activeTab.item,
+      description: edit.description || undefined,
       request: {
         ...(activeTab.item.request ?? {}),
         method: edit.method,
@@ -1085,6 +1089,40 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
               className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-y"
               placeholder={`pm.test("Status is 200", () => {\n  pm.response.to.have.status(200);\n});\n\npm.test("Response has id", () => {\n  const json = pm.response.json();\n  pm.expect(json.id).to.exist;\n});`}
             />
+          </div>
+        )}
+
+        {activeRequestTab === 'Docs' && (
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-slate-500">Add notes or documentation for this request. Supports Markdown.</p>
+              <div className="flex rounded overflow-hidden border border-slate-600 text-xs">
+                <button
+                  onClick={() => setDocsMode('edit')}
+                  className={`px-3 py-1 transition-colors ${docsMode === 'edit' ? 'bg-slate-600 text-slate-100' : 'bg-slate-800 text-slate-400 hover:text-slate-200'}`}
+                >Edit</button>
+                <button
+                  onClick={() => setDocsMode('preview')}
+                  className={`px-3 py-1 transition-colors ${docsMode === 'preview' ? 'bg-slate-600 text-slate-100' : 'bg-slate-800 text-slate-400 hover:text-slate-200'}`}
+                >Preview</button>
+              </div>
+            </div>
+            {docsMode === 'edit' ? (
+              <textarea
+                value={edit.description}
+                onChange={e => setEdit(x => x ? { ...x, description: e.target.value } : x)}
+                rows={16}
+                spellCheck={false}
+                className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-y"
+                placeholder={'# My Request\n\nDescribe what this request does, its parameters, and expected responses.'}
+              />
+            ) : (
+              <div
+                className="markdown-preview bg-slate-900 border border-slate-600 rounded px-4 py-3 min-h-[200px] text-sm text-slate-200 overflow-auto"
+                // Content is always user-authored, never from external sources
+                dangerouslySetInnerHTML={{ __html: edit.description ? marked.parse(edit.description) as string : '<p class="text-slate-600 italic">Nothing to preview.</p>' }}
+              />
+            )}
           </div>
         )}
       </div>}

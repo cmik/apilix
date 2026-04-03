@@ -387,9 +387,10 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
             name={item.name}
             auth={item.auth}
             event={item.event}
-            onSave={(auth, events) => {
+            description={item.description}
+            onSave={(auth, events, description) => {
               if (!item.id) return;
-              const updated: PostmanItem = { ...item, auth, event: events.length ? events : undefined };
+              const updated: PostmanItem = { ...item, auth, event: events.length ? events : undefined, description: description || undefined };
               dispatch({
                 type: 'UPDATE_COLLECTION',
                 payload: { ...collection, item: updateItemById(collection.item, item.id, updated) },
@@ -595,10 +596,11 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
           name={collection.info.name}
           auth={collection.auth}
           event={collection.event}
-          onSave={(auth, events) => {
+          description={collection.info.description}
+          onSave={(auth, events, description) => {
             dispatch({
               type: 'UPDATE_COLLECTION',
-              payload: { ...collection, auth, event: events.length ? events : undefined },
+              payload: { ...collection, auth, event: events.length ? events : undefined, info: { ...collection.info, description: description || undefined } },
             });
           }}
           onClose={() => setShowSettings(false)}
