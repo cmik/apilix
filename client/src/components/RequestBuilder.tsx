@@ -5,8 +5,9 @@ import { useApp } from '../store';
 import { executeRequest } from '../api';
 import { getUrlDisplay, buildVarMap, resolveVariables } from '../utils/variableResolver';
 import { updateItemById, renameItemById, resolveInheritedAuth } from '../utils/treeHelpers';
-import { parseCurlCommand, buildCurlCommand } from '../utils/curlUtils';
+import { parseCurlCommand } from '../utils/curlUtils';
 import GraphQLPanel from './GraphQLPanel';
+import CodeGenModal from './CodeGenModal';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'WS'];
 
@@ -478,10 +479,10 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
   const [dirty, setDirty] = useState(false);
   const [activeRequestTab, setActiveRequestTab] = useState<Tab>('Params');
   const [showImportDialog, setShowImportDialog] = useState(false);
+  const [showCodeGen, setShowCodeGen] = useState(false);
   const [importText, setImportText] = useState('');
   const [importMode, setImportMode] = useState<'curl' | 'raw'>('curl');
   const [importError, setImportError] = useState('');
-  const [copied, setCopied] = useState(false);
   const [docsMode, setDocsMode] = useState<'edit' | 'preview'>('edit');
 
   // Swap edit state when active tab changes
@@ -701,31 +702,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
   }
   _sendRef.current = handleSend;
 
-  async function handleCopyCurl() {
-    if (!edit) return;
-    const curl = buildCurlCommand({
-      method: edit.method,
-      url: edit.url,
-      headers: edit.headers,
-      bodyMode: edit.bodyMode,
-      bodyRaw: edit.bodyRaw,
-      bodyFormData: edit.bodyFormData,
-      bodyUrlEncoded: edit.bodyUrlEncoded,
-      authType: edit.authType,
-      authBearer: edit.authBearer,
-      authBasicUser: edit.authBasicUser,
-      authBasicPass: edit.authBasicPass,
-      authApiKeyName: edit.authApiKeyName,
-      authApiKeyValue: edit.authApiKeyValue,
-    });
-    try {
-      await navigator.clipboard.writeText(curl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // clipboard may be unavailable in insecure contexts
-    }
-  }
+
 
   function handleSave() {
     if (!activeTab || !edit) return;
@@ -844,15 +821,11 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
           </button>
           {edit.method !== 'WS' && (
             <button
-              onClick={handleCopyCurl}
-              title="Copy request as cURL command"
-              className={`px-3 py-2 border text-xs rounded transition-colors shrink-0 whitespace-nowrap ${
-                copied
-                  ? 'bg-green-700 border-green-600 text-green-100'
-                  : 'bg-slate-700 hover:bg-slate-600 border border-slate-500 text-slate-400 hover:text-slate-200'
-              }`}
+              onClick={() => setShowCodeGen(true)}
+              title="Generate code snippet"
+              className="px-3 py-2 bg-slate-700 hover:bg-slate-600 border border-slate-500 text-slate-400 hover:text-slate-200 text-xs rounded transition-colors shrink-0 whitespace-nowrap"
             >
-              {copied ? 'Copied!' : 'Copy cURL'}
+              Code
             </button>
           )}
           {dirty && (
@@ -1202,8 +1175,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
       </div>}
 
       {/* Import dialog */}
-      {showImportDialog && (
-        <div
+      {showImportDialog && (        <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
           onClick={e => { if (e.target === e.currentTarget) setShowImportDialog(false); }}
         >
@@ -1256,11 +1228,31 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
           </div>
         </div>
       )}
+
+      {/* Code generation modal */}
+      {showCodeGen && (
+        <CodeGenModal
+          params={{
+            method: edit.method,
+            url: edit.url,
+            headers: edit.headers,
+            bodyMode: edit.bodyMode,
+            bodyRaw: edit.bodyRaw,
+            bodyFormData: edit.bodyFormData,
+            bodyUrlEncoded: edit.bodyUrlEncoded,
+            authType: edit.authType,
+            authBearer: edit.authBearer,
+            authBasicUser: edit.authBasicUser,
+            authBasicPass: edit.authBasicPass,
+            authApiKeyName: edit.authApiKeyName,
+            authApiKeyValue: edit.authApiKeyValue,
+          }}
+          onClose={() => setShowCodeGen(false)}
+        />
+      )}
     </div>
   );
 }
-
-// ─── Import parsers ──────────────────────────────────────────────────────────
 
 function parseRawHttp(rawStr: string): Partial<EditState> | null {
   const text = rawStr.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
