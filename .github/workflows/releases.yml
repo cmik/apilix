@@ -22,6 +22,8 @@ jobs:
         run: npm run setup
 
       - name: Build macOS DMG
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run dist:mac
 
       - name: Upload DMG to Release
@@ -44,6 +46,8 @@ jobs:
         run: npm run setup
 
       - name: Build Windows EXE
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run dist:win
 
       - name: Upload EXE to Release
