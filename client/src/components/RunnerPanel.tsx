@@ -215,6 +215,159 @@ function IterationBlock({ iter }: { iter: RunnerIteration }) {
   );
 }
 
+// ─── Performance Metrics ─────────────────────────────────────────────────────
+
+interface PerfDataPoint {
+  name: string;
+  method: string;
+  time: number;
+}
+
+interface PerfMetrics {
+  min: number;
+  max: number;
+  avg: number;
+  p50: number;
+  p95: number;
+  p99: number;
+  totalRequests: number;
+  dataPoints: PerfDataPoint[];
+}
+
+function computePerformanceMetrics(results: RunnerIteration[]): PerfMetrics | null {
+  const dataPoints: PerfDataPoint[] = [];
+  for (const iter of results) {
+    for (const r of iter.results) {
+      if (!r.error) {
+        dataPoints.push({ name: r.name, method: r.method, time: r.responseTime });
+      }
+    }
+  }
+  if (dataPoints.length === 0) return null;
+
+  const times = [...dataPoints.map(d => d.time)].sort((a, b) => a - b);
+  const sum = times.reduce((a, b) => a + b, 0);
+  const percentile = (p: number) => {
+    const idx = Math.ceil((p / 100) * times.length) - 1;
+    return times[Math.max(0, idx)];
+  };
+
+  return {
+    min: times[0],
+    max: times[times.length - 1],
+    avg: Math.round(sum / times.length),
+    p50: percentile(50),
+    p95: percentile(95),
+    p99: percentile(99),
+    totalRequests: dataPoints.length,
+    dataPoints,
+  };
+}
+
+function barColor(time: number): string {
+  if (time < 200) return '#4ade80';
+  if (time < 800) return '#fb923c';
+  return '#f87171';
+}
+
+function ResponseTimeChart({ dataPoints, max }: { dataPoints: PerfDataPoint[]; max: number }) {
+  const chartHeight = 100;
+  const barWidth = Math.max(6, Math.min(28, Math.floor(560 / Math.max(dataPoints.length, 1)) - 2));
+  const gap = 2;
+  const svgWidth = Math.max(dataPoints.length * (barWidth + gap), 400);
+
+  return (
+    <div className="overflow-x-auto">
+      <svg height={chartHeight + 4} width={svgWidth} className="block">
+        <line x1={0} y1={chartHeight} x2={svgWidth} y2={chartHeight} stroke="#475569" strokeWidth={1} />
+        {dataPoints.map((d, i) => {
+          const barH = max > 0 ? Math.max(2, Math.round((d.time / max) * chartHeight)) : 2;
+          const x = i * (barWidth + gap);
+          const y = chartHeight - barH;
+          return (
+            <g key={i}>
+              <rect x={x} y={y} width={barWidth} height={barH} fill={barColor(d.time)} rx={2} opacity={0.85}>
+                <title>{d.name} ({d.method}): {d.time}ms</title>
+              </rect>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function PerformanceMetricsPanel({ results }: { results: RunnerIteration[] }) {
+  const [open, setOpen] = useState(true);
+  const metrics = computePerformanceMetrics(results);
+  if (!metrics) return null;
+
+  const statCards = [
+    { label: 'Min', value: metrics.min, color: 'text-green-400' },
+    { label: 'Avg', value: metrics.avg, color: 'text-slate-200' },
+    { label: 'Max', value: metrics.max, color: 'text-red-400' },
+    { label: 'P50', value: metrics.p50, color: 'text-blue-400' },
+    { label: 'P95', value: metrics.p95, color: 'text-yellow-400' },
+    { label: 'P99', value: metrics.p99, color: 'text-orange-400' },
+  ];
+
+  return (
+    <div className="bg-slate-800 border border-slate-700 rounded-lg shrink-0">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-2 w-full px-4 py-3 text-left hover:bg-slate-700/40 transition-colors rounded-lg"
+      >
+        <span className="text-sm font-semibold text-slate-200 flex-1">⚡ Performance Metrics</span>
+        {!open && (
+          <span className="text-xs text-slate-500 font-mono">
+            avg {metrics.avg}ms · min {metrics.min}ms · max {metrics.max}ms
+          </span>
+        )}
+        <span className="text-slate-500 text-xs ml-2">{open ? '▴' : '▾'}</span>
+      </button>
+      {open && (
+        <div className="px-4 pb-4 flex flex-col gap-3">
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+            {statCards.map(s => (
+              <div key={s.label} className="bg-slate-700/50 rounded p-2.5 text-center">
+                <div className={`text-lg font-bold font-mono ${s.color}`}>
+                  {s.value}
+                  <span className="text-xs font-normal text-slate-500 ml-0.5">ms</span>
+                </div>
+                <div className="text-xs text-slate-500 mt-0.5">{s.label}</div>
+              </div>
+            ))}
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between flex-wrap gap-1">
+              <span className="text-xs text-slate-500">
+                Response times · {metrics.totalRequests} request{metrics.totalRequests !== 1 ? 's' : ''}
+              </span>
+              <div className="flex items-center gap-3 text-xs text-slate-400">
+                <span className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-sm inline-block" style={{ background: '#4ade80' }} />
+                  {'< 200ms'}
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-sm inline-block" style={{ background: '#fb923c' }} />
+                  200–800ms
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-sm inline-block" style={{ background: '#f87171' }} />
+                  {'> 800ms'}
+                </span>
+              </div>
+            </div>
+            <div className="bg-slate-900/40 rounded border border-slate-700 p-2">
+              <ResponseTimeChart dataPoints={metrics.dataPoints} max={metrics.max} />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── CSV preview helper ──────────────────────────────────────────────────────
 
 function parseCSVLine(line: string): string[] {
@@ -715,6 +868,10 @@ export default function RunnerPanel() {
                 </div>
               ))}
             </div>
+          )}
+
+          {!isRunning && results.length > 0 && (
+            <PerformanceMetricsPanel results={results} />
           )}
 
           {results.length === 0 ? (
