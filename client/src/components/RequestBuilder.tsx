@@ -5,6 +5,7 @@ import { executeRequest } from '../api';
 import { getUrlDisplay, buildVarMap, resolveVariables } from '../utils/variableResolver';
 import { updateItemById, renameItemById, resolveInheritedAuth } from '../utils/treeHelpers';
 import { parseCurlCommand, buildCurlCommand } from '../utils/curlUtils';
+import GraphQLPanel from './GraphQLPanel';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'WS'];
 
@@ -931,30 +932,14 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
               />
             )}
             {edit.bodyMode === 'graphql' && (
-              <div className="flex flex-col gap-3">
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs text-slate-400 font-medium">Query</label>
-                  <textarea
-                    value={edit.bodyGraphqlQuery}
-                    onChange={e => setEdit(x => x ? { ...x, bodyGraphqlQuery: e.target.value } : x)}
-                    rows={8}
-                    className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-y"
-                    placeholder={"query {\n  ...\n}"}
-                    spellCheck={false}
-                  />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs text-slate-400 font-medium">Variables</label>
-                  <textarea
-                    value={edit.bodyGraphqlVariables}
-                    onChange={e => setEdit(x => x ? { ...x, bodyGraphqlVariables: e.target.value } : x)}
-                    rows={4}
-                    className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-y"
-                    placeholder={'{ "variable": "value" }'}
-                    spellCheck={false}
-                  />
-                </div>
-              </div>
+              <GraphQLPanel
+                query={edit.bodyGraphqlQuery}
+                variables={edit.bodyGraphqlVariables}
+                url={resolveVariables(edit.url, allVars)}
+                headers={edit.headers.filter(h => !h.disabled)}
+                onQueryChange={q => setEdit(x => x ? { ...x, bodyGraphqlQuery: q } : x)}
+                onVariablesChange={v => setEdit(x => x ? { ...x, bodyGraphqlVariables: v } : x)}
+              />
             )}
             {edit.bodyMode === 'file' && (
               <div className="flex flex-col gap-2">

@@ -132,3 +132,34 @@ export async function checkHealth(): Promise<boolean> {
     return false;
   }
 }
+
+const GRAPHQL_INTROSPECTION_QUERY = `{__schema{queryType{name}mutationType{name}subscriptionType{name}types{kind name fields(includeDeprecated:true){name type{kind name ofType{kind name ofType{kind name ofType{kind name}}}}args{name type{kind name ofType{kind name ofType{kind name}}}}}}}}`;
+
+export async function graphqlIntrospect(
+  url: string,
+  headers: Array<{ key: string; value: string }>,
+): Promise<ExecuteResult> {
+  const item: PostmanItem = {
+    name: '__introspection__',
+    request: {
+      method: 'POST',
+      url: { raw: url },
+      header: [
+        { key: 'Content-Type', value: 'application/json' },
+        ...headers,
+      ],
+      body: {
+        mode: 'graphql',
+        graphql: { query: GRAPHQL_INTROSPECTION_QUERY },
+      },
+    },
+  };
+  return executeRequest({
+    item,
+    environment: {},
+    collectionVariables: {},
+    globals: {},
+    collVars: [],
+    cookies: {},
+  });
+}
