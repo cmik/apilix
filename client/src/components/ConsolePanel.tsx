@@ -10,23 +10,23 @@ const BROADCAST_CHANNEL = 'apilix-console-v1';
 
 function methodBadge(method: string): string {
   const map: Record<string, string> = {
-    GET: 'text-green-400 bg-green-900/30',
-    POST: 'text-blue-400 bg-blue-900/30',
-    PUT: 'text-yellow-400 bg-yellow-900/30',
-    PATCH: 'text-orange-400 bg-orange-900/30',
-    DELETE: 'text-red-400 bg-red-900/30',
-    HEAD: 'text-purple-400 bg-purple-900/30',
-    OPTIONS: 'text-slate-300 bg-slate-700',
+    GET: 'text-green-400 bg-green-400/15',
+    POST: 'text-blue-400 bg-blue-400/15',
+    PUT: 'text-yellow-400 bg-yellow-400/15',
+    PATCH: 'text-orange-400 bg-orange-400/15',
+    DELETE: 'text-red-400 bg-red-400/15',
+    HEAD: 'text-purple-400 bg-purple-400/15',
+    OPTIONS: 'text-slate-400 bg-slate-400/15',
   };
-  return map[method.toUpperCase()] ?? 'text-slate-300 bg-slate-700';
+  return map[method.toUpperCase()] ?? 'text-slate-400 bg-slate-400/15';
 }
 
 function statusBadge(status: number): string {
-  if (status >= 500) return 'text-red-400 bg-red-900/30';
-  if (status >= 400) return 'text-yellow-400 bg-yellow-900/30';
-  if (status >= 300) return 'text-sky-400 bg-sky-900/30';
-  if (status >= 200) return 'text-green-400 bg-green-900/30';
-  return 'text-red-400 bg-red-900/30';
+  if (status >= 500) return 'text-red-400 bg-red-400/15';
+  if (status >= 400) return 'text-yellow-400 bg-yellow-400/15';
+  if (status >= 300) return 'text-sky-400 bg-sky-400/15';
+  if (status >= 200) return 'text-green-400 bg-green-400/15';
+  return 'text-red-400 bg-red-400/15';
 }
 
 function formatTime(ts: number): string {
@@ -59,8 +59,8 @@ function EntryDetail({ entry }: { entry: ConsoleEntry }) {
   const [tab, setTab] = useState<'response' | 'request' | 'logs'>('response');
 
   return (
-    <div className="bg-slate-900 border-t-2 border-orange-500/30 text-xs">
-      <div className="flex border-b border-slate-700/60">
+    <div className="bg-slate-900 border-t-2 border-orange-500/40 text-xs">
+      <div className="flex border-b border-slate-800">
         {(['response', 'request'] as const).map(t => (
           <button
             key={t}
@@ -96,15 +96,15 @@ function EntryDetail({ entry }: { entry: ConsoleEntry }) {
           <div className="space-y-2.5">
             <div>
               <span className="text-slate-500">URL  </span>
-              <span className="text-slate-200 break-all">{entry.url}</span>
+              <span className="text-slate-300 break-all">{entry.url}</span>
             </div>
             {entry.requestHeaders.length > 0 && (
               <div>
                 <p className="text-slate-500 mb-1">Headers</p>
                 {entry.requestHeaders.map((h, i) => (
                   <div key={i} className="flex gap-2">
-                    <span className="text-slate-400 shrink-0">{h.key}:</span>
-                    <span className="text-slate-200 break-all">{h.value}</span>
+                    <span className="text-slate-500 shrink-0">{h.key}:</span>
+                    <span className="text-slate-300 break-all">{h.value}</span>
                   </div>
                 ))}
               </div>
@@ -112,7 +112,7 @@ function EntryDetail({ entry }: { entry: ConsoleEntry }) {
             {entry.requestBody && (
               <div>
                 <p className="text-slate-500 mb-1">Body</p>
-                <pre className="bg-slate-800 rounded p-2 text-slate-200 whitespace-pre-wrap break-all">
+                <pre className="bg-slate-800/60 rounded p-2 text-slate-300 whitespace-pre-wrap break-all">
                   {tryFormat(entry.requestBody)}
                 </pre>
               </div>
@@ -129,15 +129,15 @@ function EntryDetail({ entry }: { entry: ConsoleEntry }) {
                 <div className="flex gap-6 flex-wrap">
                   <span>
                     <span className="text-slate-500">Status  </span>
-                    <span className="text-slate-200">{entry.response.status} {entry.response.statusText}</span>
+                    <span className="text-slate-300">{entry.response.status} {entry.response.statusText}</span>
                   </span>
                   <span>
                     <span className="text-slate-500">Time  </span>
-                    <span className="text-slate-200">{entry.response.responseTime} ms</span>
+                    <span className="text-slate-300">{entry.response.responseTime} ms</span>
                   </span>
                   <span>
                     <span className="text-slate-500">Size  </span>
-                    <span className="text-slate-200">{entry.response.size} B</span>
+                    <span className="text-slate-300">{entry.response.size} B</span>
                   </span>
                 </div>
 
@@ -146,8 +146,8 @@ function EntryDetail({ entry }: { entry: ConsoleEntry }) {
                     <p className="text-slate-500 mb-1">Headers</p>
                     {Object.entries(entry.response.headers).map(([k, v]) => (
                       <div key={k} className="flex gap-2">
-                        <span className="text-slate-400 shrink-0">{k}:</span>
-                        <span className="text-slate-200 break-all">{v}</span>
+                        <span className="text-slate-500 shrink-0">{k}:</span>
+                        <span className="text-slate-300 break-all">{v}</span>
                       </div>
                     ))}
                   </div>
@@ -156,7 +156,7 @@ function EntryDetail({ entry }: { entry: ConsoleEntry }) {
                 {entry.response.body && (
                   <div>
                     <p className="text-slate-500 mb-1">Body</p>
-                    <pre className="bg-slate-800 rounded p-2 text-slate-200 whitespace-pre-wrap break-all max-h-36 overflow-auto">
+                    <pre className="bg-slate-800/60 rounded p-2 text-slate-300 whitespace-pre-wrap break-all max-h-36 overflow-auto">
                       {tryFormat(entry.response.body)}
                     </pre>
                   </div>
@@ -191,32 +191,49 @@ function EntryDetail({ entry }: { entry: ConsoleEntry }) {
 
 // ─── Build standalone HTML for "Open in new window" ──────────────────────────
 
-function buildHtml(logs: ConsoleEntry[]): string {
+function buildHtml(logs: ConsoleEntry[], theme: 'dark' | 'light'): string {
   // Escape </script> sequences so they don't break the inline script tag
   const initialData = JSON.stringify(logs).replace(/<\/script>/gi, '<\\/script>');
+  const lightClass = theme === 'light' ? ' class="light"' : '';
 
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="en"${lightClass}>
 <head>
 <meta charset="UTF-8">
 <title>Console — APILIX</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:ui-monospace,'Cascadia Code',Consolas,monospace;background:#020617;color:#cbd5e1;font-size:12px;display:flex;flex-direction:column;height:100vh;overflow:hidden}
-#hdr{display:flex;align-items:center;gap:8px;padding:5px 12px;border-bottom:1px solid #1e293b;background:#0f172a;flex-shrink:0;user-select:none}
-#title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8}
-#cnt{font-size:11px;color:#334155;margin-left:2px}
-#filter{flex:1;min-width:0;background:#1e293b;border:1px solid #334155;color:#cbd5e1;font-family:inherit;font-size:11px;padding:3px 8px;border-radius:4px;outline:none}
+:root{
+  --bg:#020617;--bg-hdr:#0f172a;--bg-row-hover:#0f172a;--bg-row-sel:#1e293b;
+  --bg-input:#1e293b;--bg-pre:#1e293b;
+  --border:#1e293b;--border-row:rgba(30,41,59,.8);--border-input:#334155;
+  --text:#cbd5e1;--text-dim:#64748b;--text-dimmer:#334155;--text-title:#94a3b8;
+  --text-input:#cbd5e1;--text-ph:#475569;--text-btn-hover:#e2e8f0;
+  --scrollbar:#334155;--scrollbar-h:#475569;
+}
+html.light{
+  --bg:#ffffff;--bg-hdr:#f8fafc;--bg-row-hover:#f8fafc;--bg-row-sel:#f1f5f9;
+  --bg-input:#f1f5f9;--bg-pre:#f1f5f9;
+  --border:#e2e8f0;--border-row:rgba(226,232,240,.8);--border-input:#cbd5e1;
+  --text:#1e293b;--text-dim:#64748b;--text-dimmer:#94a3b8;--text-title:#64748b;
+  --text-input:#1e293b;--text-ph:#94a3b8;--text-btn-hover:#1e293b;
+  --scrollbar:#cbd5e1;--scrollbar-h:#94a3b8;
+}
+body{font-family:ui-monospace,'Cascadia Code',Consolas,monospace;background:var(--bg);color:var(--text);font-size:12px;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+#hdr{display:flex;align-items:center;gap:8px;padding:5px 12px;border-bottom:1px solid var(--border);background:var(--bg-hdr);flex-shrink:0;user-select:none}
+#title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-title)}
+#cnt{font-size:11px;color:var(--text-dimmer);margin-left:2px}
+#filter{flex:1;min-width:0;background:var(--bg-input);border:1px solid var(--border-input);color:var(--text-input);font-family:inherit;font-size:11px;padding:3px 8px;border-radius:4px;outline:none}
 #filter:focus{border-color:#f97316}
-#filter::placeholder{color:#475569}
-#clearBtn{background:transparent;border:1px solid #334155;color:#64748b;font-size:11px;padding:3px 10px;border-radius:4px;cursor:pointer;font-family:inherit;flex-shrink:0}
-#clearBtn:hover{color:#e2e8f0;border-color:#64748b}
+#filter::placeholder{color:var(--text-ph)}
+#clearBtn{background:transparent;border:1px solid var(--border-input);color:var(--text-dim);font-size:11px;padding:3px 10px;border-radius:4px;cursor:pointer;font-family:inherit;flex-shrink:0}
+#clearBtn:hover{color:var(--text-btn-hover);border-color:var(--text-dim)}
 #list{flex:1;overflow-y:auto;min-height:0}
-.empty{display:flex;align-items:center;justify-content:center;height:100%;color:#1e293b;font-style:italic;font-size:12px;user-select:none}
-.row{border-bottom:1px solid rgba(30,41,59,.8);cursor:pointer;user-select:none}
-.row:hover .row-inner{background:#0f172a}
+.empty{display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-dimmer);font-style:italic;font-size:12px;user-select:none}
+.row{border-bottom:1px solid var(--border-row);cursor:pointer;user-select:none}
+.row:hover .row-inner{background:var(--bg-row-hover)}
 .row.sel{border-left:2px solid #f97316}
-.row.sel .row-inner{background:#1e293b}
+.row.sel .row-inner{background:var(--bg-row-sel)}
 .row-inner{display:flex;align-items:center;gap:6px;padding:5px 12px}
 .badge{font-size:10px;font-weight:700;padding:1px 5px;border-radius:3px;flex-shrink:0;font-family:inherit}
 .mGET{color:#4ade80;background:rgba(74,222,128,.15)}
@@ -230,31 +247,31 @@ body{font-family:ui-monospace,'Cascadia Code',Consolas,monospace;background:#020
 .s3{color:#38bdf8;background:rgba(56,189,248,.15)}
 .s4{color:#facc15;background:rgba(250,204,21,.15)}
 .s5,.sE{color:#f87171;background:rgba(248,113,113,.15)}
-.url{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;color:#cbd5e1;font-family:inherit}
-.timing{color:#64748b;flex-shrink:0;font-variant-numeric:tabular-nums}
-.ts{color:#334155;flex-shrink:0;font-variant-numeric:tabular-nums}
-.chev{width:12px;height:12px;flex-shrink:0;color:#64748b;transition:transform .15s}
+.url{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;color:var(--text);font-family:inherit}
+.timing{color:var(--text-dim);flex-shrink:0;font-variant-numeric:tabular-nums}
+.ts{color:var(--text-dimmer);flex-shrink:0;font-variant-numeric:tabular-nums}
+.chev{width:12px;height:12px;flex-shrink:0;color:var(--text-dim);transition:transform .15s}
 .sel .chev{transform:rotate(180deg);color:#f97316}
-.detail{background:#0f172a;border-top:2px solid rgba(249,115,22,.25)}
-.dtabs{display:flex;border-bottom:1px solid #1e293b}
-.dtab{padding:5px 14px;font-size:11px;cursor:pointer;border:none;border-bottom:2px solid transparent;color:#64748b;background:transparent;font-family:inherit;text-transform:capitalize}
-.dtab:hover{color:#94a3b8}
+.detail{background:var(--bg-hdr);border-top:2px solid rgba(249,115,22,.25)}
+.dtabs{display:flex;border-bottom:1px solid var(--border)}
+.dtab{padding:5px 14px;font-size:11px;cursor:pointer;border:none;border-bottom:2px solid transparent;color:var(--text-dim);background:transparent;font-family:inherit;text-transform:capitalize}
+.dtab:hover{color:var(--text)}
 .dtab.act{color:#f97316;border-bottom-color:#f97316}
 .dbody{padding:10px 12px;overflow:auto;max-height:220px;font-size:11px;line-height:1.7}
-.dlabel{color:#64748b;margin-bottom:4px}
+.dlabel{color:var(--text-dim);margin-bottom:4px}
 .dsect{margin-bottom:10px}
 .kv{display:flex;gap:8px}
-.kvk{color:#94a3b8;flex-shrink:0}
-.kvv{color:#cbd5e1;word-break:break-all}
+.kvk{color:var(--text-dim);flex-shrink:0}
+.kvv{color:var(--text);word-break:break-all}
 .meta{display:flex;gap:20px;flex-wrap:wrap;margin-bottom:10px}
-.metai{color:#cbd5e1}
-.mlab{color:#64748b}
-pre.bp{background:#1e293b;border-radius:4px;padding:8px;color:#cbd5e1;white-space:pre-wrap;word-break:break-all;max-height:140px;overflow:auto;font-family:inherit;font-size:11px;margin:0}
+.metai{color:var(--text)}
+.mlab{color:var(--text-dim)}
+pre.bp{background:var(--bg-pre);border-radius:4px;padding:8px;color:var(--text);white-space:pre-wrap;word-break:break-all;max-height:140px;overflow:auto;font-family:inherit;font-size:11px;margin:0}
 .err-text{color:#f87171}
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:#334155;border-radius:3px}
-::-webkit-scrollbar-thumb:hover{background:#475569}
+::-webkit-scrollbar-thumb{background:var(--scrollbar);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--scrollbar-h)}
 </style>
 </head>
 <body>
@@ -441,6 +458,10 @@ document.getElementById('clearBtn').addEventListener('click', function() {
 var ch = new BroadcastChannel('apilix-console-v1');
 ch.onmessage = function(ev) {
   if (ev.data && ev.data.type === 'LOGS_UPDATE') { logs = ev.data.logs; render(); }
+  if (ev.data && ev.data.type === 'THEME_CHANGE') {
+    if (ev.data.theme === 'light') document.documentElement.classList.add('light');
+    else document.documentElement.classList.remove('light');
+  }
 };
 
 render();
@@ -455,9 +476,10 @@ interface ConsolePanelProps {
   height: number;
   onHeightChange: (h: number) => void;
   onClose: () => void;
+  theme: 'dark' | 'light';
 }
 
-export default function ConsolePanel({ height, onHeightChange, onClose }: ConsolePanelProps) {
+export default function ConsolePanel({ height, onHeightChange, onClose, theme }: ConsolePanelProps) {
   const { state, dispatch } = useApp();
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -482,6 +504,14 @@ export default function ConsolePanel({ height, onHeightChange, onClose }: Consol
       ch.postMessage({ type: 'LOGS_UPDATE', logs });
     }
   }, [logs]);
+
+  // Apply theme changes directly to the detached window's DOM
+  useEffect(() => {
+    if (!winRef.current || winRef.current.closed) return;
+    const html = winRef.current.document.documentElement;
+    if (theme === 'light') html.classList.add('light');
+    else html.classList.remove('light');
+  }, [theme]);
 
   // Listen for CLEAR from detached window
   useEffect(() => {
@@ -546,7 +576,7 @@ export default function ConsolePanel({ height, onHeightChange, onClose }: Consol
       channelRef.current = new BroadcastChannel(BROADCAST_CHANNEL);
     }
     win.document.open();
-    win.document.write(buildHtml(logs));
+    win.document.write(buildHtml(logs, theme));
     win.document.close();
     onClose();
   }
@@ -621,10 +651,10 @@ export default function ConsolePanel({ height, onHeightChange, onClose }: Consol
             <div
               key={entry.id}
               onClick={() => toggleEntry(entry.id)}
-              className={`cursor-pointer border-b border-slate-800/50 transition-colors select-none ${
+              className={`cursor-pointer border-b border-slate-800/80 transition-colors select-none ${
                 selectedId === entry.id
                   ? 'bg-slate-800 border-l-2 border-l-orange-500'
-                  : 'hover:bg-slate-800/70'
+                  : 'hover:bg-slate-900'
               }`}
             >
               {/* Row */}
@@ -639,17 +669,17 @@ export default function ConsolePanel({ height, onHeightChange, onClose }: Consol
                   </span>
                 )}
 
-                <span className="flex-1 text-slate-300 truncate font-mono min-w-0">
+                <span className={`flex-1 truncate font-mono min-w-0 ${selectedId === entry.id ? 'text-slate-200' : 'text-slate-300'}`}>
                   {entry.url}
                 </span>
 
                 {entry.response && (
-                  <span className="text-slate-500 shrink-0 tabular-nums">
+                  <span className="shrink-0 tabular-nums text-slate-500">
                     {entry.response.responseTime} ms
                   </span>
                 )}
 
-                <span className="text-slate-700 shrink-0 tabular-nums">
+                <span className="shrink-0 tabular-nums text-slate-600">
                   {formatTime(entry.timestamp)}
                 </span>
 

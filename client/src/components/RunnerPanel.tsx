@@ -198,8 +198,8 @@ function IterationBlock({ iter }: { iter: RunnerIteration }) {
           </span>
         )}
         <span className={`ml-auto text-xs font-medium px-2 py-0.5 rounded ${
-          errors > 0 ? 'text-red-300 bg-red-900/30' :
-          total > 0 ? (passed === total ? 'text-green-300 bg-green-900/30' : 'text-yellow-300 bg-yellow-900/30') :
+          errors > 0 ? 'text-red-300 bg-red-800/60' :
+          total > 0 ? (passed === total ? 'text-green-300 bg-green-800/60' : 'text-yellow-300 bg-yellow-800/60') :
           'text-slate-400'
         }`}>
           {errors > 0 ? `${errors} error(s)` : total > 0 ? `${passed}/${total} tests` : `${iter.results.length} requests`}

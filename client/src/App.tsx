@@ -220,6 +220,11 @@ type ServerStatus = 'checking' | 'online' | 'offline';
 
 export default function App() {
   const { state, dispatch } = useApp();
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    const saved = localStorage.getItem('apilix_theme');
+    if (saved === 'light' || saved === 'dark') return saved;
+    return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  });
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR);
   const [envQuickOpen, setEnvQuickOpen] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
@@ -230,6 +235,14 @@ export default function App() {
   const dragging = useRef(false);
   const startX = useRef(0);
   const startWidth = useRef(0);
+
+  // ── Theme ──────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const html = document.documentElement;
+    if (theme === 'light') html.classList.add('light');
+    else html.classList.remove('light');
+    localStorage.setItem('apilix_theme', theme);
+  }, [theme]);
 
   // ── Global keyboard shortcuts ──────────────────────────────────────────────
   useEffect(() => {
@@ -366,6 +379,23 @@ export default function App() {
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* Top bar */}
         <div className="flex items-center justify-end gap-2 px-4 py-2 border-b border-slate-700 bg-slate-900 shrink-0">
+          {/* Theme toggle */}
+          <button
+            onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+            title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+            className="p-1.5 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-700 transition-colors"
+          >
+            {theme === 'dark' ? (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <circle cx="12" cy="12" r="4" />
+                <path strokeLinecap="round" d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+              </svg>
+            )}
+          </button>
           {/* Cookie manager button */}
           <button
             onClick={() => setCookieManagerOpen(o => !o)}
@@ -422,6 +452,7 @@ export default function App() {
             height={consoleHeight}
             onHeightChange={setConsoleHeight}
             onClose={() => setConsoleOpen(false)}
+            theme={theme}
           />
         </div>
       </div>

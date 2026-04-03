@@ -75,10 +75,9 @@ function Tab({
         renaming ? 'max-w-[260px]' : 'max-w-[200px]'
       } ${isDragging ? 'opacity-40' : ''} ${
         isActive
-          ? 'bg-slate-850 text-slate-100 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-orange-500'
+          ? 'bg-slate-950 text-slate-100 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-orange-500'
           : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
       }`}
-      style={{ background: isActive ? 'rgb(15 23 42)' : undefined }}
       title={renaming ? undefined : name}
     >
       <span className={`text-[10px] font-bold shrink-0 ${methodColor}`}>{method.slice(0, 4)}</span>

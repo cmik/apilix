@@ -44,3 +44,122 @@
     tab-size: 2;
   }
 }
+
+/* ─── Light theme overrides ─────────────────────────────────────────────── */
+
+html.light,
+html.light body,
+html.light #root {
+  background: #ffffff;
+  color: #0f172a;
+}
+
+html.light ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+}
+html.light ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+html.light textarea,
+html.light input,
+html.light select {
+  color-scheme: light;
+}
+
+/* Background remapping (dark → light) */
+html.light .bg-slate-950 { background-color: #ffffff; }
+html.light .bg-slate-900 { background-color: #f8fafc; }
+html.light .bg-slate-800 { background-color: #f1f5f9; }
+html.light .bg-slate-700 { background-color: #e2e8f0; }
+html.light .bg-slate-700\/50 { background-color: #f1f5f9; }
+html.light .bg-slate-700\/60 { background-color: #f1f5f9; }
+html.light .bg-slate-600 { background-color: #cbd5e1; }
+
+/* Opacity-variant backgrounds */
+html.light .bg-slate-900\/50 { background-color: rgb(248 250 252 / 0.5); }
+html.light .bg-slate-800\/50 { background-color: rgb(241 245 249 / 0.5); }
+html.light .bg-slate-950\/90 { background-color: rgb(255 255 255 / 0.9); }
+
+/* Text remapping */
+html.light .text-slate-100 { color: #0f172a; }
+html.light .text-slate-200 { color: #1e293b; }
+html.light .text-slate-300 { color: #334155; }
+html.light .text-slate-400 { color: #475569; }
+html.light .text-slate-500 { color: #64748b; }
+html.light .text-slate-600 { color: #94a3b8; }
+
+/* Border remapping */
+html.light .border-slate-800 { border-color: #e2e8f0; }
+html.light .border-slate-700 { border-color: #e2e8f0; }
+html.light .border-slate-600 { border-color: #cbd5e1; }
+
+/* Hover background remapping */
+html.light .hover\:bg-slate-800:hover { background-color: #f1f5f9; }
+html.light .hover\:bg-slate-700:hover { background-color: #e2e8f0; }
+html.light .hover\:bg-slate-900:hover { background-color: #f8fafc; }
+html.light .hover\:bg-slate-600:hover { background-color: #cbd5e1; }
+
+/* Hover text remapping */
+html.light .hover\:text-slate-200:hover { color: #1e293b; }
+html.light .hover\:text-slate-100:hover { color: #0f172a; }
+
+/* Focus border remapping */
+html.light .focus\:border-orange-500:focus { border-color: #f97316; }
+
+/* ─── Tab bar ─────────────────────────────────────────────────────────────── */
+html.light .border-slate-800 { border-color: #e2e8f0; }
+
+/* Tab bar container */
+html.light .bg-slate-900.border-b { background-color: #f1f5f9; }
+
+/* Inactive tab hover */
+html.light .hover\:bg-slate-800\/60:hover { background-color: rgb(226 232 240 / 0.6); }
+
+/* ─── Light mode: Runner panel ───────────────────────────────────────────── */
+
+/* Collection Runner block title */
+html.light .text-white { color: #0f172a; }
+
+/* Request selection & execution order panel backgrounds */
+html.light .bg-slate-700\/40 { background-color: rgb(241 245 249 / 0.6); }
+
+/* Folder/request row hover in selection tree and execution order */
+html.light .hover\:bg-slate-600\/30:hover { background-color: rgb(226 232 240 / 0.5); }
+
+/* Iteration block header background */
+html.light .bg-slate-800 { background-color: #f1f5f9; }
+
+/* Iteration block content background */
+html.light .bg-slate-900\/30 { background-color: rgb(248 250 252 / 0.8); }
+
+/* Result row hover */
+html.light .hover\:bg-slate-700\/30:hover { background-color: rgb(226 232 240 / 0.5); }
+
+/* Result row test expand background */
+html.light .bg-slate-800\/30 { background-color: rgb(241 245 249 / 0.6); }
+
+/* Tests badge */
+html.light .bg-green-800\/60 { background-color: #dcfce7; }
+html.light .text-green-300  { color: #15803d; }
+html.light .bg-red-800\/60  { background-color: #fee2e2; }
+html.light .text-red-300    { color: #b91c1c; }
+html.light .bg-yellow-800\/60 { background-color: #fef9c3; }
+html.light .text-yellow-300   { color: #a16207; }
+
+
+/* keys */
+html.light .text-amber-300  { color: #b45309; } /* amber-700 */
+
+/* strings */
+html.light .text-emerald-400 { color: #047857; } /* emerald-700 */
+
+/* numbers */
+html.light .text-sky-300    { color: #0369a1; } /* sky-700 */
+
+/* booleans */
+html.light .text-purple-400  { color: #7e22ce; } /* purple-700 */
+
+/* brackets, braces, commas, null */
+html.light .text-slate-300  { color: #334155; }
+html.light .text-slate-400  { color: #475569; }
+html.light .text-slate-500  { color: #64748b; }
