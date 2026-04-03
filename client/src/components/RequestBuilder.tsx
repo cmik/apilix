@@ -6,7 +6,7 @@ import { getUrlDisplay, buildVarMap, resolveVariables } from '../utils/variableR
 import { updateItemById, renameItemById, resolveInheritedAuth } from '../utils/treeHelpers';
 import { parseCurlCommand, buildCurlCommand } from '../utils/curlUtils';
 
-const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
+const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'WS'];
 
 const METHOD_COLORS: Record<string, string> = {
   GET: 'text-green-400',
@@ -16,6 +16,7 @@ const METHOD_COLORS: Record<string, string> = {
   DELETE: 'text-red-400',
   HEAD: 'text-purple-400',
   OPTIONS: 'text-slate-400',
+  WS: 'text-cyan-400',
 };
 
 const TABS = ['Params', 'Auth', 'Headers', 'Body', 'Pre-request', 'Tests'] as const;
@@ -134,6 +135,195 @@ function KvTable({
       >
         + Add row
       </button>
+    </div>
+  );
+}
+
+// ─── WebSocket Panel ────────────────────────────────────────────────────────
+
+interface WsMessage {
+  id: string;
+  direction: 'sent' | 'received' | 'info' | 'error';
+  text: string;
+  timestamp: number;
+}
+
+type WsStatus = 'disconnected' | 'connecting' | 'connected';
+
+function WebSocketPanel({ url, headers }: {
+  url: string;
+  headers: Array<{ key: string; value: string; disabled?: boolean }>;
+}) {
+  const [status, setStatus] = useState<WsStatus>('disconnected');
+  const [messages, setMessages] = useState<WsMessage[]>([]);
+  const [input, setInput] = useState('');
+  const wsRef = useRef<WebSocket | null>(null);
+  const streamEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    streamEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  // Close connection on unmount (tab switch / component teardown)
+  useEffect(() => {
+    return () => { wsRef.current?.close(1000); };
+  }, []);
+
+  function addMsg(direction: WsMessage['direction'], text: string) {
+    setMessages(prev => [...prev, {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+      direction,
+      text,
+      timestamp: Date.now(),
+    }]);
+  }
+
+  function connect() {
+    if (wsRef.current) return;
+    if (!url.trim()) { addMsg('error', 'URL is empty'); return; }
+    setStatus('connecting');
+
+    // Support Sec-WebSocket-Protocol via headers
+    const protocolHeader = headers.find(
+      h => !h.disabled && h.key.toLowerCase() === 'sec-websocket-protocol'
+    );
+    const protocols = protocolHeader?.value
+      ? protocolHeader.value.split(',').map(s => s.trim()).filter(Boolean)
+      : undefined;
+
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(url, protocols);
+    } catch (err) {
+      setStatus('disconnected');
+      addMsg('error', `Connection failed: ${(err as Error).message}`);
+      return;
+    }
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      setStatus('connected');
+      addMsg('info', `Connected to ${url}`);
+    };
+    ws.onmessage = e => {
+      addMsg('received', typeof e.data === 'string' ? e.data : '[Binary frame]');
+    };
+    ws.onerror = () => {
+      addMsg('error', 'WebSocket error');
+    };
+    ws.onclose = e => {
+      wsRef.current = null;
+      setStatus('disconnected');
+      addMsg('info', `Disconnected (code ${e.code}${e.reason ? ': ' + e.reason : ''})`);
+    };
+  }
+
+  function disconnect() {
+    wsRef.current?.close(1000, 'User disconnected');
+  }
+
+  function sendMessage() {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || !input.trim()) return;
+    wsRef.current.send(input);
+    addMsg('sent', input);
+    setInput('');
+  }
+
+  const STATUS_STYLE: Record<WsStatus, string> = {
+    disconnected: 'bg-slate-700 text-slate-400',
+    connecting: 'bg-yellow-900/70 text-yellow-300',
+    connected: 'bg-green-900/70 text-green-300',
+  };
+  const MSG_STYLE: Record<WsMessage['direction'], string> = {
+    sent: 'text-blue-300',
+    received: 'text-green-300',
+    info: 'text-slate-500 italic',
+    error: 'text-red-400',
+  };
+  const MSG_PREFIX: Record<WsMessage['direction'], string> = {
+    sent: '↑',
+    received: '↓',
+    info: '·',
+    error: '✕',
+  };
+
+  return (
+    <div className="flex flex-col flex-1 overflow-hidden min-h-0">
+      {/* Toolbar */}
+      <div className="px-3 py-2 border-b border-slate-700 bg-slate-800 flex items-center gap-3 shrink-0">
+        <span className={`text-xs px-2 py-0.5 rounded font-medium ${STATUS_STYLE[status]}`}>
+          {status === 'connecting' ? 'Connecting…' : status === 'connected' ? 'Connected' : 'Disconnected'}
+        </span>
+        {status !== 'connected' ? (
+          <button
+            onClick={connect}
+            disabled={status === 'connecting'}
+            className="px-3 py-1 bg-green-700 hover:bg-green-600 disabled:bg-slate-600 disabled:text-slate-500 text-white text-xs font-medium rounded transition-colors"
+          >
+            {status === 'connecting' ? 'Connecting…' : 'Connect'}
+          </button>
+        ) : (
+          <button
+            onClick={disconnect}
+            className="px-3 py-1 bg-red-800 hover:bg-red-700 text-white text-xs font-medium rounded transition-colors"
+          >
+            Disconnect
+          </button>
+        )}
+        <span className="text-xs text-slate-600">
+          {messages.length} event{messages.length !== 1 ? 's' : ''}
+        </span>
+        {messages.length > 0 && (
+          <button
+            onClick={() => setMessages([])}
+            className="ml-auto text-xs text-slate-600 hover:text-slate-400 transition-colors"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+
+      {/* Message stream */}
+      <div className="flex-1 overflow-y-auto p-3 bg-slate-900/60 font-mono text-xs min-h-0">
+        {messages.length === 0 && (
+          <p className="text-slate-600 italic text-center py-10">
+            {status === 'disconnected'
+              ? 'Click Connect to open a WebSocket connection'
+              : 'Waiting for messages…'}
+          </p>
+        )}
+        {messages.map(msg => (
+          <div key={msg.id} className={`flex gap-2 mb-0.5 leading-relaxed ${MSG_STYLE[msg.direction]}`}>
+            <span className="shrink-0 w-3 text-center">{MSG_PREFIX[msg.direction]}</span>
+            <span className="text-slate-600 shrink-0 tabular-nums">
+              {new Date(msg.timestamp).toLocaleTimeString()}
+            </span>
+            <span className="break-all whitespace-pre-wrap flex-1">{msg.text}</span>
+          </div>
+        ))}
+        <div ref={streamEndRef} />
+      </div>
+
+      {/* Message input */}
+      <div className="px-3 py-2 border-t border-slate-700 bg-slate-800 shrink-0 flex gap-2 items-end">
+        <textarea
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+          disabled={status !== 'connected'}
+          placeholder={status === 'connected' ? 'Enter message (Enter to send, Shift+Enter for newline)' : 'Connect first…'}
+          rows={2}
+          spellCheck={false}
+          className="flex-1 bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-none disabled:opacity-40 disabled:cursor-not-allowed"
+        />
+        <button
+          onClick={sendMessage}
+          disabled={status !== 'connected' || !input.trim()}
+          className="px-4 py-1.5 bg-blue-700 hover:bg-blue-600 disabled:bg-slate-700 disabled:text-slate-600 text-white text-sm font-medium rounded transition-colors"
+        >
+          Send
+        </button>
+      </div>
     </div>
   );
 }
@@ -573,17 +763,19 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
           >
             Import
           </button>
-          <button
-            onClick={handleCopyCurl}
-            title="Copy request as cURL command"
-            className={`px-3 py-2 border text-xs rounded transition-colors shrink-0 whitespace-nowrap ${
-              copied
-                ? 'bg-green-700 border-green-600 text-green-100'
-                : 'bg-slate-700 hover:bg-slate-600 border border-slate-500 text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            {copied ? 'Copied!' : 'Copy cURL'}
-          </button>
+          {edit.method !== 'WS' && (
+            <button
+              onClick={handleCopyCurl}
+              title="Copy request as cURL command"
+              className={`px-3 py-2 border text-xs rounded transition-colors shrink-0 whitespace-nowrap ${
+                copied
+                  ? 'bg-green-700 border-green-600 text-green-100'
+                  : 'bg-slate-700 hover:bg-slate-600 border border-slate-500 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {copied ? 'Copied!' : 'Copy cURL'}
+            </button>
+          )}
           {dirty && (
             <button
               onClick={handleSave}
@@ -596,36 +788,49 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
               Save
             </button>
           )}
-          <button
-            onClick={handleSend}
-            disabled={state.isLoading}
-            title="Send request (⌘↵ / Ctrl+↵)"
-            className="px-5 py-2 bg-orange-600 hover:bg-orange-500 disabled:bg-orange-900 text-white text-sm font-semibold rounded transition-colors"
-          >
-            {state.isLoading ? '...' : 'Send'}
-          </button>
+          {edit.method !== 'WS' && (
+            <button
+              onClick={handleSend}
+              disabled={state.isLoading}
+              title="Send request (⌘↵ / Ctrl+↵)"
+              className="px-5 py-2 bg-orange-600 hover:bg-orange-500 disabled:bg-orange-900 text-white text-sm font-semibold rounded transition-colors"
+            >
+              {state.isLoading ? '...' : 'Send'}
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex border-b border-slate-700 bg-slate-800 shrink-0">
-        {TABS.map(t => (
-          <button
-            key={t}
-            onClick={() => setActiveRequestTab(t)}
-            className={`px-4 py-2 text-xs font-medium transition-colors ${
-              activeRequestTab === t
-                ? 'text-orange-400 border-b-2 border-orange-400 -mb-px'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
+      {/* Tabs (HTTP only) */}
+      {edit.method !== 'WS' && (
+        <div className="flex border-b border-slate-700 bg-slate-800 shrink-0">
+          {TABS.map(t => (
+            <button
+              key={t}
+              onClick={() => setActiveRequestTab(t)}
+              className={`px-4 py-2 text-xs font-medium transition-colors ${
+                activeRequestTab === t
+                  ? 'text-orange-400 border-b-2 border-orange-400 -mb-px'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      )}
 
-      {/* Tab content */}
-      <div className="flex-1 overflow-y-auto p-3 bg-slate-800/50 min-h-0">
+      {/* WebSocket panel */}
+      {edit.method === 'WS' && (
+        <WebSocketPanel
+          key={activeTabId ?? 'ws'}
+          url={resolveVariables(edit.url, allVars)}
+          headers={edit.headers}
+        />
+      )}
+
+      {/* Tab content (HTTP only) */}
+      {edit.method !== 'WS' && <div className="flex-1 overflow-y-auto p-3 bg-slate-800/50 min-h-0">
         {activeRequestTab === 'Params' && (
           <KvTable
             rows={edit.queryParams}
@@ -897,7 +1102,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
             />
           </div>
         )}
-      </div>
+      </div>}
 
       {/* Import dialog */}
       {showImportDialog && (
