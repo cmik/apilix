@@ -78,6 +78,35 @@ function getScript(item: PostmanItem, type: 'prerequest' | 'test'): string {
 
 // ─── Key/value table component ───────────────────────────────────────────────
 
+function rowsToText(rows: Array<{ key: string; value: string; disabled?: boolean }>): string {
+  return rows
+    .filter(r => r.key || r.value)
+    .map(r => {
+      const line = `${r.key}: ${r.value}`;
+      return r.disabled ? `# ${line}` : line;
+    })
+    .join('\n');
+}
+
+function textToRows(text: string): Array<{ key: string; value: string; disabled?: boolean }> {
+  return text
+    .split('\n')
+    .map(line => {
+      const disabled = line.trimStart().startsWith('#');
+      const stripped = disabled ? line.replace(/^[\s#]+/, '') : line;
+      const colonIdx = stripped.indexOf(':');
+      if (colonIdx === -1) {
+        return { key: stripped.trim(), value: '', disabled };
+      }
+      return {
+        key: stripped.slice(0, colonIdx).trim(),
+        value: stripped.slice(colonIdx + 1).trim(),
+        disabled,
+      };
+    })
+    .filter(r => r.key || r.value);
+}
+
 function KvTable({
   rows,
   onChange,
@@ -89,6 +118,19 @@ function KvTable({
   keyPlaceholder?: string;
   valuePlaceholder?: string;
 }) {
+  const [bulkMode, setBulkMode] = useState(false);
+  const [bulkText, setBulkText] = useState('');
+
+  function enterBulk() {
+    setBulkText(rowsToText(rows));
+    setBulkMode(true);
+  }
+
+  function exitBulk() {
+    onChange(textToRows(bulkText));
+    setBulkMode(false);
+  }
+
   function update(i: number, field: 'key' | 'value', val: string) {
     const next = rows.map((r, idx) => (idx === i ? { ...r, [field]: val } : r));
     onChange(next);
@@ -102,6 +144,30 @@ function KvTable({
   }
   function addRow() {
     onChange([...rows, { key: '', value: '' }]);
+  }
+
+  if (bulkMode) {
+    return (
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-slate-400">One <code className="text-orange-400">key: value</code> per line. Prefix a line with <code className="text-orange-400">#</code> to disable it.</span>
+          <button
+            onClick={exitBulk}
+            className="text-xs text-orange-400 hover:text-orange-300 transition-colors"
+          >
+            ← Table view
+          </button>
+        </div>
+        <textarea
+          value={bulkText}
+          onChange={e => setBulkText(e.target.value)}
+          rows={8}
+          spellCheck={false}
+          placeholder={`${keyPlaceholder}: ${valuePlaceholder}\n...`}
+          className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-orange-500 resize-y"
+        />
+      </div>
+    );
   }
 
   return (
@@ -132,12 +198,20 @@ function KvTable({
           <button onClick={() => remove(i)} className="px-2 text-slate-500 hover:text-red-400 text-lg leading-none">×</button>
         </div>
       ))}
-      <button
-        onClick={addRow}
-        className="self-start text-xs text-slate-500 hover:text-orange-400 mt-1 transition-colors"
-      >
-        + Add row
-      </button>
+      <div className="flex items-center gap-3 mt-1">
+        <button
+          onClick={addRow}
+          className="text-xs text-slate-500 hover:text-orange-400 transition-colors"
+        >
+          + Add row
+        </button>
+        <button
+          onClick={enterBulk}
+          className="text-xs text-slate-500 hover:text-orange-400 transition-colors"
+        >
+          Bulk edit
+        </button>
+      </div>
     </div>
   );
 }
