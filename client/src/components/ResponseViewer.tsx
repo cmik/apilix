@@ -39,12 +39,122 @@ function TestResultRow({ result }: { result: TestResult }) {
   );
 }
 
-function tryPrettyJson(body: string): string {
-  try {
-    return JSON.stringify(JSON.parse(body), null, 2);
-  } catch {
-    return body;
+type JsonNodeProps = {
+  data: unknown;
+  name?: string;
+  depth: number;
+  isLast: boolean;
+};
+
+function JsonNode({ data, name, depth, isLast }: JsonNodeProps) {
+  const [open, setOpen] = useState(true);
+  const paddingLeft = depth * 16;
+  const comma = !isLast ? <span className="text-slate-500">,</span> : null;
+  const keyEl = name !== undefined
+    ? <><span className="text-amber-300">"{name}"</span><span className="text-slate-500">: </span></>
+    : null;
+
+  if (data === null) {
+    return <div style={{ paddingLeft }} className="leading-5">{keyEl}<span className="text-slate-400">null</span>{comma}</div>;
   }
+  if (typeof data === 'boolean') {
+    return <div style={{ paddingLeft }} className="leading-5">{keyEl}<span className="text-purple-400">{String(data)}</span>{comma}</div>;
+  }
+  if (typeof data === 'number') {
+    return <div style={{ paddingLeft }} className="leading-5">{keyEl}<span className="text-sky-300">{data}</span>{comma}</div>;
+  }
+  if (typeof data === 'string') {
+    return <div style={{ paddingLeft }} className="leading-5 break-all">{keyEl}<span className="text-emerald-400">"{data}"</span>{comma}</div>;
+  }
+
+  if (Array.isArray(data)) {
+    if (data.length === 0) {
+      return <div style={{ paddingLeft }} className="leading-5">{keyEl}<span className="text-slate-300">[]</span>{comma}</div>;
+    }
+    return (
+      <>
+        <div style={{ paddingLeft }} className="flex items-center leading-5">
+          <button
+            onClick={() => setOpen(o => !o)}
+            className="text-slate-500 hover:text-orange-400 w-3.5 shrink-0 text-center select-none"
+            style={{ fontSize: 10 }}
+          >
+            {open ? '▾' : '▸'}
+          </button>
+          <span>
+            {keyEl}
+            <span className="text-slate-300">[</span>
+            {!open && <><span className="mx-1 text-slate-500 text-xs italic cursor-pointer hover:text-slate-300" onClick={() => setOpen(true)}>{data.length} items</span><span className="text-slate-300">]</span>{comma}</>}
+          </span>
+        </div>
+        {open && (
+          <>
+            {data.map((item, i) => (
+              <JsonNode key={i} data={item} depth={depth + 1} isLast={i === data.length - 1} />
+            ))}
+            <div style={{ paddingLeft: paddingLeft + 14 }} className="leading-5">
+              <span className="text-slate-300">]</span>{comma}
+            </div>
+          </>
+        )}
+      </>
+    );
+  }
+
+  if (typeof data === 'object') {
+    const entries = Object.entries(data as Record<string, unknown>);
+    if (entries.length === 0) {
+      return <div style={{ paddingLeft }} className="leading-5">{keyEl}<span className="text-slate-300">{'{}'}</span>{comma}</div>;
+    }
+    return (
+      <>
+        <div style={{ paddingLeft }} className="flex items-center leading-5">
+          <button
+            onClick={() => setOpen(o => !o)}
+            className="text-slate-500 hover:text-orange-400 w-3.5 shrink-0 text-center select-none"
+            style={{ fontSize: 10 }}
+          >
+            {open ? '▾' : '▸'}
+          </button>
+          <span>
+            {keyEl}
+            <span className="text-slate-300">{'{'}</span>
+            {!open && <><span className="mx-1 text-slate-500 text-xs italic cursor-pointer hover:text-slate-300" onClick={() => setOpen(true)}>{entries.length} keys</span><span className="text-slate-300">{'}'}</span>{comma}</>}
+          </span>
+        </div>
+        {open && (
+          <>
+            {entries.map(([k, v], i) => (
+              <JsonNode key={k} data={v} name={k} depth={depth + 1} isLast={i === entries.length - 1} />
+            ))}
+            <div style={{ paddingLeft: paddingLeft + 14 }} className="leading-5">
+              <span className="text-slate-300">{'}'}</span>{comma}
+            </div>
+          </>
+        )}
+      </>
+    );
+  }
+
+  return null;
+}
+
+function JsonTreeView({ body }: { body: string }) {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return (
+      <pre className="p-3 text-sm font-mono text-slate-200 whitespace-pre-wrap break-all">
+        {body}
+      </pre>
+    );
+  }
+  return (
+    <div className="p-3 text-sm font-mono text-slate-200">
+      <JsonNode data={parsed} depth={0} isLast={true} />
+    </div>
+  );
 }
 
 export default function ResponseViewer() {
@@ -134,9 +244,13 @@ export default function ResponseViewer() {
       {/* Content */}
       <div className="flex-1 overflow-auto">
         {tab === 'Body' && (
-          <pre className="p-3 text-sm font-mono text-slate-200 whitespace-pre-wrap break-all">
-            {rawMode ? response.body : tryPrettyJson(response.body)}
-          </pre>
+          rawMode ? (
+            <pre className="p-3 text-sm font-mono text-slate-200 whitespace-pre-wrap break-all">
+              {response.body}
+            </pre>
+          ) : (
+            <JsonTreeView body={response.body} />
+          )
         )}
 
         {tab === 'Headers' && (
