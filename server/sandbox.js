@@ -3,6 +3,8 @@
 const vm = require('vm');
 const axios = require('axios');
 const https = require('https');
+const xpathLib = require('xpath');
+const { DOMParser } = require('@xmldom/xmldom');
 
 const httpClient = axios.create({
   httpsAgent: new https.Agent({ rejectUnauthorized: false }),
@@ -412,6 +414,20 @@ async function runScript(code, response, variables) {
     atob: (s) => Buffer.from(s, 'base64').toString('utf8'),
     XMLHttpRequest: undefined,
     fetch: undefined,
+    _xp(html, expr) {
+      try {
+        const parser = new DOMParser({ errorHandler: { warning() {}, error() {}, fatalError() {} } });
+        const doc = parser.parseFromString(html, 'text/html');
+        const result = xpathLib.select(expr, doc);
+        if (typeof result === 'string' || typeof result === 'number' || typeof result === 'boolean') return result;
+        if (Array.isArray(result)) {
+          if (result.length === 0) return null;
+          const val = result[0];
+          return val.textContent !== undefined ? val.textContent : (val.nodeValue !== undefined ? val.nodeValue : String(val));
+        }
+        return result;
+      } catch (_) { return null; }
+    },
   };
 
   try {

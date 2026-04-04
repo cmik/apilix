@@ -110,7 +110,8 @@ function hurlQueryToJsExpr(queryType: string, arg: string | null): string | null
     case 'duration': return 'pm.response.responseTime';
     case 'header':   return arg ? `pm.response.headers.get(${JSON.stringify(arg)})` : null;
     case 'jsonpath': return arg ? `_jp(pm.response.json(), ${JSON.stringify(arg)})` : null;
-    default:         return null; // version, url, ip, cookie, xpath, regex, variable, bytes, sha256, md5
+    case 'xpath':    return arg ? `_xp(pm.response.text(), ${JSON.stringify(arg)})` : null;
+    default:         return null; // version, url, ip, cookie, regex, variable, bytes, sha256, md5
   }
 }
 
@@ -215,6 +216,7 @@ function buildTestEvent(
 
   const scriptLines: string[] = ['(function () {'];
   if (needsJp) scriptLines.push(...jpHelper);
+  // _xp is provided by the sandbox runtime (xpath + @xmldom/xmldom)
 
   // Captures → pm.environment.set()
   if (captures.length > 0) {
@@ -223,6 +225,7 @@ function buildTestEvent(
       let expr: string | null = null;
       switch (cap.captureType) {
         case 'jsonpath': expr = `String(_jp(pm.response.json(), ${JSON.stringify(cap.arg)}))`; break;
+        case 'xpath':    expr = `String(_xp(pm.response.text(), ${JSON.stringify(cap.arg)}))`; break;
         case 'header':   expr = `String(pm.response.headers.get(${JSON.stringify(cap.arg)}))`; break;
         case 'status':   expr = `String(pm.response.code)`; break;
         case 'body':     expr = `pm.response.text()`; break;
@@ -510,6 +513,37 @@ export function generateHurlFromItems(items: PostmanItem[]): string {
   return entries.join('\n\n');
 }
 
+/**
+ * Check whether a string looks like a valid HURL assert line
+ * (i.e. it was originally produced by hurlAssertToPmTest and stored as the pm.test name).
+ */
+function isHurlAssertLine(line: string): boolean {
+  const t = line.trim();
+  const argQuery   = /^(header|cookie|jsonpath|xpath|regex|variable)\s+"[^"]*"\s+.+/;
+  const noArgQuery = /^(status|body|duration|version|url|ip|bytes|sha256|md5)\s+.+/;
+  return argQuery.test(t) || noArgQuery.test(t);
+}
+
+/**
+ * Extract HURL assert strings that were embedded as pm.test() names when the
+ * HURL file was originally imported (see hurlAssertToPmTest).
+ */
+function extractHurlAssertsFromScript(execLines: string[]): string[] {
+  const script = execLines.join('\n');
+  const asserts: string[] = [];
+  const re = /pm\.test\(("(?:[^"\\]|\\.)*"),/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(script)) !== null) {
+    try {
+      const name = JSON.parse(m[1]) as string;
+      if (isHurlAssertLine(name)) asserts.push(name);
+    } catch {
+      // skip malformed
+    }
+  }
+  return asserts;
+}
+
 function collectHurlEntries(items: PostmanItem[], out: string[]): void {
   for (const item of items) {
     if (Array.isArray(item.item)) {
@@ -558,8 +592,30 @@ function collectHurlEntries(items: PostmanItem[], out: string[]): void {
         lines.push('```');
       }
 
+      // Extract assertions from the item's test event script
+      const testEvent = item.event?.find(e => e.listen === 'test');
+      const execLines: string[] = Array.isArray(testEvent?.script?.exec)
+        ? (testEvent!.script.exec as string[])
+        : (testEvent?.script?.exec ? (testEvent.script.exec as string).split('\n') : []);
+      const hurlAsserts = extractHurlAssertsFromScript(execLines);
+
+      // Use the status assert to produce a concrete HTTP status line when possible
+      const statusAssert = hurlAsserts.find(a => /^status\s*==\s*\d+$/.test(a.trim()));
+      const statusCode   = statusAssert?.match(/^status\s*==\s*(\d+)/)?.[1];
+
       lines.push('');
-      lines.push('HTTP *');
+      lines.push(statusCode ? `HTTP ${statusCode}` : 'HTTP *');
+
+      // Remaining asserts go into the [Asserts] section
+      const otherAsserts = statusCode
+        ? hurlAsserts.filter(a => a !== statusAssert)
+        : hurlAsserts;
+      if (otherAsserts.length > 0) {
+        lines.push('[Asserts]');
+        for (const a of otherAsserts) {
+          lines.push(a);
+        }
+      }
 
       out.push(lines.join('\n'));
     }

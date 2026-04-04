@@ -2,10 +2,12 @@ import { useState } from 'react';
 import { useApp, generateId } from '../store';
 import CollectionTree from './CollectionTree';
 import ImportModal from './ImportModal';
+import ExportModal from './ExportModal';
 
 export default function Sidebar() {
   const { state, dispatch } = useApp();
   const [showImport, setShowImport] = useState(false);
+  const [showExport, setShowExport] = useState(false);
   const [filter, setFilter] = useState('');
   const [newCollectionId, setNewCollectionId] = useState<string | null>(null);
   const [collapseSignal, setCollapseSignal] = useState(0);
@@ -37,31 +39,10 @@ export default function Sidebar() {
             + New
           </button>
           <button
-            onClick={() => {
-              state.collections.forEach(col => {
-                const exported = {
-                  info: {
-                    name: col.info.name,
-                    schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
-                    _postman_id: col._id,
-                  },
-                  item: col.item,
-                  auth: col.auth,
-                  event: col.event,
-                  variable: col.variable,
-                };
-                const blob = new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `${col.info.name.replace(/[^a-z0-9_\-. ]/gi, '_')}.postman_collection.json`;
-                a.click();
-                URL.revokeObjectURL(url);
-              });
-            }}
-            title="Export all collections"
+            onClick={() => setShowExport(true)}
+            title="Export collections / environments"
             className="px-2 py-1 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 text-xs rounded font-medium transition-colors"
-            disabled={state.collections.length === 0}
+            disabled={state.collections.length === 0 && state.environments.length === 0}
           >
             Export
           </button>
@@ -149,6 +130,7 @@ export default function Sidebar() {
       <CollectionTree filter={filter} renamingCollectionId={newCollectionId} onRenamingDone={() => setNewCollectionId(null)} collapseSignal={collapseSignal} expandSignal={expandSignal} sortAZ={sortAZ} />
 
       {showImport && <ImportModal onClose={() => setShowImport(false)} />}
+      {showExport && <ExportModal onClose={() => setShowExport(false)} />}
     </div>
   );
 }

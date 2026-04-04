@@ -212,6 +212,28 @@ function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, tabs: updatedTabs };
     }
 
+    case 'OPEN_BLANK_TAB': {
+      const newTab: RequestTab = {
+        id: generateId(),
+        collectionId: '',
+        item: {
+          id: generateId(),
+          name: 'New Request',
+          request: { method: 'GET', url: { raw: '' }, header: [] },
+        },
+        response: null,
+        isLoading: false,
+      };
+      return {
+        ...state,
+        tabs: [...state.tabs, newTab],
+        activeTabId: newTab.id,
+        activeRequest: { collectionId: '', item: newTab.item },
+        response: null,
+        isLoading: false,
+      };
+    }
+
     case 'REORDER_TABS': {
       const ordered = action.payload
         .map(id => state.tabs.find(t => t.id === id))

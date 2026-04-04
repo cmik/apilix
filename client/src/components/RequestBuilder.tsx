@@ -6,6 +6,7 @@ import { executeRequest } from '../api';
 import { getUrlDisplay, buildVarMap, resolveVariables } from '../utils/variableResolver';
 import { updateItemById, renameItemById, resolveInheritedAuth, findItemInTree } from '../utils/treeHelpers';
 import { parseCurlCommand } from '../utils/curlUtils';
+import { parseHurlFile } from '../utils/hurlUtils';
 import GraphQLPanel from './GraphQLPanel';
 import CodeGenModal from './CodeGenModal';
 
@@ -483,7 +484,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
   const [showSaveToCollection, setShowSaveToCollection] = useState(false);
   const [saveTargetCollectionId, setSaveTargetCollectionId] = useState<string>('');
   const [importText, setImportText] = useState('');
-  const [importMode, setImportMode] = useState<'curl' | 'raw'>('curl');
+  const [importMode, setImportMode] = useState<'curl' | 'raw' | 'hurl'>('curl');
   const [importError, setImportError] = useState('');
   const [docsMode, setDocsMode] = useState<'edit' | 'preview'>('edit');
 
@@ -744,6 +745,20 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
   _saveRef.current = handleSave;
 
   function handleImport() {
+    if (importMode === 'hurl') {
+      const items = parseHurlFile(importText);
+      if (items.length === 0) {
+        setImportError('No valid HURL request found. Make sure the entry starts with a method line like "GET https://…".');
+        return;
+      }
+      // itemToEditState handles all fields: url, headers, queryParams, body, auth, test/pre-request scripts
+      const parsed = itemToEditState(items[0]);
+      setEdit(e => e ? { ...e, ...parsed } : e);
+      setShowImportDialog(false);
+      setImportText('');
+      setImportError('');
+      return;
+    }
     const parsed = importMode === 'curl'
       ? parseCurlCommand(importText)
       : parseRawHttp(importText);
@@ -1195,7 +1210,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
             </div>
             <div className="px-4 py-3 flex flex-col gap-3">
               <div className="flex gap-1 bg-slate-900 p-1 rounded">
-                {(['curl', 'raw'] as const).map(m => (
+                {(['curl', 'raw', 'hurl'] as const).map(m => (
                   <button
                     key={m}
                     onClick={() => { setImportMode(m); setImportError(''); }}
@@ -1203,7 +1218,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
                       importMode === m ? 'bg-slate-700 text-slate-100' : 'text-slate-400 hover:text-slate-200'
                     }`}
                   >
-                    {m === 'curl' ? 'cURL' : 'Raw HTTP'}
+                    {m === 'curl' ? 'cURL' : m === 'raw' ? 'Raw HTTP' : 'HURL'}
                   </button>
                 ))}
               </div>
@@ -1216,7 +1231,9 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
                 className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-y"
                 placeholder={importMode === 'curl'
                   ? "curl -X POST https://api.example.com/users \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"name\": \"Alice\"}'"
-                  : "POST /users HTTP/1.1\nHost: api.example.com\nContent-Type: application/json\n\n{\"name\": \"Alice\"}"}
+                  : importMode === 'raw'
+                  ? "POST /users HTTP/1.1\nHost: api.example.com\nContent-Type: application/json\n\n{\"name\": \"Alice\"}"
+                  : "POST https://api.example.com/users\nContent-Type: application/json\n\n{\"name\": \"Alice\"}\n\nHTTP *"}
               />
               {importError && <p className="text-xs text-red-400">{importError}</p>}
               <div className="flex justify-end gap-2">

@@ -142,8 +142,6 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [insertBefore, setInsertBefore] = useState<number | null>(null);
 
-  if (tabs.length === 0) return null;
-
   function handleDragStart(e: React.DragEvent, tabId: string) {
     setDraggingId(tabId);
     e.dataTransfer.effectAllowed = 'move';
@@ -230,6 +228,15 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
       {draggingId && insertBefore === tabs.length && (
         <div className="w-0.5 bg-orange-500 self-stretch pointer-events-none shrink-0" />
       )}
+      <button
+        onClick={() => dispatch({ type: 'OPEN_BLANK_TAB' })}
+        className="flex items-center justify-center w-7 h-full shrink-0 text-slate-500 hover:text-slate-200 hover:bg-slate-800/60 transition-colors"
+        title="New request"
+      >
+        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+        </svg>
+      </button>
     </div>
   );
 }
