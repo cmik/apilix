@@ -1,5 +1,16 @@
 import type { PostmanItem, PostmanAuth } from '../types';
 
+export function findItemInTree(items: PostmanItem[], id: string): PostmanItem | null {
+  for (const item of items) {
+    if (item.id === id) return item;
+    if (item.item) {
+      const found = findItemInTree(item.item, id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 export function renameItemById(items: PostmanItem[], id: string, newName: string): PostmanItem[] {
   return items.map(item => {
     if (item.id === id) return { ...item, name: newName };

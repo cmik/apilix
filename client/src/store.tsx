@@ -206,6 +206,12 @@ function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, tabs: updatedTabs };
     }
 
+    case 'UPDATE_TAB': {
+      const { tabId, collectionId, item } = action.payload;
+      const updatedTabs = state.tabs.map(t => t.id === tabId ? { ...t, collectionId, item } : t);
+      return { ...state, tabs: updatedTabs };
+    }
+
     case 'REORDER_TABS': {
       const ordered = action.payload
         .map(id => state.tabs.find(t => t.id === id))

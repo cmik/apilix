@@ -82,14 +82,122 @@ interface HurlCapture {
   arg: string | null;
 }
 
-/**
- * Convert an array of HURL captures into a Postman test-script event that
- * calls `pm.environment.set()` for each captured variable.
- */
-function capturesEventFromHurl(captures: HurlCapture[]): import('../types').PostmanEvent | null {
-  if (captures.length === 0) return null;
+interface HurlAssert {
+  raw: string;
+}
 
-  // Minimal JSONPath traversal for expressions like $.foo, $.items[0].name
+// ─── Assert helpers ───────────────────────────────────────────────────────────
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function parseHurlPredicateValue(v: string): string {
+  v = v.trim();
+  if (v.startsWith('"') && v.endsWith('"')) return JSON.stringify(v.slice(1, -1));
+  if (v === 'true' || v === 'false' || v === 'null') return v;
+  if (/^-?\d+(\.\d+)?$/.test(v)) return v;
+  return JSON.stringify(v);
+}
+
+/** Map a HURL query keyword + optional arg to a JS expression string. */
+function hurlQueryToJsExpr(queryType: string, arg: string | null): string | null {
+  switch (queryType) {
+    case 'status':   return 'pm.response.code';
+    case 'body':     return 'pm.response.text()';
+    case 'duration': return 'pm.response.responseTime';
+    case 'header':   return arg ? `pm.response.headers.get(${JSON.stringify(arg)})` : null;
+    case 'jsonpath': return arg ? `_jp(pm.response.json(), ${JSON.stringify(arg)})` : null;
+    default:         return null; // version, url, ip, cookie, xpath, regex, variable, bytes, sha256, md5
+  }
+}
+
+/** Convert a single HURL assert line to a pm.test() call string, or a comment if unsupported. */
+function hurlAssertToPmTest(raw: string): string {
+  const line = raw.trim();
+
+  let queryExpr: string | null = null;
+  let predStr = '';
+
+  // Queries with a quoted string arg: header "X-Foo", jsonpath "$.x", xpath, regex, cookie, variable
+  const argQueryRe = /^(header|cookie|jsonpath|xpath|regex|variable)\s+"([^"]*)"\s+(.+)$/;
+  // Queries with no args: status, body, duration, version, url, ip, bytes, sha256, md5
+  const noArgQueryRe = /^(status|body|duration|version|url|ip|bytes|sha256|md5)\s+(.+)$/;
+
+  const argMatch = line.match(argQueryRe);
+  const noArgMatch = line.match(noArgQueryRe);
+
+  if (argMatch) {
+    queryExpr = hurlQueryToJsExpr(argMatch[1], argMatch[2]);
+    predStr = argMatch[3];
+  } else if (noArgMatch) {
+    queryExpr = hurlQueryToJsExpr(noArgMatch[1], null);
+    predStr = noArgMatch[2];
+  } else {
+    return `// assert not translatable: ${line}`;
+  }
+
+  if (!queryExpr) {
+    return `// assert type not supported in Apilix: ${line}`;
+  }
+
+  // Negation prefix (e.g. "not contains")
+  predStr = predStr.trim();
+  const negated = /^not\s+/.test(predStr);
+  if (negated) predStr = predStr.replace(/^not\s+/, '').trim();
+  const pfx = negated ? '.to.not' : '.to';
+
+  // Match predicate operators
+  const eqM     = predStr.match(/^==\s+(.+)$/);
+  const neqM    = predStr.match(/^!=\s+(.+)$/);
+  const gtEqM   = predStr.match(/^>=\s+(-?\d+(?:\.\d+)?)$/);
+  const ltEqM   = predStr.match(/^<=\s+(-?\d+(?:\.\d+)?)$/);
+  const gtM     = predStr.match(/^>\s+(-?\d+(?:\.\d+)?)$/);
+  const ltM     = predStr.match(/^<\s+(-?\d+(?:\.\d+)?)$/);
+  const contM   = predStr.match(/^contains\s+"([^"]*)"$/);
+  const startM  = predStr.match(/^startsWith\s+"([^"]*)"$/);
+  const endM    = predStr.match(/^endsWith\s+"([^"]*)"$/);
+  const matchM  = predStr.match(/^matches\s+"([^"]*)"$/) ?? predStr.match(/^matches\s+\/([^/]*)\/$/);
+
+  let chainSuffix: string | null = null;
+
+  if (eqM)    chainSuffix = `${pfx}.equal(${parseHurlPredicateValue(eqM[1])})`;
+  else if (neqM)   chainSuffix = `.to.not.equal(${parseHurlPredicateValue(neqM[1])})`;
+  else if (gtEqM)  chainSuffix = `${pfx}.least(${gtEqM[1]})`;
+  else if (ltEqM)  chainSuffix = `${pfx}.most(${ltEqM[1]})`;
+  else if (gtM)    chainSuffix = `${pfx}.above(${gtM[1]})`;
+  else if (ltM)    chainSuffix = `${pfx}.below(${ltM[1]})`;
+  else if (contM)  chainSuffix = `${pfx}.include(${JSON.stringify(contM[1])})`;
+  else if (startM) chainSuffix = `${pfx}.match(new RegExp('^' + ${JSON.stringify(escapeRegex(startM[1]))}))`;
+  else if (endM)   chainSuffix = `${pfx}.match(new RegExp(${JSON.stringify(escapeRegex(endM[1]))} + '$'))`;
+  else if (matchM) chainSuffix = `${pfx}.match(new RegExp(${JSON.stringify(matchM[1])}))`;
+  else if (predStr === 'exists')      chainSuffix = `${pfx}.exist`;
+  else if (predStr === 'isBoolean')   chainSuffix = `${pfx}.be.a('boolean')`;
+  else if (predStr === 'isFloat' || predStr === 'isInteger') chainSuffix = `${pfx}.be.a('number')`;
+  else if (predStr === 'isString')    chainSuffix = `${pfx}.be.a('string')`;
+  else if (predStr === 'isCollection') chainSuffix = `${pfx}.be.an('array')`;
+  else if (predStr === 'isEmpty')     chainSuffix = `${pfx}.be.empty`;
+
+  if (!chainSuffix) return `// predicate not supported in Apilix: ${line}`;
+
+  return `pm.test(${JSON.stringify(line)}, function() { pm.expect(${queryExpr})${chainSuffix}; });`;
+}
+
+// ─── Combined test event builder ─────────────────────────────────────────────
+
+/**
+ * Merge HURL captures (→ pm.environment.set) and asserts (→ pm.test) into a
+ * single Postman "test" event script.
+ */
+function buildTestEvent(
+  captures: HurlCapture[],
+  asserts: HurlAssert[],
+): import('../types').PostmanEvent | null {
+  if (captures.length === 0 && asserts.length === 0) return null;
+
+  const needsJp = captures.some(c => c.captureType === 'jsonpath')
+    || asserts.some(a => /^jsonpath\s+/.test(a.raw.trim()));
+
   const jpHelper = [
     '  function _jp(obj, path) {',
     '    var segs = path.replace(/^\\$\\.?/, \'\').match(/[^.\\[\\]]+|\\[\\d+\\]/g) || [];',
@@ -103,52 +211,45 @@ function capturesEventFromHurl(captures: HurlCapture[]): import('../types').Post
     '  }',
   ];
 
-  const scriptLines: string[] = [
-    '// HURL captures — auto-generated',
-    '(function () {',
-    ...jpHelper,
-  ];
+  const scriptLines: string[] = ['(function () {'];
+  if (needsJp) scriptLines.push(...jpHelper);
 
-  for (const cap of captures) {
-    let expr: string | null = null;
-    switch (cap.captureType) {
-      case 'jsonpath':
-        expr = `String(_jp(pm.response.json(), ${JSON.stringify(cap.arg)}))`;
-        break;
-      case 'header':
-        expr = `String(pm.response.headers.get(${JSON.stringify(cap.arg)}))`;
-        break;
-      case 'status':
-        expr = `String(pm.response.code)`;
-        break;
-      case 'body':
-        expr = `pm.response.text()`;
-        break;
-      case 'regex':
-        expr = `(function(){ var m = pm.response.text().match(new RegExp(${JSON.stringify(cap.arg)})); return m ? (m[1] !== undefined ? String(m[1]) : String(m[0])) : ''; })()`;
-        break;
-      default:
-        // xpath, url, duration, sha256, md5, bytes, variable — not supported in sandbox
-        expr = null;
+  // Captures → pm.environment.set()
+  if (captures.length > 0) {
+    scriptLines.push('  // captures');
+    for (const cap of captures) {
+      let expr: string | null = null;
+      switch (cap.captureType) {
+        case 'jsonpath': expr = `String(_jp(pm.response.json(), ${JSON.stringify(cap.arg)}))`; break;
+        case 'header':   expr = `String(pm.response.headers.get(${JSON.stringify(cap.arg)}))`; break;
+        case 'status':   expr = `String(pm.response.code)`; break;
+        case 'body':     expr = `pm.response.text()`; break;
+        case 'regex':    expr = `(function(){ var m = pm.response.text().match(new RegExp(${JSON.stringify(cap.arg)})); return m ? (m[1] !== undefined ? String(m[1]) : String(m[0])) : ''; })()`; break;
+        default:         expr = null; break;
+      }
+      scriptLines.push(`  try {`);
+      if (expr) {
+        scriptLines.push(`    pm.environment.set(${JSON.stringify(cap.varName)}, ${expr});`);
+      } else {
+        scriptLines.push(`    // capture type "${cap.captureType}" not supported — skipped`);
+      }
+      scriptLines.push(`  } catch (_) {}`);
     }
+  }
 
-    scriptLines.push(`  try {`);
-    if (expr) {
-      scriptLines.push(`    pm.environment.set(${JSON.stringify(cap.varName)}, ${expr});`);
-    } else {
-      scriptLines.push(`    // capture type "${cap.captureType}" is not supported in Apilix scripts — skipped`);
+  // Asserts → pm.test()
+  if (asserts.length > 0) {
+    scriptLines.push('  // asserts');
+    for (const a of asserts) {
+      scriptLines.push('  ' + hurlAssertToPmTest(a.raw));
     }
-    scriptLines.push(`  } catch (_) {}`);
   }
 
   scriptLines.push('})();');
 
   return {
     listen: 'test',
-    script: {
-      type: 'text/javascript',
-      exec: scriptLines,
-    },
+    script: { type: 'text/javascript', exec: scriptLines },
   };
 }
 
@@ -166,6 +267,7 @@ function parseHurlEntry(lines: string[]): PostmanItem | null {
   const headers: PostmanHeader[] = [];
   const bodyLines: string[] = [];
   const captures: HurlCapture[] = [];
+  const asserts: HurlAssert[] = [];
   const queryParams: PostmanQueryParam[] = [];
   let inBody = false;
   let inResponse = false;
@@ -187,10 +289,15 @@ function parseHurlEntry(lines: string[]): PostmanItem | null {
     // Skip comment lines
     if (line.trimStart().startsWith('#')) continue;
 
-    // Response line transitions to response section — do NOT break, captures come after it
+    // Response line transitions to response section — do NOT break, captures/asserts come after it
     if (isResponseLine(line)) {
       inResponse = true;
       currentSection = null;
+      // Extract the expected status code and add it as an implicit assert
+      const statusCapture = line.trim().match(/^HTTP(?:\/[\d.]+)?\s+(\d+)/);
+      if (statusCapture) {
+        asserts.unshift({ raw: `status == ${statusCapture[1]}` });
+      }
       continue;
     }
 
@@ -228,6 +335,12 @@ function parseHurlEntry(lines: string[]): PostmanItem | null {
           });
         }
       }
+      continue;
+    }
+
+    // Parse [Asserts] section lines
+    if (currentSection === '[Asserts]') {
+      if (trimmed !== '') asserts.push({ raw: trimmed });
       continue;
     }
 
@@ -281,7 +394,7 @@ function parseHurlEntry(lines: string[]): PostmanItem | null {
         ? 'html'
         : 'text';
 
-  const captureEvent = capturesEventFromHurl(captures);
+  const testEvent = buildTestEvent(captures, asserts);
 
   // Build the raw URL with query params appended
   let rawUrl = url;
@@ -310,7 +423,7 @@ function parseHurlEntry(lines: string[]): PostmanItem | null {
           }
         : {}),
     },
-    ...(captureEvent ? { event: [captureEvent] } : {}),
+    ...(testEvent ? { event: [testEvent] } : {}),
   };
 
   return item;
