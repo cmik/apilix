@@ -9,6 +9,36 @@ const { executeRequest, flattenItems } = require('./executor');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// ─── Runner pause/resume/stop state ──────────────────────────────────────────
+
+/** @type {Map<string, { paused: boolean, stopped: boolean }>} */
+const runStates = new Map();
+
+function generateRunId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+
+/** Waits while the run is paused. Returns 'stopped' or 'running'. */
+async function waitForResume(runId) {
+  while (true) {
+    const state = runStates.get(runId);
+    if (!state || state.stopped) return 'stopped';
+    if (!state.paused) return 'running';
+    await new Promise(r => setTimeout(r, 100));
+  }
+}
+
+/** Waits delayMs, honouring pause/stop. Returns 'stopped' or 'running'. */
+async function awaitDelay(runId, delayMs) {
+  const end = Date.now() + delayMs;
+  while (Date.now() < end) {
+    const check = await waitForResume(runId);
+    if (check === 'stopped') return 'stopped';
+    await new Promise(r => setTimeout(r, Math.min(50, Math.max(0, end - Date.now()))));
+  }
+  return 'running';
+}
+
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true }));
@@ -44,6 +74,26 @@ app.post('/api/execute', async (req, res) => {
   }
 });
 
+// ─── Run control endpoints ─────────────────────────────────────────────────────
+
+app.post('/api/run/:runId/pause', (req, res) => {
+  const state = runStates.get(req.params.runId);
+  if (state) state.paused = true;
+  res.json({ ok: true });
+});
+
+app.post('/api/run/:runId/resume', (req, res) => {
+  const state = runStates.get(req.params.runId);
+  if (state) state.paused = false;
+  res.json({ ok: true });
+});
+
+app.post('/api/run/:runId/stop', (req, res) => {
+  const state = runStates.get(req.params.runId);
+  if (state) state.stopped = true;
+  res.json({ ok: true });
+});
+
 // ─── Run an entire collection (optionally with CSV) — SSE streaming ───────────
 
 app.post('/api/run', upload.single('csvFile'), async (req, res) => {
@@ -75,19 +125,31 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
     }
 
     // Switch to SSE streaming
+    const runId = generateRunId();
+    runStates.set(runId, { paused: false, stopped: false });
+
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       Connection: 'keep-alive',
     });
 
+    // Stop the run if client disconnects from the response stream
+    res.on('close', () => {
+      const state = runStates.get(runId);
+      if (state) state.stopped = true;
+    });
+
     const sendEvent = (event, data) => {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
+    sendEvent('run-id', { runId });
+
     const delayMs = Math.min(parseInt(delay, 10) || 0, 5000);
 
-    for (let i = 0; i < dataRows.length; i++) {
+    let stopped = false;
+    outer: for (let i = 0; i < dataRows.length; i++) {
       const dataRow = dataRows[i];
       let currentEnv = { ...(environment || {}) };
       let currentCollVars = { ...(collectionVariables || {}) };
@@ -96,6 +158,9 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
       sendEvent('iteration-start', { iteration: i + 1, dataRow });
 
       for (const item of requests) {
+        // Check pause/stop before each request
+        if ((await waitForResume(runId)) === 'stopped') { stopped = true; break outer; }
+
         const result = await executeRequest(item, {
           environment: currentEnv,
           collectionVariables: currentCollVars,
@@ -134,14 +199,19 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
         sendEvent('result', resultData);
 
         if (delayMs > 0) {
-          await new Promise(resolve => setTimeout(resolve, delayMs));
+          if ((await awaitDelay(runId, delayMs)) === 'stopped') { stopped = true; break outer; }
         }
       }
 
       sendEvent('iteration-end', { iteration: i + 1 });
     }
 
-    sendEvent('done', {});
+    if (stopped) {
+      sendEvent('stopped', {});
+    } else {
+      sendEvent('done', {});
+    }
+    runStates.delete(runId);
     res.end();
   } catch (err) {
     console.error('Run error:', err);

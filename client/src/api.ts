@@ -61,10 +61,12 @@ export async function runCollection(
 }
 
 export interface RunStreamCallbacks {
+  onRunId?: (runId: string) => void;
   onIterationStart?: (data: { iteration: number; dataRow: Record<string, string> }) => void;
   onResult?: (data: RunnerIterationResult & { iteration: number }) => void;
   onIterationEnd?: (data: { iteration: number }) => void;
   onError?: (error: string) => void;
+  onStopped?: () => void;
   onDone?: () => void;
 }
 
@@ -114,14 +116,28 @@ export async function runCollectionStream(
       if (!data) continue;
       const parsed = JSON.parse(data);
       switch (eventType) {
+        case 'run-id': callbacks.onRunId?.(parsed.runId); break;
         case 'iteration-start': callbacks.onIterationStart?.(parsed); break;
         case 'result': callbacks.onResult?.(parsed); break;
         case 'iteration-end': callbacks.onIterationEnd?.(parsed); break;
         case 'error': callbacks.onError?.(parsed.error); break;
+        case 'stopped': callbacks.onStopped?.(); break;
         case 'done': callbacks.onDone?.(); break;
       }
     }
   }
+}
+
+export async function pauseRun(runId: string): Promise<void> {
+  await api.post(`/run/${runId}/pause`);
+}
+
+export async function resumeRun(runId: string): Promise<void> {
+  await api.post(`/run/${runId}/resume`);
+}
+
+export async function stopRun(runId: string): Promise<void> {
+  await api.post(`/run/${runId}/stop`);
 }
 
 export async function checkHealth(): Promise<boolean> {

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useApp } from '../store';
-import { runCollectionStream } from '../api';
+import { runCollectionStream, pauseRun, resumeRun, stopRun } from '../api';
 import type { RunnerIteration, RunnerIterationResult, PostmanItem } from '../types';
 import { applyInheritedAuth } from '../utils/treeHelpers';
 
@@ -402,6 +402,8 @@ export default function RunnerPanel() {
   const [iterations, setIterations] = useState(1);
   const [results, setResults] = useState<RunnerIteration[] | null>(null);
   const [isRunning, setIsRunning] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [runId, setRunId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [configOpen, setConfigOpen] = useState(true);
   const csvRef = useRef<HTMLInputElement>(null);
@@ -506,6 +508,8 @@ export default function RunnerPanel() {
   async function handleRun() {
     if (!selectedCollection) return;
     setIsRunning(true);
+    setIsPaused(false);
+    setRunId(null);
     setError(null);
     setResults(null);
 
@@ -536,6 +540,9 @@ export default function RunnerPanel() {
         },
         csvFile ?? undefined,
         {
+          onRunId(id) {
+            setRunId(id);
+          },
           onIterationStart(data) {
             currentIteration = { iteration: data.iteration, dataRow: data.dataRow, results: [] };
             streamingResults.push(currentIteration);
@@ -576,6 +583,9 @@ export default function RunnerPanel() {
           onError(errorMsg) {
             setError(errorMsg);
           },
+          onStopped() {
+            // run was stopped — final state already set via streaming
+          },
           onDone() {
             // final state is already set via streaming
           },
@@ -585,6 +595,8 @@ export default function RunnerPanel() {
       setError((e as Error).message);
     }
     setIsRunning(false);
+    setIsPaused(false);
+    setRunId(null);
   }
 
   // Summary stats
@@ -836,14 +848,50 @@ export default function RunnerPanel() {
           </div>
         )}
 
+        </div>{/* end collapsible body */}
+      </div>
+
+      {/* Run controls — always visible */}
+      <div className="flex items-center gap-3 shrink-0">
         <button
           onClick={handleRun}
           disabled={!selectedCollection || isRunning || selectedRequestIds.size === 0}
-          className="self-start px-6 py-2 bg-orange-600 hover:bg-orange-500 disabled:bg-slate-600 disabled:text-slate-400 text-white font-semibold rounded text-sm transition-colors"
+          className="px-6 py-2 bg-orange-600 hover:bg-orange-500 disabled:bg-slate-600 disabled:text-slate-400 text-white font-semibold rounded text-sm transition-colors"
         >
           {isRunning ? '⏳ Running...' : '▶ Run Collection'}
         </button>
-        </div>{/* end collapsible body */}
+
+        {isRunning && runId && (
+          <>
+            <button
+              onClick={async () => {
+                if (isPaused) {
+                  await resumeRun(runId);
+                  setIsPaused(false);
+                } else {
+                  await pauseRun(runId);
+                  setIsPaused(true);
+                }
+              }}
+              className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white font-semibold rounded text-sm transition-colors"
+            >
+              {isPaused ? '▶ Resume' : '⏸ Pause'}
+            </button>
+            <button
+              onClick={async () => {
+                await stopRun(runId);
+                setIsPaused(false);
+              }}
+              className="px-4 py-2 bg-red-700 hover:bg-red-600 text-white font-semibold rounded text-sm transition-colors"
+            >
+              ■ Stop
+            </button>
+          </>
+        )}
+
+        {isPaused && (
+          <span className="text-xs text-yellow-400 font-medium animate-pulse">Paused — waiting between requests</span>
+        )}
       </div>
 
       {error && (
