@@ -3,6 +3,7 @@ import { useApp, parseCollectionFile, parseEnvironmentFile, generateId } from '.
 import { parseCurlCommand } from '../utils/curlUtils';
 import { parseHurlFile, HURL_METHOD_REGEX } from '../utils/hurlUtils';
 import { parseOpenApiSpec } from '../utils/openApiUtils';
+import { parseHarFile } from '../utils/harUtils';
 import type { PostmanItem, PostmanAuth, PostmanBody } from '../types';
 
 interface ImportModalProps {
@@ -21,7 +22,7 @@ function nameFromUrl(url: string): string {
 
 export default function ImportModal({ onClose }: ImportModalProps) {
   const { state, dispatch } = useApp();
-  const [tab, setTab] = useState<'file' | 'paste' | 'curl' | 'hurl' | 'openapi'>('file');
+  const [tab, setTab] = useState<'file' | 'paste' | 'curl' | 'hurl' | 'openapi' | 'har'>('file');
   const [pasteText, setPasteText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -36,6 +37,9 @@ export default function ImportModal({ onClose }: ImportModalProps) {
   const [openApiError, setOpenApiError] = useState<string | null>(null);
   const [openApiSuccess, setOpenApiSuccess] = useState<string | null>(null);
   const openApiFileRef = useRef<HTMLInputElement>(null);
+  const [harText, setHarText] = useState('');
+  const [harError, setHarError] = useState<string | null>(null);
+  const [harSuccess, setHarSuccess] = useState<string | null>(null);
   const [targetCollectionId, setTargetCollectionId] = useState<string>(
     state.collections[0]?._id ?? ''
   );
@@ -70,6 +74,38 @@ export default function ImportModal({ onClose }: ImportModalProps) {
         setSuccess(`Collection "${collectionName}" with ${total} request(s) imported!`);
       } catch (e) {
         setError(`OpenAPI parse error: ${(e as Error).message}`);
+      }
+      return;
+    }
+
+    // Detect HAR files by extension or log.entries structure
+    const isHarFile =
+      filename?.toLowerCase().endsWith('.har') ||
+      (!filename && (() => { try { const j = JSON.parse(text); return !!(j?.log?.entries); } catch { return false; } })());
+    if (isHarFile) {
+      try {
+        const items = parseHarFile(text);
+        if (items.length === 0) {
+          setError('No requests found in HAR file.');
+          return;
+        }
+        const newColId = generateId();
+        const colName = filename ? filename.replace(/\.har$/i, '') : 'HAR Import';
+        dispatch({
+          type: 'ADD_COLLECTION',
+          payload: {
+            _id: newColId,
+            info: {
+              name: colName,
+              schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+            },
+            item: items,
+          },
+        });
+        const total = items.reduce((sum, i) => sum + (i.item ? i.item.length : 1), 0);
+        setSuccess(`Collection "${colName}" with ${total} request(s) imported!`);
+      } catch (e) {
+        setError(`HAR parse error: ${(e as Error).message}`);
       }
       return;
     }
@@ -197,6 +233,35 @@ export default function ImportModal({ onClose }: ImportModalProps) {
     setHurlText('');
   }
 
+  function handleHarImport() {
+    setHarError(null);
+    setHarSuccess(null);
+    try {
+      const items = parseHarFile(harText);
+      if (items.length === 0) {
+        setHarError('No requests found in the HAR data.');
+        return;
+      }
+      const newColId = generateId();
+      dispatch({
+        type: 'ADD_COLLECTION',
+        payload: {
+          _id: newColId,
+          info: {
+            name: 'HAR Import',
+            schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+          },
+          item: items,
+        },
+      });
+      const total = items.reduce((sum, i) => sum + (i.item ? i.item.length : 1), 0);
+      setHarSuccess(`Collection "HAR Import" with ${total} request(s) created.`);
+      setHarText('');
+    } catch (e) {
+      setHarError(`${(e as Error).message}`);
+    }
+  }
+
   function handleCurlImport() {
     setCurlError(null);
     setCurlSuccess(null);
@@ -262,7 +327,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
 
         {/* Tabs */}
         <div className="flex border-b border-slate-600 overflow-x-auto">
-          {(['file', 'paste', 'curl', 'hurl', 'openapi'] as const).map(t => (
+          {(['file', 'paste', 'curl', 'hurl', 'openapi', 'har'] as const).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -272,7 +337,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              {t === 'file' ? 'Upload File' : t === 'paste' ? 'Paste JSON' : t === 'curl' ? 'Paste cURL' : t === 'hurl' ? 'Paste HURL' : 'OpenAPI'}
+              {t === 'file' ? 'Upload File' : t === 'paste' ? 'JSON' : t === 'curl' ? 'cURL' : t === 'hurl' ? 'HURL' : t === 'openapi' ? 'OpenAPI' : 'HAR'}
             </button>
           ))}
         </div>
@@ -287,11 +352,11 @@ export default function ImportModal({ onClose }: ImportModalProps) {
             >
               <div className="text-4xl mb-3">📂</div>
               <p className="text-slate-300 font-medium">Click to browse or drag & drop</p>
-              <p className="text-slate-500 text-sm mt-1">Postman Collection v2.1 JSON, Environment JSON, OpenAPI/Swagger (.yaml/.yml/.json), or HURL (.hurl)</p>
+              <p className="text-slate-500 text-sm mt-1">Postman Collection v2.1 JSON, Environment JSON, OpenAPI/Swagger (.yaml/.yml/.json), HURL (.hurl), or HAR (.har)</p>
               <input
                 ref={fileRef}
                 type="file"
-                accept=".json,.hurl,.yaml,.yml"
+                accept=".json,.hurl,.yaml,.yml,.har"
                 multiple
                 className="hidden"
                 onChange={e => handleFiles(e.target.files)}
@@ -490,10 +555,42 @@ export default function ImportModal({ onClose }: ImportModalProps) {
             </div>
           )}
 
-          {tab !== 'curl' && tab !== 'hurl' && tab !== 'openapi' && error && (
+          {tab === 'har' && (
+            <div className="flex flex-col gap-3">
+              <div className="text-slate-400 text-xs bg-slate-900/50 border border-slate-700 rounded p-2 leading-relaxed">
+                Paste or upload a <span className="text-orange-400 font-mono">.har</span> file exported from your browser's DevTools Network panel.
+                Each captured request becomes a request in a new collection.
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-slate-400 text-sm">Paste HAR JSON</label>
+                <textarea
+                  value={harText}
+                  onChange={e => { setHarText(e.target.value); setHarError(null); setHarSuccess(null); }}
+                  rows={12}
+                  spellCheck={false}
+                  className="w-full bg-slate-900 border border-slate-600 rounded p-3 text-slate-100 text-sm font-mono resize-none focus:outline-none focus:border-orange-500"
+                  placeholder={'{\n  "log": {\n    "entries": [\n      { "request": { "method": "GET", "url": "https://..." } }\n    ]\n  }\n}'}
+                />
+              </div>
+              {harError && (
+                <p className="text-red-400 text-sm bg-red-900/20 border border-red-700 rounded p-2">{harError}</p>
+              )}
+              {harSuccess && (
+                <p className="text-green-400 text-sm bg-green-900/20 border border-green-700 rounded p-2">{harSuccess}</p>
+              )}
+              <button
+                onClick={handleHarImport}
+                className="self-end px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded text-sm font-medium transition-colors"
+              >
+                Import
+              </button>
+            </div>
+          )}
+
+          {tab !== 'curl' && tab !== 'hurl' && tab !== 'openapi' && tab !== 'har' && error && (
             <p className="mt-3 text-red-400 text-sm bg-red-900/20 border border-red-700 rounded p-2">{error}</p>
           )}
-          {tab !== 'curl' && tab !== 'hurl' && tab !== 'openapi' && success && (
+          {tab !== 'curl' && tab !== 'hurl' && tab !== 'openapi' && tab !== 'har' && success && (
             <p className="mt-3 text-green-400 text-sm bg-green-900/20 border border-green-700 rounded p-2">{success}</p>
           )}
         </div>
