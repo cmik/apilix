@@ -5,18 +5,39 @@
 
 import { generateId } from '../store';
 import type { PostmanItem, PostmanHeader } from '../types';
-import type { CodeGenParams } from './codeGen';
+
+// ─── Request params for HURL generation ──────────────────────────────────────
+// Compatible with CodeGenParams in codeGen.ts — defined here to avoid circular deps.
+
+export interface HurlRequestParams {
+  method: string;
+  url: string;
+  headers: Array<{ key: string; value: string; disabled?: boolean }>;
+  bodyMode: string;
+  bodyRaw: string;
+  bodyFormData: Array<{ key: string; value: string; disabled?: boolean }>;
+  bodyUrlEncoded: Array<{ key: string; value: string; disabled?: boolean }>;
+  authType: string;
+  authBearer: string;
+  authBasicUser: string;
+  authBasicPass: string;
+  authApiKeyName: string;
+  authApiKeyValue: string;
+}
 
 // ─── HTTP methods used to detect entry boundaries ────────────────────────────
 
-const HTTP_METHODS = new Set([
+export const HTTP_METHODS = new Set([
   'GET', 'POST', 'PUT', 'PATCH', 'DELETE',
   'HEAD', 'OPTIONS', 'CONNECT', 'TRACE',
 ]);
 
+/** Regex that matches a line starting with an HTTP method followed by whitespace. */
+export const HURL_METHOD_REGEX = /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|CONNECT|TRACE)\s/m;
+
 function isMethodLine(line: string): boolean {
-  const first = line.split(/\s+/)[0]?.toUpperCase() ?? '';
-  return HTTP_METHODS.has(first) && line.split(/\s+/).length >= 2;
+  const first = line.split(/\s+/)[0] ?? '';
+  return HTTP_METHODS.has(first.toUpperCase()) && line.split(/\s+/).length >= 2;
 }
 
 function isResponseLine(line: string): boolean {
@@ -165,9 +186,9 @@ function parseHurlEntry(lines: string[]): PostmanItem | null {
 // ─── HURL Generator ──────────────────────────────────────────────────────────
 
 /**
- * Generate a HURL entry string from CodeGenParams (single request).
+ * Generate a HURL entry string from HurlRequestParams (single request).
  */
-export function generateHurlEntry(p: CodeGenParams): string {
+export function generateHurlEntry(p: HurlRequestParams): string {
   const lines: string[] = [];
 
   // Request line

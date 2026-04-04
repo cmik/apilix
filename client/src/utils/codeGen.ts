@@ -1,6 +1,8 @@
 // ─── Code Generation Utility ─────────────────────────────────────────────────
 // Generates request snippets for multiple languages from a request definition.
 
+import { generateHurlEntry } from './hurlUtils';
+
 export interface CodeGenParams {
   method: string;
   url: string;
@@ -462,51 +464,6 @@ function genCSharp(p: CodeGenParams): string {
   return lines.join('\n');
 }
 
-// ─── HURL ─────────────────────────────────────────────────────────────────────
-
-function genHurl(p: CodeGenParams): string {
-  const lines: string[] = [];
-
-  lines.push(`${p.method} ${p.url}`);
-
-  // Auth headers
-  if (p.authType === 'bearer' && p.authBearer) {
-    lines.push(`Authorization: Bearer ${p.authBearer}`);
-  } else if (p.authType === 'basic' && (p.authBasicUser || p.authBasicPass)) {
-    const encoded = btoa(`${p.authBasicUser}:${p.authBasicPass}`);
-    lines.push(`Authorization: Basic ${encoded}`);
-  } else if (p.authType === 'apikey' && p.authApiKeyName) {
-    lines.push(`${p.authApiKeyName}: ${p.authApiKeyValue}`);
-  }
-
-  // Request headers
-  for (const h of p.headers) {
-    if (h.disabled || !h.key) continue;
-    lines.push(`${h.key}: ${h.value}`);
-  }
-
-  // Body
-  if (p.bodyMode === 'raw' && p.bodyRaw) {
-    lines.push('');
-    lines.push(p.bodyRaw);
-  } else if (p.bodyMode === 'urlencoded' && p.bodyUrlEncoded.length > 0) {
-    lines.push('[FormParams]');
-    for (const e of p.bodyUrlEncoded) {
-      if (!e.disabled && e.key) lines.push(`${e.key}: ${e.value}`);
-    }
-  } else if (p.bodyMode === 'formdata' && p.bodyFormData.length > 0) {
-    lines.push('[MultipartFormData]');
-    for (const f of p.bodyFormData) {
-      if (!f.disabled && f.key) lines.push(`${f.key}: ${f.value}`);
-    }
-  }
-
-  lines.push('');
-  lines.push('HTTP *');
-
-  return lines.join('\n');
-}
-
 // ─── Language registry ────────────────────────────────────────────────────────
 
 export const CODE_GEN_LANGUAGES: Language[] = [
@@ -517,5 +474,5 @@ export const CODE_GEN_LANGUAGES: Language[] = [
   { id: 'php', label: 'PHP (cURL)', generate: genPhp },
   { id: 'ruby', label: 'Ruby (Net::HTTP)', generate: genRuby },
   { id: 'csharp', label: 'C# (HttpClient)', generate: genCSharp },
-  { id: 'hurl', label: 'HURL', generate: genHurl },
+  { id: 'hurl', label: 'HURL', generate: generateHurlEntry },
 ];

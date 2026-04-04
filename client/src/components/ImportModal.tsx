@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { useApp, parseCollectionFile, parseEnvironmentFile, generateId } from '../store';
 import { parseCurlCommand } from '../utils/curlUtils';
-import { parseHurlFile } from '../utils/hurlUtils';
+import { parseHurlFile, HURL_METHOD_REGEX } from '../utils/hurlUtils';
 import type { PostmanItem, PostmanAuth, PostmanBody } from '../types';
 
 interface ImportModalProps {
@@ -40,7 +40,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
     setSuccess(null);
     // Detect HURL files by extension or try parsing as HURL first if it looks like one
     const isHurlFile = filename?.toLowerCase().endsWith('.hurl');
-    if (isHurlFile || (!text.trimStart().startsWith('{') && /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s/m.test(text))) {
+    if (isHurlFile || (!text.trimStart().startsWith('{') && HURL_METHOD_REGEX.test(text))) {
       const col = state.collections.find(c => c._id === targetCollectionId);
       const items = parseHurlFile(text);
       if (items.length === 0) {
