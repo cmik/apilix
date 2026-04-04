@@ -11,6 +11,8 @@ export interface CodeGenParams {
   bodyRaw: string;
   bodyFormData: Array<{ key: string; value: string; disabled?: boolean }>;
   bodyUrlEncoded: Array<{ key: string; value: string; disabled?: boolean }>;
+  bodyGraphqlQuery: string;
+  bodyGraphqlVariables: string;
   authType: string;
   authBearer: string;
   authBasicUser: string;

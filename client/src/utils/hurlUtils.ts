@@ -17,6 +17,8 @@ export interface HurlRequestParams {
   bodyRaw: string;
   bodyFormData: Array<{ key: string; value: string; disabled?: boolean }>;
   bodyUrlEncoded: Array<{ key: string; value: string; disabled?: boolean }>;
+  bodyGraphqlQuery: string;
+  bodyGraphqlVariables: string;
   authType: string;
   authBearer: string;
   authBasicUser: string;
@@ -383,16 +385,8 @@ function parseHurlEntry(lines: string[]): PostmanItem | null {
 
   const rawBody = bodyLines.join('\n');
 
-  // Determine body mode and content type
-  const contentType = headers.find(h => h.key.toLowerCase() === 'content-type')?.value ?? '';
-  const bodyMode: 'raw' | 'none' = rawBody ? 'raw' : 'none';
-  const bodyLang: string = contentType.includes('json')
-    ? 'json'
-    : contentType.includes('xml')
-      ? 'xml'
-      : contentType.includes('html')
-        ? 'html'
-        : 'text';
+  // Detect graphql multiline body (```graphql ... ```)
+  const graphqlFenceMatch = rawBody.match(/^```graphql\n([\s\S]*?)(?:\nvariables\s*\{([\s\S]*?)\})?\n```\s*$/);
 
   const testEvent = buildTestEvent(captures, asserts);
 
@@ -401,6 +395,31 @@ function parseHurlEntry(lines: string[]): PostmanItem | null {
   if (queryParams.length > 0) {
     const qs = queryParams.map(p => `${encodeURIComponent(p.key)}=${encodeURIComponent(p.value)}`).join('&');
     rawUrl = url.includes('?') ? `${url}&${qs}` : `${url}?${qs}`;
+  }
+
+  let bodyDef: import('../types').PostmanBody | undefined;
+
+  if (graphqlFenceMatch) {
+    const gqlQuery = graphqlFenceMatch[1] ?? '';
+    const gqlVars = graphqlFenceMatch[2]?.trim() ?? '';
+    bodyDef = {
+      mode: 'graphql',
+      graphql: { query: gqlQuery, ...(gqlVars ? { variables: gqlVars } : {}) },
+    };
+  } else {
+    // Determine body mode and content type
+    const contentType = headers.find(h => h.key.toLowerCase() === 'content-type')?.value ?? '';
+    const bodyMode: 'raw' | 'none' = rawBody ? 'raw' : 'none';
+    const bodyLang: string = contentType.includes('json')
+      ? 'json'
+      : contentType.includes('xml')
+        ? 'xml'
+        : contentType.includes('html')
+          ? 'html'
+          : 'text';
+    bodyDef = bodyMode === 'raw' && rawBody
+      ? { mode: 'raw', raw: rawBody, options: { raw: { language: bodyLang as 'json' | 'xml' | 'html' | 'text' } } }
+      : undefined;
   }
 
   const item: PostmanItem = {
@@ -413,15 +432,7 @@ function parseHurlEntry(lines: string[]): PostmanItem | null {
         ...(queryParams.length > 0 ? { query: queryParams } : {}),
       },
       header: headers,
-      ...(bodyMode === 'raw' && rawBody
-        ? {
-            body: {
-              mode: 'raw',
-              raw: rawBody,
-              options: { raw: { language: bodyLang as 'json' | 'xml' | 'html' | 'text' } },
-            },
-          }
-        : {}),
+      ...(bodyDef ? { body: bodyDef } : {}),
     },
     ...(testEvent ? { event: [testEvent] } : {}),
   };
@@ -470,6 +481,16 @@ export function generateHurlEntry(p: HurlRequestParams): string {
     for (const f of p.bodyFormData) {
       if (!f.disabled && f.key) lines.push(`${f.key}: ${f.value}`);
     }
+  } else if (p.bodyMode === 'graphql' && p.bodyGraphqlQuery) {
+    lines.push('');
+    lines.push('```graphql');
+    lines.push(p.bodyGraphqlQuery);
+    if (p.bodyGraphqlVariables) {
+      lines.push('variables {');
+      lines.push(p.bodyGraphqlVariables);
+      lines.push('}');
+    }
+    lines.push('```');
   }
 
   // Response assertion (wildcard — accepts any status)
@@ -525,6 +546,16 @@ function collectHurlEntries(items: PostmanItem[], out: string[]): void {
         for (const f of body.formdata) {
           if (!f.disabled && f.key) lines.push(`${f.key}: ${f.value}`);
         }
+      } else if (body?.mode === 'graphql' && body.graphql?.query) {
+        lines.push('');
+        lines.push('```graphql');
+        lines.push(body.graphql.query);
+        if (body.graphql.variables) {
+          lines.push('variables {');
+          lines.push(body.graphql.variables);
+          lines.push('}');
+        }
+        lines.push('```');
       }
 
       lines.push('');

@@ -1324,6 +1324,8 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
             bodyRaw: edit.bodyRaw,
             bodyFormData: edit.bodyFormData,
             bodyUrlEncoded: edit.bodyUrlEncoded,
+            bodyGraphqlQuery: edit.bodyGraphqlQuery,
+            bodyGraphqlVariables: edit.bodyGraphqlVariables,
             authType: edit.authType,
             authBearer: edit.authBearer,
             authBasicUser: edit.authBasicUser,
