@@ -4,7 +4,7 @@
 // HURL format: https://hurl.dev/docs/hurl-file.html
 
 import { generateId } from '../store';
-import type { PostmanItem, PostmanHeader } from '../types';
+import type { PostmanItem, PostmanHeader, PostmanQueryParam } from '../types';
 
 // ─── Request params for HURL generation ──────────────────────────────────────
 // Compatible with CodeGenParams in codeGen.ts — defined here to avoid circular deps.
@@ -74,6 +74,84 @@ export function parseHurlFile(text: string): PostmanItem[] {
   return entries;
 }
 
+// ─── Captures helpers ─────────────────────────────────────────────────────────
+
+interface HurlCapture {
+  varName: string;
+  captureType: string;
+  arg: string | null;
+}
+
+/**
+ * Convert an array of HURL captures into a Postman test-script event that
+ * calls `pm.environment.set()` for each captured variable.
+ */
+function capturesEventFromHurl(captures: HurlCapture[]): import('../types').PostmanEvent | null {
+  if (captures.length === 0) return null;
+
+  // Minimal JSONPath traversal for expressions like $.foo, $.items[0].name
+  const jpHelper = [
+    '  function _jp(obj, path) {',
+    '    var segs = path.replace(/^\\$\\.?/, \'\').match(/[^.\\[\\]]+|\\[\\d+\\]/g) || [];',
+    '    var cur = obj;',
+    '    for (var i = 0; i < segs.length; i++) {',
+    '      if (cur == null) return undefined;',
+    '      var m = segs[i].match(/^\\[(\\d+)\\]$/);',
+    '      cur = m ? cur[+m[1]] : cur[segs[i]];',
+    '    }',
+    '    return cur;',
+    '  }',
+  ];
+
+  const scriptLines: string[] = [
+    '// HURL captures — auto-generated',
+    '(function () {',
+    ...jpHelper,
+  ];
+
+  for (const cap of captures) {
+    let expr: string | null = null;
+    switch (cap.captureType) {
+      case 'jsonpath':
+        expr = `String(_jp(pm.response.json(), ${JSON.stringify(cap.arg)}))`;
+        break;
+      case 'header':
+        expr = `String(pm.response.headers.get(${JSON.stringify(cap.arg)}))`;
+        break;
+      case 'status':
+        expr = `String(pm.response.code)`;
+        break;
+      case 'body':
+        expr = `pm.response.text()`;
+        break;
+      case 'regex':
+        expr = `(function(){ var m = pm.response.text().match(new RegExp(${JSON.stringify(cap.arg)})); return m ? (m[1] !== undefined ? String(m[1]) : String(m[0])) : ''; })()`;
+        break;
+      default:
+        // xpath, url, duration, sha256, md5, bytes, variable — not supported in sandbox
+        expr = null;
+    }
+
+    scriptLines.push(`  try {`);
+    if (expr) {
+      scriptLines.push(`    pm.environment.set(${JSON.stringify(cap.varName)}, ${expr});`);
+    } else {
+      scriptLines.push(`    // capture type "${cap.captureType}" is not supported in Apilix scripts — skipped`);
+    }
+    scriptLines.push(`  } catch (_) {}`);
+  }
+
+  scriptLines.push('})();');
+
+  return {
+    listen: 'test',
+    script: {
+      type: 'text/javascript',
+      exec: scriptLines,
+    },
+  };
+}
+
 /** Parse a single HURL entry (lines from METHOD URL to start of next entry). */
 function parseHurlEntry(lines: string[]): PostmanItem | null {
   if (lines.length === 0) return null;
@@ -87,11 +165,20 @@ function parseHurlEntry(lines: string[]): PostmanItem | null {
 
   const headers: PostmanHeader[] = [];
   const bodyLines: string[] = [];
+  const captures: HurlCapture[] = [];
+  const queryParams: PostmanQueryParam[] = [];
   let inBody = false;
   let inResponse = false;
+  let currentSection: string | null = null;
 
   // Section markers in HURL
-  const sectionMarkers = new Set(['[QueryStringParams]', '[FormParams]', '[MultipartFormData]', '[Cookies]', '[Options]', '[Asserts]', '[Captures]']);
+  // Both current short names ([Query], [Form], [Multipart]) and legacy names accepted
+  const sectionMarkers = new Set([
+    '[Query]', '[QueryStringParams]',
+    '[Form]', '[FormParams]',
+    '[Multipart]', '[MultipartFormData]',
+    '[Cookies]', '[BasicAuth]', '[Options]', '[Asserts]', '[Captures]',
+  ]);
 
   for (let i = 1; i < lines.length; i++) {
     const raw = lines[i];
@@ -100,17 +187,52 @@ function parseHurlEntry(lines: string[]): PostmanItem | null {
     // Skip comment lines
     if (line.trimStart().startsWith('#')) continue;
 
-    // Response line ends the request section
+    // Response line transitions to response section — do NOT break, captures come after it
     if (isResponseLine(line)) {
       inResponse = true;
-      break;
+      currentSection = null;
+      continue;
     }
 
-    // Section markers (e.g. [Asserts], [QueryStringParams], etc.)
+    // Section markers (e.g. [Asserts], [QueryStringParams], [Captures], etc.)
     const trimmed = line.trim();
     if (sectionMarkers.has(trimmed)) {
-      // Skip everything until response line for simplicity
+      currentSection = trimmed;
       inBody = false;
+      continue;
+    }
+
+    // Parse [Query] / [QueryStringParams] section lines: "key: value"
+    if (currentSection === '[Query]' || currentSection === '[QueryStringParams]') {
+      if (trimmed !== '') {
+        const colonIdx = trimmed.indexOf(':');
+        if (colonIdx > 0) {
+          queryParams.push({
+            key: trimmed.slice(0, colonIdx).trim(),
+            value: trimmed.slice(colonIdx + 1).trim(),
+          });
+        }
+      }
+      continue;
+    }
+
+    // Parse [Captures] section lines: "varName: type" or "varName: type "arg""
+    if (currentSection === '[Captures]') {
+      if (trimmed !== '') {
+        const captureMatch = trimmed.match(/^(\w+)\s*:\s*(\w+)(?:\s+"([^"]*)")?/);
+        if (captureMatch) {
+          captures.push({
+            varName: captureMatch[1],
+            captureType: captureMatch[2],
+            arg: captureMatch[3] ?? null,
+          });
+        }
+      }
+      continue;
+    }
+
+    // Skip lines in other non-body/non-response sections, or plain response header lines
+    if (currentSection !== null || inResponse) {
       continue;
     }
 
@@ -137,9 +259,7 @@ function parseHurlEntry(lines: string[]): PostmanItem | null {
       inBody = true;
       bodyLines.push(raw);
     } else {
-      if (!inResponse) {
-        bodyLines.push(raw);
-      }
+      bodyLines.push(raw);
     }
   }
 
@@ -152,7 +272,7 @@ function parseHurlEntry(lines: string[]): PostmanItem | null {
 
   // Determine body mode and content type
   const contentType = headers.find(h => h.key.toLowerCase() === 'content-type')?.value ?? '';
-  let bodyMode: 'raw' | 'none' = rawBody ? 'raw' : 'none';
+  const bodyMode: 'raw' | 'none' = rawBody ? 'raw' : 'none';
   const bodyLang: string = contentType.includes('json')
     ? 'json'
     : contentType.includes('xml')
@@ -161,12 +281,24 @@ function parseHurlEntry(lines: string[]): PostmanItem | null {
         ? 'html'
         : 'text';
 
+  const captureEvent = capturesEventFromHurl(captures);
+
+  // Build the raw URL with query params appended
+  let rawUrl = url;
+  if (queryParams.length > 0) {
+    const qs = queryParams.map(p => `${encodeURIComponent(p.key)}=${encodeURIComponent(p.value)}`).join('&');
+    rawUrl = url.includes('?') ? `${url}&${qs}` : `${url}?${qs}`;
+  }
+
   const item: PostmanItem = {
     id: generateId(),
-    name: `${method} ${url}`,
+    name: `${method} ${rawUrl}`,
     request: {
       method,
-      url: { raw: url },
+      url: {
+        raw: rawUrl,
+        ...(queryParams.length > 0 ? { query: queryParams } : {}),
+      },
       header: headers,
       ...(bodyMode === 'raw' && rawBody
         ? {
@@ -178,6 +310,7 @@ function parseHurlEntry(lines: string[]): PostmanItem | null {
           }
         : {}),
     },
+    ...(captureEvent ? { event: [captureEvent] } : {}),
   };
 
   return item;
