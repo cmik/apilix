@@ -1,13 +1,27 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useApp, generateId } from '../store';
 import CollectionTree from './CollectionTree';
 import ImportModal from './ImportModal';
+import { buildHurlCollection } from '../utils/hurlUtils';
 
 export default function Sidebar() {
   const { state, dispatch } = useApp();
   const [showImport, setShowImport] = useState(false);
   const [filter, setFilter] = useState('');
   const [newCollectionId, setNewCollectionId] = useState<string | null>(null);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleOutside(e: MouseEvent) {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
+        setShowExportMenu(false);
+      }
+    }
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, []);
+
   const [collapseSignal, setCollapseSignal] = useState(0);
   const [expandSignal, setExpandSignal] = useState(0);
   const [sortAZ, setSortAZ] = useState(false);
@@ -36,35 +50,66 @@ export default function Sidebar() {
           >
             + New
           </button>
-          <button
-            onClick={() => {
-              state.collections.forEach(col => {
-                const exported = {
-                  info: {
-                    name: col.info.name,
-                    schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
-                    _postman_id: col._id,
-                  },
-                  item: col.item,
-                  auth: col.auth,
-                  event: col.event,
-                  variable: col.variable,
-                };
-                const blob = new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `${col.info.name.replace(/[^a-z0-9_\-. ]/gi, '_')}.postman_collection.json`;
-                a.click();
-                URL.revokeObjectURL(url);
-              });
-            }}
-            title="Export all collections"
-            className="px-2 py-1 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 text-xs rounded font-medium transition-colors"
-            disabled={state.collections.length === 0}
-          >
-            Export
-          </button>
+          <div ref={exportMenuRef} className="relative">
+            <button
+              onClick={() => setShowExportMenu(o => !o)}
+              title="Export all collections"
+              className="px-2 py-1 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 text-xs rounded font-medium transition-colors"
+              disabled={state.collections.length === 0}
+            >
+              Export ▾
+            </button>
+            {showExportMenu && (
+              <div className="absolute right-0 top-full mt-1 z-50 bg-slate-800 border border-slate-600 rounded shadow-xl w-44">
+                <button
+                  className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                  onClick={() => {
+                    setShowExportMenu(false);
+                    state.collections.forEach(col => {
+                      const exported = {
+                        info: {
+                          name: col.info.name,
+                          schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+                          _postman_id: col._id,
+                        },
+                        item: col.item,
+                        auth: col.auth,
+                        event: col.event,
+                        variable: col.variable,
+                      };
+                      const blob = new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `${col.info.name.replace(/[^a-z0-9_\-. ]/gi, '_')}.postman_collection.json`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    });
+                  }}
+                >
+                  Postman JSON
+                </button>
+                <button
+                  className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                  onClick={() => {
+                    setShowExportMenu(false);
+                    state.collections.forEach(col => {
+                      const hurlContent = buildHurlCollection(col.item);
+                      const blob = new Blob([hurlContent], { type: 'text/plain' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `${col.info.name.replace(/[^a-z0-9_\-. ]/gi, '_')}.hurl`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    });
+                  }}
+                >
+                  HURL (.hurl)
+                </button>
+              </div>
+            )}
+          </div>
           <button
             onClick={() => setShowImport(true)}
             title="Import collection / environment"
