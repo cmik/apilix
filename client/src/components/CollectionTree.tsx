@@ -6,6 +6,7 @@ import {
   renameItemById, updateItemById, removeItemById, addItemToFolder, duplicateItem,
   moveItemInTree, extractItemById, insertItemInTree, isDescendantOf,
 } from '../utils/treeHelpers';
+import { generateHurlFromItems } from '../utils/hurlUtils';
 import ItemSettingsModal from './ItemSettingsModal';
 
 // ─── Drag & Drop Context ──────────────────────────────────────────────────────
@@ -530,9 +531,21 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
     URL.revokeObjectURL(url);
   }
 
+  function handleExportHurl() {
+    const hurlContent = generateHurlFromItems(collection.item);
+    const blob = new Blob([hurlContent], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${collection.info.name.replace(/[^a-z0-9_\-. ]/gi, '_')}.hurl`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   const menuItems: MenuItem[] = [
     { label: 'View settings', icon: '⚙️', onClick: () => setShowSettings(true) },
     { label: 'Export', icon: '⬇️', onClick: handleExport },
+    { label: 'Export as HURL', icon: '⬇️', onClick: handleExportHurl },
     { label: 'Add folder', icon: '📁', onClick: handleAddFolder },
     { label: 'Add request', icon: '➕', onClick: handleAddRequest },
     {
