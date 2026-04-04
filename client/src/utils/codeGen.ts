@@ -1,6 +1,8 @@
 // ─── Code Generation Utility ─────────────────────────────────────────────────
 // Generates request snippets for multiple languages from a request definition.
 
+import { generateHurlEntry } from './hurlUtils';
+
 export interface CodeGenParams {
   method: string;
   url: string;
@@ -472,4 +474,5 @@ export const CODE_GEN_LANGUAGES: Language[] = [
   { id: 'php', label: 'PHP (cURL)', generate: genPhp },
   { id: 'ruby', label: 'Ruby (Net::HTTP)', generate: genRuby },
   { id: 'csharp', label: 'C# (HttpClient)', generate: genCSharp },
+  { id: 'hurl', label: 'HURL', generate: generateHurlEntry },
 ];

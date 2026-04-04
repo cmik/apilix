@@ -4,7 +4,7 @@ import type { PostmanItem, PostmanRequest, PostmanHeader, PostmanQueryParam } fr
 import { useApp } from '../store';
 import { executeRequest } from '../api';
 import { getUrlDisplay, buildVarMap, resolveVariables } from '../utils/variableResolver';
-import { updateItemById, renameItemById, resolveInheritedAuth } from '../utils/treeHelpers';
+import { updateItemById, renameItemById, resolveInheritedAuth, findItemInTree } from '../utils/treeHelpers';
 import { parseCurlCommand } from '../utils/curlUtils';
 import GraphQLPanel from './GraphQLPanel';
 import CodeGenModal from './CodeGenModal';
@@ -480,6 +480,8 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
   const [activeRequestTab, setActiveRequestTab] = useState<Tab>('Params');
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [showCodeGen, setShowCodeGen] = useState(false);
+  const [showSaveToCollection, setShowSaveToCollection] = useState(false);
+  const [saveTargetCollectionId, setSaveTargetCollectionId] = useState<string>('');
   const [importText, setImportText] = useState('');
   const [importMode, setImportMode] = useState<'curl' | 'raw'>('curl');
   const [importError, setImportError] = useState('');
@@ -707,7 +709,14 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
   function handleSave() {
     if (!activeTab || !edit) return;
     const col = state.collections.find(c => c._id === activeTab.collectionId);
-    if (!col || !activeTab.item.id) return;
+    // Orphaned tab — collection deleted, or item deleted from within the collection
+    const itemStillExists = col && activeTab.item.id ? findItemInTree(col.item, activeTab.item.id) !== null : false;
+    if (!col || !itemStillExists) {
+      setSaveTargetCollectionId(state.collections[0]?._id ?? '');
+      setShowSaveToCollection(true);
+      return;
+    }
+    if (!activeTab.item.id) return;
     const updatedItem: PostmanItem = {
       ...activeTab.item,
       description: edit.description || undefined,
@@ -1222,6 +1231,81 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
                   className="px-4 py-1.5 bg-orange-600 hover:bg-orange-500 text-white text-sm font-medium rounded transition-colors"
                 >
                   Import
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Save-to-collection modal (orphaned tab) */}
+      {showSaveToCollection && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          onClick={e => { if (e.target === e.currentTarget) setShowSaveToCollection(false); }}
+        >
+          <div className="bg-slate-800 border border-slate-600 rounded-lg shadow-2xl w-full max-w-sm mx-4">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
+              <h3 className="text-sm font-semibold text-slate-200">Save to Collection</h3>
+              <button onClick={() => setShowSaveToCollection(false)} className="text-slate-500 hover:text-slate-300 text-xl leading-none">×</button>
+            </div>
+            <div className="px-4 py-4 flex flex-col gap-3">
+              <p className="text-xs text-slate-400">This request is no longer linked to a collection. Choose where to save it:</p>
+              {state.collections.length === 0 ? (
+                <p className="text-xs text-orange-400">No collections available. Please create a collection first.</p>
+              ) : (
+                <select
+                  value={saveTargetCollectionId}
+                  onChange={e => setSaveTargetCollectionId(e.target.value)}
+                  className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-orange-500"
+                >
+                  {state.collections.map(c => (
+                    <option key={c._id} value={c._id}>{c.info.name}</option>
+                  ))}
+                </select>
+              )}
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  onClick={() => setShowSaveToCollection(false)}
+                  className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  disabled={!saveTargetCollectionId}
+                  onClick={() => {
+                    if (!activeTab || !edit || !saveTargetCollectionId) return;
+                    const targetCol = state.collections.find(c => c._id === saveTargetCollectionId);
+                    if (!targetCol) return;
+                    const updatedItem: PostmanItem = {
+                      ...activeTab.item,
+                      description: edit.description || undefined,
+                      request: {
+                        ...(activeTab.item.request ?? {}),
+                        method: edit.method,
+                        url: { raw: edit.url },
+                        header: edit.headers,
+                        body: edit.bodyMode !== 'none' ? {
+                          mode: edit.bodyMode as NonNullable<NonNullable<PostmanItem['request']>['body']>['mode'],
+                          raw: edit.bodyMode === 'raw' ? edit.bodyRaw : undefined,
+                          urlencoded: edit.bodyMode === 'urlencoded' ? edit.bodyUrlEncoded : undefined,
+                          formdata: edit.bodyMode === 'formdata' ? edit.bodyFormData : undefined,
+                          graphql: edit.bodyMode === 'graphql' ? { query: edit.bodyGraphqlQuery, variables: edit.bodyGraphqlVariables || undefined } : undefined,
+                          options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as 'json' | 'text' } } : undefined,
+                        } : undefined,
+                        auth: buildAuth(edit),
+                      },
+                      event: buildEvents(edit),
+                    };
+                    dispatch({ type: 'UPDATE_COLLECTION', payload: { ...targetCol, item: [...targetCol.item, updatedItem] } });
+                    dispatch({ type: 'UPDATE_TAB', payload: { tabId: activeTab.id, collectionId: saveTargetCollectionId, item: updatedItem } });
+                    cacheRef.current.set(activeTab.id, { edit, dirty: false });
+                    setDirty(false);
+                    setShowSaveToCollection(false);
+                  }}
+                  className="px-4 py-1.5 bg-orange-500 hover:bg-orange-600 text-white text-xs rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Save
                 </button>
               </div>
             </div>

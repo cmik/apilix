@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import { useApp, parseCollectionFile, parseEnvironmentFile, generateId } from '../store';
 import { parseCurlCommand } from '../utils/curlUtils';
+import { parseHurlFile, HURL_METHOD_REGEX } from '../utils/hurlUtils';
 import type { PostmanItem, PostmanAuth, PostmanBody } from '../types';
 
 interface ImportModalProps {
@@ -19,7 +20,7 @@ function nameFromUrl(url: string): string {
 
 export default function ImportModal({ onClose }: ImportModalProps) {
   const { state, dispatch } = useApp();
-  const [tab, setTab] = useState<'file' | 'paste' | 'curl'>('file');
+  const [tab, setTab] = useState<'file' | 'paste' | 'curl' | 'hurl'>('file');
   const [pasteText, setPasteText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -27,13 +28,52 @@ export default function ImportModal({ onClose }: ImportModalProps) {
   const [curlText, setCurlText] = useState('');
   const [curlError, setCurlError] = useState<string | null>(null);
   const [curlSuccess, setCurlSuccess] = useState<string | null>(null);
+  const [hurlText, setHurlText] = useState('');
+  const [hurlError, setHurlError] = useState<string | null>(null);
+  const [hurlSuccess, setHurlSuccess] = useState<string | null>(null);
   const [targetCollectionId, setTargetCollectionId] = useState<string>(
     state.collections[0]?._id ?? ''
   );
 
-  function parseAndImport(text: string) {
+  function parseAndImport(text: string, filename?: string) {
     setError(null);
     setSuccess(null);
+    // Detect HURL files by extension or try parsing as HURL first if it looks like one
+    const isHurlFile = filename?.toLowerCase().endsWith('.hurl');
+    if (isHurlFile || (!text.trimStart().startsWith('{') && HURL_METHOD_REGEX.test(text))) {
+      const col = state.collections.find(c => c._id === targetCollectionId);
+      const items = parseHurlFile(text);
+      if (items.length === 0) {
+        if (!isHurlFile) {
+          // Fall through to JSON parsing
+        } else {
+          setError('No valid HURL requests found in file.');
+          return;
+        }
+      } else {
+        if (col) {
+          dispatch({ type: 'UPDATE_COLLECTION', payload: { ...col, item: [...col.item, ...items] } });
+          setSuccess(`${items.length} request(s) from HURL file added to "${col.info.name}".`);
+        } else {
+          // Create a new collection from HURL
+          const newColId = generateId();
+          const colName = filename ? filename.replace(/\.hurl$/i, '') : 'HURL Import';
+          dispatch({
+            type: 'ADD_COLLECTION',
+            payload: {
+              _id: newColId,
+              info: {
+                name: colName,
+                schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+              },
+              item: items,
+            },
+          });
+          setSuccess(`Collection "${colName}" with ${items.length} request(s) imported!`);
+        }
+        return;
+      }
+    }
     try {
       const json = JSON.parse(text);
       if (json.info && json.item) {
@@ -45,7 +85,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
         dispatch({ type: 'ADD_ENVIRONMENT', payload: env });
         setSuccess(`Environment "${env.name}" imported!`);
       } else {
-        setError('Unrecognised format. Expected a Postman Collection v2.1 or Environment JSON.');
+        setError('Unrecognised format. Expected a Postman Collection v2.1, Environment JSON, or HURL file.');
       }
     } catch (e) {
       setError(`Invalid JSON: ${(e as Error).message}`);
@@ -58,7 +98,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
       const reader = new FileReader();
       reader.onload = e => {
         const text = e.target?.result as string;
-        parseAndImport(text);
+        parseAndImport(text, file.name);
       };
       reader.readAsText(file);
     });
@@ -67,6 +107,37 @@ export default function ImportModal({ onClose }: ImportModalProps) {
   function handleDrop(e: React.DragEvent) {
     e.preventDefault();
     handleFiles(e.dataTransfer.files);
+  }
+
+  function handleHurlImport() {
+    setHurlError(null);
+    setHurlSuccess(null);
+    const items = parseHurlFile(hurlText);
+    if (items.length === 0) {
+      setHurlError('No valid HURL requests found. Make sure each entry starts with a method line like "GET https://…".');
+      return;
+    }
+    const col = state.collections.find(c => c._id === targetCollectionId);
+    if (col) {
+      dispatch({ type: 'UPDATE_COLLECTION', payload: { ...col, item: [...col.item, ...items] } });
+      setHurlSuccess(`${items.length} request(s) added to "${col.info.name}".`);
+    } else {
+      // No collections yet — create one
+      const newColId = generateId();
+      dispatch({
+        type: 'ADD_COLLECTION',
+        payload: {
+          _id: newColId,
+          info: {
+            name: 'HURL Import',
+            schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+          },
+          item: items,
+        },
+      });
+      setHurlSuccess(`Collection "HURL Import" with ${items.length} request(s) created.`);
+    }
+    setHurlText('');
   }
 
   function handleCurlImport() {
@@ -133,18 +204,18 @@ export default function ImportModal({ onClose }: ImportModalProps) {
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-slate-600">
-          {(['file', 'paste', 'curl'] as const).map(t => (
+        <div className="flex border-b border-slate-600 overflow-x-auto">
+          {(['file', 'paste', 'curl', 'hurl'] as const).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
-              className={`px-5 py-2.5 text-sm font-medium transition-colors ${
+              className={`px-5 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
                 tab === t
                   ? 'text-orange-400 border-b-2 border-orange-400 -mb-px'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              {t === 'file' ? 'Upload File' : t === 'paste' ? 'Paste JSON' : 'Paste cURL'}
+              {t === 'file' ? 'Upload File' : t === 'paste' ? 'Paste JSON' : t === 'curl' ? 'Paste cURL' : 'Paste HURL'}
             </button>
           ))}
         </div>
@@ -159,11 +230,11 @@ export default function ImportModal({ onClose }: ImportModalProps) {
             >
               <div className="text-4xl mb-3">📂</div>
               <p className="text-slate-300 font-medium">Click to browse or drag & drop</p>
-              <p className="text-slate-500 text-sm mt-1">Postman Collection v2.1 JSON or Environment JSON</p>
+              <p className="text-slate-500 text-sm mt-1">Postman Collection v2.1 JSON, Environment JSON, or HURL (.hurl)</p>
               <input
                 ref={fileRef}
                 type="file"
-                accept=".json"
+                accept=".json,.hurl"
                 multiple
                 className="hidden"
                 onChange={e => handleFiles(e.target.files)}
@@ -238,10 +309,56 @@ export default function ImportModal({ onClose }: ImportModalProps) {
             </div>
           )}
 
-          {tab !== 'curl' && error && (
+          {tab === 'hurl' && (
+            <div className="flex flex-col gap-3">
+              <div className="text-slate-400 text-xs bg-slate-900/50 border border-slate-700 rounded p-2 leading-relaxed">
+                Paste a <span className="text-orange-400 font-mono">HURL</span> file with one or more HTTP requests.
+                Requests will be added to the selected collection (or a new one if none exists).
+              </div>
+              {state.collections.length > 0 && (
+                <div className="flex flex-col gap-1">
+                  <label className="text-slate-400 text-sm">Target collection</label>
+                  <select
+                    value={targetCollectionId}
+                    onChange={e => setTargetCollectionId(e.target.value)}
+                    className="bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-orange-500"
+                  >
+                    {state.collections.map(c => (
+                      <option key={c._id} value={c._id}>{c.info.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <div className="flex flex-col gap-1">
+                <label className="text-slate-400 text-sm">Paste HURL content</label>
+                <textarea
+                  value={hurlText}
+                  onChange={e => { setHurlText(e.target.value); setHurlError(null); setHurlSuccess(null); }}
+                  rows={11}
+                  spellCheck={false}
+                  className="w-full bg-slate-900 border border-slate-600 rounded p-3 text-slate-100 text-sm font-mono resize-none focus:outline-none focus:border-orange-500"
+                  placeholder={"GET https://api.example.com/users\nAuthorization: Bearer {{token}}\n\nHTTP *\n\n\nPOST https://api.example.com/users\nContent-Type: application/json\n\n{\"name\": \"Alice\"}\n\nHTTP *"}
+                />
+              </div>
+              {hurlError && (
+                <p className="text-red-400 text-sm bg-red-900/20 border border-red-700 rounded p-2">{hurlError}</p>
+              )}
+              {hurlSuccess && (
+                <p className="text-green-400 text-sm bg-green-900/20 border border-green-700 rounded p-2">{hurlSuccess}</p>
+              )}
+              <button
+                onClick={handleHurlImport}
+                className="self-end px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded text-sm font-medium transition-colors"
+              >
+                Import
+              </button>
+            </div>
+          )}
+
+          {tab !== 'curl' && tab !== 'hurl' && error && (
             <p className="mt-3 text-red-400 text-sm bg-red-900/20 border border-red-700 rounded p-2">{error}</p>
           )}
-          {tab !== 'curl' && success && (
+          {tab !== 'curl' && tab !== 'hurl' && success && (
             <p className="mt-3 text-green-400 text-sm bg-green-900/20 border border-green-700 rounded p-2">{success}</p>
           )}
         </div>
