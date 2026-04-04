@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { useApp, parseCollectionFile, parseEnvironmentFile, generateId } from '../store';
 import { parseCurlCommand } from '../utils/curlUtils';
 import { parseHurlFile, HURL_METHOD_REGEX } from '../utils/hurlUtils';
+import { parseOpenApiSpec } from '../utils/openApiUtils';
 import type { PostmanItem, PostmanAuth, PostmanBody } from '../types';
 
 interface ImportModalProps {
@@ -20,7 +21,7 @@ function nameFromUrl(url: string): string {
 
 export default function ImportModal({ onClose }: ImportModalProps) {
   const { state, dispatch } = useApp();
-  const [tab, setTab] = useState<'file' | 'paste' | 'curl' | 'hurl'>('file');
+  const [tab, setTab] = useState<'file' | 'paste' | 'curl' | 'hurl' | 'openapi'>('file');
   const [pasteText, setPasteText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -31,6 +32,10 @@ export default function ImportModal({ onClose }: ImportModalProps) {
   const [hurlText, setHurlText] = useState('');
   const [hurlError, setHurlError] = useState<string | null>(null);
   const [hurlSuccess, setHurlSuccess] = useState<string | null>(null);
+  const [openApiText, setOpenApiText] = useState('');
+  const [openApiError, setOpenApiError] = useState<string | null>(null);
+  const [openApiSuccess, setOpenApiSuccess] = useState<string | null>(null);
+  const openApiFileRef = useRef<HTMLInputElement>(null);
   const [targetCollectionId, setTargetCollectionId] = useState<string>(
     state.collections[0]?._id ?? ''
   );
@@ -38,6 +43,37 @@ export default function ImportModal({ onClose }: ImportModalProps) {
   function parseAndImport(text: string, filename?: string) {
     setError(null);
     setSuccess(null);
+    // Detect OpenAPI / Swagger files by extension or content
+    const isOpenApiFile =
+      filename?.toLowerCase().endsWith('.yaml') ||
+      filename?.toLowerCase().endsWith('.yml') ||
+      (filename?.toLowerCase().endsWith('.json') && (() => {
+        try { const j = JSON.parse(text); return !!(j.openapi || j.swagger); } catch { return false; }
+      })());
+
+    if (isOpenApiFile) {
+      try {
+        const { collectionName, items } = parseOpenApiSpec(text, filename);
+        const newColId = generateId();
+        dispatch({
+          type: 'ADD_COLLECTION',
+          payload: {
+            _id: newColId,
+            info: {
+              name: collectionName,
+              schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+            },
+            item: items,
+          },
+        });
+        const total = items.reduce((sum, i) => sum + (i.item ? i.item.length : 1), 0);
+        setSuccess(`Collection "${collectionName}" with ${total} request(s) imported!`);
+      } catch (e) {
+        setError(`OpenAPI parse error: ${(e as Error).message}`);
+      }
+      return;
+    }
+
     // Detect HURL files by extension or try parsing as HURL first if it looks like one
     const isHurlFile = filename?.toLowerCase().endsWith('.hurl');
     if (isHurlFile || (!text.trimStart().startsWith('{') && HURL_METHOD_REGEX.test(text))) {
@@ -84,8 +120,29 @@ export default function ImportModal({ onClose }: ImportModalProps) {
         const env = parseEnvironmentFile(json);
         dispatch({ type: 'ADD_ENVIRONMENT', payload: env });
         setSuccess(`Environment "${env.name}" imported!`);
+      } else if (json.openapi || json.swagger) {
+        // OpenAPI/Swagger JSON pasted into the paste tab
+        try {
+          const { collectionName, items } = parseOpenApiSpec(text);
+          const newColId = generateId();
+          dispatch({
+            type: 'ADD_COLLECTION',
+            payload: {
+              _id: newColId,
+              info: {
+                name: collectionName,
+                schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+              },
+              item: items,
+            },
+          });
+          const total = items.reduce((sum, i) => sum + (i.item ? i.item.length : 1), 0);
+          setSuccess(`Collection "${collectionName}" with ${total} request(s) imported!`);
+        } catch (e) {
+          setError(`OpenAPI parse error: ${(e as Error).message}`);
+        }
       } else {
-        setError('Unrecognised format. Expected a Postman Collection v2.1, Environment JSON, or HURL file.');
+        setError('Unrecognised format. Expected a Postman Collection v2.1, Environment JSON, HURL, or OpenAPI/Swagger spec.');
       }
     } catch (e) {
       setError(`Invalid JSON: ${(e as Error).message}`);
@@ -205,7 +262,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
 
         {/* Tabs */}
         <div className="flex border-b border-slate-600 overflow-x-auto">
-          {(['file', 'paste', 'curl', 'hurl'] as const).map(t => (
+          {(['file', 'paste', 'curl', 'hurl', 'openapi'] as const).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -215,7 +272,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              {t === 'file' ? 'Upload File' : t === 'paste' ? 'Paste JSON' : t === 'curl' ? 'Paste cURL' : 'Paste HURL'}
+              {t === 'file' ? 'Upload File' : t === 'paste' ? 'Paste JSON' : t === 'curl' ? 'Paste cURL' : t === 'hurl' ? 'Paste HURL' : 'OpenAPI'}
             </button>
           ))}
         </div>
@@ -230,11 +287,11 @@ export default function ImportModal({ onClose }: ImportModalProps) {
             >
               <div className="text-4xl mb-3">📂</div>
               <p className="text-slate-300 font-medium">Click to browse or drag & drop</p>
-              <p className="text-slate-500 text-sm mt-1">Postman Collection v2.1 JSON, Environment JSON, or HURL (.hurl)</p>
+              <p className="text-slate-500 text-sm mt-1">Postman Collection v2.1 JSON, Environment JSON, OpenAPI/Swagger (.yaml/.yml/.json), or HURL (.hurl)</p>
               <input
                 ref={fileRef}
                 type="file"
-                accept=".json,.hurl"
+                accept=".json,.hurl,.yaml,.yml"
                 multiple
                 className="hidden"
                 onChange={e => handleFiles(e.target.files)}
@@ -355,10 +412,88 @@ export default function ImportModal({ onClose }: ImportModalProps) {
             </div>
           )}
 
-          {tab !== 'curl' && tab !== 'hurl' && error && (
+          {tab === 'openapi' && (
+            <div className="flex flex-col gap-3">
+              <div className="text-slate-400 text-xs bg-slate-900/50 border border-slate-700 rounded p-2 leading-relaxed">
+                Paste an <span className="text-orange-400 font-mono">OpenAPI 3.x</span> or{' '}
+                <span className="text-orange-400 font-mono">Swagger 2.0</span> spec (YAML or JSON).
+                Each tagged group of endpoints becomes a folder in a new collection.
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => openApiFileRef.current?.click()}
+                  className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded text-sm transition-colors"
+                >
+                  Browse file
+                </button>
+                <input
+                  ref={openApiFileRef}
+                  type="file"
+                  accept=".yaml,.yml,.json"
+                  className="hidden"
+                  onChange={e => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = ev => setOpenApiText(ev.target?.result as string);
+                    reader.readAsText(file);
+                  }}
+                />
+                <span className="text-slate-500 text-xs self-center">.yaml / .yml / .json</span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-slate-400 text-sm">Paste spec (YAML or JSON)</label>
+                <textarea
+                  value={openApiText}
+                  onChange={e => { setOpenApiText(e.target.value); setOpenApiError(null); setOpenApiSuccess(null); }}
+                  rows={11}
+                  spellCheck={false}
+                  className="w-full bg-slate-900 border border-slate-600 rounded p-3 text-slate-100 text-sm font-mono resize-none focus:outline-none focus:border-orange-500"
+                  placeholder={"openapi: 3.0.0\ninfo:\n  title: My API\n  version: 1.0.0\npaths:\n  /users:\n    get:\n      summary: List users\n      tags: [Users]"}
+                />
+              </div>
+              {openApiError && (
+                <p className="text-red-400 text-sm bg-red-900/20 border border-red-700 rounded p-2">{openApiError}</p>
+              )}
+              {openApiSuccess && (
+                <p className="text-green-400 text-sm bg-green-900/20 border border-green-700 rounded p-2">{openApiSuccess}</p>
+              )}
+              <button
+                onClick={() => {
+                  setOpenApiError(null);
+                  setOpenApiSuccess(null);
+                  try {
+                    const { collectionName, items } = parseOpenApiSpec(openApiText);
+                    const newColId = generateId();
+                    dispatch({
+                      type: 'ADD_COLLECTION',
+                      payload: {
+                        _id: newColId,
+                        info: {
+                          name: collectionName,
+                          schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+                        },
+                        item: items,
+                      },
+                    });
+                    const total = items.reduce((sum, i) => sum + (i.item ? i.item.length : 1), 0);
+                    setOpenApiSuccess(`Collection "${collectionName}" with ${total} request(s) imported!`);
+                    setOpenApiText('');
+                  } catch (e) {
+                    setOpenApiError(`Parse error: ${(e as Error).message}`);
+                  }
+                }}
+                className="self-end px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded text-sm font-medium transition-colors"
+              >
+                Import
+              </button>
+            </div>
+          )}
+
+          {tab !== 'curl' && tab !== 'hurl' && tab !== 'openapi' && error && (
             <p className="mt-3 text-red-400 text-sm bg-red-900/20 border border-red-700 rounded p-2">{error}</p>
           )}
-          {tab !== 'curl' && tab !== 'hurl' && success && (
+          {tab !== 'curl' && tab !== 'hurl' && tab !== 'openapi' && success && (
             <p className="mt-3 text-green-400 text-sm bg-green-900/20 border border-green-700 rounded p-2">{success}</p>
           )}
         </div>
