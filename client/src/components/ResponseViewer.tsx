@@ -1,9 +1,8 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import { useApp } from '../store';
-import type { TestResult } from '../types';
+import type { TestResult, TlsCertInfo, NetworkTimings, RedirectHop } from '../types';
 
-const RESPONSE_TABS = ['Body', 'Headers', 'Test Results'] as const;
-type RespTab = typeof RESPONSE_TABS[number];
+type RespTab = 'Body' | 'Headers' | 'Test Results' | 'TLS' | 'Timeline' | 'Redirects';
 
 function StatusBadge({ status }: { status: number }) {
   const color =
@@ -21,6 +20,148 @@ function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// ── Redirect Chain Inspector ────────────────────────────────────────────────────
+function RedirectChainView({ chain, finalUrl, finalStatus }: { chain: RedirectHop[]; finalUrl?: string; finalStatus: number }) {
+  const allHops = [
+    ...chain,
+    { url: finalUrl ?? '', status: finalStatus, isFinal: true },
+  ];
+  const statusColor = (s: number) =>
+    s >= 500 ? 'bg-red-700 text-red-100' :
+    s >= 400 ? 'bg-yellow-700 text-yellow-100' :
+    s >= 300 ? 'bg-blue-700 text-blue-100' :
+    'bg-green-700 text-green-100';
+  return (
+    <div className="p-3 flex flex-col gap-0">
+      {allHops.map((hop, i) => (
+        <div key={i}>
+          <div className="flex items-start gap-3 py-2">
+            <div className="flex flex-col items-center pt-0.5">
+              <span className={`px-1.5 py-0.5 rounded text-xs font-bold ${statusColor(hop.status)}`}>{hop.status}</span>
+              {i < allHops.length - 1 && (
+                <div className="w-px flex-1 bg-slate-600 my-1" style={{ minHeight: 12 }} />
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className={`text-xs font-mono break-all ${'isFinal' in hop && hop.isFinal ? 'text-slate-100 font-semibold' : 'text-slate-300'}`}>{hop.url}</p>
+              {'responseTime' in hop && (
+                <p className="text-xs text-slate-500 mt-0.5">{hop.responseTime} ms</p>
+              )}
+              {'isFinal' in hop && hop.isFinal && (
+                <span className="inline-block mt-1 text-xs text-green-400 bg-green-900/30 px-1.5 py-0.5 rounded">Final response</span>
+              )}
+              {'headers' in hop && hop.headers && 'location' in hop.headers && (
+                <p className="text-xs text-slate-500 mt-0.5">Location: <span className="text-slate-400 font-mono">{hop.headers.location}</span></p>
+              )}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── TLS Cert Viewer ────────────────────────────────────────────────────────
+const SUBJECT_LABELS: Record<string, string> = { CN: 'Common Name', O: 'Organization', OU: 'Unit', C: 'Country', ST: 'State', L: 'Locality' };
+
+function CertRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <tr className="border-b border-slate-800/50 last:border-0">
+      <td className="py-1 pr-3 text-slate-400 text-xs font-medium w-28 align-top shrink-0">{label}</td>
+      <td className={`py-1 text-slate-200 text-xs break-all ${mono ? 'font-mono' : ''}`}>{value || '—'}</td>
+    </tr>
+  );
+}
+
+function TlsCertViewer({ chain }: { chain: TlsCertInfo[] }) {
+  const roleLabels = ['Leaf (end-entity)', 'Intermediate CA', 'Root CA'];
+  function fmtSubject(subj: Record<string, string> | null) {
+    if (!subj) return '—';
+    return Object.entries(subj).map(([k, v]) => `${SUBJECT_LABELS[k] ?? k}=${v}`).join(', ');
+  }
+  return (
+    <div className="p-3 flex flex-col gap-3 overflow-auto">
+      {chain.map((cert, i) => (
+        <div key={i} className="border border-slate-700 rounded">
+          <div className="px-3 py-1.5 bg-slate-700/50 rounded-t border-b border-slate-700 flex items-center gap-2">
+            <span className="text-xs font-bold text-orange-400">#{i + 1}</span>
+            <span className="text-xs text-slate-300">{roleLabels[i] ?? 'CA'}</span>
+          </div>
+          <div className="p-2">
+            <table className="w-full">
+              <tbody>
+                <CertRow label="Subject" value={fmtSubject(cert.subject)} mono />
+                <CertRow label="Issuer" value={fmtSubject(cert.issuer)} mono />
+                <CertRow label="Valid From" value={cert.validFrom ?? ''} />
+                <CertRow label="Valid To" value={cert.validTo ?? ''} />
+                {cert.subjectAltNames && <CertRow label="SANs" value={cert.subjectAltNames} mono />}
+                {cert.fingerprint256 && <CertRow label="SHA-256" value={cert.fingerprint256} mono />}
+                {cert.serialNumber && <CertRow label="Serial" value={cert.serialNumber} mono />}
+                {cert.bits != null && <CertRow label="Key Size" value={`${cert.bits} bits`} />}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Network Timeline ────────────────────────────────────────────────────────
+function NetworkTimeline({ timings }: { timings: NetworkTimings }) {
+  const phases: { label: string; value: number; color: string; bar: string }[] = [
+    { label: 'DNS',    value: timings.dns,    color: 'text-purple-400', bar: 'bg-purple-500' },
+    { label: 'TCP',    value: timings.tcp,    color: 'text-blue-400',   bar: 'bg-blue-500'   },
+    { label: 'TLS',    value: timings.tls,    color: 'text-amber-400',  bar: 'bg-amber-500'  },
+    { label: 'Server', value: timings.server, color: 'text-green-400',  bar: 'bg-green-500'  },
+  ].filter(p => p.value > 0);
+  const total = timings.total || 1;
+  let offset = 0;
+  return (
+    <div className="p-4 flex flex-col gap-4">
+      {/* Composite waterfall bar */}
+      <div className="flex h-4 rounded overflow-hidden w-full bg-slate-800">
+        {phases.map(p => (
+          <div
+            key={p.label}
+            className={`${p.bar} opacity-80 h-full`}
+            style={{ width: `${(p.value / total) * 100}%` }}
+            title={`${p.label}: ${p.value} ms`}
+          />
+        ))}
+      </div>
+      {/* Per-phase rows */}
+      <div className="flex flex-col gap-1.5">
+        {phases.map(p => {
+          const pctW = `${(p.value / total) * 100}%`;
+          const pctL = `${(offset / total) * 100}%`;
+          const snap = offset;
+          offset += p.value;
+          return (
+            <div key={p.label} className="flex items-center gap-3 text-xs">
+              <span className={`w-2.5 h-2.5 rounded-sm shrink-0 ${p.bar}`} />
+              <span className={`w-14 shrink-0 ${p.color}`}>{p.label}</span>
+              <div className="flex-1 relative h-3.5 bg-slate-800 rounded overflow-hidden">
+                <div
+                  className={`absolute h-full ${p.bar} opacity-60`}
+                  style={{ left: pctL, width: pctW }}
+                />
+              </div>
+              <span className="text-slate-300 w-16 text-right font-mono tabular-nums">{p.value} ms</span>
+            </div>
+          );
+        })}
+        <div className="flex items-center gap-3 text-xs pt-2 mt-1 border-t border-slate-700">
+          <span className="w-2.5 h-2.5 shrink-0" />
+          <span className="w-14 text-slate-400 shrink-0">Total</span>
+          <div className="flex-1" />
+          <span className="text-slate-200 w-16 text-right font-mono font-bold tabular-nums">{timings.total} ms</span>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function TestResultRow({ result }: { result: TestResult }) {
@@ -316,6 +457,19 @@ export default function ResponseViewer() {
 
   const { response, isLoading } = state;
 
+  const availableTabs = useMemo<RespTab[]>(() => {
+    const tabs: RespTab[] = ['Body', 'Headers', 'Test Results'];
+    if (response?.redirectChain && response.redirectChain.length > 0) tabs.push('Redirects');
+    if (response?.tlsCertChain && response.tlsCertChain.length > 0) tabs.push('TLS');
+    if (response?.networkTimings) tabs.push('Timeline');
+    return tabs;
+  }, [response]);
+
+  // Reset to Body if the current tab is no longer available
+  useEffect(() => {
+    if (!availableTabs.includes(tab)) setTab('Body');
+  }, [availableTabs]);
+
   const jsonPathResult = useMemo(() => {
     if (!jsonPathExpr.trim() || !response) return null;
     try {
@@ -442,7 +596,7 @@ export default function ResponseViewer() {
 
       {/* Tabs */}
       <div className="flex border-b border-slate-700 shrink-0">
-        {RESPONSE_TABS.map(t => (
+        {availableTabs.map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -632,6 +786,18 @@ export default function ResponseViewer() {
               response.testResults.map((r, i) => <TestResultRow key={i} result={r} />)
             )}
           </div>
+        )}
+
+        {tab === 'Redirects' && response.redirectChain && response.redirectChain.length > 0 && (
+          <RedirectChainView chain={response.redirectChain} finalUrl={response.resolvedUrl} finalStatus={response.status} />
+        )}
+
+        {tab === 'TLS' && response.tlsCertChain && response.tlsCertChain.length > 0 && (
+          <TlsCertViewer chain={response.tlsCertChain} />
+        )}
+
+        {tab === 'Timeline' && response.networkTimings && (
+          <NetworkTimeline timings={response.networkTimings} />
         )}
       </div>
     </div>

@@ -138,15 +138,47 @@ export interface TestResult {
   error: string | null;
 }
 
+export interface RedirectHop {
+  url: string;
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  responseTime: number;
+}
+
+export interface TlsCertInfo {
+  subject: Record<string, string> | null;
+  issuer: Record<string, string> | null;
+  validFrom: string | null;
+  validTo: string | null;
+  fingerprint: string | null;
+  fingerprint256: string | null;
+  serialNumber: string | null;
+  subjectAltNames: string | null;
+  bits: number | null;
+}
+
+export interface NetworkTimings {
+  dns: number;
+  tcp: number;
+  tls: number;
+  server: number;
+  total: number;
+}
+
 export interface RequestResponse {
   status: number;
   statusText: string;
   responseTime: number;
+  resolvedUrl?: string;
   headers: Record<string, string>;
   body: string;
   size: number;
   testResults: TestResult[];
   scriptLogs?: ScriptLog[];
+  networkTimings?: NetworkTimings | null;
+  tlsCertChain?: TlsCertInfo[] | null;
+  redirectChain?: RedirectHop[];
   error: string | null;
 }
 
