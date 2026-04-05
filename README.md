@@ -12,6 +12,7 @@ A lightweight, open-source alternative API testing tool — available as a **des
 - **Collection Runner** with CSV data-driven testing and multi-iteration support
 - **Environment variables** with `{{variable}}` substitution
 - **Tabbed request editing** — open multiple requests simultaneously, save changes independently
+- **Mock Server** — define static or dynamic responses for any endpoint; start a local HTTP server without a real backend
 - **Console panel** — view a log of every request and response with resolved variable values; pop out into a live-updating detached window
 - **Status bar** — quick access to the console toggle with an unread count badge and last response summary
 
@@ -107,6 +108,51 @@ npm run dist:win    # → dist/Apilix Setup x.x.x.exe
 > ```powershell
 > Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 > ```
+
+---
+
+## Mock Server
+
+The **🎭 Mock** tab lets you spin up a local HTTP server that returns custom responses without a real backend.
+
+### Setup
+
+1. Open the **Mock** tab in the sidebar.
+2. Set the port (default `3002`) and click **Start**.
+3. Click **+ Add Route** to define a mock endpoint.
+
+### Route options
+
+| Field | Description |
+|---|---|
+| Method | HTTP verb or `*` (any) |
+| Path | URL path, supports `:param` segments (e.g. `/api/users/:id`) |
+| Status Code | HTTP status to return |
+| Response Headers | Custom headers (e.g. `Content-Type`) |
+| Response Body | Static text, JSON, or a template with substitutions |
+| Delay (ms) | Artificial delay before the response is sent |
+
+### Dynamic substitution
+
+Use template placeholders in the response body or header values:
+
+```
+{{param.id}}       → path segment (:id)
+{{query.page}}     → query string (?page=2)
+{{body.username}}  → JSON request body field
+```
+
+Example response body:
+
+```json
+{
+  "id": "{{param.id}}",
+  "page": "{{query.page}}",
+  "echo": "{{body.message}}"
+}
+```
+
+Routes are matched in order — the first enabled route whose method and path match wins. Toggle individual routes on/off without deleting them. All routes and the selected port are persisted across sessions.
 
 ---
 

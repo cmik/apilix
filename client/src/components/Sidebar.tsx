@@ -59,10 +59,11 @@ export default function Sidebar() {
       {/* Nav buttons */}
       <div className="flex border-b border-slate-700 shrink-0">
         {(
-          [
+        [
             { key: 'request', label: '⚡ Requests' },
             { key: 'runner', label: '▶ Runner' },
             { key: 'environments', label: '🌍 Envs' },
+            { key: 'mock', label: '🎭 Mock' },
           ] as const
         ).map(({ key, label }) => (
           <button
