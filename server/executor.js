@@ -292,21 +292,29 @@ async function executeRequest(item, context) {
     dataRow = {},
     collVars = [],
     cookies = {},
+    collectionItems = [],
   } = context;
 
   let vars = buildVariables(environment, collectionVariables, globals, dataRow, collVars);
 
   // Run pre-request script
   let scriptLogs = [];
+  let preChildRequests = [];
   const preScript = (item.event || []).find(e => e.listen === 'prerequest');
   if (preScript) {
     const code = Array.isArray(preScript.script.exec)
       ? preScript.script.exec.join('\n')
       : (preScript.script.exec || '');
     if (code.trim()) {
-      const result = await runScript(code, null, vars);
+      const scriptDeps = {
+        collectionItems,
+        executeRequestFn: executeRequest,
+        context: { environment, collectionVariables, globals, dataRow, collVars, cookies },
+      };
+      const result = await runScript(code, null, vars, scriptDeps);
       vars = { ...vars, ...result.updatedVariables };
       scriptLogs = [...scriptLogs, ...result.consoleLogs];
+      preChildRequests = result.childRequests || [];
     }
   }
 
@@ -411,6 +419,7 @@ async function executeRequest(item, context) {
     const testScript = (item.event || []).find(e => e.listen === 'test');
     let testResults = [];
     let updatedVars = {};
+    let testChildRequests = [];
 
     if (testScript) {
       const code = Array.isArray(testScript.script.exec)
@@ -425,10 +434,16 @@ async function executeRequest(item, context) {
           body: bodyString,
           jsonData: axiosResponse.data,
         };
-        const result = await runScript(code, responseData, vars);
+        const scriptDeps = {
+          collectionItems,
+          executeRequestFn: executeRequest,
+          context: { environment, collectionVariables, globals, dataRow, collVars, cookies },
+        };
+        const result = await runScript(code, responseData, vars, scriptDeps);
         testResults = result.tests;
         updatedVars = result.updatedVariables;
         scriptLogs = [...scriptLogs, ...result.consoleLogs];
+        testChildRequests = result.childRequests || [];
         vars = { ...vars, ...updatedVars };
       }
     }
@@ -481,6 +496,8 @@ async function executeRequest(item, context) {
       size: bodyString.length,
       testResults,
       scriptLogs,
+      preChildRequests,
+      testChildRequests,
       updatedEnvironment: updatedEnv,
       updatedCollectionVariables: updatedCollVars,
       updatedCookies,

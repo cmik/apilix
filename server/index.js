@@ -55,7 +55,7 @@ app.get('/api/health', (_req, res) => {
 
 app.post('/api/execute', async (req, res) => {
   try {
-    const { item, environment, collectionVariables, globals, dataRow, collVars, cookies } = req.body;
+    const { item, environment, collectionVariables, globals, dataRow, collVars, cookies, collectionItems } = req.body;
     if (!item || !item.request) {
       return res.status(400).json({ error: 'Missing item.request in body' });
     }
@@ -66,6 +66,7 @@ app.post('/api/execute', async (req, res) => {
       dataRow: dataRow || {},
       collVars: collVars || [],
       cookies: cookies || {},
+      collectionItems: collectionItems || [],
     });
     return res.json(result);
   } catch (err) {
@@ -168,6 +169,7 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
           dataRow,
           collVars: collection.variable || [],
           cookies: currentCookies,
+          collectionItems: collection.item || [],
         });
 
         // Propagate environment/variable/cookie changes to next request in same iteration

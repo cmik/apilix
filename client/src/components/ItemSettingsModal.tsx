@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { marked } from 'marked';
 import type { PostmanAuth, PostmanEvent } from '../types';
+import ScriptEditor from './ScriptEditor';
 
 type AuthType = PostmanAuth['type'];
 const SUPPORTED_AUTH: AuthType[] = ['noauth', 'bearer', 'basic', 'apikey'];
@@ -187,13 +188,11 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
           {activeTab === 'prerequest' && (
             <div className="flex flex-col gap-2">
               <p className="text-xs text-slate-400">Runs before every request in this {kind}.</p>
-              <textarea
+              <ScriptEditor
                 value={preScript}
-                onChange={e => setPreScript(e.target.value)}
+                onChange={setPreScript}
                 rows={16}
-                spellCheck={false}
-                className="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-y"
-                placeholder={"// pm.environment.set('token', pm.response.json().token);"}
+                placeholder={"// apx.environment.set('token', 'value');"}                
               />
             </div>
           )}
@@ -202,13 +201,11 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
           {activeTab === 'tests' && (
             <div className="flex flex-col gap-2">
               <p className="text-xs text-slate-400">Runs after every request in this {kind}.</p>
-              <textarea
+              <ScriptEditor
                 value={testScript}
-                onChange={e => setTestScript(e.target.value)}
+                onChange={setTestScript}
                 rows={16}
-                spellCheck={false}
-                className="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-y"
-                placeholder={"// pm.test('Status 200', () => pm.expect(pm.response.code).to.equal(200));"}
+                placeholder={"// apx.test('Status 200', () => apx.expect(apx.response.code).to.equal(200));"}
               />
             </div>
           )}

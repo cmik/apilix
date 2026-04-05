@@ -105,17 +105,17 @@ function parseHurlPredicateValue(v: string): string {
 /** Map a HURL query keyword + optional arg to a JS expression string. */
 function hurlQueryToJsExpr(queryType: string, arg: string | null): string | null {
   switch (queryType) {
-    case 'status':   return 'pm.response.code';
-    case 'body':     return 'pm.response.text()';
-    case 'duration': return 'pm.response.responseTime';
-    case 'header':   return arg ? `pm.response.headers.get(${JSON.stringify(arg)})` : null;
-    case 'jsonpath': return arg ? `_jp(pm.response.json(), ${JSON.stringify(arg)})` : null;
-    case 'xpath':    return arg ? `_xp(pm.response.text(), ${JSON.stringify(arg)})` : null;
+    case 'status':   return 'apx.response.code';
+    case 'body':     return 'apx.response.text()';
+    case 'duration': return 'apx.response.responseTime';
+    case 'header':   return arg ? `apx.response.headers.get(${JSON.stringify(arg)})` : null;
+    case 'jsonpath': return arg ? `_jp(apx.response.json(), ${JSON.stringify(arg)})` : null;
+    case 'xpath':    return arg ? `_xp(apx.response.text(), ${JSON.stringify(arg)})` : null;
     default:         return null; // version, url, ip, cookie, regex, variable, bytes, sha256, md5
   }
 }
 
-/** Convert a single HURL assert line to a pm.test() call string, or a comment if unsupported. */
+/** Convert a single HURL assert line to an apx.test() call string, or a comment if unsupported. */
 function hurlAssertToPmTest(raw: string): string {
   const line = raw.trim();
 
@@ -183,14 +183,14 @@ function hurlAssertToPmTest(raw: string): string {
 
   if (!chainSuffix) return `// predicate not supported in Apilix: ${line}`;
 
-  return `pm.test(${JSON.stringify(line)}, function() { pm.expect(${queryExpr})${chainSuffix}; });`;
+  return `apx.test(${JSON.stringify(line)}, function() { apx.expect(${queryExpr})${chainSuffix}; });`;
 }
 
 // ─── Combined test event builder ─────────────────────────────────────────────
 
 /**
- * Merge HURL captures (→ pm.environment.set) and asserts (→ pm.test) into a
- * single Postman "test" event script.
+ * Merge HURL captures (→ apx.environment.set) and asserts (→ apx.test) into a
+ * single Apilix "test" event script.
  */
 function buildTestEvent(
   captures: HurlCapture[],
@@ -218,23 +218,23 @@ function buildTestEvent(
   if (needsJp) scriptLines.push(...jpHelper);
   // _xp is provided by the sandbox runtime (xpath + @xmldom/xmldom)
 
-  // Captures → pm.environment.set()
+  // Captures → apx.environment.set()
   if (captures.length > 0) {
     scriptLines.push('  // captures');
     for (const cap of captures) {
       let expr: string | null = null;
       switch (cap.captureType) {
-        case 'jsonpath': expr = `String(_jp(pm.response.json(), ${JSON.stringify(cap.arg)}))`; break;
-        case 'xpath':    expr = `String(_xp(pm.response.text(), ${JSON.stringify(cap.arg)}))`; break;
-        case 'header':   expr = `String(pm.response.headers.get(${JSON.stringify(cap.arg)}))`; break;
-        case 'status':   expr = `String(pm.response.code)`; break;
-        case 'body':     expr = `pm.response.text()`; break;
-        case 'regex':    expr = `(function(){ var m = pm.response.text().match(new RegExp(${JSON.stringify(cap.arg)})); return m ? (m[1] !== undefined ? String(m[1]) : String(m[0])) : ''; })()`; break;
+        case 'jsonpath': expr = `String(_jp(apx.response.json(), ${JSON.stringify(cap.arg)}))`; break;
+        case 'xpath':    expr = `String(_xp(apx.response.text(), ${JSON.stringify(cap.arg)}))`; break;
+        case 'header':   expr = `String(apx.response.headers.get(${JSON.stringify(cap.arg)}))`; break;
+        case 'status':   expr = `String(apx.response.code)`; break;
+        case 'body':     expr = `apx.response.text()`; break;
+        case 'regex':    expr = `(function(){ var m = apx.response.text().match(new RegExp(${JSON.stringify(cap.arg)})); return m ? (m[1] !== undefined ? String(m[1]) : String(m[0])) : ''; })()`;  break;
         default:         expr = null; break;
       }
       scriptLines.push(`  try {`);
       if (expr) {
-        scriptLines.push(`    pm.environment.set(${JSON.stringify(cap.varName)}, ${expr});`);
+        scriptLines.push(`    apx.environment.set(${JSON.stringify(cap.varName)}, ${expr});`);
       } else {
         scriptLines.push(`    // capture type "${cap.captureType}" not supported — skipped`);
       }
@@ -242,7 +242,7 @@ function buildTestEvent(
     }
   }
 
-  // Asserts → pm.test()
+  // Asserts → apx.test()
   if (asserts.length > 0) {
     scriptLines.push('  // asserts');
     for (const a of asserts) {
@@ -515,7 +515,7 @@ export function generateHurlFromItems(items: PostmanItem[]): string {
 
 /**
  * Check whether a string looks like a valid HURL assert line
- * (i.e. it was originally produced by hurlAssertToPmTest and stored as the pm.test name).
+ * (i.e. it was originally produced by hurlAssertToPmTest and stored as the apx.test name).
  */
 function isHurlAssertLine(line: string): boolean {
   const t = line.trim();
@@ -525,13 +525,14 @@ function isHurlAssertLine(line: string): boolean {
 }
 
 /**
- * Extract HURL assert strings that were embedded as pm.test() names when the
+ * Extract HURL assert strings that were embedded as apx.test() / pm.test() names when the
  * HURL file was originally imported (see hurlAssertToPmTest).
  */
 function extractHurlAssertsFromScript(execLines: string[]): string[] {
   const script = execLines.join('\n');
   const asserts: string[] = [];
-  const re = /pm\.test\(("(?:[^"\\]|\\.)*"),/g;
+  // Match both apx.test(...) and pm.test(...) for backward compatibility with older scripts
+  const re = /(?:apx|pm)\.test\(("(?:[^"\\]|\\.)*"),/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(script)) !== null) {
     try {

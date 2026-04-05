@@ -18,6 +18,17 @@ export interface ExecutePayload {
   dataRow?: Record<string, string>;
   collVars?: Array<{ key: string; value: string; disabled?: boolean }>;
   cookies?: CookieJar;
+  collectionItems?: PostmanItem[];
+}
+
+export interface ChildRequestLog {
+  name: string;
+  method: string;
+  result: RequestResponse & {
+    resolvedUrl?: string;
+    requestHeaders?: Record<string, string>;
+    requestBody?: string;
+  };
 }
 
 export interface ExecuteResult extends Omit<RequestResponse, never> {
@@ -28,6 +39,8 @@ export interface ExecuteResult extends Omit<RequestResponse, never> {
   resolvedUrl?: string;
   requestHeaders?: Record<string, string>;
   requestBody?: string;
+  preChildRequests?: ChildRequestLog[];
+  testChildRequests?: ChildRequestLog[];
 }
 
 export async function executeRequest(payload: ExecutePayload): Promise<ExecuteResult> {

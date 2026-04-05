@@ -204,9 +204,14 @@ function createExpect(value, negated) {
   return obj;
 }
 
-// ─── pm object factory ───────────────────────────────────────────────────────
+// ─── apx object factory ─────────────────────────────────────────────────────
+// apx is the primary API; pm is an alias for Postman compatibility
 
-function createPm(response, variables, updatedVariables, tests, pendingRequests) {
+function createApx(response, variables, updatedVariables, tests, pendingRequests, deps, childRequests) {
+  // deps = { collectionItems, executeRequestFn, context }
+  const collectionItems = (deps && deps.collectionItems) || [];
+  const executeRequestFn = (deps && deps.executeRequestFn) || null;
+  const execContext = (deps && deps.context) || {};
   const makeVarStore = () => ({
     get(key) { return Object.prototype.hasOwnProperty.call(variables, key) ? variables[key] : (updatedVariables[key] !== undefined ? updatedVariables[key] : undefined); },
     set(key, value) { updatedVariables[key] = String(value); },
@@ -215,7 +220,7 @@ function createPm(response, variables, updatedVariables, tests, pendingRequests)
     clear() {},
   });
 
-  const pm = {
+  const apx = {
     test(name, fn) {
       try {
         fn();
@@ -245,6 +250,14 @@ function createPm(response, variables, updatedVariables, tests, pendingRequests)
     },
 
     response: response ? buildResponse(response) : null,
+
+    request: {
+      headers: {
+        upsert({ key, value }) { execContext.headers = execContext.headers || {}; execContext.headers[key] = value; },
+      },
+      url: (execContext && execContext.url) || '',
+      method: (execContext && execContext.method) || '',
+    },
 
     sendRequest(opts, callback) {
       const promise = (async () => {
@@ -313,9 +326,67 @@ function createPm(response, variables, updatedVariables, tests, pendingRequests)
 
       pendingRequests.push(promise);
     },
+
+    executeRequest(requestName, callback) {
+      const promise = (async () => {
+        try {
+          // Find the request by name (case-sensitive) in the collection items
+          function findByName(items, name) {
+            for (const it of (items || [])) {
+              if (it.name === name && it.request) return it;
+              if (it.item) {
+                const found = findByName(it.item, name);
+                if (found) return found;
+              }
+            }
+            return null;
+          }
+
+          const item = findByName(collectionItems, requestName);
+          if (!item) {
+            const err = new Error(`apx.executeRequest: request "${requestName}" not found in collection`);
+            if (typeof callback === 'function') callback(err, null);
+            return;
+          }
+
+          if (!executeRequestFn) {
+            const err = new Error('apx.executeRequest: executor not available');
+            if (typeof callback === 'function') callback(err, null);
+            return;
+          }
+
+          // Merge any variable updates made so far in this script into the context
+          const mergedEnv = { ...(execContext.environment || {}), ...updatedVariables };
+          const result = await executeRequestFn(item, {
+            environment: mergedEnv,
+            collectionVariables: execContext.collectionVariables || {},
+            globals: execContext.globals || {},
+            dataRow: execContext.dataRow || {},
+            collVars: execContext.collVars || [],
+            cookies: execContext.cookies || {},
+            collectionItems,
+          });
+
+          // Record the child request so it appears in the console
+          if (Array.isArray(childRequests)) {
+            childRequests.push({
+              name: requestName,
+              method: (item.request && item.request.method) || 'GET',
+              result,
+            });
+          }
+
+          if (typeof callback === 'function') callback(null, result);
+        } catch (err) {
+          if (typeof callback === 'function') callback(err, null);
+        }
+      })();
+
+      pendingRequests.push(promise);
+    },
   };
 
-  return pm;
+  return apx;
 }
 
 function buildResponse(r) {
@@ -371,15 +442,19 @@ function buildResponse(r) {
 
 // ─── Script runner ───────────────────────────────────────────────────────────
 
-async function runScript(code, response, variables) {
+async function runScript(code, response, variables, deps) {
   const tests = [];
   const updatedVariables = {};
   const consoleLogs = [];
   const pendingRequests = [];
+  const childRequests = [];
 
-  const pm = createPm(response, variables || {}, updatedVariables, tests, pendingRequests);
+  const apx = createApx(response, variables || {}, updatedVariables, tests, pendingRequests, deps, childRequests);
+  // pm is a full alias to apx for Postman script compatibility
+  const pm = apx;
 
   const sandbox = {
+    apx,
     pm,
     console: {
       log: (...a) => { consoleLogs.push({ level: 'log', args: a.map(x => typeof x === 'object' ? JSON.stringify(x) : String(x)) }); console.log('[script]', ...a); },
@@ -443,7 +518,7 @@ async function runScript(code, response, variables) {
     tests.push({ name: '__ScriptError__', passed: false, error: err.message });
   }
 
-  return { tests, updatedVariables, consoleLogs };
+  return { tests, updatedVariables, consoleLogs, childRequests };
 }
 
 module.exports = { runScript };

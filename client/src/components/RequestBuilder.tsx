@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { marked } from 'marked';
 import type { PostmanItem, PostmanRequest, PostmanHeader, PostmanQueryParam } from '../types';
 import { useApp } from '../store';
@@ -9,6 +9,8 @@ import { parseCurlCommand } from '../utils/curlUtils';
 import { parseHurlFile } from '../utils/hurlUtils';
 import GraphQLPanel from './GraphQLPanel';
 import CodeGenModal from './CodeGenModal';
+import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
+import ScriptEditor from './ScriptEditor';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'WS'];
 
@@ -25,6 +27,18 @@ const METHOD_COLORS: Record<string, string> = {
 
 const TABS = ['Params', 'Auth', 'Headers', 'Body', 'Pre-request', 'Tests', 'Docs'] as const;
 type Tab = typeof TABS[number];
+
+function flattenRequestNames(items: PostmanItem[]): string[] {
+  const names: string[] = [];
+  function walk(arr: PostmanItem[]) {
+    for (const it of arr) {
+      if (it.request && it.name) names.push(it.name);
+      if (it.item) walk(it.item);
+    }
+  }
+  walk(items);
+  return names;
+}
 
 // ─── Local editable state for a request ─────────────────────────────────────
 
@@ -76,6 +90,59 @@ function getScript(item: PostmanItem, type: 'prerequest' | 'test'): string {
   const ev = (item.event ?? []).find(e => e.listen === type);
   if (!ev) return '';
   return Array.isArray(ev.script.exec) ? ev.script.exec.join('\n') : (ev.script.exec ?? '');
+}
+
+// ─── Script tab with snippet library ─────────────────────────────────────────
+
+interface ScriptTabProps {
+  label: React.ReactNode;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  target: 'prerequest' | 'test';
+  requestNames?: string[];
+}
+
+function ScriptTab({ label, value, onChange, placeholder, target, requestNames }: ScriptTabProps) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const handleInsert = useCallback((code: string) => {
+    const el = textareaRef.current;
+    if (!el) {
+      onChange(value ? value + '\n\n' + code : code);
+      return;
+    }
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const separator = (value.length > 0 && !value.endsWith('\n')) ? '\n\n' : (value.length > 0 ? '\n' : '');
+    const before = value.slice(0, start);
+    const after = value.slice(end);
+    const newValue = before + (start === end && start === value.length ? separator : '') + code + after;
+    onChange(newValue);
+    // Restore focus and move cursor after inserted snippet
+    requestAnimationFrame(() => {
+      const insertPos = start + (start === end && start === value.length ? separator.length : 0) + code.length;
+      el.focus();
+      el.setSelectionRange(insertPos, insertPos);
+    });
+  }, [value, onChange]);
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-slate-500 text-xs">{label}</p>
+        <ScriptSnippetsLibrary target={target} onInsert={handleInsert} />
+      </div>
+      <ScriptEditor
+        textareaRef={textareaRef}
+        value={value}
+        onChange={onChange}
+        rows={14}
+        placeholder={placeholder}
+        requestNames={requestNames}
+      />
+    </div>
+  );
 }
 
 // ─── Key/value table component ───────────────────────────────────────────────
@@ -562,6 +629,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
   const envVars = getEnvironmentVars();
   const collVars = getCollectionVars(activeReq.collectionId);
   const allVars = buildVarMap(envVars, collVars, state.globalVariables);
+  const col = state.collections.find(c => c._id === activeReq.collectionId);
 
   // Sync query params into URL
   function syncParamsToUrl(params: PostmanQueryParam[]) {
@@ -639,15 +707,46 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
         globals: state.globalVariables,
         collVars: col?.variable ?? [],
         cookies: state.cookieJar,
+        collectionItems: col?.item ?? [],
       });
 
       dispatch({ type: 'SET_TAB_RESPONSE', payload: { tabId, response: result } });
 
+      // Use a stable base timestamp so ordering is deterministic regardless of dispatch timing.
+      // The store prepends entries, so dispatch order (not timestamp) controls visual order:
+      //   dispatch pre-children first → they end up at the bottom (oldest)
+      //   dispatch main request second → middle
+      //   dispatch test children last → they end up at the top (newest)
+      const logBase = Date.now();
+      let logSeq = 0;
+
+      // 1. Pre-request children (ran before main) — dispatch first so they appear below it
+      if (result.preChildRequests && result.preChildRequests.length > 0) {
+        result.preChildRequests.forEach((child) => {
+          dispatch({
+            type: 'ADD_CONSOLE_LOG',
+            payload: {
+              id: (logBase + logSeq).toString(36) + Math.random().toString(36).slice(2),
+              timestamp: logBase + logSeq++,
+              method: child.method,
+              url: child.result.resolvedUrl ?? child.name,
+              requestHeaders: child.result.requestHeaders
+                ? Object.entries(child.result.requestHeaders).map(([key, value]) => ({ key, value }))
+                : [],
+              requestBody: child.result.requestBody,
+              scriptLogs: child.result.scriptLogs ?? [],
+              response: child.result,
+            },
+          });
+        });
+      }
+
+      // 2. Main request
       dispatch({
         type: 'ADD_CONSOLE_LOG',
         payload: {
-          id: Date.now().toString(36) + Math.random().toString(36).slice(2),
-          timestamp: Date.now(),
+          id: (logBase + logSeq).toString(36) + Math.random().toString(36).slice(2),
+          timestamp: logBase + logSeq++,
           method: edit.method,
           url: result.resolvedUrl ?? resolveVariables(edit.url, allVars),
           requestHeaders: result.requestHeaders
@@ -658,6 +757,27 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
           response: result,
         },
       });
+
+      // 3. Test children (ran after main) — dispatch last so they appear above it
+      if (result.testChildRequests && result.testChildRequests.length > 0) {
+        result.testChildRequests.forEach((child) => {
+          dispatch({
+            type: 'ADD_CONSOLE_LOG',
+            payload: {
+              id: (logBase + logSeq).toString(36) + Math.random().toString(36).slice(2),
+              timestamp: logBase + logSeq++,
+              method: child.method,
+              url: child.result.resolvedUrl ?? child.name,
+              requestHeaders: child.result.requestHeaders
+                ? Object.entries(child.result.requestHeaders).map(([key, value]) => ({ key, value }))
+                : [],
+              requestBody: child.result.requestBody,
+              scriptLogs: child.result.scriptLogs ?? [],
+              response: child.result,
+            },
+          });
+        });
+      }
 
       if (result.updatedEnvironment) {
         dispatch({ type: 'UPDATE_ACTIVE_ENV_VARS', payload: result.updatedEnvironment });
@@ -1136,31 +1256,25 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
         })()}
 
         {activeRequestTab === 'Pre-request' && (
-          <div className="flex flex-col gap-2">
-            <p className="text-slate-500 text-xs">JavaScript runs before the request. Use <code className="text-orange-400">pm.environment.set("key", "value")</code></p>
-            <textarea
-              value={edit.preRequestScript}
-              onChange={e => setEdit(x => x ? { ...x, preRequestScript: e.target.value } : x)}
-              rows={14}
-              spellCheck={false}
-              className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-y"
-              placeholder="// Pre-request script\npm.environment.set('timestamp', Date.now().toString());"
-            />
-          </div>
+          <ScriptTab
+            label={<>JavaScript runs before the request. Use <code className="text-orange-400">apx.environment.set("key", "value")</code></>}
+            value={edit.preRequestScript}
+            onChange={v => setEdit(x => x ? { ...x, preRequestScript: v } : x)}
+            placeholder="// Pre-request script&#10;apx.environment.set('timestamp', Date.now().toString());"
+            target="prerequest"
+            requestNames={flattenRequestNames(col?.item ?? [])}
+          />
         )}
 
         {activeRequestTab === 'Tests' && (
-          <div className="flex flex-col gap-2">
-            <p className="text-slate-500 text-xs">JavaScript runs after the response. Use <code className="text-orange-400">pm.test()</code> and <code className="text-orange-400">pm.expect()</code></p>
-            <textarea
-              value={edit.testScript}
-              onChange={e => setEdit(x => x ? { ...x, testScript: e.target.value } : x)}
-              rows={14}
-              spellCheck={false}
-              className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-y"
-              placeholder={`pm.test("Status is 200", () => {\n  pm.response.to.have.status(200);\n});\n\npm.test("Response has id", () => {\n  const json = pm.response.json();\n  pm.expect(json.id).to.exist;\n});`}
-            />
-          </div>
+          <ScriptTab
+            label={<>JavaScript runs after the response. Use <code className="text-orange-400">apx.test()</code> and <code className="text-orange-400">apx.expect()</code></>}
+            value={edit.testScript}
+            onChange={v => setEdit(x => x ? { ...x, testScript: v } : x)}
+            placeholder={`apx.test("Status is 200", () => {\n  apx.response.to.have.status(200);\n});\n\napx.test("Response has id", () => {\n  const json = apx.response.json();\n  apx.expect(json.id).to.exist;\n});`}
+            target="test"
+            requestNames={flattenRequestNames(col?.item ?? [])}
+          />
         )}
 
         {activeRequestTab === 'Docs' && (
