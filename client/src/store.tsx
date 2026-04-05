@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useReducer, type ReactNode } from 'react';
-import type { AppState, AppAction, AppCollection, AppEnvironment, PostmanItem, RequestTab, CookieJar, Cookie } from './types';
+import type { AppState, AppAction, AppCollection, AppEnvironment, PostmanItem, RequestTab, CookieJar, Cookie, MockRoute } from './types';
 
 const STORAGE_KEY = 'apilix_persist';
 
@@ -15,7 +15,7 @@ type PersistedTabRef = { id: string; collectionId: string; itemId: string };
 
 type PersistedState = Pick<
   AppState,
-  'collections' | 'environments' | 'activeEnvironmentId' | 'collectionVariables' | 'globalVariables' | 'cookieJar'
+  'collections' | 'environments' | 'activeEnvironmentId' | 'collectionVariables' | 'globalVariables' | 'cookieJar' | 'mockRoutes' | 'mockPort'
 > & {
   tabSession?: { tabs: PersistedTabRef[]; activeTabId: string | null };
 };
@@ -56,6 +56,9 @@ const initialState: AppState = {
   collectionVariables: {},
   globalVariables: {},
   cookieJar: {},
+  mockRoutes: [],
+  mockServerRunning: false,
+  mockPort: 3002,
 };
 
 function appReducer(state: AppState, action: AppAction): AppState {
@@ -313,6 +316,28 @@ function appReducer(state: AppState, action: AppAction): AppState {
     case 'SET_COOKIE_JAR':
       return { ...state, cookieJar: action.payload };
 
+    case 'ADD_MOCK_ROUTE':
+      return { ...state, mockRoutes: [...state.mockRoutes, action.payload] };
+
+    case 'UPDATE_MOCK_ROUTE':
+      return { ...state, mockRoutes: state.mockRoutes.map(r => r.id === action.payload.id ? action.payload : r) };
+
+    case 'DELETE_MOCK_ROUTE':
+      return { ...state, mockRoutes: state.mockRoutes.filter(r => r.id !== action.payload) };
+
+    case 'REORDER_MOCK_ROUTES': {
+      const ordered = action.payload
+        .map(id => state.mockRoutes.find(r => r.id === id))
+        .filter((r): r is MockRoute => r !== undefined);
+      return { ...state, mockRoutes: ordered };
+    }
+
+    case 'SET_MOCK_SERVER_RUNNING':
+      return { ...state, mockServerRunning: action.payload };
+
+    case 'SET_MOCK_PORT':
+      return { ...state, mockPort: action.payload };
+
     case 'UPDATE_ACTIVE_ENV_VARS': {
       if (!state.activeEnvironmentId) return state;
       const updatedEnvs = state.environments.map(env => {
@@ -386,6 +411,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       collectionVariables: saved.collectionVariables ?? base.collectionVariables,
       globalVariables: saved.globalVariables ?? base.globalVariables,
       cookieJar: saved.cookieJar ?? base.cookieJar,
+      mockRoutes: saved.mockRoutes ?? base.mockRoutes,
+      mockPort: saved.mockPort ?? base.mockPort,
       tabs: restoredTabs,
       activeTabId: restoredActiveTabId,
       activeRequest: activeTab ? { collectionId: activeTab.collectionId, item: activeTab.item } : null,
@@ -400,6 +427,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       collectionVariables: state.collectionVariables,
       globalVariables: state.globalVariables,
       cookieJar: state.cookieJar,
+      mockRoutes: state.mockRoutes,
+      mockPort: state.mockPort,
       tabSession: {
         tabs: state.tabs
           .filter(t => t.item.id != null)
@@ -412,7 +441,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } catch {
       // localStorage unavailable or quota exceeded — fail silently
     }
-  }, [state.collections, state.environments, state.activeEnvironmentId, state.collectionVariables, state.globalVariables, state.cookieJar, state.tabs, state.activeTabId]);
+  }, [state.collections, state.environments, state.activeEnvironmentId, state.collectionVariables, state.globalVariables, state.cookieJar, state.mockRoutes, state.mockPort, state.tabs, state.activeTabId]);
 
   function getActiveEnvironment(): AppEnvironment | null {
     if (!state.activeEnvironmentId) return null;

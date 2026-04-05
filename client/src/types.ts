@@ -211,7 +211,19 @@ export interface ActiveRequest {
   item: PostmanItem;
 }
 
-export type AppView = 'request' | 'runner' | 'environments';
+export type AppView = 'request' | 'runner' | 'environments' | 'mock';
+
+export interface MockRoute {
+  id: string;
+  enabled: boolean;
+  method: string; // GET POST PUT DELETE PATCH HEAD OPTIONS * (any)
+  path: string;   // e.g. /api/users/:id
+  statusCode: number;
+  responseHeaders: Array<{ key: string; value: string }>;
+  responseBody: string;
+  delay: number;  // ms
+  description: string;
+}
 
 export interface AppState {
   collections: AppCollection[];
@@ -229,6 +241,9 @@ export interface AppState {
   collectionVariables: Record<string, Record<string, string>>;
   globalVariables: Record<string, string>;
   cookieJar: CookieJar;
+  mockRoutes: MockRoute[];
+  mockServerRunning: boolean;
+  mockPort: number;
 }
 
 export interface RequestTab {
@@ -282,4 +297,10 @@ export type AppAction =
   | { type: 'UPSERT_DOMAIN_COOKIES'; payload: { domain: string; cookies: Cookie[] } }
   | { type: 'DELETE_COOKIE'; payload: { domain: string; name: string } }
   | { type: 'CLEAR_DOMAIN_COOKIES'; payload: string }
-  | { type: 'SET_COOKIE_JAR'; payload: CookieJar };
+  | { type: 'SET_COOKIE_JAR'; payload: CookieJar }
+  | { type: 'ADD_MOCK_ROUTE'; payload: MockRoute }
+  | { type: 'UPDATE_MOCK_ROUTE'; payload: MockRoute }
+  | { type: 'DELETE_MOCK_ROUTE'; payload: string }
+  | { type: 'REORDER_MOCK_ROUTES'; payload: string[] }
+  | { type: 'SET_MOCK_SERVER_RUNNING'; payload: boolean }
+  | { type: 'SET_MOCK_PORT'; payload: number };

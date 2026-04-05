@@ -149,6 +149,32 @@ export async function checkHealth(): Promise<boolean> {
   }
 }
 
+// ─── Mock Server API ──────────────────────────────────────────────────────────
+
+import type { MockRoute } from './types';
+
+export interface MockStatus {
+  running: boolean;
+  port: number;
+}
+
+export async function getMockStatus(): Promise<MockStatus> {
+  const res = await api.get<MockStatus>('/mock/status');
+  return res.data;
+}
+
+export async function startMockServer(port: number, routes: MockRoute[]): Promise<void> {
+  await api.post('/mock/start', { port, routes });
+}
+
+export async function stopMockServer(): Promise<void> {
+  await api.post('/mock/stop');
+}
+
+export async function syncMockRoutes(routes: MockRoute[]): Promise<void> {
+  await api.put('/mock/routes', { routes });
+}
+
 const GRAPHQL_INTROSPECTION_QUERY = `{__schema{queryType{name}mutationType{name}subscriptionType{name}types{kind name fields(includeDeprecated:true){name type{kind name ofType{kind name ofType{kind name ofType{kind name}}}}args{name type{kind name ofType{kind name ofType{kind name}}}}}}}}`;
 
 export async function graphqlIntrospect(

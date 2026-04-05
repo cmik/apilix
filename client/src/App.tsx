@@ -11,6 +11,7 @@ import ConsolePanel from './components/ConsolePanel';
 import StatusBar from './components/StatusBar';
 import TabBar from './components/TabBar';
 import CookieManagerModal from './components/CookieManagerModal';
+import MockServerPanel from './components/MockServerPanel';
 
 // --- Env Quick Panel ---
 
@@ -442,6 +443,11 @@ export default function App() {
         {state.view === 'environments' && (
           <div className="flex-1 flex flex-col overflow-hidden">
             <EnvironmentPanel />
+          </div>
+        )}
+        {state.view === 'mock' && (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <MockServerPanel />
           </div>
         )}
 

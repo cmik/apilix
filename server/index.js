@@ -225,6 +225,183 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
   }
 });
 
+// ─── Mock Server ───────────────────────────────────────────────────────────────
+
+const http = require('http');
+
+/** In-memory mock routes: array of { id, enabled, method, path, statusCode, responseHeaders, responseBody, delay } */
+let mockRoutes = [];
+
+/** The running mock HTTP server, or null. */
+let mockServerInstance = null;
+let mockServerPort = 3002;
+
+function generateMockId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+
+/**
+ * Attempt to match a path against a route pattern that may contain :params.
+ * Returns param map if matched, null otherwise.
+ */
+function matchPath(pattern, incoming) {
+  const patParts = pattern.replace(/\/+$/, '').split('/');
+  const incParts = incoming.replace(/\?.*$/, '').replace(/\/+$/, '').split('/');
+  if (patParts.length !== incParts.length) return null;
+  const params = {};
+  for (let i = 0; i < patParts.length; i++) {
+    if (patParts[i].startsWith(':')) {
+      params[patParts[i].slice(1)] = decodeURIComponent(incParts[i]);
+    } else if (patParts[i] !== incParts[i]) {
+      return null;
+    }
+  }
+  return params;
+}
+
+/**
+ * Simple template substitution: {{param.x}}, {{query.x}}, {{body.x}}.
+ */
+function interpolate(template, ctx) {
+  return template.replace(/\{\{(\w+)\.(\w+)\}\}/g, (_, ns, key) => {
+    const src = ctx[ns];
+    if (src && Object.prototype.hasOwnProperty.call(src, key)) return src[key];
+    return `{{${ns}.${key}}}`;
+  });
+}
+
+function buildMockHandler() {
+  return function (req, res) {
+    const method = req.method.toUpperCase();
+    const url = req.url || '/';
+
+    // Parse query string into object
+    const qIdx = url.indexOf('?');
+    const pathname = qIdx >= 0 ? url.slice(0, qIdx) : url;
+    const query = {};
+    if (qIdx >= 0) {
+      const qs = url.slice(qIdx + 1);
+      qs.split('&').forEach(pair => {
+        const [k, v] = pair.split('=');
+        if (k) query[decodeURIComponent(k)] = decodeURIComponent(v ?? '');
+      });
+    }
+
+    // Find matching route (first enabled match)
+    let matched = null;
+    let pathParams = {};
+    for (const route of mockRoutes) {
+      if (!route.enabled) continue;
+      if (route.method !== '*' && route.method.toUpperCase() !== method) continue;
+      const params = matchPath(route.path, pathname);
+      if (params !== null) {
+        matched = route;
+        pathParams = params;
+        break;
+      }
+    }
+
+    if (!matched) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'No matching mock route', method, path: pathname }));
+      return;
+    }
+
+    // Collect body for POST/PUT/PATCH
+    let bodyChunks = [];
+    req.on('data', chunk => bodyChunks.push(chunk));
+    req.on('end', () => {
+      let bodyObj = {};
+      try {
+        const raw = Buffer.concat(bodyChunks).toString('utf-8');
+        if (raw) bodyObj = JSON.parse(raw);
+      } catch { /* non-JSON body */ }
+
+      const ctx = { param: pathParams, query, body: bodyObj };
+      const responseBody = interpolate(matched.responseBody, ctx);
+
+      // Merge headers
+      const headers = { 'Access-Control-Allow-Origin': '*' };
+      (matched.responseHeaders || []).forEach(h => {
+        if (h.key) headers[h.key] = interpolate(h.value, ctx);
+      });
+      if (!headers['Content-Type']) {
+        // Auto-detect JSON
+        try { JSON.parse(responseBody); headers['Content-Type'] = 'application/json'; }
+        catch { headers['Content-Type'] = 'text/plain'; }
+      }
+
+      const send = () => {
+        res.writeHead(matched.statusCode || 200, headers);
+        res.end(responseBody);
+      };
+
+      const delay = Math.min(parseInt(matched.delay, 10) || 0, 30000);
+      if (delay > 0) setTimeout(send, delay);
+      else send();
+    });
+  };
+}
+
+function startMockServer(port, routes) {
+  return new Promise((resolve, reject) => {
+    if (mockServerInstance) {
+      mockServerInstance.close(() => { mockServerInstance = null; });
+    }
+    mockRoutes = routes || [];
+    mockServerPort = port;
+
+    const server = http.createServer(buildMockHandler());
+    server.on('error', err => reject(err));
+    server.listen(port, () => {
+      mockServerInstance = server;
+      resolve();
+    });
+  });
+}
+
+function stopMockServer() {
+  return new Promise(resolve => {
+    if (!mockServerInstance) { resolve(); return; }
+    mockServerInstance.close(() => {
+      mockServerInstance = null;
+      resolve();
+    });
+  });
+}
+
+// GET /api/mock/status
+app.get('/api/mock/status', (_req, res) => {
+  res.json({ running: mockServerInstance !== null, port: mockServerPort });
+});
+
+// POST /api/mock/start  { port, routes }
+app.post('/api/mock/start', async (req, res) => {
+  const { port, routes } = req.body;
+  const p = parseInt(port, 10) || 3002;
+  if (p < 1024 || p > 65535) {
+    return res.status(400).json({ error: 'Port must be between 1024 and 65535' });
+  }
+  try {
+    await startMockServer(p, routes || []);
+    res.json({ ok: true, port: p });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/mock/stop
+app.post('/api/mock/stop', async (_req, res) => {
+  await stopMockServer();
+  res.json({ ok: true });
+});
+
+// PUT /api/mock/routes — sync all routes while server is running
+app.put('/api/mock/routes', (req, res) => {
+  mockRoutes = req.body.routes || [];
+  res.json({ ok: true, count: mockRoutes.length });
+});
+
 // ─── Start ─────────────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
