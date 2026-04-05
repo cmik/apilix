@@ -252,21 +252,25 @@ apx.collection.set('myVar', 'value');`,
         name: 'apx.sendRequest()',
         description: 'Make an additional HTTP call from a script',
         code: `// Make an extra HTTP request
-const response = await new Promise((resolve, reject) => {
-  apx.sendRequest(
-    {
-      url: 'https://api.example.com/token',
-      method: 'POST',
-      header: { 'Content-Type': 'application/json' },
-      body: {
-        mode: 'raw',
-        raw: JSON.stringify({ grant_type: 'client_credentials' }),
-      },
+apx.sendRequest(
+  {
+    url: 'https://api.example.com/token',
+    method: 'POST',
+    header: { 'Content-Type': 'application/json' },
+    body: {
+      mode: 'raw',
+      raw: JSON.stringify({ grant_type: 'client_credentials' }),
     },
-    (err, res) => (err ? reject(err) : resolve(res))
-  );
-});
-apx.environment.set('accessToken', response.json().access_token);`,
+  },
+  (err, response) => {
+    if (err) {
+      console.error('Token request failed:', err);
+      return;
+    }
+
+    apx.environment.set('accessToken', response.json().access_token);
+  }
+);`,
       },
       {
         id: 'pm-add-header',
