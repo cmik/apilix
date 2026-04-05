@@ -251,7 +251,23 @@ function createApx(response, variables, updatedVariables, tests, pendingRequests
     environment: makeVarStore(updatedEnvMutations),
     collection: makeVarStore(updatedCollVarMutations),
     get collectionVariables() { return this.collection; }, // Postman compatibility alias
-    globals: makeVarStore(updatedGlobalMutations),
+    globals: (() => {
+      const globalStore = makeVarStore(updatedGlobalMutations);
+      const unsupportedGlobalsMutation = () => {
+        throw new Error('apx.globals mutations are not supported in this sandbox because global changes are not persisted.');
+      };
+
+      return {
+        get(key) { return globalStore.get(key); },
+        has(key) { return globalStore.has(key); },
+        toObject() {
+          return typeof globalStore.toObject === 'function' ? globalStore.toObject() : {};
+        },
+        set: unsupportedGlobalsMutation,
+        unset: unsupportedGlobalsMutation,
+        clear: unsupportedGlobalsMutation,
+      };
+    })(),
     variables: makeVarStore(null), // generic store — falls back to flat routing in executeRequest
     iterationData: {
       get(key) { return variables[key]; },
