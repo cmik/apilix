@@ -1,6 +1,10 @@
 import { useState, useMemo } from 'react';
 import { useApp } from '../store';
 import type { AppCollection, AppEnvironment } from '../types';
+import { generateHarFromItems } from '../utils/harUtils';
+import { generateHurlFromItems } from '../utils/hurlUtils';
+
+type ExportFormat = 'postman' | 'har' | 'hurl';
 
 interface ExportModalProps {
   onClose: () => void;
@@ -9,6 +13,7 @@ interface ExportModalProps {
 export default function ExportModal({ onClose }: ExportModalProps) {
   const { state } = useApp();
 
+  const [format, setFormat] = useState<ExportFormat>('postman');
   const [selectedCollections, setSelectedCollections] = useState<Set<string>>(
     new Set(state.collections.map(c => c._id))
   );
@@ -53,22 +58,42 @@ export default function ExportModal({ onClose }: ExportModalProps) {
   }
 
   function downloadCollection(col: AppCollection) {
-    const exported = {
-      info: {
-        name: col.info.name,
-        schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
-        _postman_id: col._id,
-      },
-      item: col.item,
-      auth: col.auth,
-      event: col.event,
-      variable: col.variable,
-    };
-    const blob = new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' });
+    let content: string;
+    let filename: string;
+    let mimeType: string;
+
+    const safeName = col.info.name.replace(/[^a-z0-9_\-. ]/gi, '_');
+
+    if (format === 'har') {
+      content = generateHarFromItems(col.item, col.info.name);
+      filename = `${safeName}.har`;
+      mimeType = 'application/json';
+    } else if (format === 'hurl') {
+      content = generateHurlFromItems(col.item);
+      filename = `${safeName}.hurl`;
+      mimeType = 'text/plain';
+    } else {
+      const exported = {
+        info: {
+          name: col.info.name,
+          schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+          _postman_id: col._id,
+        },
+        item: col.item,
+        auth: col.auth,
+        event: col.event,
+        variable: col.variable,
+      };
+      content = JSON.stringify(exported, null, 2);
+      filename = `${safeName}.postman_collection.json`;
+      mimeType = 'application/json';
+    }
+
+    const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${col.info.name.replace(/[^a-z0-9_\-. ]/gi, '_')}.postman_collection.json`;
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -102,32 +127,47 @@ export default function ExportModal({ onClose }: ExportModalProps) {
         const saves: Promise<void>[] = [];
 
         for (const col of colsToExport) {
-          const exported = {
-            info: {
-              name: col.info.name,
-              schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
-              _postman_id: col._id,
-            },
-            item: col.item,
-            auth: col.auth,
-            event: col.event,
-            variable: col.variable,
-          };
+          let content: string;
+          let filename: string;
           const safeName = col.info.name.replace(/[^a-z0-9_\-. ]/gi, '_');
-          const filePath = `${folder}/${safeName}.postman_collection.json`;
-          saves.push(electronAPI.saveFileToDisk(filePath, JSON.stringify(exported, null, 2)));
+
+          if (format === 'har') {
+            content = generateHarFromItems(col.item, col.info.name);
+            filename = `${safeName}.har`;
+          } else if (format === 'hurl') {
+            content = generateHurlFromItems(col.item);
+            filename = `${safeName}.hurl`;
+          } else {
+            const exported = {
+              info: {
+                name: col.info.name,
+                schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+                _postman_id: col._id,
+              },
+              item: col.item,
+              auth: col.auth,
+              event: col.event,
+              variable: col.variable,
+            };
+            content = JSON.stringify(exported, null, 2);
+            filename = `${safeName}.postman_collection.json`;
+          }
+
+          saves.push(electronAPI.saveFileToDisk(`${folder}/${filename}`, content));
         }
 
-        for (const env of envsToExport) {
-          const exported = {
-            id: env._id,
-            name: env.name,
-            values: env.values,
-            _postman_variable_scope: 'environment',
-          };
-          const safeName = env.name.replace(/[^a-z0-9_\-. ]/gi, '_');
-          const filePath = `${folder}/${safeName}.postman_environment.json`;
-          saves.push(electronAPI.saveFileToDisk(filePath, JSON.stringify(exported, null, 2)));
+        if (format === 'postman') {
+          for (const env of envsToExport) {
+            const exported = {
+              id: env._id,
+              name: env.name,
+              values: env.values,
+              _postman_variable_scope: 'environment',
+            };
+            const safeName = env.name.replace(/[^a-z0-9_\-. ]/gi, '_');
+            const filePath = `${folder}/${safeName}.postman_environment.json`;
+            saves.push(electronAPI.saveFileToDisk(filePath, JSON.stringify(exported, null, 2)));
+          }
         }
 
         Promise.all(saves).then(() => onClose());
@@ -137,14 +177,17 @@ export default function ExportModal({ onClose }: ExportModalProps) {
       state.collections
         .filter(c => selectedCollections.has(c._id))
         .forEach(downloadCollection);
-      state.environments
-        .filter(e => selectedEnvironments.has(e._id))
-        .forEach(downloadEnvironment);
+      if (format === 'postman') {
+        state.environments
+          .filter(e => selectedEnvironments.has(e._id))
+          .forEach(downloadEnvironment);
+      }
       onClose();
     }
   }
 
-  const totalSelected = selectedCollections.size + selectedEnvironments.size;
+  const showEnvironments = format === 'postman';
+  const totalSelected = selectedCollections.size + (showEnvironments ? selectedEnvironments.size : 0);
   const allCollectionsChecked =
     state.collections.length > 0 && selectedCollections.size === state.collections.length;
   const allEnvironmentsChecked =
@@ -170,6 +213,27 @@ export default function ExportModal({ onClose }: ExportModalProps) {
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5 min-h-0">
+          {/* Format selector */}
+          <section>
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide block mb-2">
+              Format
+            </span>
+            <div className="flex gap-1 rounded-md bg-slate-800 p-0.5">
+              {(['postman', 'har', 'hurl'] as const).map(f => (
+                <button
+                  key={f}
+                  onClick={() => setFormat(f)}
+                  className={`flex-1 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                    format === f
+                      ? 'bg-orange-600 text-white'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {f === 'postman' ? 'Postman JSON' : f.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </section>
           {/* Collections */}
           {state.collections.length > 0 && (
             <section className="flex flex-col min-h-0">
@@ -223,7 +287,7 @@ export default function ExportModal({ onClose }: ExportModalProps) {
           )}
 
           {/* Environments */}
-          {state.environments.length > 0 && (
+          {showEnvironments && state.environments.length > 0 && (
             <section className="flex flex-col min-h-0">
               <div className="flex items-center justify-between mb-2 shrink-0">
                 <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
@@ -274,7 +338,7 @@ export default function ExportModal({ onClose }: ExportModalProps) {
             </section>
           )}
 
-          {state.collections.length === 0 && state.environments.length === 0 && (
+          {state.collections.length === 0 && (!showEnvironments || state.environments.length === 0) && (
             <p className="text-xs text-slate-500 italic text-center py-4">
               Nothing to export yet.
             </p>

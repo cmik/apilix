@@ -1,5 +1,6 @@
 // ─── HAR (HTTP Archive) Utilities ────────────────────────────────────────────
-// Parses .har files (browser network captures) into Postman items.
+// Parses .har files (browser network captures) into Postman items, and
+// generates HAR files from Postman collections.
 // HAR spec: https://w3c.github.io/web-performance/specs/HAR/Overview.html
 
 import { generateId } from '../store';
@@ -208,4 +209,177 @@ function entryToItem(entry: HarEntry): PostmanItem {
       body,
     },
   };
+}
+
+// ─── HAR Export ───────────────────────────────────────────────────────────────
+
+interface HarExportEntry {
+  startedDateTime: string;
+  time: number;
+  request: {
+    method: string;
+    url: string;
+    httpVersion: string;
+    cookies: [];
+    headers: Array<{ name: string; value: string }>;
+    queryString: Array<{ name: string; value: string }>;
+    postData?: { mimeType: string; text?: string; params?: Array<{ name: string; value: string }> };
+    headersSize: number;
+    bodySize: number;
+  };
+  response: {
+    status: number;
+    statusText: string;
+    httpVersion: string;
+    cookies: [];
+    headers: [];
+    content: { size: number; mimeType: string };
+    redirectURL: string;
+    headersSize: number;
+    bodySize: number;
+  };
+  cache: Record<string, never>;
+  timings: { send: number; wait: number; receive: number };
+}
+
+function postmanItemToHarEntry(item: PostmanItem): HarExportEntry | null {
+  if (!item.request) return null;
+
+  const req = item.request;
+  const rawUrl = typeof req.url === 'string' ? req.url : (req.url?.raw ?? '');
+  const method = (req.method ?? 'GET').toUpperCase();
+
+  const headers: Array<{ name: string; value: string }> = (req.header ?? [])
+    .filter(h => !h.disabled)
+    .map(h => ({ name: h.key, value: h.value }));
+
+  // Auth → header
+  const auth = req.auth;
+  if (auth?.type === 'bearer') {
+    const token = auth.bearer?.find(b => b.key === 'token')?.value ?? '';
+    if (token) headers.push({ name: 'Authorization', value: `Bearer ${token}` });
+  } else if (auth?.type === 'basic') {
+    const user = auth.basic?.find(b => b.key === 'username')?.value ?? '';
+    const pass = auth.basic?.find(b => b.key === 'password')?.value ?? '';
+    if (user || pass) {
+      const encoded = btoa(`${user}:${pass}`);
+      headers.push({ name: 'Authorization', value: `Basic ${encoded}` });
+    }
+  } else if (auth?.type === 'apikey') {
+    const key = auth.apikey?.find(b => b.key === 'key')?.value ?? '';
+    const value = auth.apikey?.find(b => b.key === 'value')?.value ?? '';
+    const addTo = auth.apikey?.find(b => b.key === 'in')?.value ?? 'header';
+    if (key && addTo === 'header') headers.push({ name: key, value });
+  }
+
+  // Query string from URL object
+  const urlObj = typeof req.url === 'string' ? null : req.url;
+  const queryString: Array<{ name: string; value: string }> = (urlObj?.query ?? [])
+    .filter(q => !q.disabled)
+    .map(q => ({ name: q.key, value: q.value }));
+
+  // Body
+  let postData: HarExportEntry['request']['postData'] | undefined;
+  if (req.body && req.body.mode !== 'none') {
+    if (req.body.mode === 'raw') {
+      const lang = req.body.options?.raw?.language ?? 'text';
+      const mimeMap: Record<string, string> = {
+        json: 'application/json',
+        xml: 'application/xml',
+        html: 'text/html',
+        javascript: 'application/javascript',
+        text: 'text/plain',
+      };
+      postData = { mimeType: mimeMap[lang] ?? 'text/plain', text: req.body.raw ?? '' };
+    } else if (req.body.mode === 'urlencoded') {
+      postData = {
+        mimeType: 'application/x-www-form-urlencoded',
+        params: (req.body.urlencoded ?? [])
+          .filter(p => !p.disabled)
+          .map(p => ({ name: p.key, value: p.value })),
+      };
+    } else if (req.body.mode === 'formdata') {
+      postData = {
+        mimeType: 'multipart/form-data',
+        params: (req.body.formdata ?? [])
+          .filter(p => !p.disabled)
+          .map(p => ({ name: p.key, value: p.value })),
+      };
+    } else if (req.body.mode === 'graphql') {
+      const gql = req.body.graphql;
+      postData = {
+        mimeType: 'application/json',
+        text: JSON.stringify({ query: gql?.query ?? '', variables: gql?.variables ? JSON.parse(gql.variables) : undefined }),
+      };
+    }
+  }
+
+  const hasBody = postData !== undefined;
+
+  return {
+    startedDateTime: new Date(0).toISOString(),
+    time: 0,
+    request: {
+      method,
+      url: rawUrl,
+      httpVersion: 'HTTP/1.1',
+      cookies: [],
+      headers,
+      queryString,
+      ...(hasBody ? { postData } : {}),
+      headersSize: -1,
+      bodySize: hasBody ? -1 : 0,
+    },
+    response: {
+      status: 0,
+      statusText: '',
+      httpVersion: 'HTTP/1.1',
+      cookies: [],
+      headers: [],
+      content: { size: 0, mimeType: 'text/plain' },
+      redirectURL: '',
+      headersSize: -1,
+      bodySize: -1,
+    },
+    cache: {},
+    timings: { send: 0, wait: 0, receive: 0 },
+  };
+}
+
+function collectHarEntries(items: PostmanItem[], out: HarExportEntry[]): void {
+  for (const item of items) {
+    if (item.item) {
+      collectHarEntries(item.item, out);
+    } else {
+      const entry = postmanItemToHarEntry(item);
+      if (entry) out.push(entry);
+    }
+  }
+}
+
+/**
+ * Generate a HAR file JSON string from an array of Postman items.
+ * Nested folders are traversed recursively and flattened into HAR entries.
+ */
+export function generateHarFromItems(items: PostmanItem[], collectionName = 'Export'): string {
+  const entries: HarExportEntry[] = [];
+  collectHarEntries(items, entries);
+
+  const har = {
+    log: {
+      version: '1.2',
+      creator: { name: 'Apilix', version: '1.0', comment: '' },
+      pages: [
+        {
+          startedDateTime: new Date(0).toISOString(),
+          id: 'page_1',
+          title: collectionName,
+          pageTimings: { onContentLoad: 0, onLoad: 0 },
+        },
+      ],
+      entries: entries.map(e => ({ ...e, pageref: 'page_1' })),
+    },
+  };
+
+  return JSON.stringify(har, null, 2);
 }
