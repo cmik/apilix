@@ -1,6 +1,7 @@
 'use strict';
 
 const axios = require('axios');
+const http = require('http');
 const https = require('https');
 const FormData = require('form-data');
 const { runScript } = require('./sandbox');
@@ -201,6 +202,86 @@ function parseSetCookieHeaders(setCookieArray, hostname) {
   return parsed;
 }
 
+// ─── TLS cert & network timing ──────────────────────────────────────────────
+
+function serializeCert(cert) {
+  function entries(obj) {
+    if (!obj || typeof obj !== 'object') return {};
+    return Object.fromEntries(
+      Object.entries(obj).map(([k, v]) => [k, typeof v === 'string' ? v : String(v)])
+    );
+  }
+  return {
+    subject: cert.subject ? entries(cert.subject) : null,
+    issuer: cert.issuer ? entries(cert.issuer) : null,
+    validFrom: cert.valid_from || null,
+    validTo: cert.valid_to || null,
+    fingerprint: cert.fingerprint || null,
+    fingerprint256: cert.fingerprint256 || null,
+    serialNumber: cert.serialNumber || null,
+    subjectAltNames: cert.subjectaltname || null,
+    bits: cert.bits || null,
+  };
+}
+
+function serializeCertChain(cert) {
+  const chain = [];
+  const seen = new Set();
+  let cur = cert;
+  while (cur && cur.subject) {
+    const fp = cur.fingerprint;
+    if (fp && seen.has(fp)) break;
+    if (fp) seen.add(fp);
+    chain.push(serializeCert(cur));
+    cur = cur.issuerCertificate;
+  }
+  return chain;
+}
+
+function makeTimingAndCertContext() {
+  const timings = { dns: 0, tcp: 0, tls: 0 };
+  const certHolder = { chain: null };
+  let captured = false;
+
+  function instrument(socket, isSecure) {
+    if (captured) return;
+    captured = true;
+    const t0 = Date.now();
+    let dnsEnd = t0;
+    let connectEnd = null;
+    socket.once('lookup', () => { dnsEnd = Date.now(); timings.dns = dnsEnd - t0; });
+    socket.once('connect', () => { connectEnd = Date.now(); timings.tcp = connectEnd - dnsEnd; });
+    if (isSecure) {
+      socket.once('secureConnect', () => {
+        const secureEnd = Date.now();
+        timings.tls = secureEnd - (connectEnd ?? dnsEnd);
+        try {
+          const raw = socket.getPeerCertificate(true);
+          if (raw && raw.subject) certHolder.chain = serializeCertChain(raw);
+        } catch (_) {}
+      });
+    }
+  }
+
+  const httpsTimingAgent = new https.Agent({ rejectUnauthorized: false });
+  const _origHttps = httpsTimingAgent.createConnection.bind(httpsTimingAgent);
+  httpsTimingAgent.createConnection = function (opts, cb) {
+    const sock = _origHttps(opts, cb);
+    instrument(sock, true);
+    return sock;
+  };
+
+  const httpTimingAgent = new http.Agent({});
+  const _origHttp = httpTimingAgent.createConnection.bind(httpTimingAgent);
+  httpTimingAgent.createConnection = function (opts, cb) {
+    const sock = _origHttp(opts, cb);
+    instrument(sock, false);
+    return sock;
+  };
+
+  return { timings, certHolder, httpsTimingAgent, httpTimingAgent };
+}
+
 // ─── Main executor ───────────────────────────────────────────────────────────
 
 async function executeRequest(item, context) {
@@ -256,11 +337,71 @@ async function executeRequest(item, context) {
     try { requestBodyStr = data.toString(); } catch (_) {}
   }
 
+  // Per-request agent with timing and TLS capture
+  const _tc = makeTimingAndCertContext();
   const startTime = Date.now();
 
   try {
-    const axiosResponse = await httpClient.request({ method, url, headers, data });
+    // ─── Redirect chain handling ───────────────────────────────────────────
+    const MAX_REDIRECTS = 10;
+    const redirectChain = [];
+    let curMethod = method;
+    let curUrl = url;
+    let curData = data;
+    let curHeaders = { ...headers };
+    let axiosResponse;
+
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      const _isHopHttps = curUrl.toLowerCase().startsWith('https://');
+      // Only instrument the timing agent on the first hop
+      const agentOpts = hop === 0
+        ? (_isHopHttps ? { httpsAgent: _tc.httpsTimingAgent } : { httpAgent: _tc.httpTimingAgent })
+        : (_isHopHttps ? { httpsAgent: new https.Agent({ rejectUnauthorized: false }) } : {});
+      const hopStart = Date.now();
+      axiosResponse = await httpClient.request({
+        method: curMethod, url: curUrl, headers: curHeaders, data: curData,
+        maxRedirects: 0,
+        ...agentOpts,
+      });
+      const hopTime = Date.now() - hopStart;
+
+      const status = axiosResponse.status;
+      if (status >= 300 && status < 400 && axiosResponse.headers.location) {
+        const hopHeaders = {};
+        Object.entries(axiosResponse.headers || {}).forEach(([k, v]) => { hopHeaders[k] = String(v); });
+        redirectChain.push({
+          url: curUrl,
+          status,
+          statusText: axiosResponse.statusText || '',
+          headers: hopHeaders,
+          responseTime: hopTime,
+        });
+        // Resolve possibly-relative Location
+        let nextUrl = axiosResponse.headers.location;
+        try { nextUrl = new URL(nextUrl, curUrl).href; } catch (_) {}
+        // 303 always switches to GET; 301/302 switch to GET for non-HEAD/GET
+        if ([301, 302, 303].includes(status) && curMethod !== 'GET' && curMethod !== 'HEAD') {
+          curMethod = 'GET';
+          curData = undefined;
+          delete curHeaders['Content-Type'];
+          delete curHeaders['content-type'];
+        }
+        curUrl = nextUrl;
+      } else {
+        break;
+      }
+    }
+    // ──────────────────────────────────────────────────────────────────────
+
     const responseTime = Date.now() - startTime;
+    const _isHttps = curUrl.toLowerCase().startsWith('https://');
+    const networkTimings = {
+      dns: _tc.timings.dns,
+      tcp: _tc.timings.tcp,
+      tls: _isHttps ? _tc.timings.tls : 0,
+      server: Math.max(0, responseTime - _tc.timings.dns - _tc.timings.tcp - (_isHttps ? _tc.timings.tls : 0)),
+      total: responseTime,
+    };
 
     const bodyString = typeof axiosResponse.data === 'string'
       ? axiosResponse.data
@@ -332,7 +473,7 @@ async function executeRequest(item, context) {
       status: axiosResponse.status,
       statusText: axiosResponse.statusText,
       responseTime,
-      resolvedUrl: url,
+      resolvedUrl: curUrl,
       requestHeaders: headers,
       requestBody: requestBodyStr,
       headers: responseHeaders,
@@ -343,6 +484,9 @@ async function executeRequest(item, context) {
       updatedEnvironment: updatedEnv,
       updatedCollectionVariables: updatedCollVars,
       updatedCookies,
+      networkTimings,
+      tlsCertChain: _tc.certHolder.chain,
+      redirectChain,
       error: null,
     };
   } catch (err) {
@@ -360,6 +504,9 @@ async function executeRequest(item, context) {
       updatedEnvironment: environment,
       updatedCollectionVariables: collectionVariables,
       updatedCookies: cookies,
+      networkTimings: { dns: 0, tcp: 0, tls: 0, server: 0, total: Date.now() - startTime },
+      tlsCertChain: null,
+      redirectChain: [],
       error: err.message,
     };
   }
