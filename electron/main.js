@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, shell } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
@@ -104,6 +104,20 @@ function createWindow() {
     mainWindow = null;
   });
 }
+
+// IPC: let the renderer pick an export folder
+ipcMain.handle('choose-export-folder', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Choose export folder',
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  return result.canceled ? null : result.filePaths[0];
+});
+
+// IPC: write a file straight to disk (used after folder is chosen)
+ipcMain.handle('save-file-to-disk', async (_event, { filePath, content }) => {
+  fs.writeFileSync(filePath, content, 'utf8');
+});
 
 app.whenReady().then(async () => {
   // In dev, keep port 3001 so Vite's proxy config stays valid.

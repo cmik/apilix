@@ -90,13 +90,58 @@ export default function ExportModal({ onClose }: ExportModalProps) {
   }
 
   function handleExport() {
-    state.collections
-      .filter(c => selectedCollections.has(c._id))
-      .forEach(downloadCollection);
-    state.environments
-      .filter(e => selectedEnvironments.has(e._id))
-      .forEach(downloadEnvironment);
-    onClose();
+    const electronAPI = (window as any).electronAPI;
+
+    if (electronAPI?.chooseExportFolder) {
+      // Desktop app: pick a folder once, then write all files to it directly
+      electronAPI.chooseExportFolder().then((folder: string | null) => {
+        if (!folder) return; // user cancelled
+        const colsToExport = state.collections.filter(c => selectedCollections.has(c._id));
+        const envsToExport = state.environments.filter(e => selectedEnvironments.has(e._id));
+
+        const saves: Promise<void>[] = [];
+
+        for (const col of colsToExport) {
+          const exported = {
+            info: {
+              name: col.info.name,
+              schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+              _postman_id: col._id,
+            },
+            item: col.item,
+            auth: col.auth,
+            event: col.event,
+            variable: col.variable,
+          };
+          const safeName = col.info.name.replace(/[^a-z0-9_\-. ]/gi, '_');
+          const filePath = `${folder}/${safeName}.postman_collection.json`;
+          saves.push(electronAPI.saveFileToDisk(filePath, JSON.stringify(exported, null, 2)));
+        }
+
+        for (const env of envsToExport) {
+          const exported = {
+            id: env._id,
+            name: env.name,
+            values: env.values,
+            _postman_variable_scope: 'environment',
+          };
+          const safeName = env.name.replace(/[^a-z0-9_\-. ]/gi, '_');
+          const filePath = `${folder}/${safeName}.postman_environment.json`;
+          saves.push(electronAPI.saveFileToDisk(filePath, JSON.stringify(exported, null, 2)));
+        }
+
+        Promise.all(saves).then(() => onClose());
+      });
+    } else {
+      // Browser: use the existing blob-download approach
+      state.collections
+        .filter(c => selectedCollections.has(c._id))
+        .forEach(downloadCollection);
+      state.environments
+        .filter(e => selectedEnvironments.has(e._id))
+        .forEach(downloadEnvironment);
+      onClose();
+    }
   }
 
   const totalSelected = selectedCollections.size + selectedEnvironments.size;
