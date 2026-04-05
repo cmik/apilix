@@ -240,12 +240,12 @@ apx.globals.set('myGlobal', 'value');`,
       {
         id: 'pm-get-collection-var',
         name: 'Get / set collection variable',
-        description: 'Read and write apx.collectionVariables',
+        description: 'Read and write apx.collection',
         code: `// Read collection variable
-const v = apx.collectionVariables.get('myVar') ?? '';
+const v = apx.collection.get('myVar') ?? '';
 
 // Write collection variable
-apx.collectionVariables.set('myVar', 'value');`,
+apx.collection.set('myVar', 'value');`,
       },
       {
         id: 'pm-send-request',

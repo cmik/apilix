@@ -197,6 +197,8 @@ export interface RunnerIterationResult {
   size?: number;
   testResults: TestResult[];
   scriptLogs?: ScriptLog[];
+  preChildRequests?: Array<{ name: string; method: string; result: RequestResponse & { resolvedUrl?: string; requestHeaders?: Record<string, string>; requestBody?: string } }>;
+  testChildRequests?: Array<{ name: string; method: string; result: RequestResponse & { resolvedUrl?: string; requestHeaders?: Record<string, string>; requestBody?: string } }>;
   error: string | null;
 }
 

@@ -348,6 +348,7 @@ async function executeRequest(item, context) {
   // Per-request agent with timing and TLS capture
   const _tc = makeTimingAndCertContext();
   const startTime = Date.now();
+  let testChildRequests = [];
 
   try {
     // ─── Redirect chain handling ───────────────────────────────────────────
@@ -419,7 +420,6 @@ async function executeRequest(item, context) {
     const testScript = (item.event || []).find(e => e.listen === 'test');
     let testResults = [];
     let updatedVars = {};
-    let testChildRequests = [];
 
     if (testScript) {
       const code = Array.isArray(testScript.script.exec)
@@ -518,6 +518,9 @@ async function executeRequest(item, context) {
       body: err.message,
       size: 0,
       testResults: [],
+      scriptLogs,
+      preChildRequests,
+      testChildRequests,
       updatedEnvironment: environment,
       updatedCollectionVariables: collectionVariables,
       updatedCookies: cookies,

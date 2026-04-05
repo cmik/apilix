@@ -56,6 +56,8 @@ export interface RunPayload {
   cookies?: CookieJar;
   delay?: number;
   iterations?: number;
+  executeChildRequests?: boolean;
+  allCollectionItems?: PostmanItem[];
 }
 
 export async function runCollection(

@@ -212,10 +212,24 @@ function createApx(response, variables, updatedVariables, tests, pendingRequests
   const collectionItems = (deps && deps.collectionItems) || [];
   const executeRequestFn = (deps && deps.executeRequestFn) || null;
   const execContext = (deps && deps.context) || {};
-  const makeVarStore = () => ({
+
+  // Per-namespace write buckets — track which scope each mutation targets so
+  // apx.executeRequest() can forward mutations to the correct child scope instead
+  // of collapsing everything into the child's environment.
+  const updatedEnvMutations = {};
+  const updatedCollVarMutations = {};
+  const updatedGlobalMutations = {};
+
+  const makeVarStore = (namespaceBucket) => ({
     get(key) { return Object.prototype.hasOwnProperty.call(variables, key) ? variables[key] : (updatedVariables[key] !== undefined ? updatedVariables[key] : undefined); },
-    set(key, value) { updatedVariables[key] = String(value); },
-    unset(key) { delete updatedVariables[key]; },
+    set(key, value) {
+      updatedVariables[key] = String(value);     // flat copy keeps same-script resolution working
+      if (namespaceBucket) namespaceBucket[key] = String(value);
+    },
+    unset(key) {
+      delete updatedVariables[key];
+      if (namespaceBucket) delete namespaceBucket[key];
+    },
     has(key) { return key in variables || key in updatedVariables; },
     clear() {},
   });
@@ -234,10 +248,11 @@ function createApx(response, variables, updatedVariables, tests, pendingRequests
       return createExpect(value);
     },
 
-    environment: makeVarStore(),
-    collectionVariables: makeVarStore(),
-    globals: makeVarStore(),
-    variables: makeVarStore(),
+    environment: makeVarStore(updatedEnvMutations),
+    collection: makeVarStore(updatedCollVarMutations),
+    get collectionVariables() { return this.collection; }, // Postman compatibility alias
+    globals: makeVarStore(updatedGlobalMutations),
+    variables: makeVarStore(null), // generic store — falls back to flat routing in executeRequest
     iterationData: {
       get(key) { return variables[key]; },
       has(key) { return key in variables; },
@@ -355,12 +370,27 @@ function createApx(response, variables, updatedVariables, tests, pendingRequests
             return;
           }
 
-          // Merge any variable updates made so far in this script into the context
-          const mergedEnv = { ...(execContext.environment || {}), ...updatedVariables };
+          // Build per-namespace child contexts from the tracked mutation buckets.
+          // Mutations via the generic `variables` store (no namespace bucket) are
+          // routed to collectionVariables, mirroring executor.js unknown-key handling.
+          const trackedKeys = new Set([
+            ...Object.keys(updatedEnvMutations),
+            ...Object.keys(updatedCollVarMutations),
+            ...Object.keys(updatedGlobalMutations),
+          ]);
+          const untrackedCollVarMutations = {};
+          Object.keys(updatedVariables).forEach(k => {
+            if (!trackedKeys.has(k)) untrackedCollVarMutations[k] = updatedVariables[k];
+          });
+
+          const childEnv      = { ...(execContext.environment || {}),        ...updatedEnvMutations };
+          const childCollVars = { ...(execContext.collectionVariables || {}), ...updatedCollVarMutations, ...untrackedCollVarMutations };
+          const childGlobals  = { ...(execContext.globals || {}),             ...updatedGlobalMutations };
+
           const result = await executeRequestFn(item, {
-            environment: mergedEnv,
-            collectionVariables: execContext.collectionVariables || {},
-            globals: execContext.globals || {},
+            environment: childEnv,
+            collectionVariables: childCollVars,
+            globals: childGlobals,
             dataRow: execContext.dataRow || {},
             collVars: execContext.collVars || [],
             cookies: execContext.cookies || {},

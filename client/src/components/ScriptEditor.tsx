@@ -61,7 +61,8 @@ const INFO: Completion[] = [
 const ROOT: Completion[] = [
   { label: 'environment',          insert: 'environment',          detail: 'object'     },
   { label: 'globals',              insert: 'globals',              detail: 'object'     },
-  { label: 'collectionVariables',  insert: 'collectionVariables',  detail: 'object'     },
+  { label: 'collection',           insert: 'collection',           detail: 'object'     },
+  { label: 'collectionVariables',  insert: 'collectionVariables',  detail: 'object (alias)' },
   { label: 'variables',            insert: 'variables',            detail: 'object'     },
   { label: 'request',              insert: 'request',              detail: 'object'     },
   { label: 'response',             insert: 'response',             detail: 'object'     },
@@ -92,7 +93,7 @@ function getContext(textBefore: string, requestNames: string[]): { completions: 
   m = textBefore.match(/(?:apx|pm)\.request\.(\w*)$/);
   if (m) return { completions: REQUEST, prefix: m[1] };
 
-  m = textBefore.match(/(?:apx|pm)\.(?:environment|globals|collectionVariables|variables)\.(\w*)$/);
+  m = textBefore.match(/(?:apx|pm)\.(?:environment|globals|collection|collectionVariables|variables)\.(\w*)$/);
   if (m) return { completions: VAR_STORE, prefix: m[1] };
 
   m = textBefore.match(/(?:apx|pm)\.iterationData\.(\w*)$/);
