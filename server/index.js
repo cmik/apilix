@@ -55,7 +55,7 @@ app.get('/api/health', (_req, res) => {
 
 app.post('/api/execute', async (req, res) => {
   try {
-    const { item, environment, collectionVariables, globals, dataRow, collVars, cookies } = req.body;
+    const { item, environment, collectionVariables, globals, dataRow, collVars, cookies, collectionItems } = req.body;
     if (!item || !item.request) {
       return res.status(400).json({ error: 'Missing item.request in body' });
     }
@@ -66,6 +66,7 @@ app.post('/api/execute', async (req, res) => {
       dataRow: dataRow || {},
       collVars: collVars || [],
       cookies: cookies || {},
+      collectionItems: collectionItems || [],
     });
     return res.json(result);
   } catch (err) {
@@ -99,7 +100,7 @@ app.post('/api/run/:runId/stop', (req, res) => {
 app.post('/api/run', upload.single('csvFile'), async (req, res) => {
   try {
     const payload = JSON.parse(req.body.data || '{}');
-    const { collection, environment, collectionVariables, globals, delay, cookies } = payload;
+    const { collection, environment, collectionVariables, globals, delay, cookies, executeChildRequests, allCollectionItems } = payload;
 
     if (!collection || !collection.item) {
       return res.status(400).json({ error: 'Missing collection in body' });
@@ -168,6 +169,7 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
           dataRow,
           collVars: collection.variable || [],
           cookies: currentCookies,
+          collectionItems: executeChildRequests ? (allCollectionItems || collection.item || []) : [],
         });
 
         // Propagate environment/variable/cookie changes to next request in same iteration
@@ -193,6 +195,8 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
           size: result.size,
           testResults: result.testResults,
           scriptLogs: result.scriptLogs,
+          preChildRequests: result.preChildRequests || [],
+          testChildRequests: result.testChildRequests || [],
           error: result.error,
         };
 

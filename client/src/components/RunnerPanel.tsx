@@ -99,6 +99,11 @@ function SelectionNode({ item, depth, selectedIds, onToggleRequest, onToggleFold
 
   const method = item.request?.method ?? 'GET';
   const methodColor = METHOD_COLORS[method] ?? 'text-slate-400';
+  const usesChildRequests = (item.event ?? []).some(ev => {
+    const exec = ev.script?.exec;
+    const code = Array.isArray(exec) ? exec.join('\n') : (exec ?? '');
+    return code.includes('apx.executeRequest(');
+  });
   return (
     <div
       className="flex items-center gap-2 py-1 hover:bg-slate-600/30 rounded cursor-pointer"
@@ -114,6 +119,9 @@ function SelectionNode({ item, depth, selectedIds, onToggleRequest, onToggleFold
       />
       <span className={`text-xs font-bold w-14 shrink-0 ${methodColor}`}>{method}</span>
       <span className="text-sm text-slate-300 truncate">{item.name}</span>
+      {usesChildRequests && (
+        <span title="This request executes child requests via apx.executeRequest()" className="ml-auto shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-violet-800/60 text-violet-300 border border-violet-600/50">child</span>
+      )}
     </div>
   );
 }
@@ -128,49 +136,54 @@ function statusColor(status: number): string {
   return 'text-slate-400';
 }
 
-function ResultRow({ result }: { result: RunnerIterationResult }) {
+type ChildEntry = { tag: 'pre' | 'test'; name: string; method: string; result: { status: number; statusText: string; responseTime: number; error: string | null; testResults?: Array<{ passed: boolean; name: string; error?: string | null }> } };
+
+function ChildRow({ child, isLast }: { child: ChildEntry; isLast: boolean }) {
   const [expanded, setExpanded] = useState(false);
-  const passed = result.testResults.filter(t => t.passed).length;
-  const total = result.testResults.length;
-  const allPassed = total > 0 && passed === total;
-  const hasFailed = result.testResults.some(t => !t.passed);
+  const tests = child.result.testResults ?? [];
+  const passed = tests.filter(t => t.passed).length;
+  const hasFailed = tests.some(t => !t.passed);
 
   return (
-    <div className="border-b border-slate-700">
+    <div className="relative">
+      {/* Tree connector: vertical line at left, horizontal branch going right to content */}
+      <div className="absolute left-0 top-0 bottom-0 w-8">
+        <div className={`absolute left-1 top-0 w-px bg-slate-600/50 ${isLast ? 'h-1/2' : 'h-full'}`} />
+        <div className="absolute top-1/2 left-1 right-0 h-px bg-slate-600/50" style={{ transform: 'translateY(-50%)' }} />
+      </div>
       <div
-        className={`flex items-center gap-3 px-4 py-2 text-sm cursor-pointer hover:bg-slate-700/30 transition-colors ${
-          result.error ? 'bg-red-900/10' : ''
+        className={`ml-8 flex items-center gap-3 px-3 py-1.5 text-xs cursor-pointer hover:bg-slate-700/20 transition-colors ${
+          child.result.error ? 'bg-red-900/5' : ''
         }`}
-        onClick={() => total > 0 && setExpanded(e => !e)}
+        onClick={() => tests.length > 0 && setExpanded(e => !e)}
       >
-        <span className={`font-bold w-16 shrink-0 ${statusColor(result.status)}`}>
-          {result.error ? 'ERR' : result.status}
+        <span className={`font-bold w-14 shrink-0 ${statusColor(child.result.status)}`}>
+          {child.result.error ? 'ERR' : child.result.status}
         </span>
-        <span className="font-medium text-slate-400 w-16 shrink-0">{result.method}</span>
-        <span className="flex-1 text-slate-300 truncate font-medium">{result.name}</span>
-        <span className="text-slate-500 text-xs w-20 text-right">{result.responseTime} ms</span>
-        {total > 0 && (
-          <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
+        <span className="font-medium text-slate-500 w-14 shrink-0">{child.method}</span>
+        <span className="flex-1 text-slate-400 truncate">{child.name}</span>
+        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${
+          child.tag === 'pre' ? 'bg-blue-900/50 text-blue-400' : 'bg-purple-900/50 text-purple-400'
+        }`}>{child.tag}</span>
+        <span className="text-slate-600 text-xs w-16 text-right shrink-0">{child.result.responseTime} ms</span>
+        {tests.length > 0 && (
+          <span className={`text-xs px-1.5 py-0.5 rounded font-medium shrink-0 ${
             hasFailed ? 'bg-red-800/60 text-red-300' : 'bg-green-800/60 text-green-300'
           }`}>
-            {passed}/{total}
+            {passed}/{tests.length}
           </span>
         )}
-        {total > 0 && (
+        {tests.length > 0 && (
           <span className="text-slate-600 text-xs ml-1">{expanded ? '▴' : '▾'}</span>
         )}
       </div>
       {expanded && (
-        <div className="px-4 pb-2 flex flex-col gap-1 bg-slate-800/30">
-          {result.testResults.map((t, i) => (
-            <div key={i} className={`flex items-start gap-2 text-xs py-0.5`}>
-              <span className={t.passed ? 'text-green-400' : 'text-red-400'}>
-                {t.passed ? '✓' : '✗'}
-              </span>
+        <div className="ml-8 px-3 pb-2 flex flex-col gap-1 bg-slate-800/20">
+          {tests.map((t, i) => (
+            <div key={i} className="flex items-start gap-2 text-xs py-0.5">
+              <span className={t.passed ? 'text-green-400' : 'text-red-400'}>{t.passed ? '✓' : '✗'}</span>
               <span className={t.passed ? 'text-slate-300' : 'text-red-300'}>{t.name}</span>
-              {!t.passed && t.error && (
-                <span className="text-red-500 font-mono ml-2">{t.error}</span>
-              )}
+              {!t.passed && t.error && <span className="text-red-500 font-mono ml-2">{t.error}</span>}
             </div>
           ))}
         </div>
@@ -179,11 +192,91 @@ function ResultRow({ result }: { result: RunnerIterationResult }) {
   );
 }
 
+function ResultRow({ result }: { result: RunnerIterationResult }) {
+  const [expanded, setExpanded] = useState(false);
+  const passed = result.testResults.filter(t => t.passed).length;
+  const total = result.testResults.length;
+  const hasFailed = result.testResults.some(t => !t.passed);
+
+  const children: ChildEntry[] = [
+    ...(result.preChildRequests ?? []).map(c => ({ tag: 'pre' as const, name: c.name, method: c.method, result: c.result })),
+    ...(result.testChildRequests ?? []).map(c => ({ tag: 'test' as const, name: c.name, method: c.method, result: c.result })),
+  ];
+  const hasChildren = children.length > 0;
+
+  return (
+    <div className="border-b border-slate-700">
+      <div
+        className={`flex items-center gap-3 px-4 py-2 text-sm cursor-pointer hover:bg-slate-700/30 transition-colors ${
+          result.error ? 'bg-red-900/10' : ''
+        }`}
+        onClick={() => (total > 0 || hasChildren) && setExpanded(e => !e)}
+      >
+        <span className={`font-bold w-16 shrink-0 ${statusColor(result.status)}`}>
+          {result.error ? 'ERR' : result.status}
+        </span>
+        <span className="font-medium text-slate-400 w-16 shrink-0">{result.method}</span>
+        <span className="flex-1 text-slate-300 truncate font-medium">{result.name}</span>
+        {hasChildren && (
+          <span className="text-xs text-slate-500 shrink-0">{children.length} child{children.length !== 1 ? 'ren' : ''}</span>
+        )}
+        <span className="text-slate-500 text-xs w-20 text-right shrink-0">{result.responseTime} ms</span>
+        {total > 0 && (
+          <span className={`text-xs px-1.5 py-0.5 rounded font-medium shrink-0 ${
+            hasFailed ? 'bg-red-800/60 text-red-300' : 'bg-green-800/60 text-green-300'
+          }`}>
+            {passed}/{total}
+          </span>
+        )}
+        {(total > 0 || hasChildren) && (
+          <span className="text-slate-600 text-xs ml-1">{expanded ? '▴' : '▾'}</span>
+        )}
+      </div>
+      {expanded && (
+        <>
+          {/* Test results for the parent */}
+          {total > 0 && (
+            <div className="px-4 pb-2 flex flex-col gap-1 bg-slate-800/30">
+              {result.testResults.map((t, i) => (
+                <div key={i} className="flex items-start gap-2 text-xs py-0.5">
+                  <span className={t.passed ? 'text-green-400' : 'text-red-400'}>
+                    {t.passed ? '✓' : '✗'}
+                  </span>
+                  <span className={t.passed ? 'text-slate-300' : 'text-red-300'}>{t.name}</span>
+                  {!t.passed && t.error && (
+                    <span className="text-red-500 font-mono ml-2">{t.error}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {/* Child requests with tree connector */}
+          {hasChildren && (
+            <div className="relative pl-4 pb-1 bg-slate-900/20">
+              {children.map((child, i) => (
+                <ChildRow key={i} child={child} isLast={i === children.length - 1} />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function IterationBlock({ iter }: { iter: RunnerIteration }) {
   const [open, setOpen] = useState(true);
-  const passed = iter.results.reduce((acc, r) => acc + r.testResults.filter(t => t.passed).length, 0);
-  const total = iter.results.reduce((acc, r) => acc + r.testResults.length, 0);
-  const errors = iter.results.filter(r => r.error).length;
+  const allChildren = iter.results.flatMap(r => [
+    ...(r.preChildRequests ?? []),
+    ...(r.testChildRequests ?? []),
+  ]);
+  const passed = iter.results.reduce((acc, r) => acc + r.testResults.filter(t => t.passed).length, 0)
+    + allChildren.reduce((acc, c) => acc + (c.result.testResults ?? []).filter(t => t.passed).length, 0);
+  const total = iter.results.reduce((acc, r) => acc + r.testResults.length, 0)
+    + allChildren.reduce((acc, c) => acc + (c.result.testResults ?? []).length, 0);
+  const errors = iter.results.filter(r => r.error).length
+    + allChildren.filter(c => c.result.error).length;
+  const totalRequestCount = iter.results.length + allChildren.length;
 
   return (
     <div className="shrink-0 mb-2 border border-slate-700 rounded">
@@ -202,7 +295,7 @@ function IterationBlock({ iter }: { iter: RunnerIteration }) {
           total > 0 ? (passed === total ? 'text-green-300 bg-green-800/60' : 'text-yellow-300 bg-yellow-800/60') :
           'text-slate-400'
         }`}>
-          {errors > 0 ? `${errors} error(s)` : total > 0 ? `${passed}/${total} tests` : `${iter.results.length} requests`}
+          {errors > 0 ? `${errors} error(s)` : total > 0 ? `${passed}/${total} tests` : `${totalRequestCount} request${totalRequestCount !== 1 ? 's' : ''}`}
         </span>
         <span className="text-slate-600 text-xs ml-2">{open ? '▴' : '▾'}</span>
       </button>
@@ -221,6 +314,7 @@ interface PerfDataPoint {
   name: string;
   method: string;
   time: number;
+  isChild?: boolean;
 }
 
 interface PerfMetrics {
@@ -240,6 +334,11 @@ function computePerformanceMetrics(results: RunnerIteration[]): PerfMetrics | nu
     for (const r of iter.results) {
       if (!r.error) {
         dataPoints.push({ name: r.name, method: r.method, time: r.responseTime });
+      }
+      for (const c of [...(r.preChildRequests ?? []), ...(r.testChildRequests ?? [])]) {
+        if (!c.result.error) {
+          dataPoints.push({ name: c.name, method: c.method, time: c.result.responseTime, isChild: true });
+        }
       }
     }
   }
@@ -270,6 +369,12 @@ function barColor(time: number): string {
   return '#f87171';
 }
 
+function childBarColor(time: number): string {
+  if (time < 200) return '#67e8f9';
+  if (time < 800) return '#a78bfa';
+  return '#f472b6';
+}
+
 function ResponseTimeChart({ dataPoints, max }: { dataPoints: PerfDataPoint[]; max: number }) {
   const chartHeight = 100;
   const barWidth = Math.max(6, Math.min(28, Math.floor(560 / Math.max(dataPoints.length, 1)) - 2));
@@ -277,7 +382,18 @@ function ResponseTimeChart({ dataPoints, max }: { dataPoints: PerfDataPoint[]; m
   const svgWidth = Math.max(dataPoints.length * (barWidth + gap), 400);
 
   return (
-    <div className="overflow-x-auto">
+    <div>
+      <div className="flex items-center gap-4 mb-2 text-xs text-slate-400">
+        <span className="text-slate-500">Parent:</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-[#4ade80]"></span>&lt;200ms</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-[#fb923c]"></span>200–800ms</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-[#f87171]"></span>&gt;800ms</span>
+        <span className="border-l border-slate-600 pl-4 text-slate-500">Child:</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-[#67e8f9]"></span>&lt;200ms</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-[#a78bfa]"></span>200–800ms</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-[#f472b6]"></span>&gt;800ms</span>
+      </div>
+      <div className="overflow-x-auto">
       <svg height={chartHeight + 4} width={svgWidth} className="block">
         <line x1={0} y1={chartHeight} x2={svgWidth} y2={chartHeight} stroke="#475569" strokeWidth={1} />
         {dataPoints.map((d, i) => {
@@ -286,13 +402,14 @@ function ResponseTimeChart({ dataPoints, max }: { dataPoints: PerfDataPoint[]; m
           const y = chartHeight - barH;
           return (
             <g key={i}>
-              <rect x={x} y={y} width={barWidth} height={barH} fill={barColor(d.time)} rx={2} opacity={0.85}>
-                <title>{d.name} ({d.method}): {d.time}ms</title>
+              <rect x={x} y={y} width={barWidth} height={barH} fill={d.isChild ? childBarColor(d.time) : barColor(d.time)} rx={2} opacity={0.85}>
+                <title>{d.name} ({d.method}){d.isChild ? ' [child]' : ''}: {d.time}ms</title>
               </rect>
             </g>
           );
         })}
       </svg>
+      </div>
     </div>
   );
 }
@@ -400,6 +517,7 @@ export default function RunnerPanel() {
   const [csvRowCount, setCsvRowCount] = useState(0);
   const [delay, setDelay] = useState(0);
   const [iterations, setIterations] = useState(1);
+  const [executeChildRequests, setExecuteChildRequests] = useState(false);
   const [results, setResults] = useState<RunnerIteration[] | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
@@ -531,12 +649,14 @@ export default function RunnerPanel() {
       await runCollectionStream(
         {
           collection: { ...selectedCollection, item: orderedItems },
+          allCollectionItems: authResolvedItems,
           environment: envVars,
           collectionVariables: collVars,
           globals: state.globalVariables,
           cookies: state.cookieJar,
           delay,
           iterations: csvFile ? undefined : iterations,
+          executeChildRequests,
         },
         csvFile ?? undefined,
         {
@@ -557,11 +677,41 @@ export default function RunnerPanel() {
             }
 
             // Log to console in real-time
+            const logBase = Date.now();
+            let logSeq = 0;
+
+            // Pre-request child requests (appear lowest/oldest)
+            (data.preChildRequests || []).forEach(child => {
+              dispatch({
+                type: 'ADD_CONSOLE_LOG',
+                payload: {
+                  id: (logBase + logSeq).toString(36) + Math.random().toString(36).slice(2),
+                  timestamp: logBase + logSeq++,
+                  method: child.method,
+                  url: child.result.resolvedUrl ?? child.name,
+                  requestHeaders: Object.entries(child.result.requestHeaders ?? {}).map(([key, value]) => ({ key, value: String(value) })),
+                  requestBody: child.result.requestBody,
+                  scriptLogs: [],
+                  response: {
+                    status: child.result.status,
+                    statusText: child.result.statusText,
+                    responseTime: child.result.responseTime,
+                    headers: child.result.headers ?? {},
+                    body: child.result.body ?? '',
+                    size: child.result.size ?? 0,
+                    testResults: child.result.testResults ?? [],
+                    error: child.result.error,
+                  },
+                },
+              });
+            });
+
+            // Main request
             dispatch({
               type: 'ADD_CONSOLE_LOG',
               payload: {
-                id: Date.now().toString(36) + Math.random().toString(36).slice(2),
-                timestamp: Date.now(),
+                id: (logBase + logSeq).toString(36) + Math.random().toString(36).slice(2),
+                timestamp: logBase + logSeq++,
                 method: data.method,
                 url: data.resolvedUrl ?? data.url,
                 requestHeaders: Object.entries(data.requestHeaders ?? {}).map(([key, value]) => ({ key, value: String(value) })),
@@ -578,6 +728,32 @@ export default function RunnerPanel() {
                   error: data.error,
                 },
               },
+            });
+
+            // Post-request (test script) child requests (appear topmost/newest)
+            (data.testChildRequests || []).forEach(child => {
+              dispatch({
+                type: 'ADD_CONSOLE_LOG',
+                payload: {
+                  id: (logBase + logSeq).toString(36) + Math.random().toString(36).slice(2),
+                  timestamp: logBase + logSeq++,
+                  method: child.method,
+                  url: child.result.resolvedUrl ?? child.name,
+                  requestHeaders: Object.entries(child.result.requestHeaders ?? {}).map(([key, value]) => ({ key, value: String(value) })),
+                  requestBody: child.result.requestBody,
+                  scriptLogs: [],
+                  response: {
+                    status: child.result.status,
+                    statusText: child.result.statusText,
+                    responseTime: child.result.responseTime,
+                    headers: child.result.headers ?? {},
+                    body: child.result.body ?? '',
+                    size: child.result.size ?? 0,
+                    testResults: child.result.testResults ?? [],
+                    error: child.result.error,
+                  },
+                },
+              });
             });
           },
           onError(errorMsg) {
@@ -609,6 +785,14 @@ export default function RunnerPanel() {
             r.testResults.forEach(t => {
               if (t.passed) acc.passed++;
               else acc.failed++;
+            });
+            [...(r.preChildRequests ?? []), ...(r.testChildRequests ?? [])].forEach(c => {
+              acc.requests++;
+              if (c.result.error) acc.errors++;
+              (c.result.testResults ?? []).forEach(t => {
+                if (t.passed) acc.passed++;
+                else acc.failed++;
+              });
             });
           });
           return acc;
@@ -837,6 +1021,20 @@ export default function RunnerPanel() {
                 className="bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-orange-500"
               />
             </div>
+          </div>
+
+          {/* Execute child requests toggle */}
+          <div className="flex items-center gap-2">
+            <input
+              id="executeChildRequests"
+              type="checkbox"
+              checked={executeChildRequests}
+              onChange={e => setExecuteChildRequests(e.target.checked)}
+              className="accent-orange-500 cursor-pointer"
+            />
+            <label htmlFor="executeChildRequests" className="text-xs text-slate-400 cursor-pointer select-none">
+              Execute child requests (<code className="text-orange-400">apx.executeRequest()</code>)
+            </label>
           </div>
         </div>
 

@@ -204,18 +204,37 @@ function createExpect(value, negated) {
   return obj;
 }
 
-// ─── pm object factory ───────────────────────────────────────────────────────
+// ─── apx object factory ─────────────────────────────────────────────────────
+// apx is the primary API; pm is an alias for Postman compatibility
 
-function createPm(response, variables, updatedVariables, tests, pendingRequests) {
-  const makeVarStore = () => ({
+function createApx(response, variables, updatedVariables, tests, pendingRequests, deps, childRequests) {
+  // deps = { collectionItems, executeRequestFn, context }
+  const collectionItems = (deps && deps.collectionItems) || [];
+  const executeRequestFn = (deps && deps.executeRequestFn) || null;
+  const execContext = (deps && deps.context) || {};
+
+  // Per-namespace write buckets — track which scope each mutation targets so
+  // apx.executeRequest() can forward mutations to the correct child scope instead
+  // of collapsing everything into the child's environment.
+  const updatedEnvMutations = {};
+  const updatedCollVarMutations = {};
+  const updatedGlobalMutations = {};
+
+  const makeVarStore = (namespaceBucket) => ({
     get(key) { return Object.prototype.hasOwnProperty.call(variables, key) ? variables[key] : (updatedVariables[key] !== undefined ? updatedVariables[key] : undefined); },
-    set(key, value) { updatedVariables[key] = String(value); },
-    unset(key) { delete updatedVariables[key]; },
+    set(key, value) {
+      updatedVariables[key] = String(value);     // flat copy keeps same-script resolution working
+      if (namespaceBucket) namespaceBucket[key] = String(value);
+    },
+    unset(key) {
+      delete updatedVariables[key];
+      if (namespaceBucket) delete namespaceBucket[key];
+    },
     has(key) { return key in variables || key in updatedVariables; },
     clear() {},
   });
 
-  const pm = {
+  const apx = {
     test(name, fn) {
       try {
         fn();
@@ -229,10 +248,27 @@ function createPm(response, variables, updatedVariables, tests, pendingRequests)
       return createExpect(value);
     },
 
-    environment: makeVarStore(),
-    collectionVariables: makeVarStore(),
-    globals: makeVarStore(),
-    variables: makeVarStore(),
+    environment: makeVarStore(updatedEnvMutations),
+    collection: makeVarStore(updatedCollVarMutations),
+    get collectionVariables() { return this.collection; }, // Postman compatibility alias
+    globals: (() => {
+      const globalStore = makeVarStore(updatedGlobalMutations);
+      const unsupportedGlobalsMutation = () => {
+        throw new Error('apx.globals mutations are not supported in this sandbox because global changes are not persisted.');
+      };
+
+      return {
+        get(key) { return globalStore.get(key); },
+        has(key) { return globalStore.has(key); },
+        toObject() {
+          return typeof globalStore.toObject === 'function' ? globalStore.toObject() : {};
+        },
+        set: unsupportedGlobalsMutation,
+        unset: unsupportedGlobalsMutation,
+        clear: unsupportedGlobalsMutation,
+      };
+    })(),
+    variables: makeVarStore(null), // generic store — falls back to flat routing in executeRequest
     iterationData: {
       get(key) { return variables[key]; },
       has(key) { return key in variables; },
@@ -245,6 +281,14 @@ function createPm(response, variables, updatedVariables, tests, pendingRequests)
     },
 
     response: response ? buildResponse(response) : null,
+
+    request: {
+      headers: {
+        upsert({ key, value }) { execContext.headers = execContext.headers || {}; execContext.headers[key] = value; },
+      },
+      url: (execContext && execContext.url) || '',
+      method: (execContext && execContext.method) || '',
+    },
 
     sendRequest(opts, callback) {
       const promise = (async () => {
@@ -313,9 +357,82 @@ function createPm(response, variables, updatedVariables, tests, pendingRequests)
 
       pendingRequests.push(promise);
     },
+
+    executeRequest(requestName, callback) {
+      const promise = (async () => {
+        try {
+          // Find the request by name (case-sensitive) in the collection items
+          function findByName(items, name) {
+            for (const it of (items || [])) {
+              if (it.name === name && it.request) return it;
+              if (it.item) {
+                const found = findByName(it.item, name);
+                if (found) return found;
+              }
+            }
+            return null;
+          }
+
+          const item = findByName(collectionItems, requestName);
+          if (!item) {
+            const err = new Error(`apx.executeRequest: request "${requestName}" not found in collection`);
+            if (typeof callback === 'function') callback(err, null);
+            return;
+          }
+
+          if (!executeRequestFn) {
+            const err = new Error('apx.executeRequest: executor not available');
+            if (typeof callback === 'function') callback(err, null);
+            return;
+          }
+
+          // Build per-namespace child contexts from the tracked mutation buckets.
+          // Mutations via the generic `variables` store (no namespace bucket) are
+          // routed to collectionVariables, mirroring executor.js unknown-key handling.
+          const trackedKeys = new Set([
+            ...Object.keys(updatedEnvMutations),
+            ...Object.keys(updatedCollVarMutations),
+            ...Object.keys(updatedGlobalMutations),
+          ]);
+          const untrackedCollVarMutations = {};
+          Object.keys(updatedVariables).forEach(k => {
+            if (!trackedKeys.has(k)) untrackedCollVarMutations[k] = updatedVariables[k];
+          });
+
+          const childEnv      = { ...(execContext.environment || {}),        ...updatedEnvMutations };
+          const childCollVars = { ...(execContext.collectionVariables || {}), ...updatedCollVarMutations, ...untrackedCollVarMutations };
+          const childGlobals  = { ...(execContext.globals || {}),             ...updatedGlobalMutations };
+
+          const result = await executeRequestFn(item, {
+            environment: childEnv,
+            collectionVariables: childCollVars,
+            globals: childGlobals,
+            dataRow: execContext.dataRow || {},
+            collVars: execContext.collVars || [],
+            cookies: execContext.cookies || {},
+            collectionItems,
+          });
+
+          // Record the child request so it appears in the console
+          if (Array.isArray(childRequests)) {
+            childRequests.push({
+              name: requestName,
+              method: (item.request && item.request.method) || 'GET',
+              result,
+            });
+          }
+
+          if (typeof callback === 'function') callback(null, result);
+        } catch (err) {
+          if (typeof callback === 'function') callback(err, null);
+        }
+      })();
+
+      pendingRequests.push(promise);
+    },
   };
 
-  return pm;
+  return apx;
 }
 
 function buildResponse(r) {
@@ -371,15 +488,19 @@ function buildResponse(r) {
 
 // ─── Script runner ───────────────────────────────────────────────────────────
 
-async function runScript(code, response, variables) {
+async function runScript(code, response, variables, deps) {
   const tests = [];
   const updatedVariables = {};
   const consoleLogs = [];
   const pendingRequests = [];
+  const childRequests = [];
 
-  const pm = createPm(response, variables || {}, updatedVariables, tests, pendingRequests);
+  const apx = createApx(response, variables || {}, updatedVariables, tests, pendingRequests, deps, childRequests);
+  // pm is a full alias to apx for Postman script compatibility
+  const pm = apx;
 
   const sandbox = {
+    apx,
     pm,
     console: {
       log: (...a) => { consoleLogs.push({ level: 'log', args: a.map(x => typeof x === 'object' ? JSON.stringify(x) : String(x)) }); console.log('[script]', ...a); },
@@ -443,7 +564,7 @@ async function runScript(code, response, variables) {
     tests.push({ name: '__ScriptError__', passed: false, error: err.message });
   }
 
-  return { tests, updatedVariables, consoleLogs };
+  return { tests, updatedVariables, consoleLogs, childRequests };
 }
 
 module.exports = { runScript };

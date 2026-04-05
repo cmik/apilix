@@ -56,7 +56,10 @@ const LOG_LEVEL_COLOR: Record<string, string> = {
 
 function EntryDetail({ entry }: { entry: ConsoleEntry }) {
   const logCount = entry.scriptLogs?.length ?? 0;
-  const [tab, setTab] = useState<'response' | 'request' | 'logs'>('response');
+  const testResults = entry.response?.testResults ?? [];
+  const testCount = testResults.length;
+  const failCount = testResults.filter(t => !t.passed).length;
+  const [tab, setTab] = useState<'response' | 'request' | 'tests' | 'logs'>('response');
 
   return (
     <div className="bg-slate-900 border-t-2 border-orange-500/40 text-xs">
@@ -74,6 +77,27 @@ function EntryDetail({ entry }: { entry: ConsoleEntry }) {
             {t}
           </button>
         ))}
+        <button
+          onClick={e => { e.stopPropagation(); setTab('tests'); }}
+          className={`px-4 py-1.5 transition-colors border-b-2 flex items-center gap-1.5 ${
+            tab === 'tests'
+              ? 'text-orange-400 border-orange-500'
+              : 'text-slate-500 border-transparent hover:text-slate-300'
+          }`}
+        >
+          Tests
+          {testCount > 0 && (
+            <span className={`text-[10px] font-semibold px-1 rounded ${
+              tab === 'tests'
+                ? 'bg-orange-500/20 text-orange-300'
+                : failCount > 0
+                  ? 'bg-red-500/20 text-red-400'
+                  : 'bg-green-500/20 text-green-400'
+            }`}>
+              {failCount > 0 ? `${failCount} fail` : testCount}
+            </span>
+          )}
+        </button>
         <button
           onClick={e => { e.stopPropagation(); setTab('logs'); }}
           className={`px-4 py-1.5 transition-colors border-b-2 flex items-center gap-1.5 ${
@@ -162,6 +186,30 @@ function EntryDetail({ entry }: { entry: ConsoleEntry }) {
                   </div>
                 )}
               </>
+            )}
+          </div>
+        )}
+
+        {tab === 'tests' && (
+          <div className="space-y-1">
+            {testResults.length === 0 ? (
+              <p className="text-slate-600 italic">No tests for this request</p>
+            ) : (
+              testResults.map((t, i) => (
+                <div key={i} className="flex items-start gap-2">
+                  <span className={`shrink-0 font-semibold text-[10px] pt-px w-7 ${
+                    t.passed ? 'text-green-400' : 'text-red-400'
+                  }`}>
+                    {t.passed ? '✓' : '✗'}
+                  </span>
+                  <span className={`flex-1 break-all ${t.passed ? 'text-slate-300' : 'text-red-300'}`}>
+                    {t.name}
+                    {!t.passed && t.error && (
+                      <span className="block text-red-500 mt-0.5">{t.error}</span>
+                    )}
+                  </span>
+                </div>
+              ))
             )}
           </div>
         )}
@@ -318,10 +366,21 @@ function renderDetail(e) {
   det.className = 'detail';
   var tabsEl = document.createElement('div');
   tabsEl.className = 'dtabs';
-  ['response','request'].forEach(function(t) {
+  ['response','request','tests','logs'].forEach(function(t) {
     var btn = document.createElement('button');
+    var tr = e.response && e.response.testResults;
+    var extra = '';
+    if (t === 'tests' && tr && tr.length > 0) {
+      var fails = tr.filter(function(r) { return !r.passed; }).length;
+      extra = ' <span style="font-size:10px;font-weight:700;padding:0 3px;border-radius:3px;' +
+        (fails > 0 ? 'color:#f87171;background:rgba(248,113,113,.15)' : 'color:#4ade80;background:rgba(74,222,128,.15)') + '">' +
+        (fails > 0 ? fails + ' fail' : tr.length) + '</span>';
+    }
+    if (t === 'logs' && e.scriptLogs && e.scriptLogs.length > 0) {
+      extra = ' <span style="font-size:10px;font-weight:700;padding:0 3px;border-radius:3px;background:#1e293b;color:#94a3b8">' + e.scriptLogs.length + '</span>';
+    }
     btn.className = 'dtab' + (tab === t ? ' act' : '');
-    btn.textContent = t;
+    btn.innerHTML = t.charAt(0).toUpperCase() + t.slice(1) + extra;
     btn.addEventListener('click', function(ev) { ev.stopPropagation(); dtab[e.id] = t; render(); });
     tabsEl.appendChild(btn);
   });
@@ -350,6 +409,56 @@ function renderDetail(e) {
       bSect.appendChild(bLabel);
       var pre = document.createElement('pre'); pre.className = 'bp'; pre.textContent = fmt(e.requestBody);
       bSect.appendChild(pre); body.appendChild(bSect);
+    }
+  } else if (tab === 'tests') {
+    var tr = e.response && e.response.testResults;
+    if (!tr || tr.length === 0) {
+      var noTests = document.createElement('p');
+      noTests.style.cssText = 'color:var(--text-dimmer);font-style:italic';
+      noTests.textContent = 'No tests for this request';
+      body.appendChild(noTests);
+    } else {
+      tr.forEach(function(t) {
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;gap:8px;align-items:flex-start;margin-bottom:4px';
+        var icon = document.createElement('span');
+        icon.style.cssText = 'flex-shrink:0;font-weight:700;width:14px;' + (t.passed ? 'color:#4ade80' : 'color:#f87171');
+        icon.textContent = t.passed ? '✓' : '✗';
+        var label = document.createElement('span');
+        label.style.cssText = 'word-break:break-all;' + (t.passed ? 'color:var(--text)' : 'color:#fca5a5');
+        label.textContent = t.name;
+        if (!t.passed && t.error) {
+          var errNote = document.createElement('span');
+          errNote.style.cssText = 'display:block;color:#f87171;margin-top:2px;font-size:10px';
+          errNote.textContent = t.error;
+          label.appendChild(errNote);
+        }
+        row.appendChild(icon); row.appendChild(label);
+        body.appendChild(row);
+      });
+    }
+  } else if (tab === 'logs') {
+    var sl = e.scriptLogs;
+    if (!sl || sl.length === 0) {
+      var noLogs = document.createElement('p');
+      noLogs.style.cssText = 'color:var(--text-dimmer);font-style:italic';
+      noLogs.textContent = 'No console output for this request';
+      body.appendChild(noLogs);
+    } else {
+      var levelColor = {log:'#cbd5e1',info:'#7dd3fc',warn:'#fde047',error:'#f87171'};
+      sl.forEach(function(log) {
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;gap:8px;align-items:flex-start;margin-bottom:3px';
+        var lvl = document.createElement('span');
+        var lc = levelColor[log.level] || '#cbd5e1';
+        lvl.style.cssText = 'flex-shrink:0;font-weight:700;text-transform:uppercase;font-size:10px;width:36px;padding-top:1px;color:' + lc;
+        lvl.textContent = log.level;
+        var msg = document.createElement('span');
+        msg.style.cssText = 'word-break:break-all;color:' + lc;
+        msg.textContent = log.args.join(' ');
+        row.appendChild(lvl); row.appendChild(msg);
+        body.appendChild(row);
+      });
     }
   } else {
     if (!e.response || e.response.error) {
