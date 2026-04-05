@@ -1260,7 +1260,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
             label={<>JavaScript runs before the request. Use <code className="text-orange-400">apx.environment.set("key", "value")</code></>}
             value={edit.preRequestScript}
             onChange={v => setEdit(x => x ? { ...x, preRequestScript: v } : x)}
-            placeholder="// Pre-request script&#10;apx.environment.set('timestamp', Date.now().toString());"
+            placeholder={`// Pre-request script\napx.environment.set('timestamp', Date.now().toString());`}
             target="prerequest"
             requestNames={flattenRequestNames(col?.item ?? [])}
           />
