@@ -101,9 +101,10 @@ interface ScriptTabProps {
   placeholder: string;
   target: 'prerequest' | 'test';
   requestNames?: string[];
+  onSyntaxCheck?: (hasError: boolean) => void;
 }
 
-function ScriptTab({ label, value, onChange, placeholder, target, requestNames }: ScriptTabProps) {
+function ScriptTab({ label, value, onChange, placeholder, target, requestNames, onSyntaxCheck }: ScriptTabProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const handleInsert = useCallback((code: string) => {
@@ -137,6 +138,7 @@ function ScriptTab({ label, value, onChange, placeholder, target, requestNames }
         textareaRef={textareaRef}
         value={value}
         onChange={onChange}
+        onSyntaxCheck={onSyntaxCheck}
         rows={14}
         placeholder={placeholder}
         requestNames={requestNames}
@@ -546,6 +548,8 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
   );
   const [dirty, setDirty] = useState(false);
   const [activeRequestTab, setActiveRequestTab] = useState<Tab>('Params');
+  const [preRequestHasError, setPreRequestHasError] = useState(false);
+  const [testHasError, setTestHasError] = useState(false);
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [showCodeGen, setShowCodeGen] = useState(false);
   const [showSaveToCollection, setShowSaveToCollection] = useState(false);
@@ -1085,19 +1089,27 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
       {/* Tabs (HTTP only) */}
       {edit.method !== 'WS' && (
         <div className="flex border-b border-slate-700 bg-slate-800 shrink-0">
-          {TABS.map(t => (
-            <button
-              key={t}
-              onClick={() => setActiveRequestTab(t)}
-              className={`px-4 py-2 text-xs font-medium transition-colors ${
-                activeRequestTab === t
-                  ? 'text-orange-400 border-b-2 border-orange-400 -mb-px'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              {t}
-            </button>
-          ))}
+          {TABS.map(t => {
+            const hasErr =
+              (t === 'Pre-request' && preRequestHasError && !!edit.preRequestScript.trim()) ||
+              (t === 'Tests' && testHasError && !!edit.testScript.trim());
+            return (
+              <button
+                key={t}
+                onClick={() => setActiveRequestTab(t)}
+                className={`relative px-4 py-2 text-xs font-medium transition-colors ${
+                  activeRequestTab === t
+                    ? 'text-orange-400 border-b-2 border-orange-400 -mb-px'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                {t}
+                {hasErr && (
+                  <span className="absolute top-1.5 right-1 w-1.5 h-1.5 rounded-full bg-red-500" title="Syntax error in script" />
+                )}
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -1345,6 +1357,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
             label={<>JavaScript runs before the request. Use <code className="text-orange-400">apx.environment.set("key", "value")</code></>}
             value={edit.preRequestScript}
             onChange={v => setEdit(x => x ? { ...x, preRequestScript: v } : x)}
+            onSyntaxCheck={setPreRequestHasError}
             placeholder={`// Pre-request script\napx.environment.set('timestamp', Date.now().toString());`}
             target="prerequest"
             requestNames={flattenRequestNames(col?.item ?? [])}
@@ -1356,6 +1369,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
             label={<>JavaScript runs after the response. Use <code className="text-orange-400">apx.test()</code> and <code className="text-orange-400">apx.expect()</code></>}
             value={edit.testScript}
             onChange={v => setEdit(x => x ? { ...x, testScript: v } : x)}
+            onSyntaxCheck={setTestHasError}
             placeholder={`apx.test("Status is 200", () => {\n  apx.response.to.have.status(200);\n});\n\napx.test("Response has id", () => {\n  const json = apx.response.json();\n  apx.expect(json.id).to.exist;\n});`}
             target="test"
             requestNames={flattenRequestNames(col?.item ?? [])}

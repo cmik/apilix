@@ -247,6 +247,9 @@ interface AcState {
 export interface ScriptEditorProps {
   value: string;
   onChange: (v: string) => void;
+  onSave?: () => void;
+  /** Called whenever a syntax check runs; receives true if there is an error */
+  onSyntaxCheck?: (hasError: boolean) => void;
   rows?: number;
   placeholder?: string;
   /** Forward an external ref so the parent can read selectionStart/End for snippet insertion */
@@ -258,9 +261,21 @@ export interface ScriptEditorProps {
   variant?: 'default' | 'mock';
 }
 
+function checkJsSyntax(code: string): string | null {
+  try {
+    // eslint-disable-next-line no-new-func
+    new Function(code);
+    return null;
+  } catch (e) {
+    return e instanceof SyntaxError ? e.message : String(e);
+  }
+}
+
 export default function ScriptEditor({
   value,
   onChange,
+  onSave,
+  onSyntaxCheck,
   rows = 14,
   placeholder,
   textareaRef,
@@ -272,7 +287,20 @@ export default function ScriptEditor({
   const ref = (textareaRef as React.RefObject<HTMLTextAreaElement>) ?? internalRef;
 
   const [ac, setAc] = useState<AcState | null>(null);
+  const [syntaxError, setSyntaxError] = useState<string | null>(null);
+  const [syntaxOk, setSyntaxOk] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Run syntax check on mount so the error state is visible immediately when
+  // switching to a tab that already has a script.
+  useEffect(() => {
+    if (!value.trim()) return;
+    const err = checkJsSyntax(value);
+    setSyntaxError(err);
+    setSyntaxOk(err === null);
+    onSyntaxCheck?.(err !== null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);  // intentionally only on mount
 
   const recompute = useCallback((el: HTMLTextAreaElement) => {
     const pos = el.selectionStart;
@@ -319,6 +347,16 @@ export default function ScriptEditor({
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    // Syntax check on Ctrl+S / Cmd+S
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      e.preventDefault();
+      const err = checkJsSyntax(value);
+      setSyntaxError(err);
+      setSyntaxOk(err === null);
+      onSyntaxCheck?.(err !== null);
+      if (err === null) onSave?.();
+      return;
+    }
     if (!ac) return;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -371,14 +409,33 @@ export default function ScriptEditor({
         ref={ref}
         value={value}
         onChange={e => onChange(e.target.value)}
-        onInput={e => recompute(e.currentTarget)}
+        onInput={e => { recompute(e.currentTarget); setSyntaxError(null); setSyntaxOk(false); }}
         onKeyDown={handleKeyDown}
         onClick={e => recompute(e.currentTarget)}
+        onBlur={() => {
+          if (!value.trim()) return;
+          const err = checkJsSyntax(value);
+          setSyntaxError(err);
+          setSyntaxOk(err === null);
+          onSyntaxCheck?.(err !== null);
+        }}
         rows={rows}
         spellCheck={false}
         className={textareaClass}
         placeholder={placeholder}
       />
+
+      {syntaxError && (
+        <div className="flex items-start gap-2 mt-1 px-3 py-2 rounded bg-red-900/40 border border-red-700 text-red-300 text-xs font-mono">
+          <span className="shrink-0 font-bold">SyntaxError:</span>
+          <span className="break-all">{syntaxError}</span>
+        </div>
+      )}
+      {syntaxOk && !syntaxError && (
+        <div className="flex items-center gap-2 mt-1 px-3 py-1.5 rounded bg-green-900/40 border border-green-700 text-green-300 text-xs">
+          <span>✓ No syntax errors</span>
+        </div>
+      )}
 
       {ac && (
         <div
