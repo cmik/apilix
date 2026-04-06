@@ -223,6 +223,21 @@ export interface MockCollection {
   description: string;
 }
 
+export interface MockLogEntry {
+  id: string;
+  timestamp: string;
+  method: string;
+  path: string;
+  query: Record<string, string>;
+  headers: Record<string, string>;
+  body: string;
+  matchedRouteId: string | null;
+  matchedRouteName: string | null;
+  matchedRoutePath: string | null;
+  responseStatus: number;
+  responseBody: string;
+}
+
 export interface MockRoute {
   id: string;
   enabled: boolean;

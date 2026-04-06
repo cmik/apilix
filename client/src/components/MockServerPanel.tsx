@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useApp, generateId } from '../store';
-import type { MockRoute, MockCollection, AppCollection, PostmanItem } from '../types';
-import { startMockServer, stopMockServer, syncMockRoutes, getMockStatus } from '../api';
+import type { MockRoute, MockCollection, AppCollection, PostmanItem, MockLogEntry } from '../types';
+import { startMockServer, stopMockServer, syncMockRoutes, getMockStatus, getMockLog, clearMockLog } from '../api';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', '*'];
 const STATUS_CODES = [200, 201, 204, 301, 302, 400, 401, 403, 404, 409, 422, 500, 502, 503];
@@ -323,9 +323,15 @@ function RouteEditorModal({ initial, collections, onSave, onClose }: {
               <label className="block text-xs text-slate-400 mb-1">
                 Response Body
                 <span className="ml-2 font-normal text-slate-600">
-                  supports <code className="font-mono text-slate-500">{'{{param.id}}'}</code>{' '}
+                  <code className="font-mono text-slate-500">{'{{param.id}}'}</code>{' '}
                   <code className="font-mono text-slate-500">{'{{query.page}}'}</code>{' '}
-                  <code className="font-mono text-slate-500">{'{{body.field}}'}</code>
+                  <code className="font-mono text-slate-500">{'{{body.field}}'}</code>{' '}
+                  <code className="font-mono text-slate-500">{'{{header.x}}'}</code>{' '}
+                  <code className="font-mono text-slate-500">{'{{method}}'}</code>{' '}
+                  <code className="font-mono text-slate-500">{'{{$uuid}}'}</code>{' '}
+                  <code className="font-mono text-slate-500">{'{{$randomInt(1,100)}}'}</code>{' '}
+                  <code className="font-mono text-slate-500">{'{{$randomItem(a,b,c)}}'}</code>{' '}
+                  <code className="font-mono text-slate-500">{'{{$requestCount}}'}</code>
                 </span>
               </label>
               <textarea value={route.responseBody} onChange={e => updateField('responseBody', e.target.value)} rows={10} spellCheck={false} className="w-full bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none resize-y" />
@@ -543,6 +549,178 @@ function ImportRoutesModal({ mockCollections, appCollections, onImport, onClose 
   );
 }
 
+// ─── Traffic Inspector ────────────────────────────────────────────────────────
+
+function statusColor(status: number) {
+  if (status >= 500) return 'text-red-400';
+  if (status >= 400) return 'text-orange-400';
+  if (status >= 300) return 'text-yellow-400';
+  return 'text-green-400';
+}
+
+function formatTime(iso: string) {
+  const d = new Date(iso);
+  return d.toLocaleTimeString(undefined, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    + '.' + String(d.getMilliseconds()).padStart(3, '0');
+}
+
+function TrafficInspector({ running }: { running: boolean }) {
+  const [entries, setEntries] = useState<MockLogEntry[]>([]);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
+
+  useEffect(() => {
+    if (!running) return;
+    let active = true;
+    function poll() {
+      getMockLog().then(data => { if (active) setEntries(data.entries); }).catch(() => {});
+    }
+    poll();
+    const interval = setInterval(poll, 1500);
+    return () => { active = false; clearInterval(interval); };
+  }, [running]);
+
+  async function handleClear() {
+    setClearing(true);
+    try {
+      await clearMockLog();
+      setEntries([]);
+      setExpandedId(null);
+    } finally {
+      setClearing(false);
+    }
+  }
+
+  if (!running) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-center pb-16">
+        <p className="text-3xl mb-3">📡</p>
+        <p className="text-sm font-medium text-slate-300 mb-1">Server not running</p>
+        <p className="text-xs text-slate-500 max-w-xs">Start the mock server to capture incoming requests here.</p>
+      </div>
+    );
+  }
+
+  if (entries.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-center pb-16">
+        <p className="text-3xl mb-3">📡</p>
+        <p className="text-sm font-medium text-slate-300 mb-1">Waiting for requests…</p>
+        <p className="text-xs text-slate-500 max-w-xs">Incoming requests to the mock server will appear here in real time.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between px-5 py-2 border-b border-slate-800 shrink-0">
+        <span className="text-xs text-slate-500">{entries.length} request{entries.length !== 1 ? 's' : ''} captured</span>
+        <button
+          onClick={handleClear}
+          disabled={clearing}
+          className="px-3 py-1 text-xs text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded transition-colors disabled:opacity-40"
+        >
+          Clear
+        </button>
+      </div>
+
+      {/* Log list */}
+      <div className="flex-1 overflow-y-auto">
+        {entries.map(entry => {
+          const expanded = expandedId === entry.id;
+          const matched = entry.matchedRouteId !== null;
+          return (
+            <div key={entry.id} className="border-b border-slate-800/60 last:border-none">
+              {/* Summary row */}
+              <button
+                onClick={() => setExpandedId(expanded ? null : entry.id)}
+                className={`w-full text-left px-5 py-2.5 flex items-center gap-3 hover:bg-slate-800/40 transition-colors ${expanded ? 'bg-slate-800/40' : ''}`}
+              >
+                <span className="text-xs text-slate-600 font-mono shrink-0 w-28">{formatTime(entry.timestamp)}</span>
+                <span className={`text-xs font-mono font-bold shrink-0 w-16 ${methodColor(entry.method)}`}>{entry.method}</span>
+                <span className="text-xs font-mono text-slate-300 flex-1 truncate text-left">{entry.path}</span>
+                <span className={`text-xs font-mono font-semibold shrink-0 w-10 text-right ${statusColor(entry.responseStatus)}`}>{entry.responseStatus}</span>
+                <span className={`text-xs shrink-0 w-4 text-right ${matched ? 'text-green-500' : 'text-orange-500'}`} title={matched ? `Matched: ${entry.matchedRoutePath}` : 'No route matched'}>
+                  {matched ? '✓' : '✗'}
+                </span>
+                <span className="text-xs text-slate-600 shrink-0">{expanded ? '▴' : '▾'}</span>
+              </button>
+
+              {/* Expanded detail */}
+              {expanded && (
+                <div className="px-5 pb-4 space-y-3 bg-slate-900/40">
+                  {/* Matched route */}
+                  <div>
+                    <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Matched Route</p>
+                    {matched ? (
+                      <p className="text-xs font-mono text-slate-300">
+                        <span className={methodColor(entry.method)}>{entry.method}</span>{' '}
+                        {entry.matchedRoutePath}
+                        {entry.matchedRouteName && entry.matchedRouteName !== entry.matchedRoutePath && (
+                          <span className="text-slate-500 ml-2">— {entry.matchedRouteName}</span>
+                        )}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-orange-400">No route matched — returned 404</p>
+                    )}
+                  </div>
+
+                  {/* Query params */}
+                  {Object.keys(entry.query).length > 0 && (
+                    <div>
+                      <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Query Params</p>
+                      <div className="bg-slate-800 rounded p-2 space-y-0.5">
+                        {Object.entries(entry.query).map(([k, v]) => (
+                          <div key={k} className="flex gap-2 text-xs font-mono">
+                            <span className="text-slate-400 shrink-0">{k}:</span>
+                            <span className="text-slate-200">{v}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Request headers */}
+                  <div>
+                    <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Request Headers</p>
+                    <div className="bg-slate-800 rounded p-2 space-y-0.5 max-h-32 overflow-y-auto">
+                      {Object.entries(entry.headers).map(([k, v]) => (
+                        <div key={k} className="flex gap-2 text-xs font-mono">
+                          <span className="text-slate-400 shrink-0 capitalize">{k}:</span>
+                          <span className="text-slate-200 break-all">{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Request body */}
+                  {entry.body && (
+                    <div>
+                      <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Request Body</p>
+                      <pre className="bg-slate-800 rounded p-2 text-xs font-mono text-slate-200 whitespace-pre-wrap break-all max-h-40 overflow-y-auto">{
+                        (() => { try { return JSON.stringify(JSON.parse(entry.body), null, 2); } catch { return entry.body; } })()
+                      }</pre>
+                    </div>
+                  )}
+
+                  {/* Response body */}
+                  <div>
+                    <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Response Body <span className={`ml-1 font-semibold ${statusColor(entry.responseStatus)}`}>{entry.responseStatus}</span></p>
+                    <pre className="bg-slate-800 rounded p-2 text-xs font-mono text-slate-200 whitespace-pre-wrap break-all max-h-40 overflow-y-auto">{
+                      (() => { try { return JSON.stringify(JSON.parse(entry.responseBody), null, 2); } catch { return entry.responseBody; } })()
+                    }</pre>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Panel ────────────────────────────────────────────────────────────────
 
 export default function MockServerPanel() {
@@ -555,6 +733,7 @@ export default function MockServerPanel() {
   const [editingRoute, setEditingRoute] = useState<MockRoute | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [activeTab, setActiveTab] = useState<'routes' | 'traffic'>('routes');
 
   useEffect(() => {
     getMockStatus()
@@ -653,67 +832,106 @@ export default function MockServerPanel() {
         {error && <p className="mt-2 text-xs text-red-400 bg-red-950/40 border border-red-800/50 rounded px-3 py-2">{error}</p>}
       </div>
 
-      {/* Routes list */}
-      <div className="flex-1 overflow-y-auto px-5 py-3">
-        {!hasContent ? (
-          <div className="flex flex-col items-center justify-center h-full text-center pb-16">
-            <p className="text-3xl mb-3">🎭</p>
-            <p className="text-sm font-medium text-slate-300 mb-1">No mock routes yet</p>
-            <p className="text-xs text-slate-500 mb-4 max-w-xs">Add routes to intercept HTTP requests and return custom responses — or import from a collection or HAR file.</p>
-            <div className="flex gap-2">
-              <button onClick={() => openNewRoute()} className="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white text-xs rounded font-medium transition-colors">+ Add Route</button>
-              <button onClick={() => setShowImport(true)} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs rounded font-medium transition-colors">↓ Import Routes</button>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {/* Column headers */}
-            <div className="grid grid-cols-[20px_90px_1fr_52px_52px_64px] gap-2 px-3 py-1 text-xs text-slate-600 uppercase tracking-wider">
-              <span /><span>Method</span><span>Path</span><span>Status</span><span>Delay</span><span />
-            </div>
+      {/* Tabs */}
+      <div className="flex border-b border-slate-800 shrink-0 px-5">
+        {(['routes', 'traffic'] as const).map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`px-4 py-2 text-xs font-medium transition-colors ${activeTab === tab ? 'text-orange-400 border-b-2 border-orange-500 -mb-px' : 'text-slate-400 hover:text-slate-200'}`}
+          >
+            {tab === 'routes' ? 'Routes' : (
+              <span className="flex items-center gap-1.5">
+                Traffic
+                {mockServerRunning && <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
 
-            {/* Uncollected routes */}
-            {uncollectedRoutes.length > 0 && (
-              <div className="space-y-1">
-                {mockCollections.length > 0 && <p className="text-xs text-slate-600 uppercase tracking-wider px-1 mb-1">Uncollected</p>}
-                {uncollectedRoutes.map(route => (
-                  <RouteRow key={route.id} route={route}
-                    onEdit={() => { setIsNew(false); setEditingRoute({ ...route }); }}
-                    onDelete={() => dispatch({ type: 'DELETE_MOCK_ROUTE', payload: route.id })}
-                    onToggle={() => dispatch({ type: 'UPDATE_MOCK_ROUTE', payload: { ...route, enabled: !route.enabled } })}
+      {/* Routes tab */}
+      {activeTab === 'routes' && (
+        <div className="flex flex-col flex-1 overflow-hidden">
+          <div className="flex-1 overflow-y-auto px-5 py-3">
+            {!hasContent ? (
+              <div className="flex flex-col items-center justify-center h-full text-center pb-16">
+                <p className="text-3xl mb-3">🎭</p>
+                <p className="text-sm font-medium text-slate-300 mb-1">No mock routes yet</p>
+                <p className="text-xs text-slate-500 mb-4 max-w-xs">Add routes to intercept HTTP requests and return custom responses — or import from a collection or HAR file.</p>
+                <div className="flex gap-2">
+                  <button onClick={() => openNewRoute()} className="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white text-xs rounded font-medium transition-colors">+ Add Route</button>
+                  <button onClick={() => setShowImport(true)} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs rounded font-medium transition-colors">↓ Import Routes</button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {/* Column headers */}
+                <div className="grid grid-cols-[20px_90px_1fr_52px_52px_64px] gap-2 px-3 py-1 text-xs text-slate-600 uppercase tracking-wider">
+                  <span /><span>Method</span><span>Path</span><span>Status</span><span>Delay</span><span />
+                </div>
+
+                {/* Uncollected routes */}
+                {uncollectedRoutes.length > 0 && (
+                  <div className="space-y-1">
+                    {mockCollections.length > 0 && <p className="text-xs text-slate-600 uppercase tracking-wider px-1 mb-1">Uncollected</p>}
+                    {uncollectedRoutes.map(route => (
+                      <RouteRow key={route.id} route={route}
+                        onEdit={() => { setIsNew(false); setEditingRoute({ ...route }); }}
+                        onDelete={() => dispatch({ type: 'DELETE_MOCK_ROUTE', payload: route.id })}
+                        onToggle={() => dispatch({ type: 'UPDATE_MOCK_ROUTE', payload: { ...route, enabled: !route.enabled } })}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                {/* Collections */}
+                {mockCollections.map(collection => (
+                  <CollectionSection
+                    key={collection.id}
+                    collection={collection}
+                    routes={mockRoutes.filter(r => r.collectionId === collection.id)}
+                    onToggleCollection={() => dispatch({ type: 'UPDATE_MOCK_COLLECTION', payload: { ...collection, enabled: !collection.enabled } })}
+                    onDeleteCollection={() => dispatch({ type: 'DELETE_MOCK_COLLECTION', payload: collection.id })}
+                    onRenameCollection={name => dispatch({ type: 'UPDATE_MOCK_COLLECTION', payload: { ...collection, name } })}
+                    onAddRoute={() => openNewRoute(collection.id)}
+                    onEditRoute={route => { setIsNew(false); setEditingRoute({ ...route }); }}
+                    onDeleteRoute={id => dispatch({ type: 'DELETE_MOCK_ROUTE', payload: id })}
+                    onToggleRoute={route => dispatch({ type: 'UPDATE_MOCK_ROUTE', payload: { ...route, enabled: !route.enabled } })}
                   />
                 ))}
               </div>
             )}
-
-            {/* Collections */}
-            {mockCollections.map(collection => (
-              <CollectionSection
-                key={collection.id}
-                collection={collection}
-                routes={mockRoutes.filter(r => r.collectionId === collection.id)}
-                onToggleCollection={() => dispatch({ type: 'UPDATE_MOCK_COLLECTION', payload: { ...collection, enabled: !collection.enabled } })}
-                onDeleteCollection={() => dispatch({ type: 'DELETE_MOCK_COLLECTION', payload: collection.id })}
-                onRenameCollection={name => dispatch({ type: 'UPDATE_MOCK_COLLECTION', payload: { ...collection, name } })}
-                onAddRoute={() => openNewRoute(collection.id)}
-                onEditRoute={route => { setIsNew(false); setEditingRoute({ ...route }); }}
-                onDeleteRoute={id => dispatch({ type: 'DELETE_MOCK_ROUTE', payload: id })}
-                onToggleRoute={route => dispatch({ type: 'UPDATE_MOCK_ROUTE', payload: { ...route, enabled: !route.enabled } })}
-              />
-            ))}
           </div>
-        )}
-      </div>
 
-      {/* Usage hint */}
-      {hasContent && mockServerRunning && (
-        <div className="px-5 py-3 border-t border-slate-800 shrink-0">
-          <p className="text-xs text-slate-500">
-            Tip: Use <code className="font-mono text-slate-400">{'{{param.id}}'}</code>,{' '}
-            <code className="font-mono text-slate-400">{'{{query.page}}'}</code>, or{' '}
-            <code className="font-mono text-slate-400">{'{{body.field}}'}</code> in the response body for dynamic substitution.
-            Disabling a collection suppresses all its routes.
-          </p>
+          {/* Usage hint */}
+          {hasContent && mockServerRunning && (
+            <div className="px-5 py-3 border-t border-slate-800 shrink-0">
+              <p className="text-xs text-slate-500">
+                <span className="text-slate-400 font-medium">Request: </span>
+                <code className="font-mono text-slate-400">{'{{param.id}}'}</code>{' '}
+                <code className="font-mono text-slate-400">{'{{query.page}}'}</code>{' '}
+                <code className="font-mono text-slate-400">{'{{body.field}}'}</code>{' '}
+                <code className="font-mono text-slate-400">{'{{body.user.name}}'}</code>{' '}
+                <code className="font-mono text-slate-400">{'{{header.authorization}}'}</code>{' '}
+                <code className="font-mono text-slate-400">{'{{method}}'}</code>{' · '}
+                <span className="text-slate-400 font-medium">Generators: </span>
+                <code className="font-mono text-slate-400">{'{{$uuid}}'}</code>{' '}
+                <code className="font-mono text-slate-400">{'{{$timestamp}}'}</code>{' '}
+                <code className="font-mono text-slate-400">{'{{$isoDate}}'}</code>{' '}
+                <code className="font-mono text-slate-400">{'{{$randomInt(1,100)}}'}</code>{' '}
+                <code className="font-mono text-slate-400">{'{{$randomItem(a,b,c)}}'}</code>{' '}
+                <code className="font-mono text-slate-400">{'{{$requestCount}}'}</code>
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Traffic tab */}
+      {activeTab === 'traffic' && (
+        <div className="flex-1 overflow-hidden">
+          <TrafficInspector running={mockServerRunning} />
         </div>
       )}
 

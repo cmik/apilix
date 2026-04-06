@@ -194,6 +194,19 @@ export async function syncMockRoutes(routes: MockRoute[]): Promise<void> {
   await api.put('/mock/routes', { routes });
 }
 
+export interface MockLogResponse {
+  entries: import('./types').MockLogEntry[];
+}
+
+export async function getMockLog(): Promise<MockLogResponse> {
+  const res = await api.get<MockLogResponse>('/mock-log');
+  return res.data;
+}
+
+export async function clearMockLog(): Promise<void> {
+  await api.delete('/mock-log');
+}
+
 const GRAPHQL_INTROSPECTION_QUERY = `{__schema{queryType{name}mutationType{name}subscriptionType{name}types{kind name fields(includeDeprecated:true){name type{kind name ofType{kind name ofType{kind name ofType{kind name}}}}args{name type{kind name ofType{kind name ofType{kind name}}}}}}}}`;
 
 export async function graphqlIntrospect(

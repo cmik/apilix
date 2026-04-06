@@ -285,8 +285,17 @@ let mockRoutes = [];
 let mockServerInstance = null;
 let mockServerPort = 3002;
 
+/** Traffic log — up to MAX_LOG_ENTRIES most recent requests (newest first). */
+const MAX_LOG_ENTRIES = 200;
+let mockRequestLog = [];
+
 function generateMockId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+
+function addLogEntry(entry) {
+  mockRequestLog.unshift(entry);
+  if (mockRequestLog.length > MAX_LOG_ENTRIES) mockRequestLog.length = MAX_LOG_ENTRIES;
 }
 
 /**
@@ -308,15 +317,97 @@ function matchPath(pattern, incoming) {
   return params;
 }
 
+/** Per-route hit counters: routeId → number of requests handled. */
+const routeHitCounts = new Map();
+
 /**
- * Simple template substitution: {{param.x}}, {{query.x}}, {{body.x}}.
+ * Resolve a dot-notation path (e.g. "user.address.city") against an object.
+ * Supports numeric array indices ("items.0.id").
+ */
+function resolveDotPath(obj, path) {
+  const parts = path.split('.');
+  let cur = obj;
+  for (const p of parts) {
+    if (cur == null || typeof cur !== 'object') return undefined;
+    cur = cur[p];
+  }
+  return cur;
+}
+
+/**
+ * Template substitution supporting:
+ *   {{param.x}}               — URL path param
+ *   {{query.x}}               — query string param
+ *   {{body.x}} / {{body.x.y}} — request body field (dot-notation, array indices)
+ *   {{header.x}}              — request header (lowercase key)
+ *   {{method}}                — HTTP method
+ *   {{url}}                   — path + query string
+ *   {{$uuid}}                 — random UUID v4
+ *   {{$timestamp}}            — current Unix timestamp (ms)
+ *   {{$isoDate}}              — current ISO 8601 date-time
+ *   {{$randomInt}}            — random integer 0–9999
+ *   {{$randomInt(min,max)}}   — random integer in [min, max]
+ *   {{$randomFloat(min,max)}} — random float in [min, max], 2 dp
+ *   {{$randomItem(a,b,c)}}    — random pick from comma-separated list
+ *   {{$requestCount}}         — total hits for this route (since server start)
  */
 function interpolate(template, ctx) {
-  return template.replace(/\{\{(\w+)\.(\w+)\}\}/g, (_, ns, key) => {
-    const src = ctx[ns];
-    if (src && Object.prototype.hasOwnProperty.call(src, key)) return src[key];
-    return `{{${ns}.${key}}}`;
+  // Built-ins with arguments: {{$randomInt(min,max)}}, {{$randomFloat(min,max)}}, {{$randomItem(a,b,c)}}
+  let result = template.replace(/\{\{\$(\w+)\(([^)]*)\)\}\}/g, (match, fn, args) => {
+    const parts = args.split(',').map(s => s.trim());
+    if (fn === 'randomInt') {
+      const min = parseInt(parts[0], 10) || 0;
+      const max = parseInt(parts[1], 10) || 9999;
+      return String(Math.floor(Math.random() * (max - min + 1)) + min);
+    }
+    if (fn === 'randomFloat') {
+      const min = parseFloat(parts[0]) || 0;
+      const max = parseFloat(parts[1]) || 1;
+      return (Math.random() * (max - min) + min).toFixed(2);
+    }
+    if (fn === 'randomItem') {
+      return parts[Math.floor(Math.random() * parts.length)] ?? '';
+    }
+    return match;
   });
+
+  // No-argument built-ins: {{$uuid}}, {{$timestamp}}, {{$isoDate}}, {{$randomInt}}, {{$requestCount}}
+  result = result.replace(/\{\{\$(\w+)\}\}/g, (match, fn) => {
+    const now = new Date();
+    if (fn === 'uuid') {
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        const r = Math.random() * 16 | 0;
+        return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+      });
+    }
+    if (fn === 'timestamp') return String(now.getTime());
+    if (fn === 'isoDate') return now.toISOString();
+    if (fn === 'randomInt') return String(Math.floor(Math.random() * 10000));
+    if (fn === 'requestCount') return String(ctx._requestCount ?? 0);
+    return match;
+  });
+
+  // Bare scalars: {{method}}, {{url}}
+  result = result.replace(/\{\{(method|url)\}\}/g, (match, key) => {
+    return ctx[key] != null ? String(ctx[key]) : match;
+  });
+
+  // Namespace variables: {{ns.path.to.value}} — supports dot-notation for body
+  result = result.replace(/\{\{(\w+)\.([\w.]+)\}\}/g, (match, ns, path) => {
+    const src = ctx[ns];
+    if (src == null) return match;
+    // For body allow deep dot-notation; for others only top-level key
+    if (ns === 'body') {
+      const val = resolveDotPath(src, path);
+      return val != null ? String(val) : match;
+    }
+    // header, param, query — top-level only (first segment)
+    const key = path.split('.')[0];
+    const val = Object.prototype.hasOwnProperty.call(src, key) ? src[key] : undefined;
+    return val != null ? String(val) : match;
+  });
+
+  return result;
 }
 
 function buildMockHandler() {
@@ -351,8 +442,23 @@ function buildMockHandler() {
     }
 
     if (!matched) {
+      const notFoundBody = JSON.stringify({ error: 'No matching mock route', method, path: pathname });
+      addLogEntry({
+        id: generateMockId(),
+        timestamp: new Date().toISOString(),
+        method,
+        path: pathname,
+        query,
+        headers: req.headers,
+        body: '',
+        matchedRouteId: null,
+        matchedRouteName: null,
+        matchedRoutePath: null,
+        responseStatus: 404,
+        responseBody: notFoundBody,
+      });
       res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'No matching mock route', method, path: pathname }));
+      res.end(notFoundBody);
       return;
     }
 
@@ -361,12 +467,24 @@ function buildMockHandler() {
     req.on('data', chunk => bodyChunks.push(chunk));
     req.on('end', () => {
       let bodyObj = {};
+      const rawBody = Buffer.concat(bodyChunks).toString('utf-8');
       try {
-        const raw = Buffer.concat(bodyChunks).toString('utf-8');
-        if (raw) bodyObj = JSON.parse(raw);
+        if (rawBody) bodyObj = JSON.parse(rawBody);
       } catch { /* non-JSON body */ }
 
-      const ctx = { param: pathParams, query, body: bodyObj };
+      // Increment per-route hit counter
+      const hitCount = (routeHitCounts.get(matched.id) ?? 0) + 1;
+      routeHitCounts.set(matched.id, hitCount);
+
+      const ctx = {
+        param: pathParams,
+        query,
+        body: bodyObj,
+        header: req.headers,
+        method,
+        url,
+        _requestCount: hitCount,
+      };
       const responseBody = interpolate(matched.responseBody, ctx);
 
       // Merge headers
@@ -379,6 +497,21 @@ function buildMockHandler() {
         try { JSON.parse(responseBody); headers['Content-Type'] = 'application/json'; }
         catch { headers['Content-Type'] = 'text/plain'; }
       }
+
+      addLogEntry({
+        id: generateMockId(),
+        timestamp: new Date().toISOString(),
+        method,
+        path: pathname,
+        query,
+        headers: req.headers,
+        body: rawBody,
+        matchedRouteId: matched.id,
+        matchedRouteName: matched.description || matched.path,
+        matchedRoutePath: matched.path,
+        responseStatus: matched.statusCode || 200,
+        responseBody,
+      });
 
       const send = () => {
         res.writeHead(matched.statusCode || 200, headers);
@@ -399,6 +532,8 @@ function startMockServer(port, routes) {
     }
     mockRoutes = routes || [];
     mockServerPort = port;
+    mockRequestLog = [];
+    routeHitCounts.clear();
 
     const server = http.createServer(buildMockHandler());
     server.on('error', err => reject(err));
@@ -449,6 +584,17 @@ app.post('/api/mock/stop', async (_req, res) => {
 app.put('/api/mock/routes', (req, res) => {
   mockRoutes = req.body.routes || [];
   res.json({ ok: true, count: mockRoutes.length });
+});
+
+// GET /api/mock-log — return traffic log
+app.get('/api/mock-log', (_req, res) => {
+  res.json({ entries: mockRequestLog });
+});
+
+// DELETE /api/mock-log — clear traffic log
+app.delete('/api/mock-log', (_req, res) => {
+  mockRequestLog = [];
+  res.json({ ok: true });
 });
 
 // ─── Start ─────────────────────────────────────────────────────────────────────
