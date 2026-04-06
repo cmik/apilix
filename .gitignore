@@ -58,3 +58,4 @@ coverage/
 # GitHub workflows
 .github/
 FEATURES.md
+MOCK_SERVER_FEATURES.md

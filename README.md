@@ -11,6 +11,7 @@ A lightweight, open-source alternative API testing tool — available as a **des
 - **Pre-request & Test scripts** (`pm.*` Postman-compatible API, including `pm.sendRequest()`)
 - **Collection Runner** with CSV data-driven testing and multi-iteration support
 - **Environment variables** with `{{variable}}` substitution
+- **Global variables** — cross-collection variables manageable via the Globals panel and scriptable with `pm.globals.*`
 - **Tabbed request editing** — open multiple requests simultaneously, save changes independently
 - **Mock Server** — define static or dynamic responses for any endpoint; start a local HTTP server without a real backend
 - **Console panel** — view a log of every request and response with resolved variable values; pop out into a live-updating detached window
@@ -154,6 +155,12 @@ Example response body:
 
 Routes are matched in order — the first enabled route whose method and path match wins. Toggle individual routes on/off without deleting them. All routes and the selected port are persisted across sessions.
 
+### Notes
+
+- The mock server runs inside the Apilix backend process, so the Apilix server must be running
+- Routes are **hot-synced** to the running server as you add, edit, or disable them — no restart needed
+- CORS headers are added automatically, so browser-based frontends can call the mock server directly
+
 ---
 
 ## Importing from Postman
@@ -161,6 +168,39 @@ Routes are matched in order — the first enabled route whose method and path ma
 1. In Postman, export your collection as **Collection v2.1**
 2. Export any environments you use
 3. In Apilix, click **Import** in the sidebar and select the JSON files
+
+---
+
+## Variables
+
+Apilix resolves `{{variable}}` placeholders in URLs, headers, body, and auth fields. Variables are merged from multiple scopes in order of increasing priority — a higher-priority scope wins when the same key exists in multiple scopes.
+
+| Priority | Scope | Description |
+|:---:|---|---|
+| 1 (lowest) | **Collection definition** | Variables declared in the collection JSON `variable[]` array |
+| 2 | **Global** | Cross-collection variables managed in the 🌐 Globals panel |
+| 3 | **Collection (runtime)** | Per-collection variables set by scripts via `pm.collectionVariables.set()` |
+| 4 | **Environment** | Active environment — only enabled rows apply |
+| 5 (highest) | **Data row** | CSV column values injected by the Runner for each iteration |
+
+### Environments
+
+Open the **🌍 Envs** tab in the sidebar to create, edit, activate, import, and export environments. Click the environment name in the top bar to switch active environments. Click the 👁 icon to quick-edit variables without leaving the current request.
+
+### Global Variables
+
+Open the **🌐 Globals** sub-tab inside the Envs panel to manage global variables. Globals are shared across all collections and persist across sessions. You can also import/export globals as a Postman-compatible JSON file.
+
+Globals can be read and written from scripts:
+
+```javascript
+pm.globals.set("api_version", "v2");
+pm.globals.get("api_version");   // → "v2"
+pm.globals.unset("api_version");
+pm.globals.clear();              // remove all globals
+```
+
+Changes made in scripts are propagated back to the store after the request completes and carry forward to subsequent requests in the Runner.
 
 ---
 
@@ -214,9 +254,21 @@ pm.test("Response has id", () => {
   pm.expect(json.id).to.exist;
 });
 
-// Variables
+// Environment variables (active environment)
 pm.environment.set("token", pm.response.json().token);
 pm.environment.get("baseUrl");
+pm.environment.unset("token");
+
+// Global variables (all collections)
+pm.globals.set("api_version", "v2");
+pm.globals.get("api_version");
+pm.globals.unset("api_version");
+pm.globals.clear();
+
+// Collection variables (current collection scope)
+pm.collectionVariables.set("requestId", Date.now().toString());
+pm.collectionVariables.get("requestId");
+pm.collectionVariables.unset("requestId");
 
 // Response
 pm.response.code         // status code

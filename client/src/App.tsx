@@ -3,6 +3,7 @@ import { API_BASE } from './api';
 import { useApp, generateId } from './store';
 import type { AppEnvironment, PostmanItem } from './types';
 import Sidebar from './components/Sidebar';
+import ActivityBar from './components/ActivityBar';
 import RequestBuilder from './components/RequestBuilder';
 import ResponseViewer from './components/ResponseViewer';
 import RunnerPanel from './components/RunnerPanel';
@@ -365,6 +366,9 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen bg-slate-950 text-slate-100 overflow-hidden">
       <div className="flex flex-1 min-h-0 overflow-hidden">
+      {/* Activity bar – vertical main menu */}
+      <ActivityBar theme={theme} onToggleTheme={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} />
+
       {/* Left sidebar – width controlled by drag */}
       <div style={{ width: sidebarWidth, minWidth: sidebarWidth }} className="shrink-0 h-full overflow-hidden">
         <Sidebar />
@@ -381,23 +385,6 @@ export default function App() {
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* Top bar */}
         <div className="flex items-center justify-end gap-2 px-4 py-2 border-b border-slate-700 bg-slate-900 shrink-0">
-          {/* Theme toggle */}
-          <button
-            onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
-            title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-            className="p-1.5 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-700 transition-colors"
-          >
-            {theme === 'dark' ? (
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <circle cx="12" cy="12" r="4" />
-                <path strokeLinecap="round" d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
-              </svg>
-            ) : (
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-              </svg>
-            )}
-          </button>
           {/* Cookie manager button */}
           <button
             onClick={() => setCookieManagerOpen(o => !o)}

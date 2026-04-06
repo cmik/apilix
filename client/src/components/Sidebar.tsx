@@ -5,7 +5,7 @@ import ImportModal from './ImportModal';
 import ExportModal from './ExportModal';
 
 export default function Sidebar() {
-  const { state, dispatch } = useApp();
+  const { state, dispatch } = useApp(); // dispatch used by collection actions
   const [showImport, setShowImport] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [filter, setFilter] = useState('');
@@ -16,28 +16,27 @@ export default function Sidebar() {
 
   return (
     <div className="w-full bg-slate-900 flex flex-col h-full overflow-hidden">
-      {/* Brand */}
-      <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
-        <span className="font-bold text-xl tracking-widest" style={{color: '#a8b2bd', background: 'linear-gradient(90deg, #8a9bb0, #c8d6e0, #8a9bb0)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text'}}>APILIX</span>
-        <div className="flex gap-1.5">
-          <button
-            onClick={() => {
-              const id = generateId();
-              dispatch({
-                type: 'ADD_COLLECTION',
-                payload: {
-                  _id: id,
-                  info: { name: 'New Collection', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
-                  item: [],
-                },
-              });
-              setNewCollectionId(id);
-            }}
-            title="Create new collection"
-            className="px-2 py-1 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 text-xs rounded font-medium transition-colors"
-          >
-            + New
-          </button>
+      {/* Collections toolbar */}
+      <div className="px-3 py-2 border-b border-slate-700 flex items-center shrink-0">
+        <button
+          onClick={() => {
+            const id = generateId();
+            dispatch({
+              type: 'ADD_COLLECTION',
+              payload: {
+                _id: id,
+                info: { name: 'New Collection', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
+                item: [],
+              },
+            });
+            setNewCollectionId(id);
+          }}
+          title="Create new collection"
+          className="px-2 py-1 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 text-xs rounded font-medium transition-colors"
+        >
+          + New
+        </button>
+        <div className="ml-auto flex items-center gap-1.5">
           <button
             onClick={() => setShowExport(true)}
             title="Export collections / environments"
@@ -54,30 +53,6 @@ export default function Sidebar() {
             Import
           </button>
         </div>
-      </div>
-
-      {/* Nav buttons */}
-      <div className="flex border-b border-slate-700 shrink-0">
-        {(
-        [
-            { key: 'request', label: '⚡ Requests' },
-            { key: 'runner', label: '▶ Runner' },
-            { key: 'environments', label: '🌍 Envs' },
-            { key: 'mock', label: '🎭 Mock' },
-          ] as const
-        ).map(({ key, label }) => (
-          <button
-            key={key}
-            onClick={() => dispatch({ type: 'SET_VIEW', payload: key })}
-            className={`flex-1 py-2 text-xs font-medium transition-colors ${
-              state.view === key || (key === 'environments' && state.view === 'globals')
-                ? 'text-orange-400 border-b-2 border-orange-400'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
       </div>
 
       {/* Collections header + filter */}
