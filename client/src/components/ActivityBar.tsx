@@ -22,7 +22,7 @@ export default function ActivityBar({ theme, onToggleTheme }: Props) {
     <div className="w-[72px] shrink-0 h-full bg-slate-950 border-r border-slate-800 flex flex-col items-center py-2 overflow-hidden z-10">
       {/* Brand logo */}
       <div className="mb-4 mt-1 select-none px-2">
-        <img src={apilixLogo} alt="Apilix" title="APILIX" className="w-10 h-10 object-contain" />
+        <img src={apilixLogo} alt="Apilix" title="APILIX" className="w-16 h-16 object-contain" />
       </div>
 
       {/* Nav icons */}
