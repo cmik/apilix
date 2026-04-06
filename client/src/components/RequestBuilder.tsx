@@ -554,6 +554,9 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
   const [importMode, setImportMode] = useState<'curl' | 'raw' | 'hurl'>('curl');
   const [importError, setImportError] = useState('');
   const [docsMode, setDocsMode] = useState<'edit' | 'preview'>('edit');
+  const [urlAcSuggestions, setUrlAcSuggestions] = useState<string[]>([]);
+  const [urlAcIndex, setUrlAcIndex] = useState(0);
+  const [urlAcLeft, setUrlAcLeft] = useState(0);
 
   // Swap edit state when active tab changes
   useEffect(() => {
@@ -643,9 +646,68 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
   }
 
   // Sync URL to query params when URL typed manually
+  function measureInputTextWidth(text: string): number {
+    const input = urlInputRef.current;
+    const font = input ? getComputedStyle(input).font : '14px monospace';
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return 0;
+    ctx.font = font;
+    return ctx.measureText(text).width;
+  }
+
   function handleUrlChange(val: string) {
     const params = extractQueryParamsFromString(val);
     setEdit(e => e ? { ...e, url: val, queryParams: params } : e);
+    // Variable autocomplete: detect {{ before cursor
+    const cursorPos = urlInputRef.current?.selectionStart ?? val.length;
+    const before = val.slice(0, cursorPos);
+    const openIdx = before.lastIndexOf('{{');
+    if (openIdx !== -1 && !before.slice(openIdx + 2).includes('}}')) {
+      const query = before.slice(openIdx + 2).toLowerCase();
+      const matches = Object.keys(allVars).filter(k => k.toLowerCase().startsWith(query));
+      setUrlAcSuggestions(matches);
+      setUrlAcIndex(0);
+      // Compute horizontal offset: padding-left (12px) + width of text up to {{ opening
+      const paddingLeft = 12;
+      const left = paddingLeft + measureInputTextWidth(val.slice(0, openIdx));
+      setUrlAcLeft(left);
+    } else {
+      setUrlAcSuggestions([]);
+    }
+  }
+
+  function insertUrlVariable(name: string) {
+    const val = edit?.url ?? '';
+    const cursorPos = urlInputRef.current?.selectionStart ?? val.length;
+    const before = val.slice(0, cursorPos);
+    const openIdx = before.lastIndexOf('{{');
+    const newVal = val.slice(0, openIdx) + `{{${name}}}` + val.slice(cursorPos);
+    const newCursor = openIdx + name.length + 4;
+    const params = extractQueryParamsFromString(newVal);
+    setEdit(e => e ? { ...e, url: newVal, queryParams: params } : e);
+    setUrlAcSuggestions([]);
+    requestAnimationFrame(() => {
+      urlInputRef.current?.focus();
+      urlInputRef.current?.setSelectionRange(newCursor, newCursor);
+    });
+  }
+
+  function handleUrlKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (urlAcSuggestions.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setUrlAcIndex(i => (i + 1) % urlAcSuggestions.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setUrlAcIndex(i => (i - 1 + urlAcSuggestions.length) % urlAcSuggestions.length);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      insertUrlVariable(urlAcSuggestions[urlAcIndex]);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setUrlAcSuggestions([]);
+    }
   }
 
   function extractQueryParamsFromString(url: string): PostmanQueryParam[] {
@@ -951,14 +1013,34 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
               <option key={m} value={m} className="text-slate-100">{m}</option>
             ))}
           </select>
+          <div className="relative flex-1">
           <input
             ref={urlInputRef}
             type="text"
             value={edit.url}
             onChange={e => handleUrlChange(e.target.value)}
+            onKeyDown={handleUrlKeyDown}
+            onBlur={() => setTimeout(() => setUrlAcSuggestions([]), 120)}
             placeholder="https://api.example.com/endpoint"
-            className="flex-1 bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-orange-500"
+            className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-orange-500"
           />
+          {urlAcSuggestions.length > 0 && (
+            <div className="absolute top-full mt-1 z-50 bg-slate-800 border border-slate-600 rounded shadow-xl min-w-52 max-h-52 overflow-y-auto" style={{ left: urlAcLeft }}>
+              {urlAcSuggestions.map((name, i) => (
+                <button
+                  key={name}
+                  onMouseDown={e => { e.preventDefault(); insertUrlVariable(name); }}
+                  className={`w-full text-left px-3 py-1.5 text-xs font-mono flex items-center gap-1 ${i === urlAcIndex ? 'bg-orange-600/20 text-orange-300' : 'text-slate-300 hover:bg-slate-700'}`}
+                >
+                  <span className="text-slate-500">{'{{'}</span>{name}<span className="text-slate-500">{'}}'}</span>
+                  {allVars[name] !== undefined && (
+                    <span className="ml-auto text-slate-500 truncate max-w-24">{allVars[name]}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+          </div>
           <button
             onClick={() => { setImportText(''); setImportError(''); setShowImportDialog(true); }}
             title="Import from cURL or Raw HTTP"
