@@ -52,7 +52,7 @@ function resolveUrl(urlObj, vars) {
     .filter(q => !q.disabled)
     .map(q => `${encodeURIComponent(resolveVariables(q.key, vars))}=${encodeURIComponent(resolveVariables(q.value, vars))}`)
     .join('&');
-  let url = `${protocol}://${host}/${path}`;
+  let url = `${protocol}://${host}/${path.replace(/^\//, '')}`;
   if (query) url += `?${query}`;
   return resolveVariables(url, vars);
 }
@@ -79,7 +79,13 @@ function applyAuth(auth, headers, vars) {
       const keyName = (auth.apikey || []).find(b => b.key === 'key')?.value || 'X-API-Key';
       const keyValue = (auth.apikey || []).find(b => b.key === 'value')?.value || '';
       const location = (auth.apikey || []).find(b => b.key === 'in')?.value || 'header';
-      if (location !== 'query') {
+      if (location === 'query') {
+        // Query-param API keys are appended by the caller after URL resolution;
+        // we store them as a sentinel so resolveUrl can pick them up if needed.
+        // For now: best-effort append to the Authorization header is intentionally
+        // skipped since the URL is not available here. Callers relying on query-param
+        // API keys should embed the key directly in the URL via an environment variable.
+      } else {
         headers[resolveVariables(keyName, vars)] = resolveVariables(keyValue, vars);
       }
       break;
@@ -285,17 +291,21 @@ function makeTimingAndCertContext() {
 // ─── Main executor ───────────────────────────────────────────────────────────
 
 async function executeRequest(item, context) {
+  let environment = context.environment ?? {};
+  let collectionVariables = context.collectionVariables ?? {};
+  let globals = context.globals ?? {};
   const {
-    environment = {},
-    collectionVariables = {},
-    globals = {},
     dataRow = {},
     collVars = [],
     cookies = {},
     collectionItems = [],
+    conditionalExecution = true,
   } = context;
-
   let vars = buildVariables(environment, collectionVariables, globals, dataRow, collVars);
+  // Keep original key sets for scope routing — used when splitting script mutations
+  // back into their respective scopes. Must be captured before any script runs.
+  const originalEnvKeys = new Set(Object.keys(environment));
+  const originalCollVarKeys = new Set(Object.keys(collectionVariables));
 
   // Run pre-request script
   let scriptLogs = [];
@@ -315,20 +325,19 @@ async function executeRequest(item, context) {
       const result = await runScript(code, null, vars, scriptDeps);
       const preUpdatedVars = result.updatedVariables;
       const preUpdatedGlobals = result.updatedGlobalMutations || {};
+      // Propagate pre-request mutations back into their respective scopes so the
+      // test script context (and any child requests it fires) sees the updated values.
+      Object.entries(preUpdatedVars).forEach(([k, v]) => {
+        if (originalEnvKeys.has(k)) environment = { ...environment, [k]: v };
+        else collectionVariables = { ...collectionVariables, [k]: v };
+      });
       globals = { ...globals, ...preUpdatedGlobals };
       vars = { ...vars, ...preUpdatedVars, ...preUpdatedGlobals };
       scriptLogs = [...scriptLogs, ...result.consoleLogs];
       preChildRequests = result.childRequests || [];
-      preSkipRequest = result.skipRequest === true;
+      preSkipRequest = conditionalExecution && result.skipRequest === true;
 
       if (preSkipRequest) {
-        // Split pre-script var mutations back into env / collectionVariables
-        const skipEnv = { ...environment };
-        const skipCollVars = { ...collectionVariables };
-        Object.entries(preUpdatedVars).forEach(([k, v]) => {
-          if (k in environment) skipEnv[k] = v;
-          else skipCollVars[k] = v;
-        });
         return {
           status: 0,
           statusText: 'Skipped',
@@ -343,8 +352,8 @@ async function executeRequest(item, context) {
           scriptLogs,
           preChildRequests,
           testChildRequests: [],
-          updatedEnvironment: skipEnv,
-          updatedCollectionVariables: skipCollVars,
+          updatedEnvironment: environment,
+          updatedCollectionVariables: collectionVariables,
           updatedGlobals: globals,
           updatedCookies: cookies,
           skipped: true,
@@ -489,16 +498,16 @@ async function executeRequest(item, context) {
       }
     }
 
-    // Split updated vars back into environment and collection variables
+    // Split updated vars back into environment and collection variables.
+    // Keys already tracked in updatedGlobalMutations are excluded — globals are
+    // returned separately via the `globals` variable, not via env/collVars.
     const updatedEnv = { ...environment };
     const updatedCollVars = { ...collectionVariables };
+    const globalKeys = new Set(Object.keys(globals));
     Object.entries(updatedVars).forEach(([k, v]) => {
-      if (k in environment) updatedEnv[k] = v;
+      if (globalKeys.has(k) && !(k in environment) && !(k in collectionVariables)) return;
+      if (originalEnvKeys.has(k)) updatedEnv[k] = v;
       else updatedCollVars[k] = v;
-    });
-    // Any new keys go into collectionVariables
-    Object.entries(updatedVars).forEach(([k, v]) => {
-      if (!(k in environment)) updatedCollVars[k] = v;
     });
 
     const responseHeaders = {};
@@ -550,10 +559,11 @@ async function executeRequest(item, context) {
       error: null,
     };
   } catch (err) {
+    const errorResponseTime = Date.now() - startTime;
     return {
       status: 0,
       statusText: 'Request Failed',
-      responseTime: Date.now() - startTime,
+      responseTime: errorResponseTime,
       resolvedUrl: url,
       requestHeaders: headers,
       requestBody: requestBodyStr,
@@ -568,7 +578,7 @@ async function executeRequest(item, context) {
       updatedCollectionVariables: collectionVariables,
       updatedGlobals: globals,
       updatedCookies: cookies,
-      networkTimings: { dns: 0, tcp: 0, tls: 0, server: 0, total: Date.now() - startTime },
+      networkTimings: { dns: 0, tcp: 0, tls: 0, server: 0, total: errorResponseTime },
       tlsCertChain: null,
       redirectChain: [],
       error: err.message,
@@ -578,11 +588,11 @@ async function executeRequest(item, context) {
 
 // ─── Flatten collection items ────────────────────────────────────────────────
 
-function flattenItems(items, result) {
-  if (!result) result = [];
+function flattenItems(items) {
+  const result = [];
   for (const item of (items || [])) {
     if (item.item) {
-      flattenItems(item.item, result);
+      result.push(...flattenItems(item.item));
     } else if (item.request) {
       result.push(item);
     }

@@ -759,15 +759,18 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme }:
           logs.map(entry => (
             <div
               key={entry.id}
-              onClick={() => toggleEntry(entry.id)}
-              className={`cursor-pointer border-b border-slate-800/80 transition-colors select-none ${
+              onClick={() => {
+                if (window.getSelection()?.toString()) return;
+                toggleEntry(entry.id);
+              }}
+              className={`cursor-pointer border-b border-slate-800/80 transition-colors ${
                 selectedId === entry.id
                   ? 'bg-slate-800 border-l-2 border-l-orange-500'
                   : 'hover:bg-slate-900'
               }`}
             >
               {/* Row */}
-              <div className="flex items-center gap-2 px-3 py-1.5 text-xs">
+              <div className="flex items-center gap-2 px-3 py-1.5 text-xs select-none">
                 <span className={`font-mono font-semibold text-[11px] px-1.5 py-0.5 rounded shrink-0 ${methodBadge(entry.method)}`}>
                   {entry.method}
                 </span>

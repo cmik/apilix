@@ -100,7 +100,7 @@ app.post('/api/run/:runId/stop', (req, res) => {
 app.post('/api/run', upload.single('csvFile'), async (req, res) => {
   try {
     const payload = JSON.parse(req.body.data || '{}');
-    const { collection, environment, collectionVariables, globals, delay, cookies, executeChildRequests, allCollectionItems } = payload;
+    const { collection, environment, collectionVariables, globals, delay, cookies, executeChildRequests, conditionalExecution, allCollectionItems } = payload;
 
     if (!collection || !collection.item) {
       return res.status(400).json({ error: 'Missing collection in body' });
@@ -160,7 +160,17 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
       sendEvent('iteration-start', { iteration: i + 1, dataRow });
 
       let reqIdx = 0;
+      // Per-request execution counter — detects cycles early.
+      // Any single request running more than (n+1) times signals a loop.
+      const perRequestCount = new Array(requests.length).fill(0);
+      const maxPerRequest = requests.length + 1;
       while (reqIdx < requests.length) {
+        perRequestCount[reqIdx]++;
+        if (perRequestCount[reqIdx] > maxPerRequest) {
+          const loopName = requests[reqIdx].name;
+          sendEvent('error', { error: `Iteration ${i + 1} aborted: "${loopName}" was reached ${perRequestCount[reqIdx]} times — circular setNextRequest() detected.` });
+          break;
+        }
         const item = requests[reqIdx];
         // Check pause/stop before each request
         if ((await waitForResume(runId)) === 'stopped') { stopped = true; break outer; }
@@ -173,6 +183,7 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
           collVars: collection.variable || [],
           cookies: currentCookies,
           collectionItems: executeChildRequests ? (allCollectionItems || collection.item || []) : [],
+          conditionalExecution: conditionalExecution !== false,
         });
 
         // Propagate environment/variable/cookie changes to next request in same iteration
@@ -207,20 +218,31 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
 
         sendEvent('result', resultData);
 
-        // Handle pm.execution.setNextRequest() — jump to named request or stop iteration
-        if (result.nextRequest !== undefined && result.nextRequest !== null) {
-          const targetIdx = requests.findIndex(r => r.name === result.nextRequest);
-          if (targetIdx >= 0) {
-            reqIdx = targetIdx;
+        // When conditional execution is enabled, setNextRequest() takes priority
+        // over sequential order — it drives which request runs next.
+        if (conditionalExecution !== false && result.nextRequest !== undefined) {
+          if (result.nextRequest !== null) {
+            // Prefer a forward match to stay within the current chain segment.
+            // Fall back to the first occurrence only if nothing is found ahead.
+            const forwardIdx = requests.findIndex((r, i) => i > reqIdx && r.name === result.nextRequest);
+            const targetIdx = forwardIdx >= 0
+              ? forwardIdx
+              : requests.findIndex(r => r.name === result.nextRequest);
+            if (targetIdx >= 0) {
+              sendEvent('next-request', { from: item.name, to: result.nextRequest });
+              if (delayMs > 0) {
+                if ((await awaitDelay(runId, delayMs)) === 'stopped') { stopped = true; break outer; }
+              }
+              reqIdx = targetIdx;
+              continue;
+            } else {
+              // Unknown request name — stop iteration (Postman behaviour)
+              break;
+            }
           } else {
-            // Unknown request name — stop iteration (Postman behaviour)
+            // setNextRequest(null) stops iteration immediately
             break;
           }
-          continue;
-        }
-        // setNextRequest(null) stops iteration immediately
-        if (result.nextRequest === null) {
-          break;
         }
 
         if (delayMs > 0) {

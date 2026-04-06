@@ -208,7 +208,7 @@ function createExpect(value, negated) {
 // ─── apx object factory ─────────────────────────────────────────────────────
 // apx is the primary API; pm is an alias for Postman compatibility
 
-function createApx(response, variables, updatedVariables, tests, pendingRequests, deps, childRequests, executionSignals) {
+function createApx(response, variables, updatedVariables, updatedGlobalMutations, tests, pendingRequests, deps, childRequests, executionSignals) {
   // deps = { collectionItems, executeRequestFn, context }
   const collectionItems = (deps && deps.collectionItems) || [];
   const executeRequestFn = (deps && deps.executeRequestFn) || null;
@@ -219,21 +219,61 @@ function createApx(response, variables, updatedVariables, tests, pendingRequests
   // of collapsing everything into the child's environment.
   const updatedEnvMutations = {};
   const updatedCollVarMutations = {};
-  const updatedGlobalMutations = {};
 
-  const makeVarStore = (namespaceBucket) => ({
-    get(key) { return Object.prototype.hasOwnProperty.call(variables, key) ? variables[key] : (updatedVariables[key] !== undefined ? updatedVariables[key] : undefined); },
-    set(key, value) {
-      updatedVariables[key] = String(value);     // flat copy keeps same-script resolution working
-      if (namespaceBucket) namespaceBucket[key] = String(value);
-    },
-    unset(key) {
-      delete updatedVariables[key];
-      if (namespaceBucket) delete namespaceBucket[key];
-    },
-    has(key) { return key in variables || key in updatedVariables; },
-    clear() {},
-  });
+  const makeVarStore = (namespaceBucket, namespaceSrc) => {
+    const isNamespaced = namespaceSrc !== undefined;
+    const deletedKeys = new Set();
+    return {
+      get(key) {
+        if (isNamespaced) {
+          if (deletedKeys.has(key)) return undefined;
+          if (namespaceBucket && Object.prototype.hasOwnProperty.call(namespaceBucket, key)) return namespaceBucket[key];
+          if (namespaceSrc && Object.prototype.hasOwnProperty.call(namespaceSrc, key)) return namespaceSrc[key];
+          return undefined;
+        }
+        // Generic (apx.variables): mutations overlay takes priority over original flat
+        if (updatedVariables[key] !== undefined) return updatedVariables[key];
+        return Object.prototype.hasOwnProperty.call(variables, key) ? variables[key] : undefined;
+      },
+      set(key, value) {
+        updatedVariables[key] = String(value);
+        deletedKeys.delete(key);
+        if (namespaceBucket) namespaceBucket[key] = String(value);
+      },
+      unset(key) {
+        delete updatedVariables[key];
+        if (namespaceBucket) delete namespaceBucket[key];
+        if (isNamespaced) deletedKeys.add(key);
+      },
+      has(key) {
+        if (isNamespaced) {
+          if (deletedKeys.has(key)) return false;
+          if (namespaceBucket && Object.prototype.hasOwnProperty.call(namespaceBucket, key)) return true;
+          return !!(namespaceSrc && Object.prototype.hasOwnProperty.call(namespaceSrc, key));
+        }
+        return key in variables || key in updatedVariables;
+      },
+      clear() {
+        if (isNamespaced) {
+          Object.keys(namespaceSrc || {}).forEach(k => deletedKeys.add(k));
+          Object.keys(namespaceBucket || {}).forEach(k => {
+            delete updatedVariables[k];
+            delete namespaceBucket[k];
+            deletedKeys.add(k);
+          });
+        }
+      },
+      toObject() {
+        if (isNamespaced) {
+          const result = { ...(namespaceSrc || {}) };
+          Object.assign(result, namespaceBucket || {});
+          deletedKeys.forEach(k => delete result[k]);
+          return result;
+        }
+        return {};
+      },
+    };
+  };
 
   const apx = {
     test(name, fn) {
@@ -249,22 +289,18 @@ function createApx(response, variables, updatedVariables, tests, pendingRequests
       return createExpect(value);
     },
 
-    environment: makeVarStore(updatedEnvMutations),
-    collection: makeVarStore(updatedCollVarMutations),
+    environment: makeVarStore(updatedEnvMutations, execContext.environment || {}),
+    collection: makeVarStore(updatedCollVarMutations, execContext.collectionVariables || {}),
     get collectionVariables() { return this.collection; }, // Postman compatibility alias
     globals: (() => {
-      const globalStore = makeVarStore(updatedGlobalMutations);
+      const globalStore = makeVarStore(updatedGlobalMutations, execContext.globals || {});
       return {
         get(key) { return globalStore.get(key); },
         has(key) { return globalStore.has(key); },
-        toObject() {
-          return typeof globalStore.toObject === 'function' ? globalStore.toObject() : {};
-        },
+        toObject() { return globalStore.toObject(); },
         set(key, value) { globalStore.set(key, value); },
         unset(key) { globalStore.unset(key); },
-        clear() {
-          Object.keys(updatedGlobalMutations).forEach(k => delete updatedGlobalMutations[k]);
-        },
+        clear() { globalStore.clear(); },
       };
     })(),
     variables: makeVarStore(null), // generic store — falls back to flat routing in executeRequest
@@ -502,12 +538,13 @@ function buildResponse(r) {
 async function runScript(code, response, variables, deps) {
   const tests = [];
   const updatedVariables = {};
+  const updatedGlobalMutations = {};
   const consoleLogs = [];
   const pendingRequests = [];
   const childRequests = [];
   const executionSignals = { skipRequest: false, nextRequest: undefined };
 
-  const apx = createApx(response, variables || {}, updatedVariables, tests, pendingRequests, deps, childRequests, executionSignals);
+  const apx = createApx(response, variables || {}, updatedVariables, updatedGlobalMutations, tests, pendingRequests, deps, childRequests, executionSignals);
   // pm is a full alias to apx for Postman script compatibility
   const pm = apx;
 

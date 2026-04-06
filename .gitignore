@@ -52,10 +52,9 @@ client/.vite/
 coverage/
 
 # Misc
+feat/
 .pid_client
 .pid_server
 
 # GitHub workflows
 .github/
-FEATURES.md
-MOCK_SERVER_FEATURES.md

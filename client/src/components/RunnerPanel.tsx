@@ -1,10 +1,62 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useApp } from '../store';
 import { runCollectionStream, pauseRun, resumeRun, stopRun } from '../api';
 import type { RunnerIteration, RunnerIterationResult, PostmanItem } from '../types';
 import { applyInheritedAuth } from '../utils/treeHelpers';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Extract all literal setNextRequest('name') targets from a request's scripts. */
+function extractSetNextRequestTargets(item: PostmanItem): string[] {
+  const targets: string[] = [];
+  for (const ev of item.event ?? []) {
+    const exec = ev.script?.exec;
+    const code = Array.isArray(exec) ? exec.join('\n') : (exec ?? '');
+    for (const m of code.matchAll(/setNextRequest\(\s*['"](.*?)['"]\s*\)/g)) {
+      if (m[1]) targets.push(m[1]);
+    }
+  }
+  return [...new Set(targets)];
+}
+
+export interface ChainEntry { item: PostmanItem; autoAdded: boolean; }
+
+/**
+ * Two-level execution model:
+ *   Primary  — each entry in `startIds` (user-selected execution order)
+ *   Secondary — for each primary start, follow setNextRequest() chains until
+ *               no target is found or a cycle within this chain is detected.
+ *
+ * No deduplication across chains: if T2 is selected and also reachable from T1,
+ * it runs twice — once as part of T1's chain, once as its own chain.
+ */
+function resolveConditionalChain(
+  startIds: string[],
+  itemMap: Map<string, PostmanItem>,
+  allByName: Map<string, PostmanItem>,
+): ChainEntry[][] {
+  return startIds
+    .map(startId => {
+      const chain: ChainEntry[] = [];
+      const visitedInChain = new Set<string>();
+      let currentId: string | null = startId;
+      let autoAdded = false;
+      while (currentId !== null) {
+        if (visitedInChain.has(currentId)) break; // cycle within this chain
+        const item = itemMap.get(currentId);
+        if (!item) break;
+        visitedInChain.add(currentId);
+        chain.push({ item, autoAdded });
+        const targets = extractSetNextRequestTargets(item);
+        if (targets.length === 0) break;
+        const nextItem = allByName.get(targets[0]);
+        currentId = nextItem?.id ?? null;
+        autoAdded = true;
+      }
+      return chain;
+    })
+    .filter(chain => chain.length > 0);
+}
 
 function getAllRequestIds(items: PostmanItem[]): string[] {
   return items.reduce<string[]>((acc, item) => {
@@ -104,6 +156,11 @@ function SelectionNode({ item, depth, selectedIds, onToggleRequest, onToggleFold
     const code = Array.isArray(exec) ? exec.join('\n') : (exec ?? '');
     return code.includes('apx.executeRequest(');
   });
+  const usesSetNextRequest = (item.event ?? []).some(ev => {
+    const exec = ev.script?.exec;
+    const code = Array.isArray(exec) ? exec.join('\n') : (exec ?? '');
+    return code.includes('setNextRequest(');
+  });
   return (
     <div
       className="flex items-center gap-2 py-1 hover:bg-slate-600/30 rounded cursor-pointer"
@@ -119,9 +176,14 @@ function SelectionNode({ item, depth, selectedIds, onToggleRequest, onToggleFold
       />
       <span className={`text-xs font-bold w-14 shrink-0 ${methodColor}`}>{method}</span>
       <span className="text-sm text-slate-300 truncate">{item.name}</span>
-      {usesChildRequests && (
-        <span title="This request executes child requests via apx.executeRequest()" className="ml-auto shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-violet-800/60 text-violet-300 border border-violet-600/50">child</span>
-      )}
+      <span className="ml-auto flex items-center gap-1 shrink-0">
+        {usesChildRequests && (
+          <span title="This request executes child requests via apx.executeRequest()" className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-violet-800/60 text-violet-300 border border-violet-600/50">child</span>
+        )}
+        {usesSetNextRequest && (
+          <span title="This request controls flow via setNextRequest()" className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-800/60 text-amber-300 border border-amber-600/50">next</span>
+        )}
+      </span>
     </div>
   );
 }
@@ -301,7 +363,22 @@ function IterationBlock({ iter }: { iter: RunnerIteration }) {
       </button>
       {open && (
         <div className="bg-slate-900/30">
-          {iter.results.map((r, i) => <ResultRow key={i} result={r} />)}
+          {iter.results.map((r, i) => {
+            const jump = (iter.jumps ?? []).find(j => j.afterName === r.name);
+            return (
+              <div key={i}>
+                <ResultRow result={r} />
+                {jump && (
+                  <div className="flex items-center gap-2 px-4 py-1 bg-violet-900/20 border-y border-violet-700/30 text-xs text-violet-400 select-none">
+                    <span>↪</span>
+                    <span className="font-mono">setNextRequest</span>
+                    <span className="text-violet-600">→</span>
+                    <span className="font-medium text-violet-300">{jump.to}</span>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -518,6 +595,7 @@ export default function RunnerPanel() {
   const [delay, setDelay] = useState(0);
   const [iterations, setIterations] = useState(1);
   const [executeChildRequests, setExecuteChildRequests] = useState(false);
+  const [conditionalExecution, setConditionalExecution] = useState(true);
   const [results, setResults] = useState<RunnerIteration[] | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
@@ -529,6 +607,20 @@ export default function RunnerPanel() {
   const dragOverRef = useRef<number | null>(null);
 
   const selectedCollection = state.collections.find(c => c._id === selectedCollectionId);
+
+  // When conditional execution is on, resolve one chain per selected request
+  // (primary order) by following setNextRequest() targets (secondary chains).
+  const conditionalChains = useMemo<ChainEntry[][] | null>(() => {
+    if (!conditionalExecution || !selectedCollection) return null;
+    const flat = flattenRequestItems(selectedCollection.item);
+    const allByName = new Map<string, PostmanItem>();
+    for (const [, item] of flat) { if (item.name) allByName.set(item.name, item); }
+    const startIds = executionOrder.filter(id => selectedRequestIds.has(id));
+    if (startIds.length === 0) return null;
+    const chains = resolveConditionalChain(startIds, flat, allByName);
+    // Only surface the panel when at least one chain has auto-added requests
+    return chains.some(c => c.some(e => e.autoAdded)) ? chains : null;
+  }, [conditionalExecution, selectedCollection, executionOrder, selectedRequestIds]);
 
   // Auto-select all requests when collection changes
   useEffect(() => {
@@ -638,10 +730,15 @@ export default function RunnerPanel() {
       // Apply inherited auth on the full tree, then extract items in execution order
       const authResolvedItems = applyInheritedAuth(selectedCollection.item, selectedCollection.auth);
       const itemMap = flattenRequestItems(authResolvedItems);
-      const orderedItems = executionOrder
-        .filter(id => selectedRequestIds.has(id))
-        .map(id => itemMap.get(id))
-        .filter((item): item is PostmanItem => !!item);
+
+      // When conditional execution is on and chains were resolved, flatten all
+      // chains in primary order (no cross-chain dedup — each chain runs in full).
+      const orderedItems = conditionalChains
+        ? conditionalChains.flat().map(({ item }) => itemMap.get(item.id!) ?? item)
+        : executionOrder
+            .filter(id => selectedRequestIds.has(id))
+            .map(id => itemMap.get(id))
+            .filter((item): item is PostmanItem => !!item);
 
       const streamingResults: RunnerIteration[] = [];
       let currentIteration: RunnerIteration | null = null;
@@ -657,6 +754,7 @@ export default function RunnerPanel() {
           delay,
           iterations: csvFile ? undefined : iterations,
           executeChildRequests,
+          conditionalExecution,
         },
         csvFile ?? undefined,
         {
@@ -759,6 +857,18 @@ export default function RunnerPanel() {
           onError(errorMsg) {
             setError(errorMsg);
           },
+          onNextRequest(data) {
+            if (currentIteration) {
+              const lastResult = currentIteration.results[currentIteration.results.length - 1];
+              if (lastResult) {
+                currentIteration.jumps = [
+                  ...(currentIteration.jumps ?? []),
+                  { afterName: data.from, to: data.to },
+                ];
+                setResults([...streamingResults]);
+              }
+            }
+          },
           onStopped() {
             // run was stopped — final state already set via streaming
           },
@@ -802,7 +912,7 @@ export default function RunnerPanel() {
     : null;
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
+    <div className="flex-1 flex flex-col overflow-y-auto p-4 gap-4">
 
       {/* Config */}
       <div className="bg-slate-800 border border-slate-700 rounded-lg shrink-0">
@@ -1036,6 +1146,58 @@ export default function RunnerPanel() {
               Execute child requests (<code className="text-orange-400">apx.executeRequest()</code>)
             </label>
           </div>
+
+          {/* Conditional execution toggle */}
+          <div className="flex items-center gap-2">
+            <input
+              id="conditionalExecution"
+              type="checkbox"
+              checked={conditionalExecution}
+              onChange={e => setConditionalExecution(e.target.checked)}
+              className="accent-orange-500 cursor-pointer"
+            />
+            <label htmlFor="conditionalExecution" className="text-xs text-slate-400 cursor-pointer select-none">
+              Conditional execution (<code className="text-orange-400">pm.execution.skipRequest()</code> / <code className="text-orange-400">setNextRequest()</code>)
+            </label>
+          </div>
+
+          {/* Resolved chains — primary (user order) × secondary (setNextRequest) */}
+          {conditionalChains && (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-amber-400 font-medium">Resolved execution chains</label>
+                <span className="text-xs text-slate-500">auto-detected from <code className="text-orange-400">setNextRequest()</code></span>
+              </div>
+              {conditionalChains.map((chain, chainIdx) => (
+                <div key={chainIdx} className="flex flex-col gap-0.5">
+                  {conditionalChains.length > 1 && (
+                    <div className="text-[10px] text-slate-500 font-semibold uppercase tracking-wide px-1">
+                      Chain {chainIdx + 1} — starting from <span className="text-slate-400">{chain[0]?.item.name}</span>
+                    </div>
+                  )}
+                  <div className="bg-slate-700/40 border border-amber-700/40 rounded px-2 py-1.5 flex flex-col gap-0.5">
+                    {chain.map(({ item, autoAdded }, i) => {
+                      const method = item.request?.method ?? 'GET';
+                      const methodColor = METHOD_COLORS[method] ?? 'text-slate-400';
+                      return (
+                        <div key={(item.id ?? item.name) + i} className="flex items-center gap-2 py-0.5">
+                          <span className="text-slate-600 text-xs w-4 text-right shrink-0">{i + 1}.</span>
+                          <span className={`text-xs font-bold w-14 shrink-0 ${methodColor}`}>{method}</span>
+                          <span className={`text-sm truncate ${autoAdded ? 'text-amber-300' : 'text-slate-300'}`}>{item.name}</span>
+                          {autoAdded && (
+                            <span title="Auto-added via setNextRequest()" className="ml-auto shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-800/60 text-amber-300 border border-amber-600/50">auto</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+              <p className="text-xs text-slate-500">
+                <span className="text-slate-400">Amber</span> items are auto-added. Each chain runs in full — a request selected in the primary order runs independently even if already reached by a previous chain.
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Environment info */}

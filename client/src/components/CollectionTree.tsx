@@ -206,6 +206,15 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
         type: 'UPDATE_COLLECTION',
         payload: { ...collection, item: renameItemById(collection.item, item.id, newName) },
       });
+      // Sync any open tabs that hold a snapshot of this item
+      state.tabs.forEach(tab => {
+        if (tab.item.id === item.id) {
+          dispatch({
+            type: 'UPDATE_TAB_ITEM',
+            payload: { tabId: tab.id, item: { ...tab.item, name: newName } },
+          });
+        }
+      });
     }
     setRenaming(false);
   }

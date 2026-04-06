@@ -115,6 +115,16 @@ function getContext(textBefore: string, requestNames: string[]): { completions: 
     if (completions.length > 0) return { completions, prefix };
   }
 
+  // Request-name autocomplete inside pm.execution.setNextRequest('...
+  m = textBefore.match(/(?:apx|pm)\.execution\.setNextRequest\(['"]([^'"]*)$/);
+  if (m) {
+    const prefix = m[1];
+    const completions = requestNames
+      .filter(n => n.toLowerCase().startsWith(prefix.toLowerCase()))
+      .map(n => ({ label: n, insert: n, detail: 'request' }));
+    if (completions.length > 0) return { completions, prefix };
+  }
+
   // Root: trigger on "apx." or "pm." (empty prefix, or partial word prefix)
   m = textBefore.match(/(?:apx|pm)\.(\w*)$/);
   if (m) return { completions: ROOT, prefix: m[1] };
