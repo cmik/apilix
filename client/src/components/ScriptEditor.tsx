@@ -58,6 +58,74 @@ const INFO: Completion[] = [
   { label: 'eventName',  insert: 'eventName',  detail: 'string' },
 ];
 
+// ─── Mock-script completions ──────────────────────────────────────────────────
+
+const MOCK_REQ_HEADERS: Completion[] = [
+  { label: "['header-name']", insert: "['",            detail: 'string | undefined' },
+];
+
+const MOCK_REQ_QUERY: Completion[] = [
+  { label: "['param']",       insert: "['",            detail: 'string | undefined' },
+];
+
+const MOCK_REQ_PARAMS: Completion[] = [
+  { label: "['param']",       insert: "['",            detail: 'string | undefined' },
+];
+
+const MOCK_REQ_BODY: Completion[] = [
+  { label: "['field']",       insert: "['",            detail: 'any' },
+];
+
+const MOCK_REQ: Completion[] = [
+  { label: 'method',        insert: 'method',        detail: 'string'  },
+  { label: 'path',          insert: 'path',          detail: 'string'  },
+  { label: 'url',           insert: 'url',           detail: 'string'  },
+  { label: 'headers',       insert: 'headers',       detail: 'object'  },
+  { label: 'query',         insert: 'query',         detail: 'object'  },
+  { label: 'params',        insert: 'params',        detail: 'object'  },
+  { label: 'body',          insert: 'body',          detail: 'object'  },
+  { label: 'requestCount',  insert: 'requestCount',  detail: 'number'  },
+];
+
+const MOCK_ROOT: Completion[] = [
+  { label: 'req',               insert: 'req',               detail: 'object' },
+  { label: 'respond(status, body)', insert: 'respond(',       detail: 'void'   },
+  { label: 'JSON.stringify()',  insert: 'JSON.stringify(',   detail: 'string' },
+  { label: 'JSON.parse()',      insert: 'JSON.parse(',       detail: 'any'    },
+  { label: 'Math.random()',     insert: 'Math.random()',     detail: 'number' },
+  { label: 'Math.floor()',      insert: 'Math.floor(',       detail: 'number' },
+  { label: 'Date.now()',        insert: 'Date.now()',        detail: 'number' },
+  { label: 'new Date()',        insert: 'new Date()',        detail: 'Date'   },
+];
+
+function getMockContext(textBefore: string): { completions: Completion[]; prefix: string } | null {
+  let m: RegExpMatchArray | null;
+
+  m = textBefore.match(/\breq\.headers\.?(\w*)$/);
+  if (m) return { completions: MOCK_REQ_HEADERS, prefix: '' };
+
+  m = textBefore.match(/\breq\.query\.?(\w*)$/);
+  if (m) return { completions: MOCK_REQ_QUERY, prefix: '' };
+
+  m = textBefore.match(/\breq\.params\.?(\w*)$/);
+  if (m) return { completions: MOCK_REQ_PARAMS, prefix: '' };
+
+  m = textBefore.match(/\breq\.body\.?(\w*)$/);
+  if (m) return { completions: MOCK_REQ_BODY, prefix: '' };
+
+  m = textBefore.match(/\breq\.(\w*)$/);
+  if (m) return { completions: MOCK_REQ, prefix: m[1] };
+
+  m = textBefore.match(/(?:^|[\s;{}(,!&|?:])(\w*)$/);
+  if (m) {
+    const prefix = m[1];
+    const filtered = MOCK_ROOT.filter(c => prefix.length > 0 && c.label.startsWith(prefix));
+    if (filtered.length > 0) return { completions: filtered, prefix };
+  }
+
+  return null;
+}
+
 const ROOT: Completion[] = [
   { label: 'environment',          insert: 'environment',          detail: 'object'     },
   { label: 'globals',              insert: 'globals',              detail: 'object'     },
@@ -186,6 +254,8 @@ export interface ScriptEditorProps {
   className?: string;
   /** Request names from the current collection, for apx.executeRequest() autocomplete */
   requestNames?: string[];
+  /** 'mock' uses the req/respond context; default uses the apx/pm context */
+  variant?: 'default' | 'mock';
 }
 
 export default function ScriptEditor({
@@ -196,6 +266,7 @@ export default function ScriptEditor({
   textareaRef,
   className,
   requestNames,
+  variant = 'default',
 }: ScriptEditorProps) {
   const internalRef = useRef<HTMLTextAreaElement>(null);
   const ref = (textareaRef as React.RefObject<HTMLTextAreaElement>) ?? internalRef;
@@ -206,7 +277,9 @@ export default function ScriptEditor({
   const recompute = useCallback((el: HTMLTextAreaElement) => {
     const pos = el.selectionStart;
     const textBefore = el.value.substring(0, pos);
-    const ctx = getContext(textBefore, requestNames ?? []);
+    const ctx = variant === 'mock'
+      ? getMockContext(textBefore)
+      : getContext(textBefore, requestNames ?? []);
     if (!ctx) { setAc(null); return; }
 
     const filtered = ctx.completions.filter(c =>

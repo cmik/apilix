@@ -278,11 +278,11 @@ body{font-family:ui-monospace,'Cascadia Code',Consolas,monospace;background:var(
 #clearBtn:hover{color:var(--text-btn-hover);border-color:var(--text-dim)}
 #list{flex:1;overflow-y:auto;min-height:0}
 .empty{display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-dimmer);font-style:italic;font-size:12px;user-select:none}
-.row{border-bottom:1px solid var(--border-row);cursor:pointer;user-select:none}
+.row{border-bottom:1px solid var(--border-row);cursor:pointer}
 .row:hover .row-inner{background:var(--bg-row-hover)}
 .row.sel{border-left:2px solid #f97316}
 .row.sel .row-inner{background:var(--bg-row-sel)}
-.row-inner{display:flex;align-items:center;gap:6px;padding:5px 12px}
+.row-inner{display:flex;align-items:center;gap:6px;padding:5px 12px;user-select:none}
 .badge{font-size:10px;font-weight:700;padding:1px 5px;border-radius:3px;flex-shrink:0;font-family:inherit}
 .mGET{color:#4ade80;background:rgba(74,222,128,.15)}
 .mPOST{color:#60a5fa;background:rgba(96,165,250,.15)}
@@ -531,6 +531,7 @@ function renderEntry(e) {
   if (sel) { d.appendChild(renderDetail(e)); }
   d.addEventListener('click', function(ev) {
     if (ev.target.closest && ev.target.closest('.dtab')) return;
+    if (window.getSelection && window.getSelection().toString()) return;
     selId = (selId === e.id) ? null : e.id;
     render();
   });

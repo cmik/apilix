@@ -1,10 +1,27 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useApp, generateId } from '../store';
-import type { MockRoute, MockCollection, AppCollection, PostmanItem, MockLogEntry } from '../types';
+import type { MockRoute, MockCollection, AppCollection, PostmanItem, MockLogEntry, MockRouteRule } from '../types';
 import { startMockServer, stopMockServer, syncMockRoutes, getMockStatus, getMockLog, clearMockLog } from '../api';
+import ScriptEditor from './ScriptEditor';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', '*'];
 const STATUS_CODES = [200, 201, 204, 301, 302, 400, 401, 403, 404, 409, 422, 500, 502, 503];
+
+const RULE_SOURCES: Array<{ value: MockRouteRule['source']; label: string }> = [
+  { value: 'header', label: 'Header' },
+  { value: 'query',  label: 'Query'  },
+  { value: 'body',   label: 'Body'   },
+  { value: 'param',  label: 'Param'  },
+];
+
+const RULE_OPERATORS: Array<{ value: MockRouteRule['operator']; label: string; hasValue: boolean }> = [
+  { value: 'exists',      label: 'exists',       hasValue: false },
+  { value: 'not-exists',  label: 'not exists',   hasValue: false },
+  { value: 'equals',      label: '=',            hasValue: true  },
+  { value: 'not-equals',  label: '≠',            hasValue: true  },
+  { value: 'contains',    label: 'contains',     hasValue: true  },
+  { value: 'starts-with', label: 'starts with',  hasValue: true  },
+];
 
 const SKIP_RESPONSE_HEADERS = new Set([
   'content-encoding', 'transfer-encoding', 'connection', 'keep-alive',
@@ -12,6 +29,18 @@ const SKIP_RESPONSE_HEADERS = new Set([
 ]);
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function emptyRule(): MockRouteRule {
+  return {
+    id: generateId(),
+    source: 'header',
+    field: '',
+    operator: 'exists',
+    value: '',
+    statusCode: 401,
+    responseBody: '{"error":"Unauthorized"}',
+  };
+}
 
 function emptyRoute(collectionId?: string): MockRoute {
   return {
@@ -25,6 +54,8 @@ function emptyRoute(collectionId?: string): MockRoute {
     responseBody: '{\n  "message": "Hello from mock!"\n}',
     delay: 0,
     description: '',
+    rules: [],
+    script: '',
   };
 }
 
@@ -238,6 +269,11 @@ function RouteEditorModal({ initial, collections, onSave, onClose }: {
   const [headerRows, setHeaderRows] = useState(
     initial.responseHeaders.length > 0 ? [...initial.responseHeaders] : [{ key: '', value: '' }]
   );
+  const [rules, setRules] = useState<MockRouteRule[]>(initial.rules ?? []);
+  const [script, setScript] = useState(initial.script ?? '');
+  const [showRules, setShowRules] = useState((initial.rules ?? []).length > 0);
+  const [showScript, setShowScript] = useState(!!initial.script);
+  const [scriptError, setScriptError] = useState<string | null>(null);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose(); }
@@ -249,9 +285,27 @@ function RouteEditorModal({ initial, collections, onSave, onClose }: {
     setRoute(r => ({ ...r, [k]: v }));
   }
 
+  function updateRule(id: string, patch: Partial<MockRouteRule>) {
+    setRules(rs => rs.map(r => r.id === id ? { ...r, ...patch } : r));
+  }
+
   function handleSave() {
+    if (script.trim()) {
+      try {
+        // eslint-disable-next-line no-new-func
+        new Function(script);
+        setScriptError(null);
+      } catch (e: any) {
+        const msg = e?.message ?? 'Syntax error';
+        setScriptError(msg);
+        setShowScript(true);
+        return;
+      }
+    } else {
+      setScriptError(null);
+    }
     const headers = headerRows.filter(h => h.key.trim());
-    onSave({ ...route, responseHeaders: headers });
+    onSave({ ...route, responseHeaders: headers, rules, script });
     onClose();
   }
 
@@ -336,6 +390,122 @@ function RouteEditorModal({ initial, collections, onSave, onClose }: {
               </label>
               <textarea value={route.responseBody} onChange={e => updateField('responseBody', e.target.value)} rows={10} spellCheck={false} className="w-full bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none resize-y" />
             </div>
+
+            {/* ── Rules ── */}
+            <div className="border border-slate-700 rounded-lg overflow-hidden">
+              <button
+                onClick={() => setShowRules(s => !s)}
+                className="w-full flex items-center justify-between px-3 py-2 bg-slate-800/60 hover:bg-slate-800 transition-colors text-left"
+              >
+                <span className="text-xs font-medium text-slate-300 flex items-center gap-2">
+                  Conditional Rules
+                  {rules.length > 0 && <span className="px-1.5 py-0.5 bg-orange-500/20 text-orange-400 rounded text-xs">{rules.length}</span>}
+                </span>
+                <span className="text-slate-500 text-xs">{showRules ? '▴' : '▾'}</span>
+              </button>
+              {showRules && (
+                <div className="px-3 py-3 space-y-2">
+                  <p className="text-xs text-slate-500">Rules are evaluated in order. The first match overrides the default response.</p>
+                  {rules.map((rule, i) => {
+                    const opDef = RULE_OPERATORS.find(o => o.value === rule.operator)!;
+                    return (
+                      <div key={rule.id} className="border border-slate-700 rounded-lg p-3 space-y-2 bg-slate-900">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs text-slate-500 shrink-0">If</span>
+                          <select
+                            value={rule.source}
+                            onChange={e => updateRule(rule.id, { source: e.target.value as MockRouteRule['source'] })}
+                            className="bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none"
+                          >
+                            {RULE_SOURCES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                          </select>
+                          <input
+                            value={rule.field}
+                            onChange={e => updateRule(rule.id, { field: e.target.value })}
+                            placeholder="field"
+                            className="flex-1 min-w-[80px] bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none"
+                          />
+                          <select
+                            value={rule.operator}
+                            onChange={e => updateRule(rule.id, { operator: e.target.value as MockRouteRule['operator'] })}
+                            className="bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none"
+                          >
+                            {RULE_OPERATORS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          </select>
+                          {opDef.hasValue && (
+                            <input
+                              value={rule.value}
+                              onChange={e => updateRule(rule.id, { value: e.target.value })}
+                              placeholder="value"
+                              className="flex-1 min-w-[80px] bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none"
+                            />
+                          )}
+                          <button onClick={() => setRules(rs => rs.filter(r => r.id !== rule.id))} className="text-slate-600 hover:text-red-400 text-base transition-colors ml-auto shrink-0">×</button>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-slate-500 shrink-0">→ respond</span>
+                          <select
+                            value={rule.statusCode}
+                            onChange={e => updateRule(rule.id, { statusCode: parseInt(e.target.value, 10) })}
+                            className="bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none"
+                          >
+                            {STATUS_CODES.map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                          <input
+                            value={rule.responseBody}
+                            onChange={e => updateRule(rule.id, { responseBody: e.target.value })}
+                            placeholder='{"error":"..."}  or any body'
+                            className="flex-1 bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none"
+                          />
+                        </div>
+                        {i < rules.length - 1 && <p className="text-xs text-slate-600 italic">↓ else check next rule…</p>}
+                      </div>
+                    );
+                  })}
+                  <button
+                    onClick={() => setRules(rs => [...rs, emptyRule()])}
+                    className="text-xs text-orange-400 hover:text-orange-300 transition-colors"
+                  >
+                    + Add Rule
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* ── Script ── */}
+            <div className="border border-slate-700 rounded-lg overflow-hidden">
+              <button
+                onClick={() => setShowScript(s => !s)}
+                className="w-full flex items-center justify-between px-3 py-2 bg-slate-800/60 hover:bg-slate-800 transition-colors text-left"
+              >
+                <span className="text-xs font-medium text-slate-300 flex items-center gap-2">
+                  Response Script
+                  {script.trim() && !scriptError && <span className="px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs">active</span>}
+                  {scriptError && <span className="px-1.5 py-0.5 bg-red-500/20 text-red-400 rounded text-xs">syntax error</span>}
+                </span>
+                <span className="text-slate-500 text-xs">{showScript ? '▴' : '▾'}</span>
+              </button>
+              {showScript && (
+                <div className="px-3 py-3 space-y-2">
+                  <p className="text-xs text-slate-500">
+                    JavaScript snippet. Runs before rules and default response. Call <code className="font-mono text-slate-400">respond(status, body)</code> to override.
+                  </p>
+                  <ScriptEditor
+                    variant="mock"
+                    value={script}
+                    onChange={setScript}
+                    rows={8}
+                    placeholder={`// Available: req.method, req.path, req.headers, req.query, req.params, req.body, req.requestCount\n// respond(status, body[, headers])\n\nif (!req.headers['authorization']) {\n  respond(401, { error: 'Unauthorized' });\n} else {\n  respond(200, { message: 'Hello, ' + req.body.name });\n}`}
+                    className="w-full bg-slate-800 border border-slate-700 focus:border-blue-500 rounded px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none resize-y"
+                  />
+                  {scriptError && (
+                    <p className="text-xs text-red-400 bg-red-950/40 border border-red-800/50 rounded px-3 py-2 font-mono">{scriptError}</p>
+                  )}
+                  <p className="text-xs text-slate-600">Priority: Script → Rules → Default response. Timeout: 2 s.</p>
+                </div>
+              )}
+            </div>
+
           </div>
           <div className="flex justify-end gap-2 px-5 py-3 border-t border-slate-700 shrink-0">
             <button onClick={onClose} className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors">Cancel</button>

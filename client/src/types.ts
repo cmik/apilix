@@ -238,6 +238,16 @@ export interface MockLogEntry {
   responseBody: string;
 }
 
+export interface MockRouteRule {
+  id: string;
+  source: 'header' | 'query' | 'body' | 'param';
+  field: string;
+  operator: 'exists' | 'not-exists' | 'equals' | 'not-equals' | 'contains' | 'starts-with';
+  value: string;
+  statusCode: number;
+  responseBody: string;
+}
+
 export interface MockRoute {
   id: string;
   enabled: boolean;
@@ -249,6 +259,8 @@ export interface MockRoute {
   responseBody: string;
   delay: number;  // ms
   description: string;
+  rules?: MockRouteRule[];
+  script?: string;
 }
 
 export interface AppState {

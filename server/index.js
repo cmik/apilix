@@ -3,6 +3,7 @@
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
+const vm = require('vm');
 const { parse: parseCsv } = require('csv-parse/sync');
 const { executeRequest, flattenItems } = require('./executor');
 
@@ -410,6 +411,79 @@ function interpolate(template, ctx) {
   return result;
 }
 
+// ─── Rules Engine (Feature 2) ──────────────────────────────────────────────────
+
+function getRuleValue(source, field, ctx) {
+  switch (source) {
+    case 'header': return ctx.header[field.toLowerCase()];
+    case 'query':  return ctx.query[field];
+    case 'body':   return String(resolveDotPath(ctx.body, field) ?? '');
+    case 'param':  return ctx.param[field];
+    default:       return undefined;
+  }
+}
+
+function evaluateRule(rule, ctx) {
+  const actual = getRuleValue(rule.source, rule.field, ctx);
+  const expected = rule.value ?? '';
+  switch (rule.operator) {
+    case 'exists':      return actual !== undefined && actual !== null && actual !== '';
+    case 'not-exists':  return actual === undefined || actual === null || actual === '';
+    case 'equals':      return String(actual ?? '') === expected;
+    case 'not-equals':  return String(actual ?? '') !== expected;
+    case 'contains':    return String(actual ?? '').includes(expected);
+    case 'starts-with': return String(actual ?? '').startsWith(expected);
+    default:            return false;
+  }
+}
+
+function findMatchingRule(rules, ctx) {
+  for (const rule of (rules || [])) {
+    if (evaluateRule(rule, ctx)) return rule;
+  }
+  return null;
+}
+
+// ─── Response Scripting (Feature 3) ───────────────────────────────────────────
+
+/**
+ * Run a user-supplied JS snippet in a sandboxed vm context.
+ * Returns { status, body, headers } if respond() was called, otherwise null.
+ */
+function runMockScript(script, ctx) {
+  if (!script || !script.trim()) return null;
+  let result = null;
+  const sandbox = {
+    req: {
+      method: ctx.method,
+      path: ctx._pathname,
+      url: ctx.url,
+      headers: ctx.header,
+      query: ctx.query,
+      params: ctx.param,
+      body: ctx.body,
+      requestCount: ctx._requestCount,
+    },
+    respond(status, body, headers) {
+      result = {
+        status: parseInt(status, 10) || 200,
+        body: body != null ? (typeof body === 'object' ? JSON.stringify(body) : String(body)) : '',
+        headers: Array.isArray(headers) ? headers : [],
+      };
+    },
+    console: { log: () => {}, warn: () => {}, error: () => {}, info: () => {} },
+    JSON,
+    Math,
+    Date,
+  };
+  try {
+    vm.runInNewContext(script, sandbox, { timeout: 2000 });
+  } catch (_) {
+    // script errors are silenced — fall through to rules/default
+  }
+  return result;
+}
+
 function buildMockHandler() {
   return function (req, res) {
     const method = req.method.toUpperCase();
@@ -483,17 +557,39 @@ function buildMockHandler() {
         header: req.headers,
         method,
         url,
+        _pathname: pathname,
         _requestCount: hitCount,
       };
-      const responseBody = interpolate(matched.responseBody, ctx);
 
-      // Merge headers
+      // Priority: Script → Rules → Default response
+      const scriptResult = runMockScript(matched.script, ctx);
+      const matchedRule = !scriptResult ? findMatchingRule(matched.rules, ctx) : null;
+
+      const finalStatus = scriptResult
+        ? scriptResult.status
+        : matchedRule
+          ? matchedRule.statusCode
+          : (matched.statusCode || 200);
+
+      const rawResponseBody = scriptResult
+        ? scriptResult.body
+        : matchedRule
+          ? matchedRule.responseBody
+          : matched.responseBody;
+
+      const responseBody = interpolate(rawResponseBody, ctx);
+
+      // Merge headers: base route headers, then rule/script overrides
       const headers = { 'Access-Control-Allow-Origin': '*' };
       (matched.responseHeaders || []).forEach(h => {
         if (h.key) headers[h.key] = interpolate(h.value, ctx);
       });
+      if (scriptResult) {
+        (scriptResult.headers || []).forEach(h => {
+          if (h.key) headers[h.key] = h.value;
+        });
+      }
       if (!headers['Content-Type']) {
-        // Auto-detect JSON
         try { JSON.parse(responseBody); headers['Content-Type'] = 'application/json'; }
         catch { headers['Content-Type'] = 'text/plain'; }
       }
@@ -509,12 +605,12 @@ function buildMockHandler() {
         matchedRouteId: matched.id,
         matchedRouteName: matched.description || matched.path,
         matchedRoutePath: matched.path,
-        responseStatus: matched.statusCode || 200,
+        responseStatus: finalStatus,
         responseBody,
       });
 
       const send = () => {
-        res.writeHead(matched.statusCode || 200, headers);
+        res.writeHead(finalStatus, headers);
         res.end(responseBody);
       };
 
