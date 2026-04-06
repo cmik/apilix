@@ -1,5 +1,7 @@
 import type { ConsoleEntry } from '../types';
 
+declare const __APP_VERSION__: string;
+
 type ServerStatus = 'checking' | 'online' | 'offline';
 
 interface StatusBarProps {
@@ -65,6 +67,14 @@ export default function StatusBar({
           </span>
         )}
       </button>
+
+      {/* Separator */}
+      <span className="w-px h-3.5 bg-slate-700 mx-1" />
+
+      {/* App version */}
+      <span className="font-mono text-slate-500 px-1.5" title="App version">
+        v{__APP_VERSION__}
+      </span>
 
       <div className="flex-1" />
 

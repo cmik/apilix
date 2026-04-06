@@ -70,7 +70,7 @@ export default function Sidebar() {
             key={key}
             onClick={() => dispatch({ type: 'SET_VIEW', payload: key })}
             className={`flex-1 py-2 text-xs font-medium transition-colors ${
-              state.view === key
+              state.view === key || (key === 'environments' && state.view === 'globals')
                 ? 'text-orange-400 border-b-2 border-orange-400'
                 : 'text-slate-400 hover:text-slate-200'
             }`}

@@ -109,6 +109,34 @@ function EnvEditor({ env, onSave, onCancel }: EnvEditorProps) {
   );
 }
 
+function EnvGlobalsTabBar() {
+  const { state, dispatch } = useApp();
+  return (
+    <div className="flex border-b border-slate-700 shrink-0 -mx-4 px-4 mb-2">
+      <button
+        onClick={() => dispatch({ type: 'SET_VIEW', payload: 'environments' })}
+        className={`mr-4 pb-2 text-xs font-medium transition-colors border-b-2 ${
+          state.view === 'environments'
+            ? 'text-orange-400 border-orange-400'
+            : 'text-slate-400 hover:text-slate-200 border-transparent'
+        }`}
+      >
+        🌍 Environments
+      </button>
+      <button
+        onClick={() => dispatch({ type: 'SET_VIEW', payload: 'globals' })}
+        className={`pb-2 text-xs font-medium transition-colors border-b-2 ${
+          state.view === 'globals'
+            ? 'text-orange-400 border-orange-400'
+            : 'text-slate-400 hover:text-slate-200 border-transparent'
+        }`}
+      >
+        🌐 Globals
+      </button>
+    </div>
+  );
+}
+
 export default function EnvironmentPanel() {
   const { state, dispatch } = useApp();
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -137,6 +165,7 @@ export default function EnvironmentPanel() {
     const blank: AppEnvironment = { _id: generateId(), name: 'New Environment', values: [] };
     return (
       <div className="flex-1 flex flex-col p-4 gap-4 overflow-hidden">
+        <EnvGlobalsTabBar />
         <h2 className="text-white font-semibold text-base">New Environment</h2>
         <EnvEditor env={blank} onSave={handleCreate} onCancel={() => setCreating(false)} />
       </div>
@@ -146,6 +175,7 @@ export default function EnvironmentPanel() {
   if (editingEnv) {
     return (
       <div className="flex-1 flex flex-col p-4 gap-4 overflow-hidden">
+        <EnvGlobalsTabBar />
         <h2 className="text-white font-semibold text-base">Edit: {editingEnv.name}</h2>
         <EnvEditor env={editingEnv} onSave={handleSave} onCancel={() => setEditingId(null)} />
       </div>
@@ -154,6 +184,7 @@ export default function EnvironmentPanel() {
 
   return (
     <div className="flex-1 flex flex-col p-4 gap-4 overflow-hidden">
+      <EnvGlobalsTabBar />
       <div className="flex items-center justify-between">
         <h2 className="text-white font-semibold text-base">Environments</h2>
         <button

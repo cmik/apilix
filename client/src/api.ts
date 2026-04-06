@@ -34,6 +34,7 @@ export interface ChildRequestLog {
 export interface ExecuteResult extends Omit<RequestResponse, never> {
   updatedEnvironment?: Record<string, string>;
   updatedCollectionVariables?: Record<string, string>;
+  updatedGlobals?: Record<string, string>;
   updatedCookies?: CookieJar;
   scriptLogs?: ScriptLog[];
   resolvedUrl?: string;

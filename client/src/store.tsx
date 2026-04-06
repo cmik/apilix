@@ -281,6 +281,9 @@ function appReducer(state: AppState, action: AppAction): AppState {
     case 'UPDATE_GLOBAL_VARS':
       return { ...state, globalVariables: { ...state.globalVariables, ...action.payload } };
 
+    case 'SET_GLOBAL_VARS':
+      return { ...state, globalVariables: action.payload };
+
     case 'ADD_CONSOLE_LOG':
       return { ...state, consoleLogs: [action.payload, ...state.consoleLogs].slice(0, 500) };
 

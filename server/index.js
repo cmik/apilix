@@ -154,18 +154,21 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
       const dataRow = dataRows[i];
       let currentEnv = { ...(environment || {}) };
       let currentCollVars = { ...(collectionVariables || {}) };
+      let currentGlobals = { ...(globals || {}) };
       let currentCookies = { ...(cookies || {}) };
 
       sendEvent('iteration-start', { iteration: i + 1, dataRow });
 
-      for (const item of requests) {
+      let reqIdx = 0;
+      while (reqIdx < requests.length) {
+        const item = requests[reqIdx];
         // Check pause/stop before each request
         if ((await waitForResume(runId)) === 'stopped') { stopped = true; break outer; }
 
         const result = await executeRequest(item, {
           environment: currentEnv,
           collectionVariables: currentCollVars,
-          globals: globals || {},
+          globals: currentGlobals,
           dataRow,
           collVars: collection.variable || [],
           cookies: currentCookies,
@@ -175,6 +178,7 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
         // Propagate environment/variable/cookie changes to next request in same iteration
         if (result.updatedEnvironment) currentEnv = result.updatedEnvironment;
         if (result.updatedCollectionVariables) currentCollVars = result.updatedCollectionVariables;
+        if (result.updatedGlobals) currentGlobals = result.updatedGlobals;
         if (result.updatedCookies) currentCookies = result.updatedCookies;
 
         const resultData = {
@@ -197,14 +201,33 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
           scriptLogs: result.scriptLogs,
           preChildRequests: result.preChildRequests || [],
           testChildRequests: result.testChildRequests || [],
+          skipped: result.skipped || false,
           error: result.error,
         };
 
         sendEvent('result', resultData);
 
+        // Handle pm.execution.setNextRequest() — jump to named request or stop iteration
+        if (result.nextRequest !== undefined && result.nextRequest !== null) {
+          const targetIdx = requests.findIndex(r => r.name === result.nextRequest);
+          if (targetIdx >= 0) {
+            reqIdx = targetIdx;
+          } else {
+            // Unknown request name — stop iteration (Postman behaviour)
+            break;
+          }
+          continue;
+        }
+        // setNextRequest(null) stops iteration immediately
+        if (result.nextRequest === null) {
+          break;
+        }
+
         if (delayMs > 0) {
           if ((await awaitDelay(runId, delayMs)) === 'stopped') { stopped = true; break outer; }
         }
+
+        reqIdx++;
       }
 
       sendEvent('iteration-end', { iteration: i + 1 });

@@ -256,7 +256,7 @@ apx.sendRequest(
   {
     url: 'https://api.example.com/token',
     method: 'POST',
-    header: { 'Content-Type': 'application/json' },
+    header: [{ key: 'Content-Type', value: 'application/json' }],
     body: {
       mode: 'raw',
       raw: JSON.stringify({ grant_type: 'client_credentials' }),

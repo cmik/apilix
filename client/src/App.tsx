@@ -12,6 +12,7 @@ import StatusBar from './components/StatusBar';
 import TabBar from './components/TabBar';
 import CookieManagerModal from './components/CookieManagerModal';
 import MockServerPanel from './components/MockServerPanel';
+import GlobalVariablesPanel from './components/GlobalVariablesPanel';
 
 // --- Env Quick Panel ---
 
@@ -443,6 +444,11 @@ export default function App() {
         {state.view === 'environments' && (
           <div className="flex-1 flex flex-col overflow-hidden">
             <EnvironmentPanel />
+          </div>
+        )}
+        {state.view === 'globals' && (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <GlobalVariablesPanel />
           </div>
         )}
         {state.view === 'mock' && (

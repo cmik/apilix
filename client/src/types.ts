@@ -213,7 +213,7 @@ export interface ActiveRequest {
   item: PostmanItem;
 }
 
-export type AppView = 'request' | 'runner' | 'environments' | 'mock';
+export type AppView = 'request' | 'runner' | 'environments' | 'globals' | 'mock';
 
 export interface MockRoute {
   id: string;
@@ -282,6 +282,7 @@ export type AppAction =
   | { type: 'SET_RUNNING'; payload: boolean }
   | { type: 'UPDATE_COLLECTION_VARS'; payload: { collectionId: string; vars: Record<string, string> } }
   | { type: 'UPDATE_GLOBAL_VARS'; payload: Record<string, string> }
+  | { type: 'SET_GLOBAL_VARS'; payload: Record<string, string> }
   | { type: 'UPDATE_ACTIVE_ENV_VARS'; payload: Record<string, string> }
   | { type: 'UPDATE_COLLECTION'; payload: AppCollection }
   | { type: 'ADD_CONSOLE_LOG'; payload: ConsoleEntry }

@@ -5,6 +5,7 @@ const axios = require('axios');
 const https = require('https');
 const xpathLib = require('xpath');
 const { DOMParser } = require('@xmldom/xmldom');
+const { webcrypto } = require('crypto');
 
 const httpClient = axios.create({
   httpsAgent: new https.Agent({ rejectUnauthorized: false }),
@@ -207,7 +208,7 @@ function createExpect(value, negated) {
 // ─── apx object factory ─────────────────────────────────────────────────────
 // apx is the primary API; pm is an alias for Postman compatibility
 
-function createApx(response, variables, updatedVariables, tests, pendingRequests, deps, childRequests) {
+function createApx(response, variables, updatedVariables, tests, pendingRequests, deps, childRequests, executionSignals) {
   // deps = { collectionItems, executeRequestFn, context }
   const collectionItems = (deps && deps.collectionItems) || [];
   const executeRequestFn = (deps && deps.executeRequestFn) || null;
@@ -253,19 +254,17 @@ function createApx(response, variables, updatedVariables, tests, pendingRequests
     get collectionVariables() { return this.collection; }, // Postman compatibility alias
     globals: (() => {
       const globalStore = makeVarStore(updatedGlobalMutations);
-      const unsupportedGlobalsMutation = () => {
-        throw new Error('apx.globals mutations are not supported in this sandbox because global changes are not persisted.');
-      };
-
       return {
         get(key) { return globalStore.get(key); },
         has(key) { return globalStore.has(key); },
         toObject() {
           return typeof globalStore.toObject === 'function' ? globalStore.toObject() : {};
         },
-        set: unsupportedGlobalsMutation,
-        unset: unsupportedGlobalsMutation,
-        clear: unsupportedGlobalsMutation,
+        set(key, value) { globalStore.set(key, value); },
+        unset(key) { globalStore.unset(key); },
+        clear() {
+          Object.keys(updatedGlobalMutations).forEach(k => delete updatedGlobalMutations[k]);
+        },
       };
     })(),
     variables: makeVarStore(null), // generic store — falls back to flat routing in executeRequest
@@ -288,6 +287,15 @@ function createApx(response, variables, updatedVariables, tests, pendingRequests
       },
       url: (execContext && execContext.url) || '',
       method: (execContext && execContext.method) || '',
+    },
+
+    execution: {
+      skipRequest() {
+        if (executionSignals) executionSignals.skipRequest = true;
+      },
+      setNextRequest(name) {
+        if (executionSignals) executionSignals.nextRequest = name === null ? null : String(name);
+      },
     },
 
     sendRequest(opts, callback) {
@@ -452,6 +460,9 @@ function buildResponse(r) {
         const key = Object.keys(r.headers || {}).find(k => k.toLowerCase() === name.toLowerCase());
         return key ? r.headers[key] : undefined;
       },
+      has(name) {
+        return Object.keys(r.headers || {}).some(k => k.toLowerCase() === name.toLowerCase());
+      },
     },
     // Chai-like assertion sugar on response
     to: {
@@ -494,8 +505,9 @@ async function runScript(code, response, variables, deps) {
   const consoleLogs = [];
   const pendingRequests = [];
   const childRequests = [];
+  const executionSignals = { skipRequest: false, nextRequest: undefined };
 
-  const apx = createApx(response, variables || {}, updatedVariables, tests, pendingRequests, deps, childRequests);
+  const apx = createApx(response, variables || {}, updatedVariables, tests, pendingRequests, deps, childRequests, executionSignals);
   // pm is a full alias to apx for Postman script compatibility
   const pm = apx;
 
@@ -533,6 +545,21 @@ async function runScript(code, response, variables, deps) {
     clearInterval() {},
     btoa: (s) => Buffer.from(s).toString('base64'),
     atob: (s) => Buffer.from(s, 'base64').toString('utf8'),
+    unescape,
+    escape,
+    crypto: webcrypto,
+    TextEncoder,
+    TextDecoder,
+    Uint8Array,
+    Uint8ClampedArray,
+    Int8Array,
+    Int16Array,
+    Uint16Array,
+    Int32Array,
+    Uint32Array,
+    Float32Array,
+    Float64Array,
+    ArrayBuffer,
     XMLHttpRequest: undefined,
     fetch: undefined,
     _xp(html, expr) {
@@ -564,7 +591,7 @@ async function runScript(code, response, variables, deps) {
     tests.push({ name: '__ScriptError__', passed: false, error: err.message });
   }
 
-  return { tests, updatedVariables, consoleLogs, childRequests };
+  return { tests, updatedVariables, updatedGlobalMutations, consoleLogs, childRequests, skipRequest: executionSignals.skipRequest, nextRequest: executionSignals.nextRequest };
 }
 
 module.exports = { runScript };

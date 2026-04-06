@@ -1,6 +1,6 @@
 {
   "name": "apilix",
-  "version": "1.0.0-beta.1",
+  "version": "1.0.0-beta.3",
   "description": "APILIX - Alternative Platform for Instant Live API eXecution",
   "main": "electron/main.js",
   "scripts": {

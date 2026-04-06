@@ -301,6 +301,7 @@ async function executeRequest(item, context) {
   let scriptLogs = [];
   let preChildRequests = [];
   const preScript = (item.event || []).find(e => e.listen === 'prerequest');
+  let preSkipRequest = false;
   if (preScript) {
     const code = Array.isArray(preScript.script.exec)
       ? preScript.script.exec.join('\n')
@@ -312,9 +313,45 @@ async function executeRequest(item, context) {
         context: { environment, collectionVariables, globals, dataRow, collVars, cookies },
       };
       const result = await runScript(code, null, vars, scriptDeps);
-      vars = { ...vars, ...result.updatedVariables };
+      const preUpdatedVars = result.updatedVariables;
+      const preUpdatedGlobals = result.updatedGlobalMutations || {};
+      globals = { ...globals, ...preUpdatedGlobals };
+      vars = { ...vars, ...preUpdatedVars, ...preUpdatedGlobals };
       scriptLogs = [...scriptLogs, ...result.consoleLogs];
       preChildRequests = result.childRequests || [];
+      preSkipRequest = result.skipRequest === true;
+
+      if (preSkipRequest) {
+        // Split pre-script var mutations back into env / collectionVariables
+        const skipEnv = { ...environment };
+        const skipCollVars = { ...collectionVariables };
+        Object.entries(preUpdatedVars).forEach(([k, v]) => {
+          if (k in environment) skipEnv[k] = v;
+          else skipCollVars[k] = v;
+        });
+        return {
+          status: 0,
+          statusText: 'Skipped',
+          responseTime: 0,
+          resolvedUrl: '',
+          requestHeaders: {},
+          requestBody: undefined,
+          headers: {},
+          body: '',
+          size: 0,
+          testResults: [],
+          scriptLogs,
+          preChildRequests,
+          testChildRequests: [],
+          updatedEnvironment: skipEnv,
+          updatedCollectionVariables: skipCollVars,
+          updatedGlobals: globals,
+          updatedCookies: cookies,
+          skipped: true,
+          nextRequest: undefined,
+          error: null,
+        };
+      }
     }
   }
 
@@ -349,6 +386,7 @@ async function executeRequest(item, context) {
   const _tc = makeTimingAndCertContext();
   const startTime = Date.now();
   let testChildRequests = [];
+  let nextRequestSignal = undefined; // set by pm.execution.setNextRequest()
 
   try {
     // ─── Redirect chain handling ───────────────────────────────────────────
@@ -442,9 +480,12 @@ async function executeRequest(item, context) {
         const result = await runScript(code, responseData, vars, scriptDeps);
         testResults = result.tests;
         updatedVars = result.updatedVariables;
+        const testUpdatedGlobals = result.updatedGlobalMutations || {};
+        globals = { ...globals, ...testUpdatedGlobals };
         scriptLogs = [...scriptLogs, ...result.consoleLogs];
         testChildRequests = result.childRequests || [];
-        vars = { ...vars, ...updatedVars };
+        if (result.nextRequest !== undefined) nextRequestSignal = result.nextRequest;
+        vars = { ...vars, ...updatedVars, ...testUpdatedGlobals };
       }
     }
 
@@ -500,10 +541,12 @@ async function executeRequest(item, context) {
       testChildRequests,
       updatedEnvironment: updatedEnv,
       updatedCollectionVariables: updatedCollVars,
+      updatedGlobals: globals,
       updatedCookies,
       networkTimings,
       tlsCertChain: _tc.certHolder.chain,
       redirectChain,
+      nextRequest: nextRequestSignal,
       error: null,
     };
   } catch (err) {
@@ -523,6 +566,7 @@ async function executeRequest(item, context) {
       testChildRequests,
       updatedEnvironment: environment,
       updatedCollectionVariables: collectionVariables,
+      updatedGlobals: globals,
       updatedCookies: cookies,
       networkTimings: { dns: 0, tcp: 0, tls: 0, server: 0, total: Date.now() - startTime },
       tlsCertChain: null,

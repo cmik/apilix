@@ -788,6 +788,9 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
           payload: { collectionId: activeReq.collectionId, vars: result.updatedCollectionVariables },
         });
       }
+      if (result.updatedGlobals) {
+        dispatch({ type: 'UPDATE_GLOBAL_VARS', payload: result.updatedGlobals });
+      }
       if (result.updatedCookies) {
         Object.entries(result.updatedCookies).forEach(([domain, cookies]) => {
           dispatch({ type: 'UPSERT_DOMAIN_COOKIES', payload: { domain, cookies } });
