@@ -590,6 +590,8 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
   const [urlAcSuggestions, setUrlAcSuggestions] = useState<string[]>([]);
   const [urlAcIndex, setUrlAcIndex] = useState(0);
   const [urlAcLeft, setUrlAcLeft] = useState(0);
+  const [showSendMenu, setShowSendMenu] = useState(false);
+  const sendMenuRef = useRef<HTMLDivElement>(null);
 
   // Swap edit state when active tab changes
   useEffect(() => {
@@ -930,7 +932,112 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
   }
   _sendRef.current = handleSend;
 
+  function buildMockUrl(mockBase: string, resolvedRaw: string) {
+    try {
+      const parsed = new URL(resolvedRaw);
+      return mockBase + parsed.pathname + parsed.search + parsed.hash;
+    } catch {
+      const strippedOrigin = resolvedRaw.replace(/^https?:\/\/[^/]+/i, '');
+      const normalizedPath = strippedOrigin !== resolvedRaw ? (strippedOrigin || '/') : resolvedRaw;
+      const withSlash = normalizedPath.startsWith('/') ? normalizedPath : '/' + normalizedPath;
+      return mockBase + withSlash;
+    }
+  }
 
+  async function handleSendToMock() {
+    if (!edit || !activeReq || !activeTab) return;
+    if (!state.mockServerRunning) {
+      window.alert('Mock server is not running. Start the mock server and try again.');
+      return;
+    }
+    const mockBase = `http://localhost:${state.mockPort}`;
+    const resolvedRaw = resolveVariables(applyPathParams(edit.url, edit.pathParams), allVars);
+    const mockUrl = buildMockUrl(mockBase, resolvedRaw);
+    const tabId = activeTab.id;
+    dispatch({ type: 'SET_TAB_LOADING', payload: { tabId, loading: true } });
+    dispatch({ type: 'SET_TAB_RESPONSE', payload: { tabId, response: null } });
+
+    const col = state.collections.find(c => c._id === activeReq.collectionId);
+    const resolvedAuth = edit.authType === 'inherit'
+      ? resolveInheritedAuth(col?.item ?? [], activeReq.item.id ?? '', col?.auth)
+      : buildAuth(edit);
+
+    let binaryBase64: string | undefined;
+    if (edit.bodyMode === 'file' && edit.bodyFile) {
+      const ab = await edit.bodyFile.arrayBuffer();
+      const bytes = new Uint8Array(ab);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      binaryBase64 = btoa(binary);
+    }
+
+    const item: CollectionItem = {
+      ...activeReq.item,
+      request: {
+        method: edit.method,
+        url: { raw: mockUrl },
+        header: edit.headers.filter(h => !h.disabled),
+        body: edit.bodyMode !== 'none' ? {
+          mode: edit.bodyMode as NonNullable<NonNullable<CollectionItem['request']>['body']>['mode'],
+          raw: edit.bodyMode === 'raw' ? edit.bodyRaw : edit.bodyMode === 'file' ? (binaryBase64 ?? '') : undefined,
+          urlencoded: edit.bodyMode === 'urlencoded' ? edit.bodyUrlEncoded : undefined,
+          formdata: edit.bodyMode === 'formdata' ? edit.bodyFormData : undefined,
+          graphql: edit.bodyMode === 'graphql' ? { query: edit.bodyGraphqlQuery, variables: edit.bodyGraphqlVariables || undefined } : undefined,
+          options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as 'json' | 'text' } } : undefined,
+        } : undefined,
+        auth: resolvedAuth,
+      },
+      event: buildEvents(edit),
+    };
+
+    try {
+      const result = await executeRequest({
+        item,
+        environment: envVars,
+        collectionVariables: collVars,
+        globals: state.globalVariables,
+        collVars: col?.variable ?? [],
+        cookies: state.cookieJar,
+        collectionItems: col?.item ?? [],
+      });
+      dispatch({ type: 'SET_TAB_RESPONSE', payload: { tabId, response: result } });
+      dispatch({
+        type: 'ADD_CONSOLE_LOG',
+        payload: {
+          id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+          timestamp: Date.now(),
+          method: edit.method,
+          url: result.resolvedUrl ?? mockUrl,
+          requestHeaders: result.requestHeaders
+            ? Object.entries(result.requestHeaders).map(([key, value]) => ({ key, value }))
+            : edit.headers.map(h => ({ ...h, value: resolveVariables(h.value, allVars) })),
+          requestBody: result.requestBody ?? (edit.bodyMode === 'raw' ? resolveVariables(edit.bodyRaw, allVars) : undefined),
+          scriptLogs: result.scriptLogs ?? [],
+          response: result,
+        },
+      });
+      if (result.updatedEnvironment) dispatch({ type: 'UPDATE_ACTIVE_ENV_VARS', payload: result.updatedEnvironment });
+      if (result.updatedCollectionVariables) dispatch({ type: 'UPDATE_COLLECTION_VARS', payload: { collectionId: activeReq.collectionId, vars: result.updatedCollectionVariables } });
+      if (result.updatedGlobals) dispatch({ type: 'UPDATE_GLOBAL_VARS', payload: result.updatedGlobals });
+      if (result.updatedCookies) Object.entries(result.updatedCookies).forEach(([domain, cookies]) => dispatch({ type: 'UPSERT_DOMAIN_COOKIES', payload: { domain, cookies } }));
+    } catch (err) {
+      const errPayload = { status: 0, statusText: 'Error', responseTime: 0, headers: {}, body: (err as Error).message, size: 0, testResults: [], error: (err as Error).message };
+      dispatch({ type: 'SET_TAB_RESPONSE', payload: { tabId, response: errPayload } });
+      dispatch({
+        type: 'ADD_CONSOLE_LOG',
+        payload: {
+          id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+          timestamp: Date.now(),
+          method: edit.method,
+          url: mockUrl,
+          requestHeaders: edit.headers.map(h => ({ ...h, value: resolveVariables(h.value, allVars) })),
+          requestBody: edit.bodyMode === 'raw' ? resolveVariables(edit.bodyRaw, allVars) : undefined,
+          response: errPayload,
+        },
+      });
+    }
+    dispatch({ type: 'SET_TAB_LOADING', payload: { tabId, loading: false } });
+  }
 
   function handleSave() {
     if (!activeTab || !edit) return;
@@ -1110,14 +1217,43 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
             </button>
           )}
           {edit.method !== 'WS' && (
-            <button
-              onClick={handleSend}
-              disabled={state.isLoading}
-              title="Send request (⌘↵ / Ctrl+↵)"
-              className="px-5 py-2 bg-orange-600 hover:bg-orange-500 disabled:bg-orange-900 text-white text-sm font-semibold rounded transition-colors"
-            >
-              {state.isLoading ? '...' : 'Send'}
-            </button>
+            <div ref={sendMenuRef} className="relative flex">
+              <button
+                onClick={handleSend}
+                disabled={state.isLoading}
+                title="Send request (⌘↵ / Ctrl+↵)"
+                className="px-5 py-2 bg-orange-600 hover:bg-orange-500 disabled:bg-orange-900 text-white text-sm font-semibold rounded-l transition-colors"
+              >
+                {state.isLoading ? '...' : 'Send'}
+              </button>
+              <button
+                onClick={() => setShowSendMenu(v => !v)}
+                disabled={state.isLoading}
+                title="Send options"
+                className="px-2 py-2 bg-orange-700 hover:bg-orange-600 disabled:bg-orange-900 text-white text-xs rounded-r border-l border-orange-500 transition-colors"
+              >
+                ▾
+              </button>
+              {showSendMenu && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowSendMenu(false)} />
+                  <div className="absolute right-0 top-full mt-1 z-50 bg-slate-800 border border-slate-600 rounded-md shadow-2xl py-1 min-w-[190px]">
+                    <button
+                      onClick={() => { setShowSendMenu(false); handleSendToMock(); }}
+                      disabled={!state.mockServerRunning}
+                      title={state.mockServerRunning ? `Send to mock server on port ${state.mockPort}` : 'Start the mock server first'}
+                      className="w-full text-left flex items-center gap-2.5 px-3 py-1.5 text-xs transition-colors hover:bg-slate-700 text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                    >
+                      <span className="w-4 shrink-0 text-center">🎭</span>
+                      <span>
+                        Send to Mock Server
+                        {state.mockServerRunning && <span className="ml-1 text-slate-500 font-mono">:{state.mockPort}</span>}
+                      </span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           )}
         </div>
       </div>

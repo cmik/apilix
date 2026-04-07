@@ -1,13 +1,146 @@
 import { useState, useRef, useEffect, createContext, useContext } from 'react';
 import { createPortal } from 'react-dom';
-import type { CollectionItem, AppCollection } from '../types';
-import { useApp } from '../store';
+import type { CollectionItem, AppCollection, MockCollection, MockRoute } from '../types';
+import { useApp, generateId } from '../store';
 import {
   renameItemById, updateItemById, removeItemById, addItemToFolder, duplicateItem,
   moveItemInTree, extractItemById, insertItemInTree, isDescendantOf, getAllRequestIds,
 } from '../utils/treeHelpers';
 import { generateHurlFromItems } from '../utils/hurlUtils';
 import ItemSettingsModal from './ItemSettingsModal';
+
+// ─── Send-to-Mock helpers ────────────────────────────────────────────────────
+
+function flattenMockItems(items: CollectionItem[]): CollectionItem[] {
+  const result: CollectionItem[] = [];
+  for (const item of items) {
+    if (Array.isArray(item.item)) result.push(...flattenMockItems(item.item));
+    else if (item.request) result.push(item);
+  }
+  return result;
+}
+
+function extractMockPath(url: CollectionItem['request'] extends undefined ? never : NonNullable<CollectionItem['request']>['url']): string {
+  if (!url) return '/';
+  const raw = typeof url === 'string' ? url : (url as any)?.raw ?? '';
+  try { return new URL(raw).pathname || '/'; } catch {}
+  if (raw.startsWith('/')) return raw.split('?')[0];
+  return (raw.replace(/^https?:\/\/[^/]+/, '') || '/').split('?')[0] || '/';
+}
+
+function toMockRoute(item: CollectionItem, collectionId?: string): MockRoute {
+  const req = item.request!;
+  return {
+    id: generateId(),
+    enabled: true,
+    collectionId,
+    method: (req.method ?? 'GET').toUpperCase(),
+    path: extractMockPath(req.url),
+    statusCode: 200,
+    responseHeaders: [{ key: 'Content-Type', value: 'application/json' }],
+    responseBody: '{\n  "ok": true\n}',
+    delay: 0,
+    description: item.name,
+    rules: [],
+    script: '',
+  };
+}
+
+type MockTargetChoice =
+  | { mode: 'new'; name: string }
+  | { mode: 'existing'; collectionId: string }
+  | { mode: 'uncollected' };
+
+function SendToMockModal({
+  suggestedName, routeCount, existingMockCollections, onConfirm, onClose,
+}: {
+  suggestedName: string;
+  routeCount: number;
+  existingMockCollections: MockCollection[];
+  onConfirm: (choice: MockTargetChoice) => void;
+  onClose: () => void;
+}) {
+  const [mode, setMode] = useState<'new' | 'existing' | 'uncollected'>('new');
+  const [name, setName] = useState(suggestedName);
+  const [existingId, setExistingId] = useState(existingMockCollections[0]?.id ?? '');
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose(); }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const canConfirm = mode === 'new' ? name.trim().length > 0 : mode === 'existing' ? !!existingId : true;
+
+  function handleConfirm() {
+    if (!canConfirm) return;
+    if (mode === 'new') onConfirm({ mode: 'new', name: name.trim() });
+    else if (mode === 'existing') onConfirm({ mode: 'existing', collectionId: existingId });
+    else onConfirm({ mode: 'uncollected' });
+    onClose();
+  }
+
+  return createPortal(
+    <>
+      <div className="fixed inset-0 z-50 bg-black/50" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="bg-slate-900 border border-slate-700 rounded-lg shadow-2xl w-full max-w-sm flex flex-col">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-slate-700">
+            <h2 className="text-sm font-semibold text-white">
+              Add to Mock Server
+              <span className="ml-2 text-slate-400 font-normal text-xs">({routeCount} route{routeCount !== 1 ? 's' : ''})</span>
+            </h2>
+            <button onClick={onClose} className="text-slate-500 hover:text-slate-200 text-xl leading-none">×</button>
+          </div>
+          <div className="px-5 py-4 space-y-2">
+            <label className={`flex items-start gap-3 px-3 py-2.5 rounded-lg border cursor-pointer transition-colors ${mode === 'new' ? 'border-orange-500 bg-orange-500/5' : 'border-slate-700 hover:border-slate-600'}`}>
+              <input type="radio" name="send-mock-mode" value="new" checked={mode === 'new'} onChange={() => setMode('new')} className="accent-orange-500 mt-0.5 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-slate-200">Create new mock collection</p>
+                {mode === 'new' && (
+                  <input
+                    autoFocus
+                    value={name}
+                    onChange={e => setName(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && canConfirm) handleConfirm(); }}
+                    placeholder="Collection name…"
+                    className="mt-2 w-full bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none"
+                  />
+                )}
+              </div>
+            </label>
+            {existingMockCollections.length > 0 && (
+              <label className={`flex items-start gap-3 px-3 py-2.5 rounded-lg border cursor-pointer transition-colors ${mode === 'existing' ? 'border-orange-500 bg-orange-500/5' : 'border-slate-700 hover:border-slate-600'}`}>
+                <input type="radio" name="send-mock-mode" value="existing" checked={mode === 'existing'} onChange={() => setMode('existing')} className="accent-orange-500 mt-0.5 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-slate-200">Add to existing mock collection</p>
+                  {mode === 'existing' && (
+                    <select
+                      value={existingId}
+                      onChange={e => setExistingId(e.target.value)}
+                      className="mt-2 w-full bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none"
+                    >
+                      {existingMockCollections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  )}
+                </div>
+              </label>
+            )}
+            <label className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border cursor-pointer transition-colors ${mode === 'uncollected' ? 'border-orange-500 bg-orange-500/5' : 'border-slate-700 hover:border-slate-600'}`}>
+              <input type="radio" name="send-mock-mode" value="uncollected" checked={mode === 'uncollected'} onChange={() => setMode('uncollected')} className="accent-orange-500 shrink-0" />
+              <p className="text-xs font-medium text-slate-200">Add as uncollected routes</p>
+            </label>
+          </div>
+          <div className="flex justify-end gap-2 px-5 py-3 border-t border-slate-700">
+            <button onClick={onClose} className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors">Cancel</button>
+            <button onClick={handleConfirm} disabled={!canConfirm} className="px-4 py-1.5 bg-orange-600 hover:bg-orange-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs rounded font-medium transition-colors">Add Routes</button>
+          </div>
+        </div>
+      </div>
+    </>,
+    document.body,
+  );
+}
 
 // ─── Drag & Drop Context ──────────────────────────────────────────────────────
 
@@ -185,6 +318,7 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
   const [renameVal, setRenameVal] = useState(item.name);
   const [showSettings, setShowSettings] = useState(false);
   const [newItemId, setNewItemId] = useState<string | null>(null);
+  const [mockItems, setMockItems] = useState<CollectionItem[] | null>(null);
   const rowRef = useRef<HTMLDivElement>(null);
 
   const isFolder = Array.isArray(item.item);
@@ -331,6 +465,14 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
       },
     },
     {
+      label: 'Add to Mock Server',
+      icon: '🎭',
+      onClick: () => {
+        const items = isFolder ? flattenMockItems(item.item || []) : (item.request ? [item] : []);
+        if (items.length > 0) setMockItems(items);
+      },
+    },
+    {
       label: 'Rename',
       icon: '✏️',
       onClick: () => { setRenameVal(item.name); setRenaming(true); },
@@ -418,6 +560,26 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
             onClose={() => setShowSettings(false)}
           />
         )}
+
+        {mockItems && (
+          <SendToMockModal
+            suggestedName={item.name}
+            routeCount={mockItems.length}
+            existingMockCollections={state.mockCollections}
+            onConfirm={(choice) => {
+              let collectionId: string | undefined;
+              if (choice.mode === 'new') {
+                collectionId = generateId();
+                dispatch({ type: 'ADD_MOCK_COLLECTION', payload: { id: collectionId, name: choice.name, enabled: true, description: '' } });
+              } else if (choice.mode === 'existing') {
+                collectionId = choice.collectionId;
+              }
+              for (const req of mockItems) dispatch({ type: 'ADD_MOCK_ROUTE', payload: toMockRoute(req, collectionId) });
+              dispatch({ type: 'SET_VIEW', payload: 'mock' });
+            }}
+            onClose={() => setMockItems(null)}
+          />
+        )}
       </div>
     );
   }
@@ -462,6 +624,25 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
       </div>
       {dropPos === 'after' && (
         <div className="absolute bottom-0 left-2 right-0 h-0.5 bg-orange-500 rounded-full z-10 pointer-events-none" />
+      )}
+      {mockItems && (
+        <SendToMockModal
+          suggestedName={item.name}
+          routeCount={mockItems.length}
+          existingMockCollections={state.mockCollections}
+          onConfirm={(choice) => {
+            let cid: string | undefined;
+            if (choice.mode === 'new') {
+              cid = generateId();
+              dispatch({ type: 'ADD_MOCK_COLLECTION', payload: { id: cid, name: choice.name, enabled: true, description: '' } });
+            } else if (choice.mode === 'existing') {
+              cid = choice.collectionId;
+            }
+            for (const req of mockItems) dispatch({ type: 'ADD_MOCK_ROUTE', payload: toMockRoute(req, cid) });
+            dispatch({ type: 'SET_VIEW', payload: 'mock' });
+          }}
+          onClose={() => setMockItems(null)}
+        />
       )}
     </div>
   );
@@ -561,6 +742,15 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
     URL.revokeObjectURL(url);
   }
 
+  function handleSendCollectionToMock() {
+    const requests = flattenMockItems(collection.item);
+    if (requests.length === 0) return;
+    const colId = generateId();
+    dispatch({ type: 'ADD_MOCK_COLLECTION', payload: { id: colId, name: collection.info.name, enabled: true, description: '' } });
+    for (const req of requests) dispatch({ type: 'ADD_MOCK_ROUTE', payload: toMockRoute(req, colId) });
+    dispatch({ type: 'SET_VIEW', payload: 'mock' });
+  }
+
   const menuItems: MenuItem[] = [
     { label: 'View settings', icon: '⚙️', onClick: () => setShowSettings(true) },
     { label: 'Export', icon: '⬇️', onClick: handleExport },
@@ -576,6 +766,7 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
         dispatch({ type: 'SET_VIEW', payload: 'runner' });
       },
     },
+    { label: 'Add to Mock Server', icon: '🎭', onClick: handleSendCollectionToMock },
     {
       label: 'Rename',
       icon: '✏️',
