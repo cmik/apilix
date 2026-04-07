@@ -95,7 +95,7 @@ function itemToEditState(item: CollectionItem) {
     bodyGraphqlQuery: req.body?.graphql?.query ?? '',
     bodyGraphqlVariables: req.body?.graphql?.variables ?? '',
     bodyFile: null as File | null,
-    description: item.description ?? '',
+    description: item.description ?? req.description ?? '',
   };
 }
 
