@@ -626,7 +626,7 @@ export default function RunnerPanel() {
     setExecutionOrder(requestIds);
     setResults(null);
     dispatch({ type: 'SET_RUNNER_PRESELECTION', payload: null });
-  }, [state.runnerPreselection]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [dispatch, state.runnerPreselection]);
 
   // Auto-select all requests when collection changes
   useEffect(() => {
