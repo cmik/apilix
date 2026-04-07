@@ -762,7 +762,9 @@ export default function RunnerPanel() {
             const parsed = new URL(rawUrl);
             mockUrl = mockBase + parsed.pathname + parsed.search + parsed.hash;
           } catch {
-            const withSlash = rawUrl.startsWith('/') ? rawUrl : '/' + rawUrl;
+            const strippedOrigin = rawUrl.replace(/^https?:\/\/[^/]+/i, '');
+            const normalizedPath = strippedOrigin !== rawUrl ? (strippedOrigin || '/') : rawUrl;
+            const withSlash = normalizedPath.startsWith('/') ? normalizedPath : '/' + normalizedPath;
             mockUrl = mockBase + withSlash;
           }
           const updatedUrl = typeof item.request.url === 'string'
