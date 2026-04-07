@@ -389,32 +389,32 @@ pm.environment.set('capturedId', json.id?.toString() ?? '');`,
     ],
   },
   {
-    label: 'Postman pm.* API',
+    label: 'Apilix apx.* functions',
     snippets: [
       {
         id: 'test-pm-get-env',
         name: 'Get environment variable',
         description: 'Read an environment variable inside a test',
-        code: `const value = pm.environment.get('myVar') ?? 'default';`,
+        code: `const value = apx.environment.get('myVar') ?? 'default';`,
       },
       {
         id: 'test-pm-set-env',
         name: 'Set env variable from response',
         description: 'Extract a JSON value and store it for the next request',
-        code: `const json = pm.response.json();
-pm.environment.set('capturedToken', json.token ?? '');`,
+        code: `const json = apx.response.json();
+apx.environment.set('capturedToken', json.token ?? '');`,
       },
       {
         id: 'test-pm-unset-env',
         name: 'Unset environment variable',
         description: 'Clean up a variable after the test run',
-        code: `pm.environment.unset('temporaryVar');`,
+        code: `apx.environment.unset('temporaryVar');`,
       },
       {
         id: 'test-pm-response-json',
         name: 'Parse response JSON',
         description: 'Parse the response body and access properties',
-        code: `const json = pm.response.json();
+        code: `const json = apx.response.json();
 console.log('id:', json.id);
 console.log('status:', json.status);`,
       },
@@ -422,7 +422,7 @@ console.log('status:', json.status);`,
         id: 'test-pm-response-text',
         name: 'Get response text',
         description: 'Access the raw response body as a string',
-        code: `const text = pm.response.text();
+        code: `const text = apx.response.text();
 console.log('body:', text);`,
       },
       {
@@ -430,8 +430,8 @@ console.log('body:', text);`,
         name: 'Skip this request (runner)',
         description: 'Conditionally skip the request in a collection run',
         code: `// Skip this request in the runner if condition is not met
-if (!pm.environment.get('runThis')) {
-  pm.execution.skipRequest();
+if (!apx.environment.get('runThis')) {
+  apx.execution.skipRequest();
 }`,
       },
       {
@@ -439,7 +439,7 @@ if (!pm.environment.get('runThis')) {
         name: 'Set next request (runner)',
         description: 'Jump to a named request in the collection runner',
         code: `// Jump to a specific request by name in the runner
-pm.execution.setNextRequest('Login');`,
+apx.execution.setNextRequest('Login');`,
       },
     ],
   },
