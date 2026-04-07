@@ -392,26 +392,26 @@ pm.environment.set('capturedId', json.id?.toString() ?? '');`,
     label: 'Apilix apx.* functions',
     snippets: [
       {
-        id: 'test-pm-get-env',
+        id: 'test-apx-get-env',
         name: 'Get environment variable',
         description: 'Read an environment variable inside a test',
         code: `const value = apx.environment.get('myVar') ?? 'default';`,
       },
       {
-        id: 'test-pm-set-env',
+        id: 'test-apx-set-env',
         name: 'Set env variable from response',
         description: 'Extract a JSON value and store it for the next request',
         code: `const json = apx.response.json();
 apx.environment.set('capturedToken', json.token ?? '');`,
       },
       {
-        id: 'test-pm-unset-env',
+        id: 'test-apx-unset-env',
         name: 'Unset environment variable',
         description: 'Clean up a variable after the test run',
         code: `apx.environment.unset('temporaryVar');`,
       },
       {
-        id: 'test-pm-response-json',
+        id: 'test-apx-response-json',
         name: 'Parse response JSON',
         description: 'Parse the response body and access properties',
         code: `const json = apx.response.json();
@@ -419,14 +419,14 @@ console.log('id:', json.id);
 console.log('status:', json.status);`,
       },
       {
-        id: 'test-pm-response-text',
+        id: 'test-apx-response-text',
         name: 'Get response text',
         description: 'Access the raw response body as a string',
         code: `const text = apx.response.text();
 console.log('body:', text);`,
       },
       {
-        id: 'test-pm-skip-request',
+        id: 'test-apx-skip-request',
         name: 'Skip this request (runner)',
         description: 'Conditionally skip the request in a collection run',
         code: `// Skip this request in the runner if condition is not met
@@ -435,7 +435,7 @@ if (!apx.environment.get('runThis')) {
 }`,
       },
       {
-        id: 'test-pm-next-request',
+        id: 'test-apx-next-request',
         name: 'Set next request (runner)',
         description: 'Jump to a named request in the collection runner',
         code: `// Jump to a specific request by name in the runner
