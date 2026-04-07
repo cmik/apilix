@@ -932,20 +932,27 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
   }
   _sendRef.current = handleSend;
 
-  async function handleSendToMock() {
-    if (!edit || !activeReq || !activeTab) return;
-    const mockBase = `http://localhost:${state.mockPort}`;
-    const resolvedRaw = resolveVariables(applyPathParams(edit.url, edit.pathParams), allVars);
-    let mockUrl: string;
+  function buildMockUrl(mockBase: string, resolvedRaw: string) {
     try {
       const parsed = new URL(resolvedRaw);
-      mockUrl = mockBase + parsed.pathname + parsed.search + parsed.hash;
+      return mockBase + parsed.pathname + parsed.search + parsed.hash;
     } catch {
-      // relative or bare path
-      const withSlash = resolvedRaw.startsWith('/') ? resolvedRaw : '/' + resolvedRaw;
-      mockUrl = mockBase + withSlash;
+      const strippedOrigin = resolvedRaw.replace(/^https?:\/\/[^/]+/i, '');
+      const normalizedPath = strippedOrigin !== resolvedRaw ? (strippedOrigin || '/') : resolvedRaw;
+      const withSlash = normalizedPath.startsWith('/') ? normalizedPath : '/' + normalizedPath;
+      return mockBase + withSlash;
     }
+  }
 
+  async function handleSendToMock() {
+    if (!edit || !activeReq || !activeTab) return;
+    if (!state.mockServerRunning) {
+      window.alert('Mock server is not running. Start the mock server and try again.');
+      return;
+    }
+    const mockBase = `http://localhost:${state.mockPort}`;
+    const resolvedRaw = resolveVariables(applyPathParams(edit.url, edit.pathParams), allVars);
+    const mockUrl = buildMockUrl(mockBase, resolvedRaw);
     const tabId = activeTab.id;
     dispatch({ type: 'SET_TAB_LOADING', payload: { tabId, loading: true } });
     dispatch({ type: 'SET_TAB_RESPONSE', payload: { tabId, response: null } });
