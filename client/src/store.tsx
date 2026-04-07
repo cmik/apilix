@@ -506,7 +506,7 @@ export function generateId(): string {
 
 export function parseCollectionFile(json: unknown): AppCollection {
   const col = json as AppCollection;
-  if (!col.info || !col.item) throw new Error('Not a valid collection');
+  if (!col.info || !col.item) throw new Error('Invalid Postman Collection v2.1 JSON: expected an object with "info" and "item" properties');
   return { ...col, _id: generateId() };
 }
 
