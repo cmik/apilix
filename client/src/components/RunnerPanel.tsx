@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { useApp } from '../store';
 import { runCollectionStream, pauseRun, resumeRun, stopRun } from '../api';
 import type { RunnerIteration, RunnerIterationResult, CollectionItem } from '../types';
-import { applyInheritedAuth } from '../utils/treeHelpers';
+import { applyInheritedAuth, getAllRequestIds } from '../utils/treeHelpers';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -56,14 +56,6 @@ function resolveConditionalChain(
       return chain;
     })
     .filter(chain => chain.length > 0);
-}
-
-function getAllRequestIds(items: CollectionItem[]): string[] {
-  return items.reduce<string[]>((acc, item) => {
-    if (item.item) return acc.concat(getAllRequestIds(item.item));
-    if (item.request && item.id) acc.push(item.id);
-    return acc;
-  }, []);
 }
 
 /** Flatten all request items into an id → item map */
@@ -622,8 +614,26 @@ export default function RunnerPanel() {
     return chains.some(c => c.some(e => e.autoAdded)) ? chains : null;
   }, [conditionalExecution, selectedCollection, executionOrder, selectedRequestIds]);
 
+  // Consume a preselection dispatched from CollectionTree ("Execute in Runner")
+  // Use a ref to signal the auto-select-all effect to skip when preselection is applied.
+  const skipAutoSelectRef = useRef(false);
+  useEffect(() => {
+    if (!state.runnerPreselection) return;
+    const { collectionId, requestIds } = state.runnerPreselection;
+    skipAutoSelectRef.current = true;
+    setSelectedCollectionId(collectionId);
+    setSelectedRequestIds(new Set(requestIds));
+    setExecutionOrder(requestIds);
+    setResults(null);
+    dispatch({ type: 'SET_RUNNER_PRESELECTION', payload: null });
+  }, [state.runnerPreselection]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Auto-select all requests when collection changes
   useEffect(() => {
+    if (skipAutoSelectRef.current) {
+      skipAutoSelectRef.current = false;
+      return;
+    }
     if (selectedCollection) {
       const allIds = getAllRequestIds(selectedCollection.item);
       setSelectedRequestIds(new Set(allIds));

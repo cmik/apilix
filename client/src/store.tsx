@@ -60,6 +60,7 @@ const initialState: AppState = {
   mockRoutes: [],
   mockServerRunning: false,
   mockPort: 3002,
+  runnerPreselection: null,
 };
 
 function appReducer(state: AppState, action: AppAction): AppState {
@@ -358,6 +359,9 @@ function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'SET_MOCK_PORT':
       return { ...state, mockPort: action.payload };
+
+    case 'SET_RUNNER_PRESELECTION':
+      return { ...state, runnerPreselection: action.payload };
 
     case 'UPDATE_ACTIVE_ENV_VARS': {
       if (!state.activeEnvironmentId) return state;
