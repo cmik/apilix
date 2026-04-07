@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, createContext, useContext } from 'react';
 import { createPortal } from 'react-dom';
-import type { PostmanItem, AppCollection } from '../types';
+import type { CollectionItem, AppCollection } from '../types';
 import { useApp } from '../store';
 import {
   renameItemById, updateItemById, removeItemById, addItemToFolder, duplicateItem,
@@ -49,7 +49,7 @@ const METHOD_COLORS: Record<string, string> = {
   OPTIONS: 'text-slate-400',
 };
 
-function getUrlShort(url: NonNullable<PostmanItem['request']>['url'] | undefined): string {
+function getUrlShort(url: NonNullable<CollectionItem['request']>['url'] | undefined): string {
   if (!url) return '';
   if (typeof url === 'string') return url;
   return url.raw || (Array.isArray(url.path) ? '/' + url.path.join('/') : '');
@@ -160,7 +160,7 @@ function KebabBtn({ onClick }: { onClick: (e: React.MouseEvent) => void }) {
 // --- ItemNode ---
 
 interface ItemNodeProps {
-  item: PostmanItem;
+  item: CollectionItem;
   collectionId: string;
   collection: AppCollection;
   depth: number;
@@ -400,7 +400,7 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
             description={item.description}
             onSave={(auth, events, description) => {
               if (!item.id) return;
-              const updated: PostmanItem = { ...item, auth, event: events.length ? events : undefined, description: description || undefined };
+              const updated: CollectionItem = { ...item, auth, event: events.length ? events : undefined, description: description || undefined };
               dispatch({
                 type: 'UPDATE_COLLECTION',
                 payload: { ...collection, item: updateItemById(collection.item, item.id, updated) },
@@ -635,7 +635,7 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
 // --- Flat search helpers ---
 
 interface FlatRequest {
-  item: PostmanItem;
+  item: CollectionItem;
   collectionId: string;
   collectionName: string;
   breadcrumb: string;
@@ -643,7 +643,7 @@ interface FlatRequest {
 
 function flattenAll(collections: AppCollection[]): FlatRequest[] {
   const results: FlatRequest[] = [];
-  function walk(items: PostmanItem[], collectionId: string, collectionName: string, path: string) {
+  function walk(items: CollectionItem[], collectionId: string, collectionName: string, path: string) {
     for (const item of items) {
       if (Array.isArray(item.item)) {
         walk(item.item, collectionId, collectionName, path ? `${path} / ${item.name}` : item.name);

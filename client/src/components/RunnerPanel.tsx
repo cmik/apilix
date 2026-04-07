@@ -1,13 +1,13 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useApp } from '../store';
 import { runCollectionStream, pauseRun, resumeRun, stopRun } from '../api';
-import type { RunnerIteration, RunnerIterationResult, PostmanItem } from '../types';
+import type { RunnerIteration, RunnerIterationResult, CollectionItem } from '../types';
 import { applyInheritedAuth } from '../utils/treeHelpers';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /** Extract all literal setNextRequest('name') targets from a request's scripts. */
-function extractSetNextRequestTargets(item: PostmanItem): string[] {
+function extractSetNextRequestTargets(item: CollectionItem): string[] {
   const targets: string[] = [];
   for (const ev of item.event ?? []) {
     const exec = ev.script?.exec;
@@ -19,7 +19,7 @@ function extractSetNextRequestTargets(item: PostmanItem): string[] {
   return [...new Set(targets)];
 }
 
-export interface ChainEntry { item: PostmanItem; autoAdded: boolean; }
+export interface ChainEntry { item: CollectionItem; autoAdded: boolean; }
 
 /**
  * Two-level execution model:
@@ -32,8 +32,8 @@ export interface ChainEntry { item: PostmanItem; autoAdded: boolean; }
  */
 function resolveConditionalChain(
   startIds: string[],
-  itemMap: Map<string, PostmanItem>,
-  allByName: Map<string, PostmanItem>,
+  itemMap: Map<string, CollectionItem>,
+  allByName: Map<string, CollectionItem>,
 ): ChainEntry[][] {
   return startIds
     .map(startId => {
@@ -58,7 +58,7 @@ function resolveConditionalChain(
     .filter(chain => chain.length > 0);
 }
 
-function getAllRequestIds(items: PostmanItem[]): string[] {
+function getAllRequestIds(items: CollectionItem[]): string[] {
   return items.reduce<string[]>((acc, item) => {
     if (item.item) return acc.concat(getAllRequestIds(item.item));
     if (item.request && item.id) acc.push(item.id);
@@ -67,8 +67,8 @@ function getAllRequestIds(items: PostmanItem[]): string[] {
 }
 
 /** Flatten all request items into an id → item map */
-function flattenRequestItems(items: PostmanItem[]): Map<string, PostmanItem> {
-  const map = new Map<string, PostmanItem>();
+function flattenRequestItems(items: CollectionItem[]): Map<string, CollectionItem> {
+  const map = new Map<string, CollectionItem>();
   for (const item of items) {
     if (item.item) {
       for (const [k, v] of flattenRequestItems(item.item)) map.set(k, v);
@@ -92,7 +92,7 @@ const METHOD_COLORS: Record<string, string> = {
 };
 
 interface SelectionNodeProps {
-  item: PostmanItem;
+  item: CollectionItem;
   depth: number;
   selectedIds: Set<string>;
   onToggleRequest: (id: string) => void;
@@ -613,7 +613,7 @@ export default function RunnerPanel() {
   const conditionalChains = useMemo<ChainEntry[][] | null>(() => {
     if (!conditionalExecution || !selectedCollection) return null;
     const flat = flattenRequestItems(selectedCollection.item);
-    const allByName = new Map<string, PostmanItem>();
+    const allByName = new Map<string, CollectionItem>();
     for (const [, item] of flat) { if (item.name) allByName.set(item.name, item); }
     const startIds = executionOrder.filter(id => selectedRequestIds.has(id));
     if (startIds.length === 0) return null;
@@ -711,7 +711,7 @@ export default function RunnerPanel() {
     }
   }
 
-  function countRequests(items: PostmanItem[]): number {
+  function countRequests(items: CollectionItem[]): number {
     return getAllRequestIds(items).length;
   }
 
@@ -738,7 +738,7 @@ export default function RunnerPanel() {
         : executionOrder
             .filter(id => selectedRequestIds.has(id))
             .map(id => itemMap.get(id))
-            .filter((item): item is PostmanItem => !!item);
+            .filter((item): item is CollectionItem => !!item);
 
       const streamingResults: RunnerIteration[] = [];
       let currentIteration: RunnerIteration | null = null;

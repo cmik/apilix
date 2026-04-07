@@ -1,9 +1,9 @@
 import React, { createContext, useContext, useEffect, useReducer, type ReactNode } from 'react';
-import type { AppState, AppAction, AppCollection, AppEnvironment, PostmanItem, RequestTab, CookieJar, Cookie, MockRoute, MockCollection } from './types';
+import type { AppState, AppAction, AppCollection, AppEnvironment, CollectionItem, RequestTab, CookieJar, Cookie, MockRoute, MockCollection } from './types';
 
 const STORAGE_KEY = 'apilix_persist';
 
-function ensureIds(items: PostmanItem[]): PostmanItem[] {
+function ensureIds(items: CollectionItem[]): CollectionItem[] {
   return items.map(item => ({
     ...item,
     id: item.id ?? generateId(),
@@ -20,7 +20,7 @@ type PersistedState = Pick<
   tabSession?: { tabs: PersistedTabRef[]; activeTabId: string | null };
 };
 
-function findItemInTree(items: PostmanItem[], id: string): PostmanItem | null {
+function findItemInTree(items: CollectionItem[], id: string): CollectionItem | null {
   for (const item of items) {
     if (item.id === id) return item;
     if (item.item) {
@@ -506,12 +506,12 @@ export function generateId(): string {
 
 export function parseCollectionFile(json: unknown): AppCollection {
   const col = json as AppCollection;
-  if (!col.info || !col.item) throw new Error('Not a valid Postman collection');
+  if (!col.info || !col.item) throw new Error('Not a valid collection');
   return { ...col, _id: generateId() };
 }
 
 export function parseEnvironmentFile(json: unknown): AppEnvironment {
   const env = json as AppEnvironment;
-  if (!env.name || !Array.isArray(env.values)) throw new Error('Not a valid Postman environment');
+  if (!env.name || !Array.isArray(env.values)) throw new Error('Not a valid environment');
   return { ...env, _id: generateId() };
 }

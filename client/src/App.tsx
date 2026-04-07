@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { API_BASE } from './api';
 import { useApp, generateId } from './store';
-import type { AppEnvironment, PostmanItem } from './types';
+import type { AppEnvironment, CollectionItem } from './types';
 import Sidebar from './components/Sidebar';
 import ActivityBar from './components/ActivityBar';
 import RequestBuilder from './components/RequestBuilder';
@@ -275,7 +275,7 @@ export default function App() {
           e.preventDefault();
           {
             const newId = generateId();
-            const newReq: PostmanItem = {
+            const newReq: CollectionItem = {
               id: newId,
               name: 'New Request',
               request: { method: 'GET', url: { raw: '' }, header: [] },

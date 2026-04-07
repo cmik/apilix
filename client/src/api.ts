@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { PostmanItem, PostmanCollection, RequestResponse, RunnerIteration, RunnerIterationResult, ScriptLog, CookieJar } from './types';
+import type { CollectionItem, BaseCollection, RequestResponse, RunnerIteration, RunnerIterationResult, ScriptLog, CookieJar } from './types';
 
 // When loaded via file:// (packaged Electron app), relative /api won't work.
 // The preload script exposes the dynamic server port via window.electronAPI.
@@ -11,14 +11,14 @@ export const API_BASE = window.location.protocol === 'file:'
 const api = axios.create({ baseURL: API_BASE });
 
 export interface ExecutePayload {
-  item: PostmanItem;
+  item: CollectionItem;
   environment: Record<string, string>;
   collectionVariables: Record<string, string>;
   globals: Record<string, string>;
   dataRow?: Record<string, string>;
   collVars?: Array<{ key: string; value: string; disabled?: boolean }>;
   cookies?: CookieJar;
-  collectionItems?: PostmanItem[];
+  collectionItems?: CollectionItem[];
 }
 
 export interface ChildRequestLog {
@@ -50,7 +50,7 @@ export async function executeRequest(payload: ExecutePayload): Promise<ExecuteRe
 }
 
 export interface RunPayload {
-  collection: PostmanCollection;
+  collection: BaseCollection;
   environment: Record<string, string>;
   collectionVariables: Record<string, string>;
   globals: Record<string, string>;
@@ -59,7 +59,7 @@ export interface RunPayload {
   iterations?: number;
   executeChildRequests?: boolean;
   conditionalExecution?: boolean;
-  allCollectionItems?: PostmanItem[];
+  allCollectionItems?: CollectionItem[];
 }
 
 export async function runCollection(
@@ -213,7 +213,7 @@ export async function graphqlIntrospect(
   url: string,
   headers: Array<{ key: string; value: string }>,
 ): Promise<ExecuteResult> {
-  const item: PostmanItem = {
+  const item: CollectionItem = {
     name: '__introspection__',
     request: {
       method: 'POST',

@@ -1,6 +1,6 @@
-import type { PostmanItem, PostmanAuth } from '../types';
+import type { CollectionItem, CollectionAuth } from '../types';
 
-export function findItemInTree(items: PostmanItem[], id: string): PostmanItem | null {
+export function findItemInTree(items: CollectionItem[], id: string): CollectionItem | null {
   for (const item of items) {
     if (item.id === id) return item;
     if (item.item) {
@@ -11,7 +11,7 @@ export function findItemInTree(items: PostmanItem[], id: string): PostmanItem | 
   return null;
 }
 
-export function renameItemById(items: PostmanItem[], id: string, newName: string): PostmanItem[] {
+export function renameItemById(items: CollectionItem[], id: string, newName: string): CollectionItem[] {
   return items.map(item => {
     if (item.id === id) return { ...item, name: newName };
     if (item.item) return { ...item, item: renameItemById(item.item, id, newName) };
@@ -19,7 +19,7 @@ export function renameItemById(items: PostmanItem[], id: string, newName: string
   });
 }
 
-export function updateItemById(items: PostmanItem[], id: string, updated: PostmanItem): PostmanItem[] {
+export function updateItemById(items: CollectionItem[], id: string, updated: CollectionItem): CollectionItem[] {
   return items.map(item => {
     if (item.id === id) return updated;
     if (item.item) return { ...item, item: updateItemById(item.item, id, updated) };
@@ -27,13 +27,13 @@ export function updateItemById(items: PostmanItem[], id: string, updated: Postma
   });
 }
 
-export function removeItemById(items: PostmanItem[], id: string): PostmanItem[] {
+export function removeItemById(items: CollectionItem[], id: string): CollectionItem[] {
   return items
     .filter(item => item.id !== id)
     .map(item => item.item ? { ...item, item: removeItemById(item.item, id) } : item);
 }
 
-export function addItemToFolder(items: PostmanItem[], folderId: string, newItem: PostmanItem): PostmanItem[] {
+export function addItemToFolder(items: CollectionItem[], folderId: string, newItem: CollectionItem): CollectionItem[] {
   return items.map(item => {
     if (item.id === folderId) {
       return { ...item, item: [...(item.item || []), newItem] };
@@ -48,7 +48,7 @@ export function addItemToFolder(items: PostmanItem[], folderId: string, newItem:
 // Recursively bake inherited auth into requests that have no explicit auth set.
 // Folders with explicit auth override the inherited value for their subtree.
 // noauth on a folder means "block inheritance here".
-export function applyInheritedAuth(items: PostmanItem[], inherited: PostmanAuth | undefined): PostmanItem[] {
+export function applyInheritedAuth(items: CollectionItem[], inherited: CollectionAuth | undefined): CollectionItem[] {
   return items.map(item => {
     if (item.item) {
       // folder: its own auth (if set and not 'inherit') overrides inherited auth for its children
@@ -64,7 +64,7 @@ export function applyInheritedAuth(items: PostmanItem[], inherited: PostmanAuth 
   });
 }
 
-function deepCloneWithNewIds(item: PostmanItem): PostmanItem {
+function deepCloneWithNewIds(item: CollectionItem): CollectionItem {
   const newId = Math.random().toString(36).slice(2) + Date.now().toString(36);
   return {
     ...item,
@@ -73,8 +73,8 @@ function deepCloneWithNewIds(item: PostmanItem): PostmanItem {
   };
 }
 
-export function duplicateItem(items: PostmanItem[], itemId: string): PostmanItem[] {
-  const result: PostmanItem[] = [];
+export function duplicateItem(items: CollectionItem[], itemId: string): CollectionItem[] {
+  const result: CollectionItem[] = [];
   for (const item of items) {
     if (item.id === itemId) {
       result.push(item);
@@ -93,12 +93,12 @@ export function duplicateItem(items: PostmanItem[], itemId: string): PostmanItem
 
 /** Remove an item by id and return both the modified tree and the extracted item. */
 export function extractItemById(
-  items: PostmanItem[],
+  items: CollectionItem[],
   id: string,
-): { items: PostmanItem[]; extracted: PostmanItem | null } {
-  let extracted: PostmanItem | null = null;
-  function extract(nodes: PostmanItem[]): PostmanItem[] {
-    const result: PostmanItem[] = [];
+): { items: CollectionItem[]; extracted: CollectionItem | null } {
+  let extracted: CollectionItem | null = null;
+  function extract(nodes: CollectionItem[]): CollectionItem[] {
+    const result: CollectionItem[] = [];
     for (const node of nodes) {
       if (node.id === id) {
         extracted = node;
@@ -113,11 +113,11 @@ export function extractItemById(
 
 /** Insert newItem before/after targetId, or as last child of targetId (when position='inside'). */
 export function insertItemInTree(
-  items: PostmanItem[],
-  newItem: PostmanItem,
+  items: CollectionItem[],
+  newItem: CollectionItem,
   targetId: string,
   position: 'before' | 'after' | 'inside',
-): PostmanItem[] {
+): CollectionItem[] {
   if (position === 'inside') {
     return items.map(node => {
       if (node.id === targetId && Array.isArray(node.item)) {
@@ -127,7 +127,7 @@ export function insertItemInTree(
       return node;
     });
   }
-  const result: PostmanItem[] = [];
+  const result: CollectionItem[] = [];
   for (const node of items) {
     if (node.id === targetId) {
       if (position === 'before') result.push(newItem, node);
@@ -141,11 +141,11 @@ export function insertItemInTree(
 
 /** Move sourceId to before/after/inside targetId within the same tree. */
 export function moveItemInTree(
-  items: PostmanItem[],
+  items: CollectionItem[],
   sourceId: string,
   targetId: string,
   position: 'before' | 'after' | 'inside',
-): PostmanItem[] {
+): CollectionItem[] {
   if (sourceId === targetId) return items;
   const { items: withoutSource, extracted } = extractItemById(items, sourceId);
   if (!extracted) return items;
@@ -154,18 +154,18 @@ export function moveItemInTree(
 
 /** Returns true if targetId is a descendant of ancestorId anywhere in the tree. */
 export function isDescendantOf(
-  items: PostmanItem[],
+  items: CollectionItem[],
   ancestorId: string,
   targetId: string,
 ): boolean {
-  function walkChildren(nodes: PostmanItem[]): boolean {
+  function walkChildren(nodes: CollectionItem[]): boolean {
     for (const node of nodes) {
       if (node.id === targetId) return true;
       if (node.item && walkChildren(node.item)) return true;
     }
     return false;
   }
-  function findAncestor(nodes: PostmanItem[]): boolean {
+  function findAncestor(nodes: CollectionItem[]): boolean {
     for (const node of nodes) {
       if (node.id === ancestorId) return node.item ? walkChildren(node.item) : false;
       if (node.item && findAncestor(node.item)) return true;
@@ -178,14 +178,14 @@ export function isDescendantOf(
 // Walk the collection tree and return the effective (parent) auth for a given request ID.
 // This is the auth the request would inherit if its own auth is set to 'inherit'.
 export function resolveInheritedAuth(
-  items: PostmanItem[],
+  items: CollectionItem[],
   targetId: string,
-  collectionAuth: PostmanAuth | undefined,
-): PostmanAuth | undefined {
+  collectionAuth: CollectionAuth | undefined,
+): CollectionAuth | undefined {
   function walk(
-    nodes: PostmanItem[],
-    inherited: PostmanAuth | undefined,
-  ): { found: true; auth: PostmanAuth | undefined } | { found: false } {
+    nodes: CollectionItem[],
+    inherited: CollectionAuth | undefined,
+  ): { found: true; auth: CollectionAuth | undefined } | { found: false } {
     for (const node of nodes) {
       if (node.id === targetId) return { found: true, auth: inherited };
       if (node.item) {

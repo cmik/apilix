@@ -1,10 +1,10 @@
 // ─── HAR (HTTP Archive) Utilities ────────────────────────────────────────────
-// Parses .har files (browser network captures) into Postman items, and
-// generates HAR files from Postman collections.
+// Parses .har files (browser network captures) into collection items, and
+// generates HAR files from collections.
 // HAR spec: https://w3c.github.io/web-performance/specs/HAR/Overview.html
 
 import { generateId } from '../store';
-import type { PostmanItem, PostmanHeader, PostmanBody } from '../types';
+import type { CollectionItem, CollectionHeader, CollectionBody } from '../types';
 
 // ─── HAR type stubs ───────────────────────────────────────────────────────────
 
@@ -72,7 +72,7 @@ function nameFromRequest(method: string, rawUrl: string): string {
   }
 }
 
-function buildBody(postData: HarPostData | undefined): PostmanBody | undefined {
+function buildBody(postData: HarPostData | undefined): CollectionBody | undefined {
   if (!postData) return undefined;
 
   const mimeType = postData.mimeType ?? '';
@@ -128,16 +128,16 @@ function buildBody(postData: HarPostData | undefined): PostmanBody | undefined {
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 export interface HarImportResult {
-  items: PostmanItem[];
+  items: CollectionItem[];
   /** Page-title based folder grouping. Key = folder name, value = items. */
   grouped: boolean;
 }
 
 /**
- * Parse the text content of a .har file and return Postman items.
+ * Parse the text content of a .har file and return collection items.
  * Throws if the JSON is invalid or missing the required `log.entries` array.
  */
-export function parseHarFile(text: string): PostmanItem[] {
+export function parseHarFile(text: string): CollectionItem[] {
   let har: HarFile;
   try {
     har = JSON.parse(text) as HarFile;
@@ -162,8 +162,8 @@ export function parseHarFile(text: string): PostmanItem[] {
 
   if (useGroups) {
     // Build a folder per page
-    const folderMap = new Map<string, PostmanItem>();
-    const orphans: PostmanItem[] = [];
+    const folderMap = new Map<string, CollectionItem>();
+    const orphans: CollectionItem[] = [];
 
     for (const entry of entries) {
       const item = entryToItem(entry);
@@ -188,12 +188,12 @@ export function parseHarFile(text: string): PostmanItem[] {
   return entries.map(entryToItem);
 }
 
-function entryToItem(entry: HarEntry): PostmanItem {
+function entryToItem(entry: HarEntry): CollectionItem {
   const req = entry.request;
   const method = (req.method ?? 'GET').toUpperCase();
   const rawUrl = req.url ?? '';
 
-  const headers: PostmanHeader[] = (req.headers ?? [])
+  const headers: CollectionHeader[] = (req.headers ?? [])
     .filter(h => !SKIP_HEADERS.has(h.name.toLowerCase()))
     .map(h => ({ key: h.name, value: h.value }));
 
@@ -242,7 +242,7 @@ interface HarExportEntry {
   timings: { send: number; wait: number; receive: number };
 }
 
-function postmanItemToHarEntry(item: PostmanItem): HarExportEntry | null {
+function collectionItemToHarEntry(item: CollectionItem): HarExportEntry | null {
   if (!item.request) return null;
 
   const req = item.request;
@@ -346,22 +346,22 @@ function postmanItemToHarEntry(item: PostmanItem): HarExportEntry | null {
   };
 }
 
-function collectHarEntries(items: PostmanItem[], out: HarExportEntry[]): void {
+function collectHarEntries(items: CollectionItem[], out: HarExportEntry[]): void {
   for (const item of items) {
     if (item.item) {
       collectHarEntries(item.item, out);
     } else {
-      const entry = postmanItemToHarEntry(item);
+      const entry = collectionItemToHarEntry(item);
       if (entry) out.push(entry);
     }
   }
 }
 
 /**
- * Generate a HAR file JSON string from an array of Postman items.
+ * Generate a HAR file JSON string from an array of collection items.
  * Nested folders are traversed recursively and flattened into HAR entries.
  */
-export function generateHarFromItems(items: PostmanItem[], collectionName = 'Export'): string {
+export function generateHarFromItems(items: CollectionItem[], collectionName = 'Export'): string {
   const entries: HarExportEntry[] = [];
   collectHarEntries(items, entries);
 
