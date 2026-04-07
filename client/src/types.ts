@@ -1,37 +1,37 @@
 // ─── Postman Format v2.1 Types ─────────────────────────────────────────────
 
-export interface PostmanAuth {
+export interface CollectionAuth {
   type: 'noauth' | 'inherit' | 'bearer' | 'basic' | 'apikey' | 'oauth1' | 'oauth2' | 'digest' | 'hawk' | 'awsv4' | 'ntlm';
   bearer?: Array<{ key: string; value: string; type?: string }>;
   basic?: Array<{ key: string; value: string; type?: string }>;
   apikey?: Array<{ key: string; value: string; type?: string }>;
 }
 
-export interface PostmanHeader {
+export interface CollectionHeader {
   key: string;
   value: string;
   description?: string;
   disabled?: boolean;
 }
 
-export interface PostmanQueryParam {
+export interface CollectionQueryParam {
   key: string;
   value: string;
   description?: string;
   disabled?: boolean;
 }
 
-export interface PostmanUrl {
+export interface CollectionUrl {
   raw: string;
   protocol?: string;
   host?: string[];
   port?: string;
   path?: string[];
-  query?: PostmanQueryParam[];
+  query?: CollectionQueryParam[];
   variable?: Array<{ key: string; value: string }>;
 }
 
-export interface PostmanBody {
+export interface CollectionBody {
   mode: 'raw' | 'urlencoded' | 'formdata' | 'file' | 'graphql' | 'none';
   raw?: string;
   urlencoded?: Array<{ key: string; value: string; description?: string; disabled?: boolean }>;
@@ -42,7 +42,7 @@ export interface PostmanBody {
   };
 }
 
-export interface PostmanEvent {
+export interface CollectionEvent {
   listen: 'prerequest' | 'test';
   script: {
     id?: string;
@@ -51,27 +51,27 @@ export interface PostmanEvent {
   };
 }
 
-export interface PostmanItem {
+export interface CollectionItem {
   id?: string;
   name: string;
-  item?: PostmanItem[];
-  request?: PostmanRequest;
-  event?: PostmanEvent[];
-  variable?: PostmanVariable[];
-  auth?: PostmanAuth;
+  item?: CollectionItem[];
+  request?: CollectionRequest;
+  event?: CollectionEvent[];
+  variable?: CollectionVariable[];
+  auth?: CollectionAuth;
   description?: string;
 }
 
-export interface PostmanRequest {
+export interface CollectionRequest {
   method: string;
-  url: PostmanUrl | string;
-  header?: PostmanHeader[];
-  body?: PostmanBody;
-  auth?: PostmanAuth;
+  url: CollectionUrl | string;
+  header?: CollectionHeader[];
+  body?: CollectionBody;
+  auth?: CollectionAuth;
   description?: string;
 }
 
-export interface PostmanVariable {
+export interface CollectionVariable {
   key: string;
   value: string;
   type?: string;
@@ -79,20 +79,20 @@ export interface PostmanVariable {
   disabled?: boolean;
 }
 
-export interface PostmanCollection {
+export interface BaseCollection {
   info: {
     _postman_id?: string;
     name: string;
     description?: string;
     schema: string;
   };
-  item: PostmanItem[];
-  event?: PostmanEvent[];
-  variable?: PostmanVariable[];
-  auth?: PostmanAuth;
+  item: CollectionItem[];
+  event?: CollectionEvent[];
+  variable?: CollectionVariable[];
+  auth?: CollectionAuth;
 }
 
-export interface PostmanEnvironment {
+export interface BaseEnvironment {
   id?: string;
   name: string;
   values: Array<{
@@ -119,11 +119,11 @@ export interface Cookie {
 
 export type CookieJar = Record<string, Cookie[]>;
 
-export interface AppCollection extends PostmanCollection {
+export interface AppCollection extends BaseCollection {
   _id: string;
 }
 
-export interface AppEnvironment extends PostmanEnvironment {
+export interface AppEnvironment extends BaseEnvironment {
   _id: string;
 }
 
@@ -211,7 +211,7 @@ export interface RunnerIteration {
 
 export interface ActiveRequest {
   collectionId: string;
-  item: PostmanItem;
+  item: CollectionItem;
 }
 
 export type AppView = 'request' | 'runner' | 'environments' | 'globals' | 'mock';
@@ -288,7 +288,7 @@ export interface AppState {
 export interface RequestTab {
   id: string;
   collectionId: string;
-  item: PostmanItem;
+  item: CollectionItem;
   response: RequestResponse | null;
   isLoading: boolean;
 }
@@ -324,13 +324,13 @@ export type AppAction =
   | { type: 'UPDATE_COLLECTION'; payload: AppCollection }
   | { type: 'ADD_CONSOLE_LOG'; payload: ConsoleEntry }
   | { type: 'CLEAR_CONSOLE_LOGS' }
-  | { type: 'OPEN_TAB'; payload: { collectionId: string; item: PostmanItem } }
+  | { type: 'OPEN_TAB'; payload: { collectionId: string; item: CollectionItem } }
   | { type: 'CLOSE_TAB'; payload: string }
   | { type: 'SET_ACTIVE_TAB'; payload: string }
   | { type: 'SET_TAB_RESPONSE'; payload: { tabId: string; response: RequestResponse | null } }
   | { type: 'SET_TAB_LOADING'; payload: { tabId: string; loading: boolean } }
-  | { type: 'UPDATE_TAB_ITEM'; payload: { tabId: string; item: PostmanItem } }
-  | { type: 'UPDATE_TAB'; payload: { tabId: string; collectionId: string; item: PostmanItem } }
+  | { type: 'UPDATE_TAB_ITEM'; payload: { tabId: string; item: CollectionItem } }
+  | { type: 'UPDATE_TAB'; payload: { tabId: string; collectionId: string; item: CollectionItem } }
   | { type: 'OPEN_BLANK_TAB' }
   | { type: 'REORDER_TABS'; payload: string[] }
   | { type: 'REORDER_COLLECTIONS'; payload: string[] }

@@ -1,5 +1,5 @@
 import { load as yamlLoad } from 'js-yaml';
-import type { PostmanItem, PostmanHeader, PostmanQueryParam, PostmanBody } from '../types';
+import type { CollectionItem, CollectionHeader, CollectionQueryParam, CollectionBody } from '../types';
 
 // ─── OpenAPI / Swagger type stubs ────────────────────────────────────────────
 
@@ -115,7 +115,7 @@ function paramExample(p: OaParameter): string {
 
 export interface ParsedOpenApiResult {
   collectionName: string;
-  items: PostmanItem[];
+  items: CollectionItem[];
 }
 
 export function parseOpenApiSpec(text: string, filename?: string): ParsedOpenApiResult {
@@ -149,8 +149,8 @@ export function parseOpenApiSpec(text: string, filename?: string): ParsedOpenApi
   const paths = spec.paths || {};
 
   // Collect items grouped by first tag
-  const tagMap = new Map<string, PostmanItem[]>();
-  const untagged: PostmanItem[] = [];
+  const tagMap = new Map<string, CollectionItem[]>();
+  const untagged: CollectionItem[] = [];
 
   for (const [pathStr, pathItem] of Object.entries(paths)) {
     const pathLevelParams: OaParameter[] = pathItem.parameters || [];
@@ -165,12 +165,12 @@ export function parseOpenApiSpec(text: string, filename?: string): ParsedOpenApi
       const rawUrl = `${baseUrl}${pathStr}`;
 
       // Query params
-      const queryParams: PostmanQueryParam[] = allParams
+      const queryParams: CollectionQueryParam[] = allParams
         .filter(p => p.in === 'query')
         .map(p => ({ key: p.name, value: paramExample(p), description: p.description }));
 
       // Headers
-      const headers: PostmanHeader[] = allParams
+      const headers: CollectionHeader[] = allParams
         .filter(p => p.in === 'header')
         .map(p => ({ key: p.name, value: paramExample(p), description: p.description }));
 
@@ -180,7 +180,7 @@ export function parseOpenApiSpec(text: string, filename?: string): ParsedOpenApi
         : rawUrl;
 
       // Body
-      let body: PostmanBody | undefined;
+      let body: CollectionBody | undefined;
 
       if (isSwagger2) {
         const bodyParam = allParams.find(p => p.in === 'body');
@@ -233,7 +233,7 @@ export function parseOpenApiSpec(text: string, filename?: string): ParsedOpenApi
         operation.operationId ||
         `${method.toUpperCase()} ${pathStr}`;
 
-      const item: PostmanItem = {
+      const item: CollectionItem = {
         id: crypto.randomUUID(),
         name: opName,
         description: operation.description,
@@ -261,7 +261,7 @@ export function parseOpenApiSpec(text: string, filename?: string): ParsedOpenApi
   }
 
   // Build final item list — one folder per tag
-  const items: PostmanItem[] = [];
+  const items: CollectionItem[] = [];
   for (const [tag, tagItems] of tagMap.entries()) {
     items.push({
       id: crypto.randomUUID(),

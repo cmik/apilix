@@ -1,10 +1,10 @@
 // ─── HURL Utilities ──────────────────────────────────────────────────────────
-// Supports parsing HURL files into Postman items and generating HURL from
-// Postman request definitions.
+// Supports parsing HURL files into collection items and generating HURL from
+// request definitions.
 // HURL format: https://hurl.dev/docs/hurl-file.html
 
 import { generateId } from '../store';
-import type { PostmanItem, PostmanHeader, PostmanQueryParam } from '../types';
+import type { CollectionItem, CollectionHeader, CollectionQueryParam } from '../types';
 
 // ─── Request params for HURL generation ──────────────────────────────────────
 // Compatible with CodeGenParams in codeGen.ts — defined here to avoid circular deps.
@@ -49,12 +49,12 @@ function isResponseLine(line: string): boolean {
 // ─── HURL Parser ─────────────────────────────────────────────────────────────
 
 /**
- * Parse a HURL file (one or more entries) into an array of PostmanItems.
- * Each HURL entry becomes one Postman request item.
+ * Parse a HURL file (one or more entries) into an array of collection items.
+ * Each HURL entry becomes one request item.
  */
-export function parseHurlFile(text: string): PostmanItem[] {
+export function parseHurlFile(text: string): CollectionItem[] {
   const lines = text.split(/\r?\n/);
-  const entries: PostmanItem[] = [];
+  const entries: CollectionItem[] = [];
 
   // Split file into entry blocks. A new entry starts with `METHOD URL`.
   const entryStartIndices: number[] = [];
@@ -195,7 +195,7 @@ function hurlAssertToPmTest(raw: string): string {
 function buildTestEvent(
   captures: HurlCapture[],
   asserts: HurlAssert[],
-): import('../types').PostmanEvent | null {
+): import('../types').CollectionEvent | null {
   if (captures.length === 0 && asserts.length === 0) return null;
 
   const needsJp = captures.some(c => c.captureType === 'jsonpath')
@@ -259,7 +259,7 @@ function buildTestEvent(
 }
 
 /** Parse a single HURL entry (lines from METHOD URL to start of next entry). */
-function parseHurlEntry(lines: string[]): PostmanItem | null {
+function parseHurlEntry(lines: string[]): CollectionItem | null {
   if (lines.length === 0) return null;
 
   const firstLine = lines[0].trim();
@@ -269,11 +269,11 @@ function parseHurlEntry(lines: string[]): PostmanItem | null {
   const method = parts[0].toUpperCase();
   const url = parts.slice(1).join(' ');
 
-  const headers: PostmanHeader[] = [];
+  const headers: CollectionHeader[] = [];
   const bodyLines: string[] = [];
   const captures: HurlCapture[] = [];
   const asserts: HurlAssert[] = [];
-  const queryParams: PostmanQueryParam[] = [];
+  const queryParams: CollectionQueryParam[] = [];
   let inBody = false;
   let inResponse = false;
   let currentSection: string | null = null;
@@ -400,7 +400,7 @@ function parseHurlEntry(lines: string[]): PostmanItem | null {
     rawUrl = url.includes('?') ? `${url}&${qs}` : `${url}?${qs}`;
   }
 
-  let bodyDef: import('../types').PostmanBody | undefined;
+  let bodyDef: import('../types').CollectionBody | undefined;
 
   if (graphqlFenceMatch) {
     const gqlQuery = graphqlFenceMatch[1] ?? '';
@@ -425,7 +425,7 @@ function parseHurlEntry(lines: string[]): PostmanItem | null {
       : undefined;
   }
 
-  const item: PostmanItem = {
+  const item: CollectionItem = {
     id: generateId(),
     name: `${method} ${rawUrl}`,
     request: {
@@ -504,10 +504,10 @@ export function generateHurlEntry(p: HurlRequestParams): string {
 }
 
 /**
- * Generate a full HURL file from multiple Postman items (requests only, not folders).
+ * Generate a full HURL file from multiple collection items (requests only, not folders).
  * Nested folders are traversed recursively.
  */
-export function generateHurlFromItems(items: PostmanItem[]): string {
+export function generateHurlFromItems(items: CollectionItem[]): string {
   const entries: string[] = [];
   collectHurlEntries(items, entries);
   return entries.join('\n\n');
@@ -545,7 +545,7 @@ function extractHurlAssertsFromScript(execLines: string[]): string[] {
   return asserts;
 }
 
-function collectHurlEntries(items: PostmanItem[], out: string[]): void {
+function collectHurlEntries(items: CollectionItem[], out: string[]): void {
   for (const item of items) {
     if (Array.isArray(item.item)) {
       // Folder — recurse

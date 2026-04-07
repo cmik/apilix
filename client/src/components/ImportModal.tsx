@@ -4,7 +4,7 @@ import { parseCurlCommand } from '../utils/curlUtils';
 import { parseHurlFile, HURL_METHOD_REGEX } from '../utils/hurlUtils';
 import { parseOpenApiSpec } from '../utils/openApiUtils';
 import { parseHarFile } from '../utils/harUtils';
-import type { PostmanItem, PostmanAuth, PostmanBody } from '../types';
+import type { CollectionItem, CollectionAuth, CollectionBody } from '../types';
 
 interface ImportModalProps {
   onClose: () => void;
@@ -276,7 +276,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
       return;
     }
 
-    const auth: PostmanAuth | undefined = parsed.authType === 'basic'
+    const auth: CollectionAuth | undefined = parsed.authType === 'basic'
       ? {
           type: 'basic',
           basic: [
@@ -286,7 +286,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
         }
       : undefined;
 
-    const body: PostmanBody | undefined = parsed.bodyMode !== 'none'
+    const body: CollectionBody | undefined = parsed.bodyMode !== 'none'
       ? {
           mode: parsed.bodyMode,
           raw: parsed.bodyMode === 'raw' ? parsed.bodyRaw : undefined,
@@ -296,7 +296,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
         }
       : undefined;
 
-    const newItem: PostmanItem = {
+    const newItem: CollectionItem = {
       id: generateId(),
       name: nameFromUrl(parsed.url),
       request: {

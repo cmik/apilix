@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { marked } from 'marked';
-import type { PostmanItem, PostmanRequest, PostmanHeader, PostmanQueryParam } from '../types';
+import type { CollectionItem, CollectionRequest, CollectionHeader, CollectionQueryParam } from '../types';
 import { useApp } from '../store';
 import { executeRequest } from '../api';
 import { getUrlDisplay, buildVarMap, resolveVariables } from '../utils/variableResolver';
@@ -28,9 +28,9 @@ const METHOD_COLORS: Record<string, string> = {
 const TABS = ['Params', 'Auth', 'Headers', 'Body', 'Pre-request', 'Tests', 'Docs'] as const;
 type Tab = typeof TABS[number];
 
-function flattenRequestNames(items: PostmanItem[]): string[] {
+function flattenRequestNames(items: CollectionItem[]): string[] {
   const names: string[] = [];
-  function walk(arr: PostmanItem[]) {
+  function walk(arr: CollectionItem[]) {
     for (const it of arr) {
       if (it.request && it.name) names.push(it.name);
       if (it.item) walk(it.item);
@@ -42,8 +42,8 @@ function flattenRequestNames(items: PostmanItem[]): string[] {
 
 // ─── Local editable state for a request ─────────────────────────────────────
 
-function itemToEditState(item: PostmanItem) {
-  const req = item.request as PostmanRequest;
+function itemToEditState(item: CollectionItem) {
+  const req = item.request as CollectionRequest;
   const urlRaw = typeof req.url === 'string' ? req.url : (req.url?.raw ?? '');
   return {
     method: req.method?.toUpperCase() ?? 'GET',
@@ -70,7 +70,7 @@ function itemToEditState(item: PostmanItem) {
   };
 }
 
-function extractQueryParams(url: PostmanRequest['url']): PostmanQueryParam[] {
+function extractQueryParams(url: CollectionRequest['url']): CollectionQueryParam[] {
   if (typeof url === 'string') {
     const idx = url.indexOf('?');
     if (idx === -1) return [];
@@ -86,7 +86,7 @@ function extractQueryParams(url: PostmanRequest['url']): PostmanQueryParam[] {
   return (url?.query ?? []).map(q => ({ ...q }));
 }
 
-function getScript(item: PostmanItem, type: 'prerequest' | 'test'): string {
+function getScript(item: CollectionItem, type: 'prerequest' | 'test'): string {
   const ev = (item.event ?? []).find(e => e.listen === type);
   if (!ev) return '';
   return Array.isArray(ev.script.exec) ? ev.script.exec.join('\n') : (ev.script.exec ?? '');
@@ -639,7 +639,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
   const col = state.collections.find(c => c._id === activeReq.collectionId);
 
   // Sync query params into URL
-  function syncParamsToUrl(params: PostmanQueryParam[]) {
+  function syncParamsToUrl(params: CollectionQueryParam[]) {
     const baseUrl = edit!.url.split('?')[0];
     const qs = params
       .filter(p => p.key && !p.disabled)
@@ -714,7 +714,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
     }
   }
 
-  function extractQueryParamsFromString(url: string): PostmanQueryParam[] {
+  function extractQueryParamsFromString(url: string): CollectionQueryParam[] {
     const idx = url.indexOf('?');
     if (idx === -1) return [];
     return url.slice(idx + 1).split('&').map(p => {
@@ -746,14 +746,14 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
     }
 
     // Build the item from current edit state
-    const item: PostmanItem = {
+    const item: CollectionItem = {
       ...activeReq.item,
       request: {
         method: edit.method,
         url: { raw: edit.url },
         header: edit.headers.filter(h => !h.disabled),
         body: edit.bodyMode !== 'none' ? {
-          mode: edit.bodyMode as NonNullable<NonNullable<PostmanItem['request']>['body']>['mode'],
+          mode: edit.bodyMode as NonNullable<NonNullable<CollectionItem['request']>['body']>['mode'],
           raw: edit.bodyMode === 'raw' ? edit.bodyRaw : edit.bodyMode === 'file' ? (binaryBase64 ?? '') : undefined,
           urlencoded: edit.bodyMode === 'urlencoded' ? edit.bodyUrlEncoded : undefined,
           formdata: edit.bodyMode === 'formdata' ? edit.bodyFormData : undefined,
@@ -907,7 +907,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
       return;
     }
     if (!activeTab.item.id) return;
-    const updatedItem: PostmanItem = {
+    const updatedItem: CollectionItem = {
       ...activeTab.item,
       description: edit.description || undefined,
       request: {
@@ -916,7 +916,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
         url: { raw: edit.url },
         header: edit.headers,
         body: edit.bodyMode !== 'none' ? {
-          mode: edit.bodyMode as NonNullable<NonNullable<PostmanItem['request']>['body']>['mode'],
+          mode: edit.bodyMode as NonNullable<NonNullable<CollectionItem['request']>['body']>['mode'],
           raw: edit.bodyMode === 'raw' ? edit.bodyRaw : undefined,
           urlencoded: edit.bodyMode === 'urlencoded' ? edit.bodyUrlEncoded : undefined,
           formdata: edit.bodyMode === 'formdata' ? edit.bodyFormData : undefined,          graphql: edit.bodyMode === 'graphql' ? { query: edit.bodyGraphqlQuery, variables: edit.bodyGraphqlVariables || undefined } : undefined,          options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as 'json' | 'text' } } : undefined,
@@ -1267,7 +1267,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
           <div className="flex flex-col gap-3">
             <select
               value={edit.authType}
-              onChange={e => setEdit(x => x ? { ...x, authType: e.target.value as NonNullable<PostmanItem['request']>['auth'] extends { type: infer T } ? T : never } : x)}
+              onChange={e => setEdit(x => x ? { ...x, authType: e.target.value as NonNullable<CollectionItem['request']>['auth'] extends { type: infer T } ? T : never } : x)}
               className="w-56 bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none"
             >
               <option value="inherit">Inherit auth from parent</option>
@@ -1507,7 +1507,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
                     if (!activeTab || !edit || !saveTargetCollectionId) return;
                     const targetCol = state.collections.find(c => c._id === saveTargetCollectionId);
                     if (!targetCol) return;
-                    const updatedItem: PostmanItem = {
+                    const updatedItem: CollectionItem = {
                       ...activeTab.item,
                       description: edit.description || undefined,
                       request: {
@@ -1516,7 +1516,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
                         url: { raw: edit.url },
                         header: edit.headers,
                         body: edit.bodyMode !== 'none' ? {
-                          mode: edit.bodyMode as NonNullable<NonNullable<PostmanItem['request']>['body']>['mode'],
+                          mode: edit.bodyMode as NonNullable<NonNullable<CollectionItem['request']>['body']>['mode'],
                           raw: edit.bodyMode === 'raw' ? edit.bodyRaw : undefined,
                           urlencoded: edit.bodyMode === 'urlencoded' ? edit.bodyUrlEncoded : undefined,
                           formdata: edit.bodyMode === 'formdata' ? edit.bodyFormData : undefined,
@@ -1617,7 +1617,7 @@ function parseRawHttp(rawStr: string): Partial<EditState> | null {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function buildAuth(edit: ReturnType<typeof itemToEditState>): PostmanRequest['auth'] {
+function buildAuth(edit: ReturnType<typeof itemToEditState>): CollectionRequest['auth'] {
   switch (edit.authType) {
     case 'inherit':
       return undefined; // undefined auth = inherit from parent (Postman-compatible)
@@ -1645,8 +1645,8 @@ function buildAuth(edit: ReturnType<typeof itemToEditState>): PostmanRequest['au
   }
 }
 
-function buildEvents(edit: ReturnType<typeof itemToEditState>): PostmanItem['event'] {
-  const events: PostmanItem['event'] = [];
+function buildEvents(edit: ReturnType<typeof itemToEditState>): CollectionItem['event'] {
+  const events: CollectionItem['event'] = [];
   if (edit.preRequestScript.trim()) {
     events.push({ listen: 'prerequest', script: { type: 'text/javascript', exec: edit.preRequestScript.split('\n') } });
   }

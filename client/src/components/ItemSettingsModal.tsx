@@ -1,22 +1,22 @@
 import { useState } from 'react';
 import { marked } from 'marked';
-import type { PostmanAuth, PostmanEvent } from '../types';
+import type { CollectionAuth, CollectionEvent } from '../types';
 import ScriptEditor from './ScriptEditor';
 
-type AuthType = PostmanAuth['type'];
+type AuthType = CollectionAuth['type'];
 const SUPPORTED_AUTH: AuthType[] = ['noauth', 'bearer', 'basic', 'apikey'];
 
 interface Props {
   kind: 'collection' | 'folder';
   name: string;
-  auth?: PostmanAuth;
-  event?: PostmanEvent[];
+  auth?: CollectionAuth;
+  event?: CollectionEvent[];
   description?: string;
-  onSave: (auth: PostmanAuth | undefined, event: PostmanEvent[], description: string) => void;
+  onSave: (auth: CollectionAuth | undefined, event: CollectionEvent[], description: string) => void;
   onClose: () => void;
 }
 
-function getScript(events: PostmanEvent[] | undefined, listen: 'prerequest' | 'test'): string {
+function getScript(events: CollectionEvent[] | undefined, listen: 'prerequest' | 'test'): string {
   const ev = (events || []).find(e => e.listen === listen);
   if (!ev) return '';
   const exec = ev.script.exec;
@@ -24,10 +24,10 @@ function getScript(events: PostmanEvent[] | undefined, listen: 'prerequest' | 't
 }
 
 function patchEvents(
-  events: PostmanEvent[] | undefined,
+  events: CollectionEvent[] | undefined,
   listen: 'prerequest' | 'test',
   code: string,
-): PostmanEvent[] {
+): CollectionEvent[] {
   const others = (events || []).filter(e => e.listen !== listen);
   if (!code.trim()) return others;
   return [...others, { listen, script: { type: 'text/javascript', exec: code.split('\n') } }];
@@ -50,7 +50,7 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
   const [description, setDescription] = useState(initialDescription ?? '');
   const [docsMode, setDocsMode] = useState<'edit' | 'preview'>('edit');
 
-  function buildAuth(): PostmanAuth | undefined {
+  function buildAuth(): CollectionAuth | undefined {
     if (authType === 'noauth') return { type: 'noauth' };
     if (authType === 'bearer') return { type: 'bearer', bearer: [{ key: 'token', value: authBearer, type: 'string' }] };
     if (authType === 'basic') return {

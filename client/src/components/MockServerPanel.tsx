@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useApp, generateId } from '../store';
-import type { MockRoute, MockCollection, AppCollection, PostmanItem, MockLogEntry, MockRouteRule } from '../types';
+import type { MockRoute, MockCollection, AppCollection, CollectionItem, MockLogEntry, MockRouteRule } from '../types';
 import { startMockServer, stopMockServer, syncMockRoutes, getMockStatus, getMockLog, clearMockLog } from '../api';
 import ScriptEditor from './ScriptEditor';
 
@@ -81,8 +81,8 @@ function methodColor(method: string) {
   }
 }
 
-function flattenRequests(items: PostmanItem[]): PostmanItem[] {
-  const result: PostmanItem[] = [];
+function flattenRequests(items: CollectionItem[]): CollectionItem[] {
+  const result: CollectionItem[] = [];
   for (const item of items) {
     if (item.item) {
       result.push(...flattenRequests(item.item));
@@ -105,7 +105,7 @@ function extractPath(url: unknown): string {
   }
 }
 
-function postmanItemToMockRoute(item: PostmanItem, collectionId?: string): MockRoute {
+function collectionItemToMockRoute(item: CollectionItem, collectionId?: string): MockRoute {
   const req = item.request!;
   const method = (req.method ?? 'GET').toUpperCase();
   const path = extractPath(req.url);
@@ -583,7 +583,7 @@ function ImportRoutesModal({ mockCollections, appCollections, onImport, onClose 
     const target = targetCollectionId || undefined;
     let routes: MockRoute[] = [];
     if (tab === 'collection') {
-      routes = flatRequests.filter(i => i.id && selectedItemIds.has(i.id)).map(i => postmanItemToMockRoute(i, target));
+      routes = flatRequests.filter(i => i.id && selectedItemIds.has(i.id)).map(i => collectionItemToMockRoute(i, target));
     } else {
       routes = harEntries
         .map((e, i) => ({ e, i }))
@@ -631,7 +631,7 @@ function ImportRoutesModal({ mockCollections, appCollections, onImport, onClose 
                 <div>
                   <label className="block text-xs text-slate-400 mb-1">Source collection</label>
                   {appCollections.length === 0 ? (
-                    <p className="text-xs text-slate-500 italic">No collections available. Import a Postman collection first.</p>
+                    <p className="text-xs text-slate-500 italic">No collections available. Import a collection first.</p>
                   ) : (
                     <select value={sourceColId} onChange={e => setSourceColId(e.target.value)} className="w-full bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none">
                       {appCollections.map(c => <option key={c._id} value={c._id}>{c.info.name}</option>)}
