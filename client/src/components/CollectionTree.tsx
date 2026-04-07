@@ -523,6 +523,7 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
     const exported = {
       info: {
         name: collection.info.name,
+        description: collection.info.description,
         schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
         _postman_id: collection._id,
       },
@@ -619,10 +620,17 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
           auth={collection.auth}
           event={collection.event}
           description={collection.info.description}
-          onSave={(auth, events, description) => {
+          variables={collection.variable ?? []}
+          onSave={(auth, events, description, variables) => {
             dispatch({
               type: 'UPDATE_COLLECTION',
-              payload: { ...collection, auth, event: events.length ? events : undefined, info: { ...collection.info, description: description || undefined } },
+              payload: {
+                ...collection,
+                auth,
+                event: events.length ? events : undefined,
+                variable: variables.length ? variables : undefined,
+                info: { ...collection.info, description: description || undefined },
+              },
             });
           }}
           onClose={() => setShowSettings(false)}

@@ -42,14 +42,43 @@ function flattenRequestNames(items: CollectionItem[]): string[] {
 
 // ─── Local editable state for a request ─────────────────────────────────────
 
+function extractPathParamNames(url: string): string[] {
+  // Match :paramName segments in URL path (not inside query string)
+  const pathPart = url.split('?')[0];
+  const names: string[] = [];
+  const re = /:([a-zA-Z_][a-zA-Z0-9_]*)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(pathPart)) !== null) {
+    if (!names.includes(m[1])) names.push(m[1]);
+  }
+  return names;
+}
+
+function applyPathParams(url: string, params: Array<{ key: string; value: string }>): string {
+  let resolved = url;
+  for (const p of params) {
+    if (p.key) {
+      resolved = resolved.replace(
+        new RegExp(`:${p.key}(?=/|$|\\?|#)`, 'g'),
+        encodeURIComponent(p.value)
+      );
+    }
+  }
+  return resolved;
+}
+
 function itemToEditState(item: CollectionItem) {
   const req = item.request as CollectionRequest;
   const urlRaw = typeof req.url === 'string' ? req.url : (req.url?.raw ?? '');
+  const urlVars = typeof req.url === 'object' ? (req.url?.variable ?? []) : [];
+  const detectedNames = extractPathParamNames(urlRaw);
+  const storedMap = new Map(urlVars.map(v => [v.key ?? '', v.value ?? '']));
   return {
     method: req.method?.toUpperCase() ?? 'GET',
     url: urlRaw,
     headers: (req.header ?? []).map(h => ({ ...h })),
     queryParams: extractQueryParams(req.url),
+    pathParams: detectedNames.map(k => ({ key: k, value: storedMap.get(k) ?? '' })),
     bodyMode: req.body?.mode ?? 'none',
     bodyRaw: req.body?.raw ?? '',
     bodyRawLang: req.body?.options?.raw?.language ?? 'json',
@@ -662,7 +691,13 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
 
   function handleUrlChange(val: string) {
     const params = extractQueryParamsFromString(val);
-    setEdit(e => e ? { ...e, url: val, queryParams: params } : e);
+    const detectedNames = extractPathParamNames(val);
+    setEdit(e => {
+      if (!e) return e;
+      const existing = new Map(e.pathParams.map(p => [p.key, p.value]));
+      const pathParams = detectedNames.map(k => ({ key: k, value: existing.get(k) ?? '' }));
+      return { ...e, url: val, queryParams: params, pathParams };
+    });
     // Variable autocomplete: detect {{ before cursor
     const cursorPos = urlInputRef.current?.selectionStart ?? val.length;
     const before = val.slice(0, cursorPos);
@@ -746,11 +781,12 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
     }
 
     // Build the item from current edit state
+    const resolvedUrl = applyPathParams(edit.url, edit.pathParams);
     const item: CollectionItem = {
       ...activeReq.item,
       request: {
         method: edit.method,
-        url: { raw: edit.url },
+        url: { raw: resolvedUrl, variable: edit.pathParams.filter(p => p.key).map(p => ({ key: p.key, value: p.value })) },
         header: edit.headers.filter(h => !h.disabled),
         body: edit.bodyMode !== 'none' ? {
           mode: edit.bodyMode as NonNullable<NonNullable<CollectionItem['request']>['body']>['mode'],
@@ -913,7 +949,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
       request: {
         ...(activeTab.item.request ?? {}),
         method: edit.method,
-        url: { raw: edit.url },
+        url: { raw: edit.url, variable: edit.pathParams.filter(p => p.key).map(p => ({ key: p.key, value: p.value })) },
         header: edit.headers,
         body: edit.bodyMode !== 'none' ? {
           mode: edit.bodyMode as NonNullable<NonNullable<CollectionItem['request']>['body']>['mode'],
@@ -1125,11 +1161,38 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
       {/* Tab content (HTTP only) */}
       {edit.method !== 'WS' && <div className="flex-1 overflow-y-auto p-3 bg-slate-800/50 min-h-0">
         {activeRequestTab === 'Params' && (
-          <KvTable
-            rows={edit.queryParams}
-            onChange={params => syncParamsToUrl(params)}
-            keyPlaceholder="Parameter"
-          />
+          <div className="flex flex-col gap-4">
+            <KvTable
+              rows={edit.queryParams}
+              onChange={params => syncParamsToUrl(params)}
+              keyPlaceholder="Parameter"
+            />
+            {edit.pathParams.length > 0 && (
+              <div>
+                <p className="text-xs text-slate-500 uppercase tracking-wider font-medium mb-2">Path Variables</p>
+                <div className="flex flex-col gap-1">
+                  {edit.pathParams.map((param, i) => (
+                    <div key={param.key} className="flex gap-1 items-center">
+                      <span className="w-36 shrink-0 px-2 py-1 bg-slate-700/50 border border-slate-600 rounded text-sm font-mono text-slate-400 truncate">
+                        :{param.key}
+                      </span>
+                      <input
+                        value={param.value}
+                        onChange={e => {
+                          const updated = edit.pathParams.map((p, j) =>
+                            j === i ? { ...p, value: e.target.value } : p
+                          );
+                          setEdit(x => x ? { ...x, pathParams: updated } : x);
+                        }}
+                        placeholder="value"
+                        className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
         {activeRequestTab === 'Headers' && (
@@ -1513,7 +1576,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
                       request: {
                         ...(activeTab.item.request ?? {}),
                         method: edit.method,
-                        url: { raw: edit.url },
+                        url: { raw: edit.url, variable: edit.pathParams.filter(p => p.key).map(p => ({ key: p.key, value: p.value })) },
                         header: edit.headers,
                         body: edit.bodyMode !== 'none' ? {
                           mode: edit.bodyMode as NonNullable<NonNullable<CollectionItem['request']>['body']>['mode'],
@@ -1525,7 +1588,6 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
                         } : undefined,
                         auth: buildAuth(edit),
                       },
-                      event: buildEvents(edit),
                     };
                     dispatch({ type: 'UPDATE_COLLECTION', payload: { ...targetCol, item: [...targetCol.item, updatedItem] } });
                     dispatch({ type: 'UPDATE_TAB', payload: { tabId: activeTab.id, collectionId: saveTargetCollectionId, item: updatedItem } });

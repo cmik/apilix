@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { marked } from 'marked';
-import type { CollectionAuth, CollectionEvent } from '../types';
+import type { CollectionAuth, CollectionEvent, CollectionVariable } from '../types';
 import ScriptEditor from './ScriptEditor';
 
 type AuthType = CollectionAuth['type'];
@@ -12,7 +12,8 @@ interface Props {
   auth?: CollectionAuth;
   event?: CollectionEvent[];
   description?: string;
-  onSave: (auth: CollectionAuth | undefined, event: CollectionEvent[], description: string) => void;
+  variables?: CollectionVariable[];
+  onSave: (auth: CollectionAuth | undefined, event: CollectionEvent[], description: string, variables: CollectionVariable[]) => void;
   onClose: () => void;
 }
 
@@ -33,12 +34,12 @@ function patchEvents(
   return [...others, { listen, script: { type: 'text/javascript', exec: code.split('\n') } }];
 }
 
-export default function ItemSettingsModal({ kind, name, auth, event, description: initialDescription, onSave, onClose }: Props) {
+export default function ItemSettingsModal({ kind, name, auth, event, description: initialDescription, variables: initialVariables, onSave, onClose }: Props) {
   const initialAuthType: AuthType = SUPPORTED_AUTH.includes(auth?.type ?? 'noauth')
     ? (auth?.type ?? 'noauth')
     : 'noauth';
 
-  const [activeTab, setActiveTab] = useState<'auth' | 'prerequest' | 'tests' | 'docs'>('auth');
+  const [activeTab, setActiveTab] = useState<'auth' | 'variables' | 'prerequest' | 'tests' | 'docs'>('auth');
   const [authType, setAuthType] = useState<AuthType>(initialAuthType);
   const [authBearer, setAuthBearer] = useState((auth?.bearer ?? []).find(b => b.key === 'token')?.value ?? '');
   const [authBasicUser, setAuthBasicUser] = useState((auth?.basic ?? []).find(b => b.key === 'username')?.value ?? '');
@@ -49,6 +50,7 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
   const [testScript, setTestScript] = useState(getScript(event, 'test'));
   const [description, setDescription] = useState(initialDescription ?? '');
   const [docsMode, setDocsMode] = useState<'edit' | 'preview'>('edit');
+  const [vars, setVars] = useState<CollectionVariable[]>(initialVariables ?? []);
 
   function buildAuth(): CollectionAuth | undefined {
     if (authType === 'noauth') return { type: 'noauth' };
@@ -74,12 +76,13 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
     let events = event ? [...event] : [];
     events = patchEvents(events, 'prerequest', preScript);
     events = patchEvents(events, 'test', testScript);
-    onSave(buildAuth(), events, description);
+    onSave(buildAuth(), events, description, vars.filter(v => v.key));
     onClose();
   }
 
   const TABS = [
     { key: 'auth' as const, label: 'Authorization' },
+    ...(kind === 'collection' ? [{ key: 'variables' as const, label: 'Variables' }] : []),
     { key: 'prerequest' as const, label: 'Pre-request Script' },
     { key: 'tests' as const, label: 'Tests' },
     { key: 'docs' as const, label: 'Documentation' },
@@ -181,6 +184,52 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ── Variables ── */}
+          {activeTab === 'variables' && (
+            <div className="flex flex-col gap-3">
+              <p className="text-xs text-slate-400">
+                Collection variables are available to all requests in this collection via <code className="text-orange-400 font-mono">{'{{key}}'}</code> syntax.
+                They can also be read and set in scripts via <code className="text-orange-400 font-mono">apx.collection.get/set(key)</code>.
+              </p>
+              <div className="flex flex-col gap-1">
+                {vars.map((v, i) => (
+                  <div key={i} className={`flex gap-1 items-center ${v.disabled ? 'opacity-40' : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={!v.disabled}
+                      onChange={() => setVars(prev => prev.map((x, j) => j === i ? { ...x, disabled: !x.disabled } : x))}
+                      className="shrink-0 accent-orange-500 cursor-pointer"
+                      title={v.disabled ? 'Enable' : 'Disable'}
+                    />
+                    <input
+                      value={v.key}
+                      onChange={e => setVars(prev => prev.map((x, j) => j === i ? { ...x, key: e.target.value } : x))}
+                      placeholder="Variable name"
+                      className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
+                    />
+                    <input
+                      value={v.value}
+                      onChange={e => setVars(prev => prev.map((x, j) => j === i ? { ...x, value: e.target.value } : x))}
+                      placeholder="value"
+                      className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
+                    />
+                    <button
+                      onClick={() => setVars(prev => prev.filter((_, j) => j !== i))}
+                      className="text-slate-600 hover:text-red-400 transition-colors px-1 text-lg leading-none shrink-0"
+                      title="Remove"
+                    >×</button>
+                  </div>
+                ))}
+                <button
+                  onClick={() => setVars(prev => [...prev, { key: '', value: '' }])}
+                  className="self-start mt-1 text-xs text-orange-400 hover:text-orange-300 transition-colors"
+                >
+                  + Add variable
+                </button>
+              </div>
             </div>
           )}
 

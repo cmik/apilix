@@ -76,6 +76,7 @@ export default function ExportModal({ onClose }: ExportModalProps) {
       const exported = {
         info: {
           name: col.info.name,
+          description: col.info.description,
           schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
           _postman_id: col._id,
         },
@@ -141,6 +142,7 @@ export default function ExportModal({ onClose }: ExportModalProps) {
             const exported = {
               info: {
                 name: col.info.name,
+                description: col.info.description,
                 schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
                 _postman_id: col._id,
               },
