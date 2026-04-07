@@ -512,6 +512,8 @@ export function parseCollectionFile(json: unknown): AppCollection {
 
 export function parseEnvironmentFile(json: unknown): AppEnvironment {
   const env = json as AppEnvironment;
-  if (!env.name || !Array.isArray(env.values)) throw new Error('Not a valid environment');
+  if (!env.name || !Array.isArray(env.values)) {
+    throw new Error('Not a valid environment: expected JSON with a name and a values array');
+  }
   return { ...env, _id: generateId() };
 }
