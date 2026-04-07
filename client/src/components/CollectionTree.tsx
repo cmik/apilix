@@ -4,7 +4,7 @@ import type { CollectionItem, AppCollection } from '../types';
 import { useApp } from '../store';
 import {
   renameItemById, updateItemById, removeItemById, addItemToFolder, duplicateItem,
-  moveItemInTree, extractItemById, insertItemInTree, isDescendantOf,
+  moveItemInTree, extractItemById, insertItemInTree, isDescendantOf, getAllRequestIds,
 } from '../utils/treeHelpers';
 import { generateHurlFromItems } from '../utils/hurlUtils';
 import ItemSettingsModal from './ItemSettingsModal';
@@ -322,6 +322,15 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
       { label: 'Add request', icon: '➕', onClick: handleAddRequest },
     ] : []),
     {
+      label: 'Execute in Runner',
+      icon: '▶',
+      onClick: () => {
+        const ids = isFolder ? getAllRequestIds(item.item || []) : (item.id ? [item.id] : []);
+        dispatch({ type: 'SET_RUNNER_PRESELECTION', payload: { collectionId, requestIds: ids } });
+        dispatch({ type: 'SET_VIEW', payload: 'runner' });
+      },
+    },
+    {
       label: 'Rename',
       icon: '✏️',
       onClick: () => { setRenameVal(item.name); setRenaming(true); },
@@ -558,6 +567,15 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
     { label: 'Export as HURL', icon: '⬇️', onClick: handleExportHurl },
     { label: 'Add folder', icon: '📁', onClick: handleAddFolder },
     { label: 'Add request', icon: '➕', onClick: handleAddRequest },
+    {
+      label: 'Execute in Runner',
+      icon: '▶',
+      onClick: () => {
+        const ids = getAllRequestIds(collection.item);
+        dispatch({ type: 'SET_RUNNER_PRESELECTION', payload: { collectionId: collection._id, requestIds: ids } });
+        dispatch({ type: 'SET_VIEW', payload: 'runner' });
+      },
+    },
     {
       label: 'Rename',
       icon: '✏️',

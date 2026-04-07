@@ -283,6 +283,7 @@ export interface AppState {
   mockRoutes: MockRoute[];
   mockServerRunning: boolean;
   mockPort: number;
+  runnerPreselection: { collectionId: string; requestIds: string[] } | null;
 }
 
 export interface RequestTab {
@@ -347,4 +348,5 @@ export type AppAction =
   | { type: 'REORDER_MOCK_ROUTES'; payload: string[] }
   | { type: 'SET_MOCK_ROUTES'; payload: MockRoute[] }
   | { type: 'SET_MOCK_SERVER_RUNNING'; payload: boolean }
-  | { type: 'SET_MOCK_PORT'; payload: number };
+  | { type: 'SET_MOCK_PORT'; payload: number }
+  | { type: 'SET_RUNNER_PRESELECTION'; payload: { collectionId: string; requestIds: string[] } | null };

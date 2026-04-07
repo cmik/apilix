@@ -199,3 +199,20 @@ export function resolveInheritedAuth(
   const result = walk(items, collectionAuth);
   return result.found ? result.auth : collectionAuth;
 }
+
+/** Collect all request (leaf) IDs from a subtree. */
+export function getAllRequestIds(items: CollectionItem[]): string[] {
+  function walk(nodes: CollectionItem[], acc: string[]): void {
+    for (const item of nodes) {
+      if (item.item) {
+        walk(item.item, acc);
+        continue;
+      }
+      if (item.request && item.id) acc.push(item.id);
+    }
+  }
+
+  const requestIds: string[] = [];
+  walk(items, requestIds);
+  return requestIds;
+}
