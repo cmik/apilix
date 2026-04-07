@@ -594,6 +594,7 @@ export default function RunnerPanel() {
   const [runId, setRunId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [configOpen, setConfigOpen] = useState(true);
+  const [useMockServer, setUseMockServer] = useState(false);
   const csvRef = useRef<HTMLInputElement>(null);
   const dragItemRef = useRef<number | null>(null);
   const dragOverRef = useRef<number | null>(null);
@@ -743,12 +744,33 @@ export default function RunnerPanel() {
 
       // When conditional execution is on and chains were resolved, flatten all
       // chains in primary order (no cross-chain dedup — each chain runs in full).
-      const orderedItems = conditionalChains
+      let orderedItems = conditionalChains
         ? conditionalChains.flat().map(({ item }) => itemMap.get(item.id!) ?? item)
         : executionOrder
             .filter(id => selectedRequestIds.has(id))
             .map(id => itemMap.get(id))
             .filter((item): item is CollectionItem => !!item);
+
+      // Rewrite URLs to mock server if enabled
+      if (useMockServer && state.mockServerRunning) {
+        const mockBase = `http://localhost:${state.mockPort}`;
+        orderedItems = orderedItems.map(item => {
+          if (!item.request) return item;
+          const rawUrl = typeof item.request.url === 'string' ? item.request.url : (item.request.url?.raw ?? '');
+          let mockUrl: string;
+          try {
+            const parsed = new URL(rawUrl);
+            mockUrl = mockBase + parsed.pathname + parsed.search + parsed.hash;
+          } catch {
+            const withSlash = rawUrl.startsWith('/') ? rawUrl : '/' + rawUrl;
+            mockUrl = mockBase + withSlash;
+          }
+          const updatedUrl = typeof item.request.url === 'string'
+            ? mockUrl
+            : { ...(item.request.url as object), raw: mockUrl };
+          return { ...item, request: { ...item.request, url: updatedUrl as typeof item.request.url } };
+        });
+      }
 
       const streamingResults: RunnerIteration[] = [];
       let currentIteration: RunnerIteration | null = null;
@@ -1218,11 +1240,33 @@ export default function RunnerPanel() {
           </div>
         )}
 
+        {/* Mock server option */}
+        <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors ${useMockServer && state.mockServerRunning ? 'border-orange-500/50 bg-orange-500/5' : 'border-slate-700'}`}>
+          <input
+            id="useMockServer"
+            type="checkbox"
+            checked={useMockServer && state.mockServerRunning}
+            disabled={!state.mockServerRunning}
+            onChange={e => setUseMockServer(e.target.checked)}
+            className="accent-orange-500 cursor-pointer disabled:cursor-not-allowed"
+          />
+          <label htmlFor="useMockServer" className={`text-xs cursor-pointer select-none flex items-center gap-2 ${state.mockServerRunning ? 'text-slate-300' : 'text-slate-600 cursor-not-allowed'}`}>
+            <span>🎭</span>
+            <span>Send all requests to Mock Server</span>
+            {state.mockServerRunning
+              ? <span className="font-mono text-slate-500">localhost:{state.mockPort}</span>
+              : <span className="text-slate-600 italic">(start the mock server to enable)</span>
+            }
+          </label>
+        </div>
+
         </div>{/* end collapsible body */}
       </div>
 
       {/* Run controls — always visible */}
-      <div className="flex items-center gap-3 shrink-0">
+      <div className="flex flex-col gap-2 shrink-0">
+
+      <div className="flex items-center gap-3">
         <button
           onClick={handleRun}
           disabled={!selectedCollection || isRunning || selectedRequestIds.size === 0}
@@ -1263,6 +1307,7 @@ export default function RunnerPanel() {
           <span className="text-xs text-yellow-400 font-medium animate-pulse">Paused — waiting between requests</span>
         )}
       </div>
+      </div>{/* end run controls wrapper */}
 
       {error && (
         <div className="bg-red-900/20 border border-red-700 rounded px-3 py-2 text-red-400 text-sm shrink-0">{error}</div>
