@@ -1019,6 +1019,14 @@ async function ensureRepo(repoDir, config) {
   if (config.authorEmail) await git.addConfig('user.email', config.authorEmail);
   // Always use merge strategy on pull (avoids "divergent branches" error)
   await git.addConfig('pull.rebase', 'false');
+  // Ensure the target branch exists locally and is checked out before commit/push.
+  const branch = config.branch || 'main';
+  const localBranches = await git.branchLocal();
+  if (localBranches.all.includes(branch)) {
+    await git.checkout(branch);
+  } else {
+    await git.checkoutLocalBranch(branch);
+  }
   return git;
 }
 
