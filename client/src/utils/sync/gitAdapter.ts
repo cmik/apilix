@@ -11,8 +11,9 @@
  *   username — git username (for HTTPS authentication)
  *   token    — personal access token (stored encrypted)
  *
- * The server stores workspace files at `userData/git-sync/workspaces/{id}.json`
- * inside a local git repository that tracks the remote.
+ * The server stores each workspace in a local git repository at
+ * `userData/git-sync/workspaces/{workspaceId}/`, with the workspace data
+ * written to `workspace.json` inside that repository directory.
  */
 
 import type { WorkspaceData } from '../../types';
