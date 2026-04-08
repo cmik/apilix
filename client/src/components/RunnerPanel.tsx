@@ -753,25 +753,9 @@ export default function RunnerPanel() {
 
       // Rewrite URLs to mock server if enabled
       if (useMockServer && state.mockServerRunning) {
-        const mockBase = `http://localhost:${state.mockPort}`;
-        orderedItems = orderedItems.map(item => {
-          if (!item.request) return item;
-          const rawUrl = typeof item.request.url === 'string' ? item.request.url : (item.request.url?.raw ?? '');
-          let mockUrl: string;
-          try {
-            const parsed = new URL(rawUrl);
-            mockUrl = mockBase + parsed.pathname + parsed.search + parsed.hash;
-          } catch {
-            const strippedOrigin = rawUrl.replace(/^https?:\/\/[^/]+/i, '');
-            const normalizedPath = strippedOrigin !== rawUrl ? (strippedOrigin || '/') : rawUrl;
-            const withSlash = normalizedPath.startsWith('/') ? normalizedPath : '/' + normalizedPath;
-            mockUrl = mockBase + withSlash;
-          }
-          const updatedUrl = typeof item.request.url === 'string'
-            ? mockUrl
-            : { ...(item.request.url as object), raw: mockUrl };
-          return { ...item, request: { ...item.request, url: updatedUrl as typeof item.request.url } };
-        });
+        // URL rewriting is done server-side (after variable resolution) via mockBase.
+        // No client-side rewrite needed — template variables like {{baseUrl}} must be
+        // resolved first or the mock URL will embed the literal template string as a path.
       }
 
       const streamingResults: RunnerIteration[] = [];
@@ -789,6 +773,9 @@ export default function RunnerPanel() {
           iterations: csvFile ? undefined : iterations,
           executeChildRequests,
           conditionalExecution,
+          ...(useMockServer && state.mockServerRunning
+            ? { mockBase: `http://localhost:${state.mockPort}` }
+            : {}),
         },
         csvFile ?? undefined,
         {
