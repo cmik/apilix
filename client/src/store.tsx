@@ -479,6 +479,14 @@ function appReducer(state: AppState, action: AppAction): AppState {
         ),
       };
 
+    case 'SET_WORKSPACE_COLOR':
+      return {
+        ...state,
+        workspaces: state.workspaces.map(w =>
+          w.id === action.payload.id ? { ...w, color: action.payload.color } : w
+        ),
+      };
+
     case 'DELETE_WORKSPACE': {
       const { id, fallbackId } = action.payload;
       const remaining = state.workspaces.filter(w => w.id !== id);

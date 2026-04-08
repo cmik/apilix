@@ -118,8 +118,7 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
   }
 
   function setColor(id: string, color: string) {
-    dispatch({ type: 'RENAME_WORKSPACE', payload: { id, name: state.workspaces.find(w => w.id === id)!.name } });
-    // Inline color update via a rename-like pattern reusing the manifest write
+    dispatch({ type: 'SET_WORKSPACE_COLOR', payload: { id, color } });
     const updated = state.workspaces.map(w => w.id === id ? { ...w, color } : w);
     StorageDriver.writeManifest({ workspaces: updated, activeWorkspaceId: state.activeWorkspaceId });
   }

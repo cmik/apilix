@@ -441,6 +441,7 @@ export type AppAction =
   | { type: 'CREATE_WORKSPACE'; payload: Workspace }
   | { type: 'SWITCH_WORKSPACE'; payload: { workspace: Workspace; data: WorkspaceData } }
   | { type: 'RENAME_WORKSPACE'; payload: { id: string; name: string } }
+  | { type: 'SET_WORKSPACE_COLOR'; payload: { id: string; color: string } }
   | { type: 'DELETE_WORKSPACE'; payload: { id: string; fallbackId: string } }
   | { type: 'DUPLICATE_WORKSPACE'; payload: { workspace: Workspace; data: WorkspaceData } }
   | { type: 'SET_SYNC_STATUS'; payload: { workspaceId: string; status: 'idle' | 'syncing' | 'error' } }
