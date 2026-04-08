@@ -173,12 +173,31 @@ app.delete('/workspaces/:id/members/:uid', auth, (req, res) => {
 
 // ─── Workspace data routes ─────────────────────────────────────────────────────
 
+const WORKSPACE_ROLE_RANK = {
+  viewer: 1,
+  editor: 2,
+  owner: 3,
+};
+
 function membershipGuard(minRole) {
   return (req, res, next) => {
-    const role = store.getMemberRole(req.params.id, req.user.sub);
-    if (!role) return res.status(403).json({ error: 'No access to this workspace' });
+    const ws = store.getWorkspace(req.params.id);
+    if (!ws) return res.status(404).json({ error: 'Not found' });
+
+    let role = store.getMemberRole(req.params.id, req.user.sub);
+    if (!role && ws.ownerId === req.user.sub) role = 'owner';
+
+    if (!role || !WORKSPACE_ROLE_RANK[role]) {
+      return res.status(403).json({ error: 'No access to this workspace' });
+    }
+
+    const requiredRank = WORKSPACE_ROLE_RANK[minRole];
+    if (!requiredRank || WORKSPACE_ROLE_RANK[role] < requiredRank) {
+      return res.status(403).json({ error: 'Insufficient workspace role' });
+    }
+
     req.memberRole = role;
-    req.workspaceMeta = store.getWorkspace(req.params.id);
+    req.workspaceMeta = ws;
     next();
   };
 }
