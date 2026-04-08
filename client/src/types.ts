@@ -281,7 +281,74 @@ export interface MockRoute {
   wsMessageHandlers?: WsMessageHandler[];
 }
 
+// ─── Workspace & Collaboration Types ─────────────────────────────────────────
+
+export type WorkspaceRole = 'owner' | 'editor' | 'viewer';
+export type WorkspaceType = 'local' | 'team';
+
+export interface Workspace {
+  id: string;
+  name: string;
+  description?: string;
+  color?: string;
+  createdAt: string;
+  type: WorkspaceType;
+  teamServerId?: string;
+  teamServerUrl?: string;
+  role?: WorkspaceRole;
+}
+
+export interface WorkspaceData {
+  collections: AppCollection[];
+  environments: AppEnvironment[];
+  activeEnvironmentId: string | null;
+  collectionVariables: Record<string, Record<string, string>>;
+  globalVariables: Record<string, string>;
+  cookieJar: CookieJar;
+  mockCollections: MockCollection[];
+  mockRoutes: MockRoute[];
+  mockPort: number;
+}
+
+export type SyncProvider = 's3' | 'git' | 'http' | 'team';
+
+export interface SyncConfig {
+  workspaceId: string;
+  provider: SyncProvider;
+  /** Provider-specific fields (encrypted when stored to disk) */
+  config: Record<string, string>;
+  lastSynced?: string;
+}
+
+export interface HistoryEntry {
+  snapshotId: string;
+  timestamp: string;
+  summary: string;
+  collectionsCount: number;
+}
+
+export interface WorkspaceSnapshot {
+  snapshotId: string;
+  timestamp: string;
+  summary: string;
+  data: WorkspaceData;
+}
+
+export interface TeamServer {
+  id: string;
+  url: string;
+  /** Encrypted JWT token — never store plaintext */
+  token: string;
+  name: string;
+}
+
 export interface AppState {
+  // ── Workspace ──────────────────────────────────────────────────────────────
+  workspaces: Workspace[];
+  activeWorkspaceId: string;
+  storageReady: boolean;
+  syncStatus: Record<string, 'idle' | 'syncing' | 'error'>;
+  // ── Data ──────────────────────────────────────────────────────────────────
   collections: AppCollection[];
   environments: AppEnvironment[];
   activeEnvironmentId: string | null;
@@ -367,4 +434,14 @@ export type AppAction =
   | { type: 'SET_MOCK_ROUTES'; payload: MockRoute[] }
   | { type: 'SET_MOCK_SERVER_RUNNING'; payload: boolean }
   | { type: 'SET_MOCK_PORT'; payload: number }
-  | { type: 'SET_RUNNER_PRESELECTION'; payload: { collectionId: string; requestIds: string[] } | null };
+  | { type: 'SET_RUNNER_PRESELECTION'; payload: { collectionId: string; requestIds: string[] } | null }
+  // ── Workspace actions ────────────────────────────────────────────────────
+  | { type: 'HYDRATE_WORKSPACE'; payload: WorkspaceData & { workspaces: Workspace[]; activeWorkspaceId: string } }
+  | { type: 'SET_STORAGE_READY'; payload: boolean }
+  | { type: 'CREATE_WORKSPACE'; payload: Workspace }
+  | { type: 'SWITCH_WORKSPACE'; payload: { workspace: Workspace; data: WorkspaceData } }
+  | { type: 'RENAME_WORKSPACE'; payload: { id: string; name: string } }
+  | { type: 'DELETE_WORKSPACE'; payload: { id: string; fallbackId: string } }
+  | { type: 'DUPLICATE_WORKSPACE'; payload: { workspace: Workspace; data: WorkspaceData } }
+  | { type: 'SET_SYNC_STATUS'; payload: { workspaceId: string; status: 'idle' | 'syncing' | 'error' } }
+  | { type: 'RESTORE_SNAPSHOT'; payload: WorkspaceData };
