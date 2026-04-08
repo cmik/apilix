@@ -524,8 +524,8 @@ function TeamTab() {
 
       <div className="pt-2 border-t border-slate-800">
         <p className="text-[11px] text-slate-600">
-          To start your own team server, see <code className="text-slate-400">server/team/</code> and run{' '}
-          <code className="text-slate-400">npm start</code> in that directory.
+          To start your own team server, deploy the standalone{' '}
+          <code className="text-slate-400">apilix-team-server</code> project.
         </p>
       </div>
     </div>

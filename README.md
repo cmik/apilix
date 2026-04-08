@@ -409,17 +409,7 @@ Pushes and pulls workspace JSON to/from any HTTP endpoint that accepts a JSON bo
 
 ### Team Server Sync
 
-Syncs with a self-hosted **Apilix team server** (`server/team/`) that provides role-based access control (RBAC) for shared workspaces.
-
-#### Setting up the server
-
-```bash
-cd server/team
-npm install
-npm start   # runs on port 3003 by default
-```
-
-See `server/team/` for environment variables and configuration.
+Syncs with a self-hosted **Apilix team server** that provides role-based access control (RBAC) for shared workspaces. Deploy the standalone `apilix-team-server` project and follow its README for setup instructions.
 
 #### Connecting a workspace
 
@@ -440,7 +430,7 @@ See `server/team/` for environment variables and configuration.
 
 ## Team Management
 
-The Apilix team server (`server/team/`) is a self-hosted Express service that lets multiple users share workspaces with role-based access control. It runs as a separate process from the main API server.
+The Apilix team server is a self-hosted Express service available as the standalone `apilix-team-server` project. It lets multiple users share workspaces with role-based access control and runs as a separate process from the main API server.
 
 ### Roles
 
@@ -454,11 +444,7 @@ The workspace creator is automatically the **owner**. The bootstrap admin (see b
 
 ### Starting the server
 
-```bash
-cd server/team
-npm install
-node index.js
-```
+See the `apilix-team-server` project for full setup instructions.
 
 Environment variables:
 

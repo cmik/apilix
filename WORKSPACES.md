@@ -394,14 +394,17 @@ Syncs with the self-hosted Apilix team server. Unlike the other providers, the t
 
 ## 10. Team server setup & management
 
-The team server (`server/team/index.js`) is a standalone Express application. It runs on its own port and is completely separate from the main Apilix API server.
+The team server is a standalone Express application available as the `apilix-team-server` project. It runs on its own port and is completely separate from the main Apilix API server.
 
 ### Starting the server
 
+See the `apilix-team-server` project for full setup and deployment instructions.
+
 ```bash
-cd server/team
+git clone https://github.com/your-org/apilix-team-server
+cd apilix-team-server
 npm install
-node index.js
+npm start
 ```
 
 ### Environment variables
@@ -420,7 +423,7 @@ TEAM_PORT=8080 \
 TEAM_DATA_DIR=/var/apilix-team \
 ADMIN_EMAIL=admin@yourcompany.com \
 ADMIN_PASSWORD=s3cr3t \
-node server/team/index.js
+node index.js
 ```
 
 ### Data layout
@@ -601,7 +604,7 @@ After=network.target
 [Service]
 Type=simple
 User=apilix
-WorkingDirectory=/opt/apilix/server/team
+WorkingDirectory=/opt/apilix-team-server
 ExecStart=/usr/bin/node index.js
 Restart=on-failure
 Environment=TEAM_PORT=3003
