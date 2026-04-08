@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useApp, generateId } from '../store';
-import type { MockRoute, MockCollection, AppCollection, CollectionItem, MockLogEntry, MockRouteRule } from '../types';
+import type { MockRoute, MockCollection, AppCollection, CollectionItem, MockLogEntry, MockRouteRule, WsOnConnectEvent, WsMessageHandler } from '../types';
 import { startMockServer, stopMockServer, syncMockRoutes, getMockStatus, getMockLog, clearMockLog } from '../api';
 import ScriptEditor from './ScriptEditor';
 
@@ -42,11 +42,20 @@ function emptyRule(): MockRouteRule {
   };
 }
 
+function emptyWsOnConnectEvent(): WsOnConnectEvent {
+  return { id: generateId(), payload: '', delay: 0 };
+}
+
+function emptyWsMessageHandler(): WsMessageHandler {
+  return { id: generateId(), matchPattern: '', response: '' };
+}
+
 function emptyRoute(collectionId?: string): MockRoute {
   return {
     id: generateId(),
     enabled: true,
     collectionId,
+    type: 'http',
     method: 'GET',
     path: '/api/example',
     statusCode: 200,
@@ -56,6 +65,8 @@ function emptyRoute(collectionId?: string): MockRoute {
     description: '',
     rules: [],
     script: '',
+    wsOnConnect: [],
+    wsMessageHandlers: [],
   };
 }
 
@@ -173,19 +184,23 @@ function RouteRow({
 }: {
   route: MockRoute; onEdit: () => void; onDelete: () => void; onToggle: () => void; indent?: boolean;
 }) {
+  const isWs = route.type === 'websocket';
   const statusColor = route.statusCode >= 500 ? 'text-red-400' : route.statusCode >= 400 ? 'text-orange-400' : route.statusCode >= 300 ? 'text-yellow-400' : 'text-green-400';
   return (
     <div className={`grid grid-cols-[20px_90px_1fr_52px_52px_64px] gap-2 items-center bg-slate-900 border rounded-lg px-3 py-2 transition-colors ${
       route.enabled ? 'border-slate-700 hover:border-slate-600' : 'border-slate-800 opacity-50'
     } ${indent ? 'ml-6' : ''}`}>
       <input type="checkbox" checked={route.enabled} onChange={onToggle} title={route.enabled ? 'Disable route' : 'Enable route'} className="accent-orange-500 cursor-pointer" />
-      <span className={`text-xs font-mono font-bold ${methodColor(route.method)}`}>{route.method === '*' ? 'ANY' : route.method}</span>
+      {isWs
+        ? <span className="text-xs font-mono font-bold text-purple-400">WS</span>
+        : <span className={`text-xs font-mono font-bold ${methodColor(route.method)}`}>{route.method === '*' ? 'ANY' : route.method}</span>
+      }
       <div className="min-w-0">
         <p className="text-xs font-mono text-slate-200 truncate">{route.path}</p>
         {route.description && <p className="text-xs text-slate-500 truncate mt-0.5">{route.description}</p>}
       </div>
-      <span className={`text-xs font-mono ${statusColor}`}>{route.statusCode}</span>
-      <span className="text-xs text-slate-500">{route.delay > 0 ? `${route.delay}ms` : '—'}</span>
+      <span className={`text-xs font-mono ${isWs ? 'text-slate-600' : statusColor}`}>{isWs ? '—' : route.statusCode}</span>
+      <span className="text-xs text-slate-500">{!isWs && route.delay > 0 ? `${route.delay}ms` : '—'}</span>
       <div className="flex items-center gap-1 justify-end">
         <button onClick={onEdit} className="px-2 py-1 text-xs text-slate-500 hover:text-slate-200 hover:bg-slate-700 rounded transition-colors">Edit</button>
         <button onClick={onDelete} className="px-2 py-1 text-xs text-slate-600 hover:text-red-400 hover:bg-slate-700 rounded transition-colors">✕</button>
@@ -274,6 +289,10 @@ function RouteEditorModal({ initial, collections, onSave, onClose }: {
   const [showRules, setShowRules] = useState((initial.rules ?? []).length > 0);
   const [showScript, setShowScript] = useState(!!initial.script);
   const [scriptError, setScriptError] = useState<string | null>(null);
+  const [wsOnConnect, setWsOnConnect] = useState<WsOnConnectEvent[]>(initial.wsOnConnect ?? []);
+  const [wsHandlers, setWsHandlers] = useState<WsMessageHandler[]>(initial.wsMessageHandlers ?? []);
+
+  const isWs = route.type === 'websocket';
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose(); }
@@ -290,7 +309,7 @@ function RouteEditorModal({ initial, collections, onSave, onClose }: {
   }
 
   function handleSave() {
-    if (script.trim()) {
+    if (!isWs && script.trim()) {
       try {
         // eslint-disable-next-line no-new-func
         new Function(script);
@@ -305,7 +324,7 @@ function RouteEditorModal({ initial, collections, onSave, onClose }: {
       setScriptError(null);
     }
     const headers = headerRows.filter(h => h.key.trim());
-    onSave({ ...route, responseHeaders: headers, rules, script });
+    onSave({ ...route, responseHeaders: headers, rules, script, wsOnConnect, wsMessageHandlers: wsHandlers });
     onClose();
   }
 
@@ -319,6 +338,27 @@ function RouteEditorModal({ initial, collections, onSave, onClose }: {
             <button onClick={onClose} className="text-slate-500 hover:text-slate-200 text-xl leading-none">×</button>
           </div>
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+
+            {/* ── Type toggle ── */}
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Type</label>
+              <div className="flex rounded-lg overflow-hidden border border-slate-700 w-fit">
+                {(['http', 'websocket'] as const).map(t => (
+                  <button
+                    key={t}
+                    onClick={() => updateField('type', t)}
+                    className={`px-4 py-1.5 text-xs font-medium transition-colors ${
+                      route.type === t
+                        ? t === 'websocket' ? 'bg-purple-700 text-white' : 'bg-orange-600 text-white'
+                        : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {t === 'http' ? 'HTTP' : 'WebSocket'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {collections.length > 0 && (
               <div>
                 <label className="block text-xs text-slate-400 mb-1">Collection (optional)</label>
@@ -336,175 +376,302 @@ function RouteEditorModal({ initial, collections, onSave, onClose }: {
               <label className="block text-xs text-slate-400 mb-1">Description (optional)</label>
               <input value={route.description} onChange={e => updateField('description', e.target.value)} placeholder="Describe this mock route…" className="w-full bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none" />
             </div>
-            <div className="flex gap-2">
-              <div className="shrink-0">
-                <label className="block text-xs text-slate-400 mb-1">Method</label>
-                <select value={route.method} onChange={e => updateField('method', e.target.value)} className="bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none">
-                  {METHODS.map(m => <option key={m} value={m}>{m === '*' ? 'ANY' : m}</option>)}
-                </select>
-              </div>
-              <div className="flex-1">
-                <label className="block text-xs text-slate-400 mb-1">Path</label>
-                <input value={route.path} onChange={e => updateField('path', e.target.value)} placeholder="/api/users/:id" className="w-full bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none" />
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <div className="flex-1">
-                <label className="block text-xs text-slate-400 mb-1">Status Code</label>
-                <select value={route.statusCode} onChange={e => updateField('statusCode', parseInt(e.target.value, 10))} className="w-full bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none">
-                  {STATUS_CODES.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-              <div className="w-36">
-                <label className="block text-xs text-slate-400 mb-1">Delay (ms)</label>
-                <input type="number" min={0} max={30000} value={route.delay} onChange={e => updateField('delay', Math.max(0, parseInt(e.target.value, 10) || 0))} className="w-full bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none" />
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">Response Headers</label>
-              <div className="space-y-1">
-                {headerRows.map((h, i) => (
-                  <div key={i} className="flex gap-1.5 group">
-                    <input value={h.key} onChange={e => setHeaderRows(rows => rows.map((r, idx) => idx === i ? { ...r, key: e.target.value } : r))} placeholder="Header-Name" className="flex-1 bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none" />
-                    <input value={h.value} onChange={e => setHeaderRows(rows => rows.map((r, idx) => idx === i ? { ...r, value: e.target.value } : r))} placeholder="value" className="flex-1 bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none" />
-                    <button onClick={() => setHeaderRows(rows => rows.filter((_, idx) => idx !== i))} className="text-slate-600 hover:text-red-400 text-base opacity-0 group-hover:opacity-100 transition-opacity shrink-0">×</button>
+
+            {/* HTTP fields */}
+            {!isWs && (
+              <>
+                <div className="flex gap-2">
+                  <div className="shrink-0">
+                    <label className="block text-xs text-slate-400 mb-1">Method</label>
+                    <select value={route.method} onChange={e => updateField('method', e.target.value)} className="bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none">
+                      {METHODS.map(m => <option key={m} value={m}>{m === '*' ? 'ANY' : m}</option>)}
+                    </select>
                   </div>
-                ))}
-              </div>
-              <button onClick={() => setHeaderRows(rows => [...rows, { key: '', value: '' }])} className="mt-1 text-xs text-slate-500 hover:text-orange-400 transition-colors">+ Add header</button>
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">
-                Response Body
-                <span className="ml-2 font-normal text-slate-600">
-                  <code className="font-mono text-slate-500">{'{{param.id}}'}</code>{' '}
-                  <code className="font-mono text-slate-500">{'{{query.page}}'}</code>{' '}
-                  <code className="font-mono text-slate-500">{'{{body.field}}'}</code>{' '}
-                  <code className="font-mono text-slate-500">{'{{header.x}}'}</code>{' '}
-                  <code className="font-mono text-slate-500">{'{{method}}'}</code>{' '}
-                  <code className="font-mono text-slate-500">{'{{$uuid}}'}</code>{' '}
-                  <code className="font-mono text-slate-500">{'{{$randomInt(1,100)}}'}</code>{' '}
-                  <code className="font-mono text-slate-500">{'{{$randomItem(a,b,c)}}'}</code>{' '}
-                  <code className="font-mono text-slate-500">{'{{$requestCount}}'}</code>
-                </span>
-              </label>
-              <textarea value={route.responseBody} onChange={e => updateField('responseBody', e.target.value)} rows={10} spellCheck={false} className="w-full bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none resize-y" />
-            </div>
-
-            {/* ── Rules ── */}
-            <div className="border border-slate-700 rounded-lg overflow-hidden">
-              <button
-                onClick={() => setShowRules(s => !s)}
-                className="w-full flex items-center justify-between px-3 py-2 bg-slate-800/60 hover:bg-slate-800 transition-colors text-left"
-              >
-                <span className="text-xs font-medium text-slate-300 flex items-center gap-2">
-                  Conditional Rules
-                  {rules.length > 0 && <span className="px-1.5 py-0.5 bg-orange-500/20 text-orange-400 rounded text-xs">{rules.length}</span>}
-                </span>
-                <span className="text-slate-500 text-xs">{showRules ? '▴' : '▾'}</span>
-              </button>
-              {showRules && (
-                <div className="px-3 py-3 space-y-2">
-                  <p className="text-xs text-slate-500">Rules are evaluated in order. The first match overrides the default response.</p>
-                  {rules.map((rule, i) => {
-                    const opDef = RULE_OPERATORS.find(o => o.value === rule.operator)!;
-                    return (
-                      <div key={rule.id} className="border border-slate-700 rounded-lg p-3 space-y-2 bg-slate-900">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-xs text-slate-500 shrink-0">If</span>
-                          <select
-                            value={rule.source}
-                            onChange={e => updateRule(rule.id, { source: e.target.value as MockRouteRule['source'] })}
-                            className="bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none"
-                          >
-                            {RULE_SOURCES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-                          </select>
-                          <input
-                            value={rule.field}
-                            onChange={e => updateRule(rule.id, { field: e.target.value })}
-                            placeholder="field"
-                            className="flex-1 min-w-[80px] bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none"
-                          />
-                          <select
-                            value={rule.operator}
-                            onChange={e => updateRule(rule.id, { operator: e.target.value as MockRouteRule['operator'] })}
-                            className="bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none"
-                          >
-                            {RULE_OPERATORS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                          </select>
-                          {opDef.hasValue && (
-                            <input
-                              value={rule.value}
-                              onChange={e => updateRule(rule.id, { value: e.target.value })}
-                              placeholder="value"
-                              className="flex-1 min-w-[80px] bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none"
-                            />
-                          )}
-                          <button onClick={() => setRules(rs => rs.filter(r => r.id !== rule.id))} className="text-slate-600 hover:text-red-400 text-base transition-colors ml-auto shrink-0">×</button>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-xs text-slate-500 shrink-0">→ respond</span>
-                          <select
-                            value={rule.statusCode}
-                            onChange={e => updateRule(rule.id, { statusCode: parseInt(e.target.value, 10) })}
-                            className="bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none"
-                          >
-                            {STATUS_CODES.map(s => <option key={s} value={s}>{s}</option>)}
-                          </select>
-                          <input
-                            value={rule.responseBody}
-                            onChange={e => updateRule(rule.id, { responseBody: e.target.value })}
-                            placeholder='{"error":"..."}  or any body'
-                            className="flex-1 bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none"
-                          />
-                        </div>
-                        {i < rules.length - 1 && <p className="text-xs text-slate-600 italic">↓ else check next rule…</p>}
+                  <div className="flex-1">
+                    <label className="block text-xs text-slate-400 mb-1">Path</label>
+                    <input value={route.path} onChange={e => updateField('path', e.target.value)} placeholder="/api/users/:id" className="w-full bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none" />
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <label className="block text-xs text-slate-400 mb-1">Status Code</label>
+                    <select value={route.statusCode} onChange={e => updateField('statusCode', parseInt(e.target.value, 10))} className="w-full bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none">
+                      {STATUS_CODES.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div className="w-36">
+                    <label className="block text-xs text-slate-400 mb-1">Delay (ms)</label>
+                    <input type="number" min={0} max={30000} value={route.delay} onChange={e => updateField('delay', Math.max(0, parseInt(e.target.value, 10) || 0))} className="w-full bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Response Headers</label>
+                  <div className="space-y-1">
+                    {headerRows.map((h, i) => (
+                      <div key={i} className="flex gap-1.5 group">
+                        <input value={h.key} onChange={e => setHeaderRows(rows => rows.map((r, idx) => idx === i ? { ...r, key: e.target.value } : r))} placeholder="Header-Name" className="flex-1 bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none" />
+                        <input value={h.value} onChange={e => setHeaderRows(rows => rows.map((r, idx) => idx === i ? { ...r, value: e.target.value } : r))} placeholder="value" className="flex-1 bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none" />
+                        <button onClick={() => setHeaderRows(rows => rows.filter((_, idx) => idx !== i))} className="text-slate-600 hover:text-red-400 text-base opacity-0 group-hover:opacity-100 transition-opacity shrink-0">×</button>
                       </div>
-                    );
-                  })}
-                  <button
-                    onClick={() => setRules(rs => [...rs, emptyRule()])}
-                    className="text-xs text-orange-400 hover:text-orange-300 transition-colors"
-                  >
-                    + Add Rule
-                  </button>
+                    ))}
+                  </div>
+                  <button onClick={() => setHeaderRows(rows => [...rows, { key: '', value: '' }])} className="mt-1 text-xs text-slate-500 hover:text-orange-400 transition-colors">+ Add header</button>
                 </div>
-              )}
-            </div>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">
+                    Response Body
+                    <span className="ml-2 font-normal text-slate-600">
+                      <code className="font-mono text-slate-500">{'{{param.id}}'}</code>{' '}
+                      <code className="font-mono text-slate-500">{'{{query.page}}'}</code>{' '}
+                      <code className="font-mono text-slate-500">{'{{body.field}}'}</code>{' '}
+                      <code className="font-mono text-slate-500">{'{{header.x}}'}</code>{' '}
+                      <code className="font-mono text-slate-500">{'{{method}}'}</code>{' '}
+                      <code className="font-mono text-slate-500">{'{{$uuid}}'}</code>{' '}
+                      <code className="font-mono text-slate-500">{'{{$randomInt(1,100)}}'}</code>{' '}
+                      <code className="font-mono text-slate-500">{'{{$randomItem(a,b,c)}}'}</code>{' '}
+                      <code className="font-mono text-slate-500">{'{{$requestCount}}'}</code>
+                    </span>
+                  </label>
+                  <textarea value={route.responseBody} onChange={e => updateField('responseBody', e.target.value)} rows={10} spellCheck={false} className="w-full bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none resize-y" />
+                </div>
 
-            {/* ── Script ── */}
-            <div className="border border-slate-700 rounded-lg overflow-hidden">
-              <button
-                onClick={() => setShowScript(s => !s)}
-                className="w-full flex items-center justify-between px-3 py-2 bg-slate-800/60 hover:bg-slate-800 transition-colors text-left"
-              >
-                <span className="text-xs font-medium text-slate-300 flex items-center gap-2">
-                  Response Script
-                  {script.trim() && !scriptError && <span className="px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs">active</span>}
-                  {scriptError && <span className="px-1.5 py-0.5 bg-red-500/20 text-red-400 rounded text-xs">syntax error</span>}
-                </span>
-                <span className="text-slate-500 text-xs">{showScript ? '▴' : '▾'}</span>
-              </button>
-              {showScript && (
-                <div className="px-3 py-3 space-y-2">
-                  <p className="text-xs text-slate-500">
-                    JavaScript snippet. Runs before rules and default response. Call <code className="font-mono text-slate-400">respond(status, body)</code> to override.
-                  </p>
-                  <ScriptEditor
-                    variant="mock"
-                    value={script}
-                    onChange={setScript}
-                    rows={8}
-                    placeholder={`// Available: req.method, req.path, req.headers, req.query, req.params, req.body, req.requestCount\n// respond(status, body[, headers])\n\nif (!req.headers['authorization']) {\n  respond(401, { error: 'Unauthorized' });\n} else {\n  respond(200, { message: 'Hello, ' + req.body.name });\n}`}
-                    className="w-full bg-slate-800 border border-slate-700 focus:border-blue-500 rounded px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none resize-y"
-                  />
-                  {scriptError && (
-                    <p className="text-xs text-red-400 bg-red-950/40 border border-red-800/50 rounded px-3 py-2 font-mono">{scriptError}</p>
+                {/* ── Rules ── */}
+                <div className="border border-slate-700 rounded-lg overflow-hidden">
+                  <button
+                    onClick={() => setShowRules(s => !s)}
+                    className="w-full flex items-center justify-between px-3 py-2 bg-slate-800/60 hover:bg-slate-800 transition-colors text-left"
+                  >
+                    <span className="text-xs font-medium text-slate-300 flex items-center gap-2">
+                      Conditional Rules
+                      {rules.length > 0 && <span className="px-1.5 py-0.5 bg-orange-500/20 text-orange-400 rounded text-xs">{rules.length}</span>}
+                    </span>
+                    <span className="text-slate-500 text-xs">{showRules ? '▴' : '▾'}</span>
+                  </button>
+                  {showRules && (
+                    <div className="px-3 py-3 space-y-2">
+                      <p className="text-xs text-slate-500">Rules are evaluated in order. The first match overrides the default response.</p>
+                      {rules.map((rule, i) => {
+                        const opDef = RULE_OPERATORS.find(o => o.value === rule.operator)!;
+                        return (
+                          <div key={rule.id} className="border border-slate-700 rounded-lg p-3 space-y-2 bg-slate-900">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-xs text-slate-500 shrink-0">If</span>
+                              <select
+                                value={rule.source}
+                                onChange={e => updateRule(rule.id, { source: e.target.value as MockRouteRule['source'] })}
+                                className="bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none"
+                              >
+                                {RULE_SOURCES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                              </select>
+                              <input
+                                value={rule.field}
+                                onChange={e => updateRule(rule.id, { field: e.target.value })}
+                                placeholder="field"
+                                className="flex-1 min-w-[80px] bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none"
+                              />
+                              <select
+                                value={rule.operator}
+                                onChange={e => updateRule(rule.id, { operator: e.target.value as MockRouteRule['operator'] })}
+                                className="bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none"
+                              >
+                                {RULE_OPERATORS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                              </select>
+                              {opDef.hasValue && (
+                                <input
+                                  value={rule.value}
+                                  onChange={e => updateRule(rule.id, { value: e.target.value })}
+                                  placeholder="value"
+                                  className="flex-1 min-w-[80px] bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none"
+                                />
+                              )}
+                              <button onClick={() => setRules(rs => rs.filter(r => r.id !== rule.id))} className="text-slate-600 hover:text-red-400 text-base transition-colors ml-auto shrink-0">×</button>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs text-slate-500 shrink-0">→ respond</span>
+                              <select
+                                value={rule.statusCode}
+                                onChange={e => updateRule(rule.id, { statusCode: parseInt(e.target.value, 10) })}
+                                className="bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none"
+                              >
+                                {STATUS_CODES.map(s => <option key={s} value={s}>{s}</option>)}
+                              </select>
+                              <input
+                                value={rule.responseBody}
+                                onChange={e => updateRule(rule.id, { responseBody: e.target.value })}
+                                placeholder='{"error":"..."}  or any body'
+                                className="flex-1 bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none"
+                              />
+                            </div>
+                            {i < rules.length - 1 && <p className="text-xs text-slate-600 italic">↓ else check next rule…</p>}
+                          </div>
+                        );
+                      })}
+                      <button
+                        onClick={() => setRules(rs => [...rs, emptyRule()])}
+                        className="text-xs text-orange-400 hover:text-orange-300 transition-colors"
+                      >
+                        + Add Rule
+                      </button>
+                    </div>
                   )}
-                  <p className="text-xs text-slate-600">Priority: Script → Rules → Default response. Timeout: 2 s.</p>
                 </div>
-              )}
-            </div>
+
+                {/* ── Script ── */}
+                <div className="border border-slate-700 rounded-lg overflow-hidden">
+                  <button
+                    onClick={() => setShowScript(s => !s)}
+                    className="w-full flex items-center justify-between px-3 py-2 bg-slate-800/60 hover:bg-slate-800 transition-colors text-left"
+                  >
+                    <span className="text-xs font-medium text-slate-300 flex items-center gap-2">
+                      Response Script
+                      {script.trim() && !scriptError && <span className="px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs">active</span>}
+                      {scriptError && <span className="px-1.5 py-0.5 bg-red-500/20 text-red-400 rounded text-xs">syntax error</span>}
+                    </span>
+                    <span className="text-slate-500 text-xs">{showScript ? '▴' : '▾'}</span>
+                  </button>
+                  {showScript && (
+                    <div className="px-3 py-3 space-y-2">
+                      <p className="text-xs text-slate-500">
+                        JavaScript snippet. Runs before rules and default response. Call <code className="font-mono text-slate-400">respond(status, body)</code> to override.
+                      </p>
+                      <ScriptEditor
+                        variant="mock"
+                        value={script}
+                        onChange={setScript}
+                        rows={8}
+                        placeholder={`// Available: req.method, req.path, req.headers, req.query, req.params, req.body, req.requestCount\n// respond(status, body[, headers])\n\nif (!req.headers['authorization']) {\n  respond(401, { error: 'Unauthorized' });\n} else {\n  respond(200, { message: 'Hello, ' + req.body.name });\n}`}
+                        className="w-full bg-slate-800 border border-slate-700 focus:border-blue-500 rounded px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none resize-y"
+                      />
+                      {scriptError && (
+                        <p className="text-xs text-red-400 bg-red-950/40 border border-red-800/50 rounded px-3 py-2 font-mono">{scriptError}</p>
+                      )}
+                      <p className="text-xs text-slate-600">Priority: Script → Rules → Default response. Timeout: 2 s.</p>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* WebSocket fields */}
+            {isWs && (
+              <>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Path</label>
+                  <input value={route.path} onChange={e => updateField('path', e.target.value)} placeholder="/ws/events" className="w-full bg-slate-800 border border-slate-700 focus:border-purple-500 rounded px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none" />
+                  <p className="mt-1 text-xs text-slate-600">Connect with <code className="font-mono">ws://localhost:{'{port}'}{route.path || '/ws/...'}</code></p>
+                </div>
+
+                {/* On-Connect Events */}
+                <div className="border border-slate-700 rounded-lg overflow-hidden">
+                  <div className="flex items-center justify-between px-3 py-2 bg-slate-800/60">
+                    <span className="text-xs font-medium text-slate-300 flex items-center gap-2">
+                      On-Connect Events
+                      {wsOnConnect.length > 0 && <span className="px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs">{wsOnConnect.length}</span>}
+                    </span>
+                  </div>
+                  <div className="px-3 py-3 space-y-2">
+                    <p className="text-xs text-slate-500">Messages sent automatically when a client connects.</p>
+                    <p className="text-xs text-slate-600">
+                      Generators:{' '}
+                      <code className="font-mono text-slate-500">{'{{$uuid}}'}</code>{' '}
+                      <code className="font-mono text-slate-500">{'{{$timestamp}}'}</code>{' '}
+                      <code className="font-mono text-slate-500">{'{{$isoDate}}'}</code>{' '}
+                      <code className="font-mono text-slate-500">{'{{$randomInt(1,100)}}'}</code>{' '}
+                      <code className="font-mono text-slate-500">{'{{$randomItem(a,b,c)}}'}</code>{' '}
+                      <code className="font-mono text-slate-500">{'{{query.x}}'}</code>{' '}
+                      <code className="font-mono text-slate-500">{'{{param.id}}'}</code>{' '}
+                      <code className="font-mono text-slate-500">{'{{header.x}}'}</code>
+                    </p>
+                    {wsOnConnect.map((ev, i) => (
+                      <div key={ev.id} className="border border-slate-700 rounded-lg p-3 space-y-2 bg-slate-900">
+                        <div className="flex items-start gap-2">
+                          <textarea
+                            value={ev.payload}
+                            onChange={e => setWsOnConnect(evs => evs.map((x, idx) => idx === i ? { ...x, payload: e.target.value } : x))}
+                            placeholder='{"type":"welcome","message":"Connected!"}'
+                            rows={3}
+                            spellCheck={false}
+                            className="flex-1 bg-slate-800 border border-slate-700 focus:border-purple-500 rounded px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none resize-y"
+                          />
+                          <button onClick={() => setWsOnConnect(evs => evs.filter((_, idx) => idx !== i))} className="text-slate-600 hover:text-red-400 text-base transition-colors shrink-0 mt-1">×</button>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs text-slate-500 shrink-0">Delay (ms)</label>
+                          <input
+                            type="number" min={0} max={30000}
+                            value={ev.delay ?? 0}
+                            onChange={e => setWsOnConnect(evs => evs.map((x, idx) => idx === i ? { ...x, delay: Math.max(0, parseInt(e.target.value, 10) || 0) } : x))}
+                            className="w-24 bg-slate-800 border border-slate-700 focus:border-purple-500 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                    <button
+                      onClick={() => setWsOnConnect(evs => [...evs, emptyWsOnConnectEvent()])}
+                      className="text-xs text-purple-400 hover:text-purple-300 transition-colors"
+                    >
+                      + Add on-connect event
+                    </button>
+                  </div>
+                </div>
+
+                {/* Message Handlers */}
+                <div className="border border-slate-700 rounded-lg overflow-hidden">
+                  <div className="flex items-center justify-between px-3 py-2 bg-slate-800/60">
+                    <span className="text-xs font-medium text-slate-300 flex items-center gap-2">
+                      Message Handlers
+                      {wsHandlers.length > 0 && <span className="px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs">{wsHandlers.length}</span>}
+                    </span>
+                  </div>
+                  <div className="px-3 py-3 space-y-2">
+                    <p className="text-xs text-slate-500">When an incoming message exactly matches a pattern, the configured response is sent back. JSON and XML patterns are matched ignoring whitespace differences.</p>
+                    <p className="text-xs text-slate-600">
+                      Response generators:{' '}
+                      <code className="font-mono text-slate-500">{'{{$uuid}}'}</code>{' '}
+                      <code className="font-mono text-slate-500">{'{{$timestamp}}'}</code>{' '}
+                      <code className="font-mono text-slate-500">{'{{$isoDate}}'}</code>{' '}
+                      <code className="font-mono text-slate-500">{'{{$randomInt(1,100)}}'}</code>{' '}
+                      <code className="font-mono text-slate-500">{'{{$randomItem(a,b,c)}}'}</code>{' '}
+                      <code className="font-mono text-slate-500">{'{{body.field}}'}</code>{' '}
+                      <code className="font-mono text-slate-500">{'{{query.x}}'}</code>{' '}
+                      <code className="font-mono text-slate-500">{'{{param.id}}'}</code>{' '}
+                      <code className="font-mono text-slate-500">{'{{$requestCount}}'}</code>
+                    </p>
+                    {wsHandlers.map((handler, i) => (
+                      <div key={handler.id} className="border border-slate-700 rounded-lg p-3 space-y-2 bg-slate-900">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-slate-500 shrink-0">If message =</span>
+                          <input
+                            value={handler.matchPattern}
+                            onChange={e => setWsHandlers(hs => hs.map((x, idx) => idx === i ? { ...x, matchPattern: e.target.value } : x))}
+                            placeholder='{"action":"ping"}'
+                            className="flex-1 bg-slate-800 border border-slate-700 focus:border-purple-500 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none"
+                          />
+                          <button onClick={() => setWsHandlers(hs => hs.filter((_, idx) => idx !== i))} className="text-slate-600 hover:text-red-400 text-base transition-colors shrink-0">×</button>
+                        </div>
+                        <div className="flex items-start gap-1.5">
+                          <span className="text-xs text-slate-500 shrink-0 mt-2">→ send</span>
+                          <textarea
+                            value={handler.response}
+                            onChange={e => setWsHandlers(hs => hs.map((x, idx) => idx === i ? { ...x, response: e.target.value } : x))}
+                            placeholder='{"action":"pong"}'
+                            rows={3}
+                            spellCheck={false}
+                            className="flex-1 bg-slate-800 border border-slate-700 focus:border-purple-500 rounded px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none resize-y"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                    <button
+                      onClick={() => setWsHandlers(hs => [...hs, emptyWsMessageHandler()])}
+                      className="text-xs text-purple-400 hover:text-purple-300 transition-colors"
+                    >
+                      + Add message handler
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
 
           </div>
           <div className="flex justify-end gap-2 px-5 py-3 border-t border-slate-700 shrink-0">
@@ -800,6 +967,19 @@ function TrafficInspector({ running }: { running: boolean }) {
         {entries.map(entry => {
           const expanded = expandedId === entry.id;
           const matched = entry.matchedRouteId !== null;
+          const isWsEvent = !!entry.wsEventType;
+
+          // WS event label + colour
+          const wsLabel = entry.wsEventType === 'ws_connect' ? 'CONNECT'
+            : entry.wsEventType === 'ws_disconnect' ? 'DISCONN'
+            : entry.wsEventType === 'ws_message_in' ? '→ IN'
+            : entry.wsEventType === 'ws_message_out' ? '← OUT'
+            : '';
+          const wsLabelColor = entry.wsEventType === 'ws_connect' ? 'text-green-400'
+            : entry.wsEventType === 'ws_disconnect' ? 'text-slate-500'
+            : entry.wsEventType === 'ws_message_in' ? 'text-blue-400'
+            : 'text-purple-400';
+
           return (
             <div key={entry.id} className="border-b border-slate-800/60 last:border-none">
               {/* Summary row */}
@@ -808,9 +988,22 @@ function TrafficInspector({ running }: { running: boolean }) {
                 className={`w-full text-left px-5 py-2.5 flex items-center gap-3 hover:bg-slate-800/40 transition-colors ${expanded ? 'bg-slate-800/40' : ''}`}
               >
                 <span className="text-xs text-slate-600 font-mono shrink-0 w-28">{formatTime(entry.timestamp)}</span>
-                <span className={`text-xs font-mono font-bold shrink-0 w-16 ${methodColor(entry.method)}`}>{entry.method}</span>
-                <span className="text-xs font-mono text-slate-300 flex-1 truncate text-left">{entry.path}</span>
-                <span className={`text-xs font-mono font-semibold shrink-0 w-10 text-right ${statusColor(entry.responseStatus)}`}>{entry.responseStatus}</span>
+                {isWsEvent ? (
+                  <span className={`text-xs font-mono font-bold shrink-0 w-16 ${wsLabelColor}`}>{wsLabel}</span>
+                ) : (
+                  <span className={`text-xs font-mono font-bold shrink-0 w-16 ${methodColor(entry.method)}`}>{entry.method}</span>
+                )}
+                <span className="text-xs font-mono text-slate-300 flex-1 truncate text-left">
+                  {entry.path}
+                  {isWsEvent && entry.wsClientId && (
+                    <span className="ml-2 text-slate-600">#{entry.wsClientId}</span>
+                  )}
+                </span>
+                {isWsEvent ? (
+                  <span className="text-xs font-mono text-purple-500 shrink-0 w-10 text-right">WS</span>
+                ) : (
+                  <span className={`text-xs font-mono font-semibold shrink-0 w-10 text-right ${statusColor(entry.responseStatus)}`}>{entry.responseStatus}</span>
+                )}
                 <span className={`text-xs shrink-0 w-4 text-right ${matched ? 'text-green-500' : 'text-orange-500'}`} title={matched ? `Matched: ${entry.matchedRoutePath}` : 'No route matched'}>
                   {matched ? '✓' : '✗'}
                 </span>
@@ -825,7 +1018,10 @@ function TrafficInspector({ running }: { running: boolean }) {
                     <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Matched Route</p>
                     {matched ? (
                       <p className="text-xs font-mono text-slate-300">
-                        <span className={methodColor(entry.method)}>{entry.method}</span>{' '}
+                        {isWsEvent
+                          ? <span className="text-purple-400">WS</span>
+                          : <span className={methodColor(entry.method)}>{entry.method}</span>
+                        }{' '}
                         {entry.matchedRoutePath}
                         {entry.matchedRouteName && entry.matchedRouteName !== entry.matchedRoutePath && (
                           <span className="text-slate-500 ml-2">— {entry.matchedRouteName}</span>
@@ -836,51 +1032,76 @@ function TrafficInspector({ running }: { running: boolean }) {
                     )}
                   </div>
 
-                  {/* Query params */}
-                  {Object.keys(entry.query).length > 0 && (
+                  {/* WS payload */}
+                  {isWsEvent && (entry.body || entry.responseBody) && (
                     <div>
-                      <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Query Params</p>
-                      <div className="bg-slate-800 rounded p-2 space-y-0.5">
-                        {Object.entries(entry.query).map(([k, v]) => (
-                          <div key={k} className="flex gap-2 text-xs font-mono">
-                            <span className="text-slate-400 shrink-0">{k}:</span>
-                            <span className="text-slate-200">{v}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Request headers */}
-                  <div>
-                    <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Request Headers</p>
-                    <div className="bg-slate-800 rounded p-2 space-y-0.5 max-h-32 overflow-y-auto">
-                      {Object.entries(entry.headers).map(([k, v]) => (
-                        <div key={k} className="flex gap-2 text-xs font-mono">
-                          <span className="text-slate-400 shrink-0 capitalize">{k}:</span>
-                          <span className="text-slate-200 break-all">{v}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Request body */}
-                  {entry.body && (
-                    <div>
-                      <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Request Body</p>
+                      <p className="text-xs text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-2">
+                        {entry.wsEventType === 'ws_message_in' ? 'Message (received)' : 'Message (sent)'}
+                        {entry.wsMessageType && entry.wsMessageType !== 'string' && (
+                          <span className={`px-1.5 py-0.5 rounded text-xs font-mono ${entry.wsMessageType === 'json' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-cyan-500/20 text-cyan-400'}`}>
+                            {entry.wsMessageType.toUpperCase()}
+                          </span>
+                        )}
+                      </p>
                       <pre className="bg-slate-800 rounded p-2 text-xs font-mono text-slate-200 whitespace-pre-wrap break-all max-h-40 overflow-y-auto">{
-                        (() => { try { return JSON.stringify(JSON.parse(entry.body), null, 2); } catch { return entry.body; } })()
+                        (() => {
+                          const text = entry.body || entry.responseBody;
+                          try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; }
+                        })()
                       }</pre>
                     </div>
                   )}
 
-                  {/* Response body */}
-                  <div>
-                    <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Response Body <span className={`ml-1 font-semibold ${statusColor(entry.responseStatus)}`}>{entry.responseStatus}</span></p>
-                    <pre className="bg-slate-800 rounded p-2 text-xs font-mono text-slate-200 whitespace-pre-wrap break-all max-h-40 overflow-y-auto">{
-                      (() => { try { return JSON.stringify(JSON.parse(entry.responseBody), null, 2); } catch { return entry.responseBody; } })()
-                    }</pre>
-                  </div>
+                  {/* HTTP-only fields */}
+                  {!isWsEvent && (
+                    <>
+                      {/* Query params */}
+                      {Object.keys(entry.query).length > 0 && (
+                        <div>
+                          <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Query Params</p>
+                          <div className="bg-slate-800 rounded p-2 space-y-0.5">
+                            {Object.entries(entry.query).map(([k, v]) => (
+                              <div key={k} className="flex gap-2 text-xs font-mono">
+                                <span className="text-slate-400 shrink-0">{k}:</span>
+                                <span className="text-slate-200">{v}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Request headers */}
+                      <div>
+                        <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Request Headers</p>
+                        <div className="bg-slate-800 rounded p-2 space-y-0.5 max-h-32 overflow-y-auto">
+                          {Object.entries(entry.headers).map(([k, v]) => (
+                            <div key={k} className="flex gap-2 text-xs font-mono">
+                              <span className="text-slate-400 shrink-0 capitalize">{k}:</span>
+                              <span className="text-slate-200 break-all">{v}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Request body */}
+                      {entry.body && (
+                        <div>
+                          <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Request Body</p>
+                          <pre className="bg-slate-800 rounded p-2 text-xs font-mono text-slate-200 whitespace-pre-wrap break-all max-h-40 overflow-y-auto">{
+                            (() => { try { return JSON.stringify(JSON.parse(entry.body), null, 2); } catch { return entry.body; } })()
+                          }</pre>
+                        </div>
+                      )}
+
+                      {/* Response body */}
+                      <div>
+                        <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Response Body <span className={`ml-1 font-semibold ${statusColor(entry.responseStatus)}`}>{entry.responseStatus}</span></p>
+                        <pre className="bg-slate-800 rounded p-2 text-xs font-mono text-slate-200 whitespace-pre-wrap break-all max-h-40 overflow-y-auto">{
+                          (() => { try { return JSON.stringify(JSON.parse(entry.responseBody), null, 2); } catch { return entry.responseBody; } })()
+                        }</pre>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>

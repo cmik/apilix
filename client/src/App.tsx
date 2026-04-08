@@ -418,12 +418,11 @@ export default function App() {
         {state.view === 'request' && <TabBar dirtyIds={dirtyIds} />}
 
         {/* Content area */}
-        {state.view === 'request' && (
-          <div className="flex-1 flex flex-col overflow-hidden">
-            <RequestBuilder onDirtyChange={setDirtyIds} />
-            <ResponseViewer />
-          </div>
-        )}
+        {/* RequestBuilder is always mounted to preserve unsaved changes; hidden when not active */}
+        <div className={`flex-1 flex flex-col overflow-hidden ${state.view === 'request' ? '' : 'hidden'}`}>
+          <RequestBuilder onDirtyChange={setDirtyIds} />
+          <ResponseViewer />
+        </div>
         {/* RunnerPanel is always mounted to preserve form state; hidden when not active */}
         <div className={`flex-1 flex flex-col overflow-hidden ${state.view === 'runner' ? '' : 'hidden'}`}>
           <RunnerPanel />

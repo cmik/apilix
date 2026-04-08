@@ -11,6 +11,16 @@ export default defineConfig({
   },
   plugins: [react()],
   base: './',
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom'],
+          'vendor-libs': ['axios', 'js-yaml', 'marked'],
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     proxy: {

@@ -280,13 +280,21 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
 // ─── Mock Server ───────────────────────────────────────────────────────────────
 
 const http = require('http');
+const { WebSocketServer } = require('ws');
 
-/** In-memory mock routes: array of { id, enabled, method, path, statusCode, responseHeaders, responseBody, delay } */
+/** In-memory mock routes: array of { id, enabled, type, method, path, statusCode, responseHeaders, responseBody, delay } */
 let mockRoutes = [];
 
 /** The running mock HTTP server, or null. */
 let mockServerInstance = null;
 let mockServerPort = 3002;
+
+/** Active WebSocketServer (noServer mode), or null. */
+let mockWss = null;
+
+/** Tracks all live WS client entries { ws, clientId } for clean teardown. */
+const mockWsClients = new Set();
+let wsClientCounter = 0;
 
 /** Traffic log — up to MAX_LOG_ENTRIES most recent requests (newest first). */
 const MAX_LOG_ENTRIES = 200;
@@ -503,11 +511,12 @@ function buildMockHandler() {
       });
     }
 
-    // Find matching route (first enabled match)
+    // Find matching route (first enabled HTTP match — WS routes are handled by the upgrade handler)
     let matched = null;
     let pathParams = {};
     for (const route of mockRoutes) {
       if (!route.enabled) continue;
+      if (route.type === 'websocket') continue;
       if (route.method !== '*' && route.method.toUpperCase() !== method) continue;
       const params = matchPath(route.path, pathname);
       if (params !== null) {
@@ -623,6 +632,244 @@ function buildMockHandler() {
   };
 }
 
+// ─── WebSocket Upgrade Handler (Feature 7) ────────────────────────────────────
+
+/**
+ * Detect whether a WS message is JSON, XML, or plain string.
+ * @returns {'json'|'xml'|'string'}
+ */
+function detectWsMsgType(text) {
+  const t = text.trim();
+  if (t.startsWith('{') || t.startsWith('[')) {
+    try { JSON.parse(t); return 'json'; } catch (_) {}
+  }
+  if (t.startsWith('<')) return 'xml';
+  return 'string';
+}
+
+/**
+ * Normalise a message for comparison purposes.
+ * JSON → canonical re-serialisation (key order preserved, whitespace stripped).
+ * XML  → whitespace between tags collapsed, leading/trailing stripped.
+ * string → unchanged.
+ */
+function normaliseWsMsg(text, type) {
+  if (type === 'json') {
+    try { return JSON.stringify(JSON.parse(text)); } catch (_) { return text; }
+  }
+  if (type === 'xml') {
+    return text.trim().replace(/>\s+</g, '><').replace(/\s+/g, ' ');
+  }
+  return text;
+}
+
+/**
+ * True when the incoming WS message matches a handler's pattern,
+ * ignoring insignificant whitespace for JSON and XML messages.
+ */
+function wsMessagesMatch(incoming, pattern) {
+  const inType  = detectWsMsgType(incoming);
+  const patType = detectWsMsgType(pattern);
+  if (inType === 'json' && patType === 'json') {
+    return normaliseWsMsg(incoming, 'json') === normaliseWsMsg(pattern, 'json');
+  }
+  if (inType === 'xml' && patType === 'xml') {
+    return normaliseWsMsg(incoming, 'xml') === normaliseWsMsg(pattern, 'xml');
+  }
+  return incoming === pattern;
+}
+
+function handleWsUpgrade(req, socket, head) {
+  const url = req.url || '/';
+  const qIdx = url.indexOf('?');
+  const pathname = qIdx >= 0 ? url.slice(0, qIdx) : url;
+
+  // Parse upgrade-request query string
+  const wsQuery = {};
+  if (qIdx >= 0) {
+    url.slice(qIdx + 1).split('&').forEach(pair => {
+      const [k, v] = pair.split('=');
+      if (k) wsQuery[decodeURIComponent(k)] = decodeURIComponent(v ?? '');
+    });
+  }
+
+  // Find first enabled WebSocket route matching the path
+  let matched = null;
+  let pathParams = {};
+  for (const route of mockRoutes) {
+    if (!route.enabled) continue;
+    if (route.type !== 'websocket') continue;
+    const params = matchPath(route.path, pathname);
+    if (params !== null) {
+      matched = route;
+      pathParams = params;
+      break;
+    }
+  }
+
+  if (!matched || !mockWss) {
+    socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+
+  mockWss.handleUpgrade(req, socket, head, ws => {
+    const clientId = String(++wsClientCounter);
+    const clientEntry = { ws, clientId };
+    mockWsClients.add(clientEntry);
+
+    // Log connect event
+    addLogEntry({
+      id: generateMockId(),
+      timestamp: new Date().toISOString(),
+      method: 'WS',
+      path: pathname,
+      query: {},
+      headers: req.headers,
+      body: '',
+      matchedRouteId: matched.id,
+      matchedRouteName: matched.description || matched.path,
+      matchedRoutePath: matched.path,
+      responseStatus: 101,
+      responseBody: '',
+      wsEventType: 'ws_connect',
+      wsClientId: clientId,
+    });
+
+    // Base interpolation context (no incoming message body yet)
+    const baseCtx = {
+      param: pathParams,
+      query: wsQuery,
+      header: req.headers,
+      method: 'WS',
+      url: req.url || pathname,
+      _pathname: pathname,
+      _requestCount: 0,
+      body: {},
+    };
+
+    // Send on-connect events
+    for (const event of (matched.wsOnConnect || [])) {
+      const delay = Math.min(parseInt(event.delay, 10) || 0, 30000);
+      setTimeout(() => {
+        if (ws.readyState === ws.OPEN) {
+          const outPayload = interpolate(event.payload, baseCtx);
+          const outType = detectWsMsgType(outPayload);
+          ws.send(outPayload);
+          addLogEntry({
+            id: generateMockId(),
+            timestamp: new Date().toISOString(),
+            method: 'WS',
+            path: pathname,
+            query: {},
+            headers: {},
+            body: '',
+            matchedRouteId: matched.id,
+            matchedRouteName: matched.description || matched.path,
+            matchedRoutePath: matched.path,
+            responseStatus: 101,
+            responseBody: outPayload,
+            wsEventType: 'ws_message_out',
+            wsClientId: clientId,
+            wsMessageType: outType,
+          });
+        }
+      }, delay);
+    }
+
+    ws.on('message', data => {
+      const text = data.toString();
+      const msgType = detectWsMsgType(text);
+
+      // Log incoming message
+      addLogEntry({
+        id: generateMockId(),
+        timestamp: new Date().toISOString(),
+        method: 'WS',
+        path: pathname,
+        query: {},
+        headers: {},
+        body: text,
+        matchedRouteId: matched.id,
+        matchedRouteName: matched.description || matched.path,
+        matchedRoutePath: matched.path,
+        responseStatus: 101,
+        responseBody: '',
+        wsEventType: 'ws_message_in',
+        wsClientId: clientId,
+        wsMessageType: msgType,
+      });
+
+      // Build per-message interpolation context (parse JSON body for {{body.x}} access)
+      const hitCount = (routeHitCounts.get(matched.id) ?? 0) + 1;
+      routeHitCounts.set(matched.id, hitCount);
+      let msgBodyObj = {};
+      if (msgType === 'json') {
+        try { msgBodyObj = JSON.parse(text); } catch (_) {}
+      }
+      const msgCtx = {
+        param: pathParams,
+        query: wsQuery,
+        header: req.headers,
+        method: 'WS',
+        url: req.url || pathname,
+        _pathname: pathname,
+        _requestCount: hitCount,
+        body: msgBodyObj,
+      };
+
+      // Find and send matching handler response (JSON/XML matched ignoring whitespace)
+      const handler = (matched.wsMessageHandlers || []).find(h => wsMessagesMatch(text, h.matchPattern));
+      if (handler && ws.readyState === ws.OPEN) {
+        const outResponse = interpolate(handler.response, msgCtx);
+        const outType = detectWsMsgType(outResponse);
+        ws.send(outResponse);
+        addLogEntry({
+          id: generateMockId(),
+          timestamp: new Date().toISOString(),
+          method: 'WS',
+          path: pathname,
+          query: {},
+          headers: {},
+          body: '',
+          matchedRouteId: matched.id,
+          matchedRouteName: matched.description || matched.path,
+          matchedRoutePath: matched.path,
+          responseStatus: 101,
+          responseBody: outResponse,
+          wsEventType: 'ws_message_out',
+          wsClientId: clientId,
+          wsMessageType: outType,
+        });
+      }
+    });
+
+    ws.on('close', () => {
+      mockWsClients.delete(clientEntry);
+      addLogEntry({
+        id: generateMockId(),
+        timestamp: new Date().toISOString(),
+        method: 'WS',
+        path: pathname,
+        query: {},
+        headers: {},
+        body: '',
+        matchedRouteId: matched.id,
+        matchedRouteName: matched.description || matched.path,
+        matchedRoutePath: matched.path,
+        responseStatus: 101,
+        responseBody: '',
+        wsEventType: 'ws_disconnect',
+        wsClientId: clientId,
+      });
+    });
+
+    ws.on('error', () => {
+      mockWsClients.delete(clientEntry);
+    });
+  });
+}
+
 function startMockServer(port, routes) {
   return new Promise((resolve, reject) => {
     if (mockServerInstance) {
@@ -632,8 +879,14 @@ function startMockServer(port, routes) {
     mockServerPort = port;
     mockRequestLog = [];
     routeHitCounts.clear();
+    wsClientCounter = 0;
 
     const server = http.createServer(buildMockHandler());
+
+    // WebSocket support — noServer mode shares the same port
+    mockWss = new WebSocketServer({ noServer: true });
+    server.on('upgrade', handleWsUpgrade);
+
     server.on('error', err => reject(err));
     server.listen(port, () => {
       mockServerInstance = server;
@@ -645,6 +898,18 @@ function startMockServer(port, routes) {
 function stopMockServer() {
   return new Promise(resolve => {
     if (!mockServerInstance) { resolve(); return; }
+
+    // Terminate all active WS connections
+    for (const { ws } of mockWsClients) {
+      try { ws.terminate(); } catch (_) {}
+    }
+    mockWsClients.clear();
+
+    if (mockWss) {
+      mockWss.close();
+      mockWss = null;
+    }
+
     mockServerInstance.close(() => {
       mockServerInstance = null;
       resolve();
