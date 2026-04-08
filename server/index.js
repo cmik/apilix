@@ -681,16 +681,22 @@ function wsMessagesMatch(incoming, pattern) {
 
 function handleWsUpgrade(req, socket, head) {
   const url = req.url || '/';
-  const qIdx = url.indexOf('?');
-  const pathname = qIdx >= 0 ? url.slice(0, qIdx) : url;
+  let parsedUrl;
+
+  try {
+    parsedUrl = new URL(url, 'http://localhost');
+  } catch (err) {
+    socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+
+  const pathname = parsedUrl.pathname;
 
   // Parse upgrade-request query string
   const wsQuery = {};
-  if (qIdx >= 0) {
-    url.slice(qIdx + 1).split('&').forEach(pair => {
-      const [k, v] = pair.split('=');
-      if (k) wsQuery[decodeURIComponent(k)] = decodeURIComponent(v ?? '');
-    });
+  for (const [k, v] of parsedUrl.searchParams.entries()) {
+    wsQuery[k] = v;
   }
 
   // Find first enabled WebSocket route matching the path
