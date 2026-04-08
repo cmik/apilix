@@ -101,7 +101,7 @@ app.post('/api/run/:runId/stop', (req, res) => {
 app.post('/api/run', upload.single('csvFile'), async (req, res) => {
   try {
     const payload = JSON.parse(req.body.data || '{}');
-    const { collection, environment, collectionVariables, globals, delay, cookies, executeChildRequests, conditionalExecution, allCollectionItems } = payload;
+    const { collection, environment, collectionVariables, globals, delay, cookies, executeChildRequests, conditionalExecution, allCollectionItems, mockBase } = payload;
 
     if (!collection || !collection.item) {
       return res.status(400).json({ error: 'Missing collection in body' });
@@ -185,6 +185,7 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
           cookies: currentCookies,
           collectionItems: executeChildRequests ? (allCollectionItems || collection.item || []) : [],
           conditionalExecution: conditionalExecution !== false,
+          mockBase: mockBase || null,
         });
 
         // Propagate environment/variable/cookie changes to next request in same iteration

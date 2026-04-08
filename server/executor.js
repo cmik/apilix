@@ -300,6 +300,7 @@ async function executeRequest(item, context) {
     cookies = {},
     collectionItems = [],
     conditionalExecution = true,
+    mockBase = null,
   } = context;
   let vars = buildVariables(environment, collectionVariables, globals, dataRow, collVars);
   // Keep original key sets for scope routing — used when splitting script mutations
@@ -320,7 +321,7 @@ async function executeRequest(item, context) {
       const scriptDeps = {
         collectionItems,
         executeRequestFn: executeRequest,
-        context: { environment, collectionVariables, globals, dataRow, collVars, cookies },
+        context: { environment, collectionVariables, globals, dataRow, collVars, cookies, mockBase },
       };
       const result = await runScript(code, null, vars, scriptDeps);
       const preUpdatedVars = result.updatedVariables;
@@ -366,7 +367,23 @@ async function executeRequest(item, context) {
 
   const req = item.request;
   const method = (req.method || 'GET').toUpperCase();
-  const url = resolveUrl(req.url, vars);
+  let url = resolveUrl(req.url, vars);
+
+  // Rewrite to mock server base AFTER variable resolution so that URLs like
+  // {{baseUrl}}/path resolve to https://real.host/path first, then become
+  // http://localhost:PORT/path — not http://localhost:PORT/https://real.host/path.
+  if (mockBase) {
+    try {
+      const parsed = new URL(url);
+      url = mockBase.replace(/\/$/, '') + parsed.pathname + parsed.search + parsed.hash;
+    } catch {
+      // URL couldn't be parsed even after resolution (edge case) — strip origin best-effort
+      const stripped = url.replace(/^(?:https?:)?\/\/[^/?#]*/i, '');
+      const pathPart = stripped !== url ? (stripped || '/') : (url.startsWith('/') ? url : '/' + url);
+      url = mockBase.replace(/\/$/, '') + pathPart;
+    }
+  }
+
   const headers = {};
 
   (req.header || []).forEach(h => {
@@ -484,7 +501,7 @@ async function executeRequest(item, context) {
         const scriptDeps = {
           collectionItems,
           executeRequestFn: executeRequest,
-          context: { environment, collectionVariables, globals, dataRow, collVars, cookies },
+          context: { environment, collectionVariables, globals, dataRow, collVars, cookies, mockBase },
         };
         const result = await runScript(code, responseData, vars, scriptDeps);
         testResults = result.tests;

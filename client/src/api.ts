@@ -60,6 +60,8 @@ export interface RunPayload {
   executeChildRequests?: boolean;
   conditionalExecution?: boolean;
   allCollectionItems?: CollectionItem[];
+  /** When set, the server rewrites every request URL to this base (after variable resolution). */
+  mockBase?: string;
 }
 
 export async function runCollection(

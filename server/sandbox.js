@@ -455,6 +455,7 @@ function createApx(response, variables, updatedVariables, updatedGlobalMutations
             collVars: execContext.collVars || [],
             cookies: execContext.cookies || {},
             collectionItems,
+            mockBase: execContext.mockBase || null,
           });
 
           // Record the child request so it appears in the console

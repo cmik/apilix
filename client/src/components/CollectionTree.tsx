@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, createContext, useContext } from 'react';
 import { createPortal } from 'react-dom';
 import type { CollectionItem, AppCollection, MockCollection, MockRoute } from '../types';
 import { useApp, generateId } from '../store';
+import { buildVarMap, resolveVariables } from '../utils/variableResolver';
 import {
   renameItemById, updateItemById, removeItemById, addItemToFolder, duplicateItem,
   moveItemInTree, extractItemById, insertItemInTree, isDescendantOf, getAllRequestIds,
@@ -28,14 +29,17 @@ function extractMockPath(url: CollectionItem['request'] extends undefined ? neve
   return (raw.replace(/^https?:\/\/[^/]+/, '') || '/').split('?')[0] || '/';
 }
 
-function toMockRoute(item: CollectionItem, collectionId?: string): MockRoute {
+function toMockRoute(item: CollectionItem, collectionId?: string, varMap: Record<string, string> = {}): MockRoute {
   const req = item.request!;
+  const rawUrl = typeof req.url === 'string' ? req.url : (req.url as any)?.raw ?? '';
+  const resolvedUrl = resolveVariables(rawUrl, varMap);
+  const resolvedUrlObj = typeof req.url === 'string' ? resolvedUrl : { ...(req.url as object), raw: resolvedUrl };
   return {
     id: generateId(),
     enabled: true,
     collectionId,
     method: (req.method ?? 'GET').toUpperCase(),
-    path: extractMockPath(req.url),
+    path: extractMockPath(resolvedUrlObj as typeof req.url),
     statusCode: 200,
     responseHeaders: [{ key: 'Content-Type', value: 'application/json' }],
     responseBody: '{\n  "ok": true\n}',
@@ -301,7 +305,9 @@ interface ItemNodeProps {
 }
 
 function ItemNode({ item, collectionId, collection, depth, startRenaming }: ItemNodeProps) {
-  const { state, dispatch } = useApp();
+  const { state, dispatch, getEnvironmentVars, getCollectionVars } = useApp();
+  const staticCollVars = Object.fromEntries((collection.variable ?? []).filter(v => !v.disabled).map(v => [v.key, v.value]));
+  const varMap = buildVarMap(getEnvironmentVars(), { ...staticCollVars, ...getCollectionVars(collectionId) }, state.globalVariables);
   const dragCtx = useDragCtx();
   const collapseSignal = useContext(CollapseCtx);
   const expandSignal = useContext(ExpandCtx);
@@ -574,7 +580,7 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
               } else if (choice.mode === 'existing') {
                 collectionId = choice.collectionId;
               }
-              for (const req of mockItems) dispatch({ type: 'ADD_MOCK_ROUTE', payload: toMockRoute(req, collectionId) });
+              for (const req of mockItems) dispatch({ type: 'ADD_MOCK_ROUTE', payload: toMockRoute(req, collectionId, varMap) });
               dispatch({ type: 'SET_VIEW', payload: 'mock' });
             }}
             onClose={() => setMockItems(null)}
@@ -638,7 +644,7 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
             } else if (choice.mode === 'existing') {
               cid = choice.collectionId;
             }
-            for (const req of mockItems) dispatch({ type: 'ADD_MOCK_ROUTE', payload: toMockRoute(req, cid) });
+            for (const req of mockItems) dispatch({ type: 'ADD_MOCK_ROUTE', payload: toMockRoute(req, cid, varMap) });
             dispatch({ type: 'SET_VIEW', payload: 'mock' });
           }}
           onClose={() => setMockItems(null)}
@@ -658,7 +664,7 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
   onDragStart?: (e: React.DragEvent) => void;
   onDragEnd?: () => void;
 }) {
-  const { dispatch } = useApp();
+  const { state, dispatch, getEnvironmentVars, getCollectionVars } = useApp();
   const collapseSignal = useContext(CollapseCtx);
   const expandSignal = useContext(ExpandCtx);
   const [open, setOpen] = useState(true);
@@ -746,8 +752,10 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
     const requests = flattenMockItems(collection.item);
     if (requests.length === 0) return;
     const colId = generateId();
+    const staticCollVars = Object.fromEntries((collection.variable ?? []).filter(v => !v.disabled).map(v => [v.key, v.value]));
+    const varMap = buildVarMap(getEnvironmentVars(), { ...staticCollVars, ...getCollectionVars(collection._id) }, state.globalVariables);
     dispatch({ type: 'ADD_MOCK_COLLECTION', payload: { id: colId, name: collection.info.name, enabled: true, description: '' } });
-    for (const req of requests) dispatch({ type: 'ADD_MOCK_ROUTE', payload: toMockRoute(req, colId) });
+    for (const req of requests) dispatch({ type: 'ADD_MOCK_ROUTE', payload: toMockRoute(req, colId, varMap) });
     dispatch({ type: 'SET_VIEW', payload: 'mock' });
   }
 
