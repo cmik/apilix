@@ -932,18 +932,6 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
   }
   _sendRef.current = handleSend;
 
-  function buildMockUrl(mockBase: string, resolvedRaw: string) {
-    try {
-      const parsed = new URL(resolvedRaw);
-      return mockBase + parsed.pathname + parsed.search + parsed.hash;
-    } catch {
-      const strippedOrigin = resolvedRaw.replace(/^https?:\/\/[^/]+/i, '');
-      const normalizedPath = strippedOrigin !== resolvedRaw ? (strippedOrigin || '/') : resolvedRaw;
-      const withSlash = normalizedPath.startsWith('/') ? normalizedPath : '/' + normalizedPath;
-      return mockBase + withSlash;
-    }
-  }
-
   async function handleSendToMock() {
     if (!edit || !activeReq || !activeTab) return;
     if (!state.mockServerRunning) {
@@ -951,8 +939,6 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
       return;
     }
     const mockBase = `http://localhost:${state.mockPort}`;
-    const resolvedRaw = resolveVariables(applyPathParams(edit.url, edit.pathParams), allVars);
-    const mockUrl = buildMockUrl(mockBase, resolvedRaw);
     const tabId = activeTab.id;
     dispatch({ type: 'SET_TAB_LOADING', payload: { tabId, loading: true } });
     dispatch({ type: 'SET_TAB_RESPONSE', payload: { tabId, response: null } });
@@ -975,7 +961,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
       ...activeReq.item,
       request: {
         method: edit.method,
-        url: { raw: mockUrl },
+        url: { raw: applyPathParams(edit.url, edit.pathParams) },
         header: edit.headers.filter(h => !h.disabled),
         body: edit.bodyMode !== 'none' ? {
           mode: edit.bodyMode as NonNullable<NonNullable<CollectionItem['request']>['body']>['mode'],
@@ -999,6 +985,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
         collVars: col?.variable ?? [],
         cookies: state.cookieJar,
         collectionItems: col?.item ?? [],
+        mockBase,
       });
       dispatch({ type: 'SET_TAB_RESPONSE', payload: { tabId, response: result } });
       dispatch({
@@ -1007,7 +994,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
           id: Date.now().toString(36) + Math.random().toString(36).slice(2),
           timestamp: Date.now(),
           method: edit.method,
-          url: result.resolvedUrl ?? mockUrl,
+          url: result.resolvedUrl ?? mockBase,
           requestHeaders: result.requestHeaders
             ? Object.entries(result.requestHeaders).map(([key, value]) => ({ key, value }))
             : edit.headers.map(h => ({ ...h, value: resolveVariables(h.value, allVars) })),
@@ -1029,7 +1016,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
           id: Date.now().toString(36) + Math.random().toString(36).slice(2),
           timestamp: Date.now(),
           method: edit.method,
-          url: mockUrl,
+          url: mockBase,
           requestHeaders: edit.headers.map(h => ({ ...h, value: resolveVariables(h.value, allVars) })),
           requestBody: edit.bodyMode === 'raw' ? resolveVariables(edit.bodyRaw, allVars) : undefined,
           response: errPayload,

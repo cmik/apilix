@@ -19,6 +19,8 @@ export interface ExecutePayload {
   collVars?: Array<{ key: string; value: string; disabled?: boolean }>;
   cookies?: CookieJar;
   collectionItems?: CollectionItem[];
+  /** When set, the server rewrites the request URL to this base after variable resolution. */
+  mockBase?: string;
 }
 
 export interface ChildRequestLog {

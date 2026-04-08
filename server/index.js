@@ -56,7 +56,7 @@ app.get('/api/health', (_req, res) => {
 
 app.post('/api/execute', async (req, res) => {
   try {
-    const { item, environment, collectionVariables, globals, dataRow, collVars, cookies, collectionItems } = req.body;
+    const { item, environment, collectionVariables, globals, dataRow, collVars, cookies, collectionItems, mockBase } = req.body;
     if (!item || !item.request) {
       return res.status(400).json({ error: 'Missing item.request in body' });
     }
@@ -68,6 +68,7 @@ app.post('/api/execute', async (req, res) => {
       collVars: collVars || [],
       cookies: cookies || {},
       collectionItems: collectionItems || [],
+      mockBase: mockBase || null,
     });
     return res.json(result);
   } catch (err) {
