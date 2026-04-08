@@ -752,7 +752,7 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
     const requests = flattenMockItems(collection.item);
     if (requests.length === 0) return;
     const colId = generateId();
-    const staticCollVars = Object.fromEntries((collection.variable ?? []).filter(v => !v.disabled).map(v => [v.key, v.value]));
+    const staticCollVars = Object.fromEntries((collection.variable ?? []).filter(v => v.key && !v.disabled).map(v => [v.key, v.value]));
     const varMap = buildVarMap(getEnvironmentVars(), { ...staticCollVars, ...getCollectionVars(collection._id) }, state.globalVariables);
     dispatch({ type: 'ADD_MOCK_COLLECTION', payload: { id: colId, name: collection.info.name, enabled: true, description: '' } });
     for (const req of requests) dispatch({ type: 'ADD_MOCK_ROUTE', payload: toMockRoute(req, colId, varMap) });
