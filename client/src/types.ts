@@ -236,6 +236,21 @@ export interface MockLogEntry {
   matchedRoutePath: string | null;
   responseStatus: number;
   responseBody: string;
+  wsEventType?: 'ws_connect' | 'ws_disconnect' | 'ws_message_in' | 'ws_message_out';
+  wsClientId?: string;
+  wsMessageType?: 'string' | 'json' | 'xml';
+}
+
+export interface WsOnConnectEvent {
+  id: string;
+  payload: string;
+  delay?: number;
+}
+
+export interface WsMessageHandler {
+  id: string;
+  matchPattern: string;
+  response: string;
 }
 
 export interface MockRouteRule {
@@ -252,6 +267,7 @@ export interface MockRoute {
   id: string;
   enabled: boolean;
   collectionId?: string; // belongs to a MockCollection
+  type?: 'http' | 'websocket';
   method: string; // GET POST PUT DELETE PATCH HEAD OPTIONS * (any)
   path: string;   // e.g. /api/users/:id
   statusCode: number;
@@ -261,6 +277,8 @@ export interface MockRoute {
   description: string;
   rules?: MockRouteRule[];
   script?: string;
+  wsOnConnect?: WsOnConnectEvent[];
+  wsMessageHandlers?: WsMessageHandler[];
 }
 
 export interface AppState {

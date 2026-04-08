@@ -259,14 +259,17 @@ export default function App() {
 
       switch (e.key.toLowerCase()) {
         case 'enter':
+          if (state.view !== 'request') break;
           e.preventDefault();
           document.dispatchEvent(new CustomEvent('apilix:send'));
           break;
         case 's':
+          if (state.view !== 'request') break;
           e.preventDefault();
           document.dispatchEvent(new CustomEvent('apilix:save'));
           break;
         case 'l':
+          if (state.view !== 'request') break;
           e.preventDefault();
           document.dispatchEvent(new CustomEvent('apilix:focusUrl'));
           break;
@@ -316,7 +319,7 @@ export default function App() {
     }
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [state.activeTabId, state.collections, dispatch]);
+  }, [state.view, state.activeTabId, state.collections, dispatch]);
 
   useEffect(() => {
     let cancelled = false;
@@ -418,12 +421,11 @@ export default function App() {
         {state.view === 'request' && <TabBar dirtyIds={dirtyIds} />}
 
         {/* Content area */}
-        {state.view === 'request' && (
-          <div className="flex-1 flex flex-col overflow-hidden">
-            <RequestBuilder onDirtyChange={setDirtyIds} />
-            <ResponseViewer />
-          </div>
-        )}
+        {/* RequestBuilder is always mounted to preserve unsaved changes; hidden when not active */}
+        <div className={`flex-1 flex flex-col overflow-hidden ${state.view === 'request' ? '' : 'hidden'}`}>
+          <RequestBuilder onDirtyChange={setDirtyIds} />
+          <ResponseViewer />
+        </div>
         {/* RunnerPanel is always mounted to preserve form state; hidden when not active */}
         <div className={`flex-1 flex flex-col overflow-hidden ${state.view === 'runner' ? '' : 'hidden'}`}>
           <RunnerPanel />

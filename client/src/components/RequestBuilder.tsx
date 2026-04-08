@@ -508,7 +508,7 @@ function WebSocketPanel({ url, headers }: {
 // ─── Main component ──────────────────────────────────────────────────────────
 
 type EditState = ReturnType<typeof itemToEditState>;
-type TabCache = { edit: EditState; dirty: boolean };
+type TabCache = { edit: EditState; dirty: boolean; activeRequestTab: Tab };
 
 function RenamableTitle({ name, onRename }: { name: string; onRename: (n: string) => void }) {
   const [renaming, setRenaming] = useState(false);
@@ -604,13 +604,14 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
     if (cached) {
       setEditRaw(cached.edit);
       setDirty(cached.dirty);
+      setActiveRequestTab(cached.activeRequestTab);
     } else {
       const fresh = itemToEditState(activeTab.item);
-      cacheRef.current.set(activeTab.id, { edit: fresh, dirty: false });
+      cacheRef.current.set(activeTab.id, { edit: fresh, dirty: false, activeRequestTab: 'Params' });
       setEditRaw(fresh);
       setDirty(false);
+      setActiveRequestTab('Params');
     }
-    setActiveRequestTab('Params');
   }, [activeTabId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Notify parent of dirty set changes
@@ -641,10 +642,22 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
     setEditRaw(prev => {
       if (!prev || !activeTab) return prev;
       const next = updater(prev);
-      cacheRef.current.set(activeTab.id, { edit: next, dirty: true });
+      const existing = cacheRef.current.get(activeTab.id);
+      cacheRef.current.set(activeTab.id, { edit: next, dirty: true, activeRequestTab: existing?.activeRequestTab ?? 'Params' });
       setDirty(true);
       return next;
     });
+  }
+
+  // Wrapper: update active request sub-tab + cache in one call
+  function setActiveRequestTabCached(tab: Tab) {
+    setActiveRequestTab(tab);
+    if (activeTab) {
+      const existing = cacheRef.current.get(activeTab.id);
+      if (existing) {
+        cacheRef.current.set(activeTab.id, { ...existing, activeRequestTab: tab });
+      }
+    }
   }
 
   // Backward-compat alias used below
@@ -1255,7 +1268,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
             return (
               <button
                 key={t}
-                onClick={() => setActiveRequestTab(t)}
+                onClick={() => setActiveRequestTabCached(t)}
                 className={`relative px-4 py-2 text-xs font-medium transition-colors ${
                   activeRequestTab === t
                     ? 'text-orange-400 border-b-2 border-orange-400 -mb-px'
