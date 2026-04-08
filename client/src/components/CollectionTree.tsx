@@ -306,7 +306,7 @@ interface ItemNodeProps {
 
 function ItemNode({ item, collectionId, collection, depth, startRenaming }: ItemNodeProps) {
   const { state, dispatch, getEnvironmentVars, getCollectionVars } = useApp();
-  const staticCollVars = Object.fromEntries((collection.variable ?? []).filter(v => !v.disabled).map(v => [v.key, v.value]));
+  const staticCollVars = Object.fromEntries((collection.variable ?? []).filter(v => !v.disabled && v.key).map(v => [v.key, v.value]));
   const varMap = buildVarMap(getEnvironmentVars(), { ...staticCollVars, ...getCollectionVars(collectionId) }, state.globalVariables);
   const dragCtx = useDragCtx();
   const collapseSignal = useContext(CollapseCtx);
