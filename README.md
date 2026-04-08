@@ -424,13 +424,13 @@ See `server/team/` for environment variables and configuration.
 #### Connecting a workspace
 
 1. Obtain a JWT token from the team server (login endpoint or admin console).
-2. Note the **Server Workspace ID** (`ws_...`) assigned to your workspace on the server.
+2. Note the **Server Workspace ID** assigned to your workspace on the server.
 3. Open **Manage Workspaces → Sync**, select **Team Server**, and fill in the fields:
 
 | Field | Required | Notes |
 |---|:---:|---|
 | Server URL | ✅ | Base URL of the team server, e.g. `https://apilix.yourcompany.com` |
-| Server Workspace ID | ✅ | The workspace ID as registered on the server (`ws_...`) |
+| Server Workspace ID | ✅ | The workspace ID as registered on the server (for example, a server-generated hex ID) |
 | JWT Token | ✅ | Session token — RBAC is enforced server-side |
 
 4. Use the **Team** tab to test the connection before pushing.
