@@ -259,14 +259,17 @@ export default function App() {
 
       switch (e.key.toLowerCase()) {
         case 'enter':
+          if (state.view !== 'request') break;
           e.preventDefault();
           document.dispatchEvent(new CustomEvent('apilix:send'));
           break;
         case 's':
+          if (state.view !== 'request') break;
           e.preventDefault();
           document.dispatchEvent(new CustomEvent('apilix:save'));
           break;
         case 'l':
+          if (state.view !== 'request') break;
           e.preventDefault();
           document.dispatchEvent(new CustomEvent('apilix:focusUrl'));
           break;
@@ -316,7 +319,7 @@ export default function App() {
     }
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [state.activeTabId, state.collections, dispatch]);
+  }, [state.view, state.activeTabId, state.collections, dispatch]);
 
   useEffect(() => {
     let cancelled = false;
