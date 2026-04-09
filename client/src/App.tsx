@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { API_BASE } from './api';
 import { useApp, generateId } from './store';
-import type { AppEnvironment, CollectionItem } from './types';
+import type { AppEnvironment, CollectionItem, WorkspaceData, SyncConfig, SyncMetadata, ConflictPackage } from './types';
 import Sidebar from './components/Sidebar';
 import ActivityBar from './components/ActivityBar';
 import RequestBuilder from './components/RequestBuilder';
@@ -14,6 +14,29 @@ import TabBar from './components/TabBar';
 import CookieManagerModal from './components/CookieManagerModal';
 import MockServerPanel from './components/MockServerPanel';
 import GlobalVariablesPanel from './components/GlobalVariablesPanel';
+import ConflictMergeModal from './components/ConflictMergeModal';
+import * as StorageDriver from './utils/storageDriver';
+import * as SnapshotEngine from './utils/snapshotEngine';
+import {
+  push as syncPush,
+  pullWithMeta as syncPullWithMeta,
+  pullForMerge,
+  applyMerged as syncApplyMerged,
+  rebaseAfterStale,
+  getRemoteSyncState,
+  checkConflict,
+  hasLocalUnpushedChanges,
+  ConflictError,
+  StaleVersionError,
+} from './utils/syncEngine';
+import {
+  buildUnsavedRequestTabsConfirmMessage,
+  getUnsavedRequestTabSummary,
+  saveExistingRequestTabs,
+  requestWorkspaceSwitchGuard,
+  type WorkspaceSwitchDecision,
+  type UnsavedRequestTabSummary,
+} from './utils/requestTabSyncGuard';
 
 // --- Env Quick Panel ---
 
@@ -157,8 +180,6 @@ function EnvironmentSelector() {
     setQuery('');
   }
 
-  if (state.environments.length === 0) return null;
-
   return (
     <div ref={containerRef} className="relative">
       <button
@@ -204,7 +225,10 @@ function EnvironmentSelector() {
                 </button>
               </li>
             ))}
-            {filtered.length === 0 && (
+            {state.environments.length === 0 && (
+              <li className="px-3 py-2 text-xs text-slate-500 italic">No environments available</li>
+            )}
+            {state.environments.length > 0 && filtered.length === 0 && (
               <li className="px-3 py-2 text-xs text-slate-500 italic">No match</li>
             )}
           </ul>
@@ -221,8 +245,72 @@ const DEFAULT_CONSOLE_HEIGHT = 240;
 
 type ServerStatus = 'checking' | 'online' | 'offline';
 
+// ─── Workspace switch guard modal ────────────────────────────────────────────
+
+function WorkspaceSwitchGuardModal({
+  summary,
+  onDecide,
+}: {
+  summary: UnsavedRequestTabSummary;
+  onDecide: (d: WorkspaceSwitchDecision) => void;
+}) {
+  const existingCount = summary.existingDirtyTabIds.length;
+  const draftCount = summary.draftDirtyTabIds.length;
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60">
+      <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-[420px] p-5 space-y-4">
+        <h3 className="text-sm font-semibold text-slate-200">Unsaved changes</h3>
+        <div className="text-xs text-slate-400 space-y-1.5">
+          {existingCount > 0 && (
+            <p>
+              You have{' '}
+              <strong className="text-slate-200">
+                {existingCount} unsaved request{existingCount !== 1 ? 's' : ''}
+              </strong>{' '}
+              in existing collection items.
+            </p>
+          )}
+          {draftCount > 0 && (
+            <p className="text-yellow-400/80">
+              {draftCount} draft request{draftCount !== 1 ? 's' : ''} will always be lost when switching workspaces.
+            </p>
+          )}
+        </div>
+        <div className="flex flex-col gap-2 pt-1">
+          {existingCount > 0 && (
+            <button
+              onClick={() => onDecide('save-and-switch')}
+              className="w-full py-2 px-3 rounded text-xs font-medium bg-orange-600 hover:bg-orange-500 text-white transition-colors text-left"
+            >
+              Save &amp; Switch
+              <span className="text-orange-200 font-normal">
+                {' '}— save {existingCount} request{existingCount !== 1 ? 's' : ''} then switch
+                {draftCount > 0 ? `, ${draftCount} draft${draftCount !== 1 ? 's' : ''} will be lost` : ''}
+              </span>
+            </button>
+          )}
+          <button
+            onClick={() => onDecide('switch-anyway')}
+            className="w-full py-2 px-3 rounded text-xs font-medium bg-slate-700 hover:bg-slate-600 text-slate-200 transition-colors text-left"
+          >
+            Switch anyway
+            <span className="text-slate-400 font-normal"> — discard all unsaved changes</span>
+          </button>
+          <button
+            onClick={() => onDecide('cancel')}
+            className="w-full py-2 px-3 rounded text-xs font-medium border border-slate-700 hover:border-slate-600 text-slate-400 hover:text-slate-200 transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const { state, dispatch } = useApp();
+  const isBrowserMode = !(window as { electronAPI?: unknown }).electronAPI;
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     const saved = localStorage.getItem('apilix_theme');
     if (saved === 'light' || saved === 'dark') return saved;
@@ -235,6 +323,19 @@ export default function App() {
   const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
   const [serverStatus, setServerStatus] = useState<ServerStatus>('checking');
   const [cookieManagerOpen, setCookieManagerOpen] = useState(false);
+  const [syncConfigured, setSyncConfigured] = useState(false);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [quickSyncConflictPackage, setQuickSyncConflictPackage] = useState<ConflictPackage | null>(null);
+  const [quickSyncConfig, setQuickSyncConfig] = useState<SyncConfig | null>(null);
+  const [quickSyncMsg, setQuickSyncMsg] = useState<string>('');
+  const [quickSyncStatus, setQuickSyncStatus] = useState<'ok' | 'warning' | 'error' | 'info'>('info');
+  const [lastSuccessfulSyncAt, setLastSuccessfulSyncAt] = useState<string | null>(null);
+  const [workspaceSwitchGuard, setWorkspaceSwitchGuard] = useState<{
+    summary: UnsavedRequestTabSummary;
+    resolve: (d: WorkspaceSwitchDecision) => void;
+  } | null>(null);
+  const [closeGuardOpen, setCloseGuardOpen] = useState(false);
+  const closeGuardDirtyCountRef = useRef(0);
   const dragging = useRef(false);
   const startX = useRef(0);
   const startWidth = useRef(0);
@@ -264,6 +365,13 @@ export default function App() {
           document.dispatchEvent(new CustomEvent('apilix:send'));
           break;
         case 's':
+          if (e.shiftKey) {
+            if (inInput) return;
+            if (!syncConfigured || syncBusy) return;
+            e.preventDefault();
+            void handleQuickSync();
+            break;
+          }
           if (state.view !== 'request') break;
           e.preventDefault();
           document.dispatchEvent(new CustomEvent('apilix:save'));
@@ -319,7 +427,46 @@ export default function App() {
     }
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [state.view, state.activeTabId, state.collections, dispatch]);
+  }, [state.view, state.activeTabId, state.collections, dispatch, syncConfigured, syncBusy]);
+
+  useEffect(() => {
+    function onGuardRequest(e: Event) {
+      const detail = (e as CustomEvent<{
+        summary: UnsavedRequestTabSummary;
+        resolve: (d: WorkspaceSwitchDecision) => void;
+      }>).detail;
+      setWorkspaceSwitchGuard({ summary: detail.summary, resolve: detail.resolve });
+    }
+    document.addEventListener('apilix:workspace-switch-guard', onGuardRequest);
+    return () => document.removeEventListener('apilix:workspace-switch-guard', onGuardRequest);
+  }, []);
+
+  function handleWorkspaceSwitchDecide(decision: WorkspaceSwitchDecision) {
+    if (!workspaceSwitchGuard) return;
+    workspaceSwitchGuard.resolve(decision);
+    setWorkspaceSwitchGuard(null);
+  }
+
+  useEffect(() => {
+    if (isBrowserMode) return;
+    const api = (window as { electronAPI?: { onWillClose?: (cb: () => void) => void; respondClose?: (confirmed: boolean) => void } }).electronAPI;
+    if (!api?.onWillClose || !api?.respondClose) return;
+    api.onWillClose(async () => {
+      const summary = await getUnsavedRequestTabSummary();
+      if (summary.dirtyTabIds.length === 0) {
+        api.respondClose!(true);
+        return;
+      }
+      closeGuardDirtyCountRef.current = summary.dirtyTabIds.length;
+      setCloseGuardOpen(true);
+    });
+  }, [isBrowserMode]);
+
+  function handleCloseGuard(confirmed: boolean) {
+    setCloseGuardOpen(false);
+    const api = (window as { electronAPI?: { respondClose?: (confirmed: boolean) => void } }).electronAPI;
+    api?.respondClose?.(confirmed);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -335,6 +482,194 @@ export default function App() {
     const id = setInterval(check, 10000);
     return () => { cancelled = true; clearInterval(id); };
   }, []);
+
+  useEffect(() => {
+    if (isBrowserMode) {
+      setSyncConfigured(false);
+      return;
+    }
+    let active = true;
+    StorageDriver.readSyncConfig(state.activeWorkspaceId)
+      .then(cfg => {
+        if (!active) return;
+        const configured = Boolean(cfg?.provider && cfg?.config && Object.keys(cfg.config).length > 0);
+        setSyncConfigured(configured);
+        setLastSuccessfulSyncAt(cfg?.metadata?.lastSyncedAt ?? cfg?.lastSynced ?? null);
+      })
+      .catch(() => {
+        if (!active) return;
+        setSyncConfigured(false);
+        setLastSuccessfulSyncAt(null);
+      });
+    return () => { active = false; };
+  }, [isBrowserMode, state.activeWorkspaceId]);
+
+  function getCurrentWorkspaceData(): WorkspaceData {
+    return {
+      collections: state.collections,
+      environments: state.environments,
+      activeEnvironmentId: state.activeEnvironmentId,
+      collectionVariables: state.collectionVariables,
+      globalVariables: state.globalVariables,
+      cookieJar: state.cookieJar,
+      mockCollections: state.mockCollections,
+      mockRoutes: state.mockRoutes,
+      mockPort: state.mockPort,
+    };
+  }
+
+  async function loadCurrentSyncConfig(): Promise<SyncConfig | null> {
+    const stored = await StorageDriver.readSyncConfig(state.activeWorkspaceId);
+    if (!stored?.provider || !stored?.config || Object.keys(stored.config).length === 0) return null;
+    return {
+      workspaceId: state.activeWorkspaceId,
+      provider: stored.provider as SyncConfig['provider'],
+      config: stored.config,
+      metadata: stored.metadata ?? (stored.lastSynced ? { lastSyncedAt: stored.lastSynced } : undefined),
+    };
+  }
+
+  async function persistSyncBase(cfg: SyncConfig, data: WorkspaceData, timestamp: string | null, version: string | null, summary: string): Promise<SyncMetadata> {
+    const baseSnapshotId = await SnapshotEngine.createSnapshot(cfg.workspaceId, data, summary);
+    const nextMetadata: SyncMetadata = {
+      ...(cfg.metadata ?? {}),
+      lastSyncedAt: timestamp ?? new Date().toISOString(),
+      lastSyncedVersion: version ?? cfg.metadata?.lastSyncedVersion,
+      lastMergeBaseSnapshotId: baseSnapshotId,
+    };
+    await StorageDriver.writeSyncConfig(cfg.workspaceId, cfg.provider, cfg.config, nextMetadata);
+    return nextMetadata;
+  }
+
+  function setQuickSyncFeedback(message: string, status: 'ok' | 'warning' | 'error' | 'info') {
+    setQuickSyncMsg(message);
+    setQuickSyncStatus(status);
+  }
+
+  async function prepareCollectionsForSync(): Promise<typeof state.collections | null> {
+    const summary = await getUnsavedRequestTabSummary();
+    if (summary.dirtyTabIds.length === 0) return state.collections;
+
+    const confirmed = window.confirm(buildUnsavedRequestTabsConfirmMessage('sync', summary));
+    if (!confirmed) {
+      setQuickSyncFeedback('Sync canceled', 'info');
+      return null;
+    }
+
+    const result = await saveExistingRequestTabs(summary.existingDirtyTabIds);
+    return result.updatedCollections;
+  }
+
+  function getQuickSyncTooltip(): string {
+    if (quickSyncStatus === 'ok' && lastSuccessfulSyncAt) {
+      return `${quickSyncMsg || 'Synced successfully'}\nLast successful sync: ${new Date(lastSuccessfulSyncAt).toLocaleString()}`;
+    }
+    return quickSyncMsg || 'Ready to sync';
+  }
+
+  async function handleQuickSync() {
+    if (syncBusy) return;
+    setQuickSyncFeedback('', 'info');
+    setSyncBusy(true);
+    try {
+      const syncedCollections = await prepareCollectionsForSync();
+      if (!syncedCollections) return;
+
+      const cfg = await loadCurrentSyncConfig();
+      if (!cfg) {
+        setQuickSyncFeedback('No sync provider configured for this workspace', 'warning');
+        return;
+      }
+      setQuickSyncConfig(cfg);
+      let currentCfg = cfg;
+      const localData = { ...getCurrentWorkspaceData(), collections: syncedCollections };
+
+      const hasUnpushed = await hasLocalUnpushedChanges(currentCfg, localData);
+      if (hasUnpushed) {
+        const remoteAhead = await checkConflict(currentCfg);
+        if (remoteAhead) {
+          const pkg = await pullForMerge(currentCfg, localData);
+          setQuickSyncConflictPackage(pkg);
+          setQuickSyncFeedback('Remote has newer changes — review merge before pushing', 'warning');
+          return;
+        }
+        await syncPush(currentCfg, localData);
+        const pushedState = await getRemoteSyncState(currentCfg);
+        const meta = await persistSyncBase(currentCfg, localData, pushedState.timestamp, pushedState.version, 'sync base after quick-sync push');
+        currentCfg = { ...currentCfg, metadata: meta };
+      }
+
+      try {
+        const result = await syncPullWithMeta(currentCfg);
+        if (result.data) {
+          dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...result.data, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
+          await StorageDriver.writeWorkspace(currentCfg.workspaceId, result.data);
+          const meta = await persistSyncBase(currentCfg, result.data, result.remoteState.timestamp, result.remoteState.version, 'sync base after quick-sync pull');
+          currentCfg = { ...currentCfg, metadata: meta };
+          setLastSuccessfulSyncAt(meta.lastSyncedAt ?? null);
+          setQuickSyncFeedback(hasUnpushed ? 'Synced (pushed + pulled)' : 'Synced (pulled)', 'ok');
+        } else {
+          setQuickSyncFeedback(hasUnpushed ? 'Pushed local changes (remote empty)' : 'Remote is empty — nothing to pull', 'info');
+        }
+      } catch (err: unknown) {
+        if (err instanceof ConflictError) {
+          const pkg = await pullForMerge(currentCfg, localData);
+          setQuickSyncConflictPackage(pkg);
+          setQuickSyncFeedback('Conflict detected — review merge', 'warning');
+        } else {
+          throw err;
+        }
+      }
+    } catch (err: unknown) {
+      setQuickSyncFeedback((err as Error).message, 'error');
+    } finally {
+      setSyncBusy(false);
+    }
+  }
+
+  async function handleQuickSyncMergeResolved(mergedData: WorkspaceData) {
+    if (!quickSyncConflictPackage || !quickSyncConfig) return;
+    const currentPackage = quickSyncConflictPackage;
+    let currentCfg = quickSyncConfig;
+    setQuickSyncConflictPackage(null);
+    setSyncBusy(true);
+    setQuickSyncFeedback('Applying merge…', 'info');
+    try {
+      const preMergeLocal = getCurrentWorkspaceData();
+      await SnapshotEngine.createSnapshot(state.activeWorkspaceId, preMergeLocal, 'pre-quick-sync-merge backup');
+
+      if (currentPackage.remoteVersion) {
+        await syncApplyMerged(currentCfg, mergedData, currentPackage.remoteVersion);
+      } else {
+        await syncPush(currentCfg, mergedData);
+      }
+
+      const remoteState = await getRemoteSyncState(currentCfg);
+      const meta = await persistSyncBase(currentCfg, mergedData, remoteState.timestamp, remoteState.version, 'sync base after quick-sync merge apply');
+      currentCfg = { ...currentCfg, metadata: meta };
+      setQuickSyncConfig(currentCfg);
+      setLastSuccessfulSyncAt(meta.lastSyncedAt ?? null);
+
+      dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...mergedData, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
+      await StorageDriver.writeWorkspace(state.activeWorkspaceId, mergedData);
+      setQuickSyncFeedback('Sync merge applied successfully', 'ok');
+    } catch (err: unknown) {
+      if (err instanceof StaleVersionError) {
+        setQuickSyncFeedback('Remote changed during apply. Rebuilding merge…', 'warning');
+        try {
+          const rebased = await rebaseAfterStale(currentCfg, mergedData, currentPackage.remoteData);
+          setQuickSyncConflictPackage(rebased);
+          setQuickSyncFeedback('Remote changed during apply. Review updated merge.', 'warning');
+        } catch (rebaseErr: unknown) {
+          setQuickSyncFeedback((rebaseErr as Error).message, 'error');
+        }
+      } else {
+        setQuickSyncFeedback((err as Error).message, 'error');
+      }
+    } finally {
+      setSyncBusy(false);
+    }
+  }
 
   const onHandleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -366,6 +701,8 @@ export default function App() {
     };
   }, []);
 
+  const quickSyncTooltip = getQuickSyncTooltip();
+
   return (
     <div className="flex flex-col h-screen bg-slate-950 text-slate-100 overflow-hidden">
       <div className="flex flex-1 min-h-0 overflow-hidden">
@@ -387,34 +724,68 @@ export default function App() {
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* Top bar */}
-        <div className="flex items-center justify-end gap-2 px-4 py-2 border-b border-slate-700 bg-slate-900 shrink-0">
-          {/* Cookie manager button */}
-          <button
-            onClick={() => setCookieManagerOpen(o => !o)}
-            title="Cookie Manager"
-            className={`px-2 py-1 rounded text-xs transition-colors border ${
-              cookieManagerOpen
-                ? 'bg-orange-600 border-orange-600 text-white'
-                : 'bg-slate-700 border-slate-600 text-slate-400 hover:text-white hover:border-orange-500'
-            }`}
-          >
-            🍪
-          </button>
-          <span className="text-slate-500 text-xs">Environment:</span>
-          <EnvironmentSelector />
-          {state.activeEnvironmentId && (
+        <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-700 bg-slate-900 shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            {!isBrowserMode && syncConfigured && (
+              <div className="flex items-center gap-1.5" title={quickSyncTooltip}>
+                <button
+                  onClick={handleQuickSync}
+                  disabled={syncBusy}
+                  aria-label={`Sync workspace. Status: ${quickSyncTooltip}`}
+                  title={quickSyncTooltip}
+                  className={`px-3 py-1 rounded text-xs font-medium border transition-colors focus:outline-none focus:ring-2 focus:ring-orange-500 ${
+                    syncBusy
+                      ? 'bg-slate-700 border-slate-600 text-slate-400 cursor-not-allowed'
+                      : 'bg-orange-600 border-orange-600 text-white hover:bg-orange-500'
+                  }`}
+                >
+                  {syncBusy ? 'Syncing…' : 'Sync'}
+                </button>
+                <span
+                  role="status"
+                  aria-label={`Sync status: ${quickSyncTooltip}`}
+                  title={quickSyncTooltip}
+                  className={`inline-flex w-2.5 h-2.5 rounded-full ${
+                    syncBusy ? 'bg-sky-400 animate-pulse' :
+                    quickSyncStatus === 'ok' ? 'bg-green-500' :
+                    quickSyncStatus === 'warning' ? 'bg-yellow-400' :
+                    quickSyncStatus === 'error' ? 'bg-red-500' :
+                    'bg-slate-500'
+                  }`}
+                />
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Cookie manager button */}
             <button
-              onClick={() => setEnvQuickOpen(o => !o)}
-              title="Quick view environment variables"
+              onClick={() => setCookieManagerOpen(o => !o)}
+              title="Cookie Manager"
               className={`px-2 py-1 rounded text-xs transition-colors border ${
-                envQuickOpen
+                cookieManagerOpen
                   ? 'bg-orange-600 border-orange-600 text-white'
                   : 'bg-slate-700 border-slate-600 text-slate-400 hover:text-white hover:border-orange-500'
               }`}
             >
-              👁
+              🍪
             </button>
-          )}
+            <span className="text-slate-500 text-xs">Environment:</span>
+            <EnvironmentSelector />
+            {state.activeEnvironmentId && (
+              <button
+                onClick={() => setEnvQuickOpen(o => !o)}
+                title="Quick view environment variables"
+                className={`px-2 py-1 rounded text-xs transition-colors border ${
+                  envQuickOpen
+                    ? 'bg-orange-600 border-orange-600 text-white'
+                    : 'bg-slate-700 border-slate-600 text-slate-400 hover:text-white hover:border-orange-500'
+                }`}
+              >
+                👁
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Tab bar — shown only in request view */}
@@ -479,6 +850,78 @@ export default function App() {
       {/* Cookie manager modal */}
       {cookieManagerOpen && (
         <CookieManagerModal onClose={() => setCookieManagerOpen(false)} />
+      )}
+
+      {/* App close guard */}
+      {closeGuardOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-[380px] p-5 space-y-4">
+            <h3 className="text-sm font-semibold text-slate-200">Unsaved changes</h3>
+            <p className="text-xs text-slate-400">
+              You have{' '}
+              <strong className="text-slate-200">
+                {closeGuardDirtyCountRef.current} unsaved request tab{closeGuardDirtyCountRef.current !== 1 ? 's' : ''}
+              </strong>
+              . Closing the app will discard all unsaved work.
+            </p>
+            <div className="flex flex-col gap-2 pt-1">
+              <button
+                onClick={() => handleCloseGuard(true)}
+                className="w-full py-2 px-3 rounded text-xs font-medium bg-red-700 hover:bg-red-600 text-white transition-colors"
+              >
+                Close anyway
+              </button>
+              <button
+                onClick={() => handleCloseGuard(false)}
+                className="w-full py-2 px-3 rounded text-xs font-medium border border-slate-700 hover:border-slate-600 text-slate-400 hover:text-slate-200 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {workspaceSwitchGuard && (
+        <WorkspaceSwitchGuardModal
+          summary={workspaceSwitchGuard.summary}
+          onDecide={handleWorkspaceSwitchDecide}
+        />
+      )}
+
+      {quickSyncConflictPackage && (
+        <ConflictMergeModal
+          conflictPackage={quickSyncConflictPackage}
+          onResolved={(merged) => handleQuickSyncMergeResolved(merged)}
+          onKeepLocal={() => {
+            setQuickSyncConflictPackage(null);
+            setQuickSyncFeedback('Kept local changes', 'warning');
+          }}
+          onKeepRemote={async () => {
+            if (!quickSyncConfig) {
+              setQuickSyncConflictPackage(null);
+              return;
+            }
+            setSyncBusy(true);
+            try {
+              const result = await syncPullWithMeta(quickSyncConfig, 'keep-remote');
+              if (result.data) {
+                dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...result.data, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
+                await StorageDriver.writeWorkspace(state.activeWorkspaceId, result.data);
+                const meta = await persistSyncBase(quickSyncConfig, result.data, result.remoteState.timestamp, result.remoteState.version, 'sync base after keep-remote');
+                setQuickSyncConfig({ ...quickSyncConfig, metadata: meta });
+                setLastSuccessfulSyncAt(meta.lastSyncedAt ?? null);
+              }
+              setQuickSyncFeedback('Applied remote changes', 'ok');
+            } catch (err: unknown) {
+              setQuickSyncFeedback((err as Error).message, 'error');
+            } finally {
+              setSyncBusy(false);
+              setQuickSyncConflictPackage(null);
+            }
+          }}
+          onClose={() => setQuickSyncConflictPackage(null)}
+        />
       )}
     </div>
   );

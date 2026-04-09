@@ -3,6 +3,7 @@ import type { Workspace, WorkspaceData } from '../types';
 import { useApp } from '../store';
 import { generateId } from '../store';
 import * as StorageDriver from '../utils/storageDriver';
+import { requestWorkspaceSwitchGuard, saveExistingRequestTabs } from '../utils/requestTabSyncGuard';
 
 const PRESET_COLORS = ['#f97316', '#3b82f6', '#22c55e', '#a855f7', '#ef4444', '#eab308'];
 
@@ -42,6 +43,25 @@ export default function WorkspaceSwitcher({ onManage }: Props) {
     if (workspace.id === state.activeWorkspaceId) {
       setOpen(false);
       return;
+    }
+    const { decision, summary } = await requestWorkspaceSwitchGuard();
+    if (decision === 'cancel') return;
+    if (decision === 'save-and-switch') {
+      const saveResult = await saveExistingRequestTabs(summary.existingDirtyTabIds);
+      // Flush updated collections to disk immediately — the debounced persist effect
+      // fires after SWITCH_WORKSPACE changes activeWorkspaceId, so without this write
+      // the saved data would be written to the new workspace's slot instead.
+      await StorageDriver.writeWorkspace(state.activeWorkspaceId, {
+        collections: saveResult.updatedCollections,
+        environments: state.environments,
+        activeEnvironmentId: state.activeEnvironmentId,
+        collectionVariables: state.collectionVariables,
+        globalVariables: state.globalVariables,
+        cookieJar: state.cookieJar,
+        mockCollections: state.mockCollections,
+        mockRoutes: state.mockRoutes,
+        mockPort: state.mockPort,
+      });
     }
     const data = await StorageDriver.readWorkspace(workspace.id) ?? emptyWorkspaceData();
     dispatch({ type: 'SWITCH_WORKSPACE', payload: { workspace, data } });

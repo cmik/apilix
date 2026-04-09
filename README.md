@@ -16,6 +16,7 @@ A lightweight, open-source alternative API testing tool — available as a **des
 - **Mock Server** — define static or dynamic responses for any endpoint; start a local HTTP server without a real backend
 - **Console panel** — view a log of every request and response with resolved variable values; pop out into a live-updating detached window
 - **Status bar** — quick access to the console toggle with an unread count badge and last response summary
+- **Advanced workspace sync conflicts** — three-way merge UI at request/code level, stale-version recovery, and recent sync activity telemetry
 
 ---
 

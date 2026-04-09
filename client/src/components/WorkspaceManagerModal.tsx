@@ -1,13 +1,52 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { Workspace, WorkspaceData, SyncConfig, SyncProvider, HistoryEntry } from '../types';
+import type { Workspace, WorkspaceData, SyncConfig, SyncProvider, HistoryEntry, SyncMetadata, ConflictPackage, SyncActivityEntry, SyncActivityLevel } from '../types';
 import { useApp, generateId } from '../store';
 import * as StorageDriver from '../utils/storageDriver';
-import { push as syncPush, pull as syncPull, ConflictError } from '../utils/syncEngine';
+import {
+  requestWorkspaceSwitchGuard,
+  saveExistingRequestTabs,
+  buildUnsavedRequestTabsConfirmMessage,
+  getUnsavedRequestTabSummary,
+} from '../utils/requestTabSyncGuard';
+import {
+  push as syncPush,
+  pullWithMeta as syncPullWithMeta,
+  getRemoteSyncState,
+  applyMerged as syncApplyMerged,
+  pullForMerge,
+  rebaseAfterStale,
+  ConflictError,
+  StaleVersionError,
+} from '../utils/syncEngine';
 import * as SnapshotEngine from '../utils/snapshotEngine';
+import ConflictMergeModal from './ConflictMergeModal';
 
 type Tab = 'workspaces' | 'sync' | 'team' | 'history';
 
 const PRESET_COLORS = ['#f97316', '#3b82f6', '#22c55e', '#a855f7', '#ef4444', '#eab308'];
+
+const PROVIDER_CAPABILITIES: Record<SyncProvider, Array<{ label: string; tone: 'success' | 'warning' }>> = {
+  git: [
+    { label: 'Versioned writes', tone: 'success' },
+    { label: 'Remote state metadata', tone: 'success' },
+    { label: 'Three-way merge recovery', tone: 'success' },
+  ],
+  http: [
+    { label: 'Versioned writes', tone: 'success' },
+    { label: 'Remote state metadata', tone: 'success' },
+    { label: 'Three-way merge recovery', tone: 'success' },
+  ],
+  team: [
+    { label: 'Versioned writes', tone: 'success' },
+    { label: 'Remote state metadata', tone: 'success' },
+    { label: 'Three-way merge recovery', tone: 'success' },
+  ],
+  s3: [
+    { label: 'Remote state metadata', tone: 'success' },
+    { label: 'Three-way merge recovery', tone: 'success' },
+    { label: 'Conditional writes depend on backend support', tone: 'warning' },
+  ],
+};
 
 interface Props {
   onClose: () => void;
@@ -15,6 +54,16 @@ interface Props {
 
 export default function WorkspaceManagerModal({ onClose }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>('workspaces');
+  const isBrowserMode = !(window as { electronAPI?: unknown }).electronAPI;
+  const visibleTabs: Tab[] = isBrowserMode
+    ? ['workspaces', 'history']
+    : ['workspaces', 'sync', 'team', 'history'];
+
+  useEffect(() => {
+    if (!visibleTabs.includes(activeTab)) {
+      setActiveTab('workspaces');
+    }
+  }, [activeTab, visibleTabs]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
@@ -27,7 +76,7 @@ export default function WorkspaceManagerModal({ onClose }: Props) {
 
         {/* Tabs */}
         <div className="flex border-b border-slate-800 px-4">
-          {(['workspaces', 'sync', 'team', 'history'] as Tab[]).map(tab => (
+          {visibleTabs.map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -45,8 +94,8 @@ export default function WorkspaceManagerModal({ onClose }: Props) {
         {/* Tab content */}
         <div className="flex-1 overflow-y-auto p-4">
           {activeTab === 'workspaces' && <WorkspacesTab onClose={onClose} />}
-          {activeTab === 'sync' && <SyncTab />}
-          {activeTab === 'team' && <TeamTab />}
+          {!isBrowserMode && activeTab === 'sync' && <SyncTab />}
+          {!isBrowserMode && activeTab === 'team' && <TeamTab />}
           {activeTab === 'history' && <HistoryTab />}
         </div>
       </div>
@@ -64,6 +113,25 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
 
   async function handleSwitch(workspace: Workspace) {
     if (workspace.id === state.activeWorkspaceId) return;
+    const { decision, summary } = await requestWorkspaceSwitchGuard();
+    if (decision === 'cancel') return;
+    if (decision === 'save-and-switch') {
+      const saveResult = await saveExistingRequestTabs(summary.existingDirtyTabIds);
+      // Flush updated collections to disk immediately — the debounced persist effect
+      // fires after SWITCH_WORKSPACE changes activeWorkspaceId, so without this write
+      // the saved data would be written to the new workspace's slot instead.
+      await StorageDriver.writeWorkspace(state.activeWorkspaceId, {
+        collections: saveResult.updatedCollections,
+        environments: state.environments,
+        activeEnvironmentId: state.activeEnvironmentId,
+        collectionVariables: state.collectionVariables,
+        globalVariables: state.globalVariables,
+        cookieJar: state.cookieJar,
+        mockCollections: state.mockCollections,
+        mockRoutes: state.mockRoutes,
+        mockPort: state.mockPort,
+      });
+    }
     const data = await StorageDriver.readWorkspace(workspace.id) ?? emptyWorkspaceData();
     dispatch({ type: 'SWITCH_WORKSPACE', payload: { workspace, data } });
     onClose();
@@ -252,90 +320,271 @@ function SyncTab() {
 
   const [provider, setProvider] = useState<SyncProvider>('s3');
   const [fields, setFields] = useState<Record<string, string>>({});
+  const [providerDrafts, setProviderDrafts] = useState<Record<SyncProvider, Record<string, string>>>(
+    () => ({ s3: {}, git: {}, http: {}, team: {} })
+  );
+  const [syncMetadata, setSyncMetadata] = useState<SyncMetadata | undefined>(undefined);
   const [loaded, setLoaded] = useState(false);
   const [status, setStatus] = useState<'idle' | 'busy' | 'ok' | 'error'>('idle');
   const [msg, setMsg] = useState('');
   const [conflict, setConflict] = useState<null | { remoteTimestamp: string; localTimestamp: string | null }>(null);
+  const [conflictPackage, setConflictPackage] = useState<ConflictPackage | null>(null);
+  const [activity, setActivity] = useState<SyncActivityEntry[]>([]);
 
   // Load persisted sync config on mount / workspace change
   useEffect(() => {
     let active = true;
-    StorageDriver.readSyncConfig(workspaceId).then(cfg => {
+    Promise.all([
+      StorageDriver.readSyncConfig(workspaceId),
+      StorageDriver.readSyncActivity(workspaceId),
+    ]).then(([cfg, entries]) => {
       if (!active) return;
       if (cfg) {
-        setProvider(cfg.provider as SyncProvider);
-        setFields(cfg.config);
+        const loadedProvider = cfg.provider as SyncProvider;
+        const loadedConfig = cfg.config;
+        setProvider(loadedProvider);
+        setFields(loadedConfig);
+        setProviderDrafts(prev => ({
+          ...prev,
+          [loadedProvider]: loadedConfig,
+        }));
+        setSyncMetadata(cfg.metadata ?? (cfg.lastSynced ? { lastSyncedAt: cfg.lastSynced } : undefined));
       } else {
         setFields({});
+        setSyncMetadata(undefined);
       }
+      setActivity(entries);
       setLoaded(true);
     });
     return () => { active = false; };
   }, [workspaceId]);
 
+  async function logActivity(action: SyncActivityEntry['action'], level: SyncActivityLevel, message: string, detail?: string) {
+    const entry: SyncActivityEntry = {
+      id: generateId(),
+      timestamp: new Date().toISOString(),
+      provider,
+      action,
+      level,
+      message,
+      detail,
+    };
+    setActivity(prev => [entry, ...prev].slice(0, 100));
+    await StorageDriver.appendSyncActivity(workspaceId, entry);
+  }
+
   async function saveConfig() {
-    await StorageDriver.writeSyncConfig(workspaceId, provider, fields);
+    await StorageDriver.writeSyncConfig(workspaceId, provider, fields, syncMetadata);
+    await logActivity('save-config', 'info', 'Sync configuration saved');
+  }
+
+  function getCurrentWorkspaceData(): WorkspaceData {
+    return {
+      collections: state.collections,
+      environments: state.environments,
+      activeEnvironmentId: state.activeEnvironmentId,
+      collectionVariables: state.collectionVariables,
+      globalVariables: state.globalVariables,
+      cookieJar: state.cookieJar,
+      mockCollections: state.mockCollections,
+      mockRoutes: state.mockRoutes,
+      mockPort: state.mockPort,
+    };
+  }
+
+  async function prepareCollectionsForPush(): Promise<typeof state.collections | null> {
+    const summary = await getUnsavedRequestTabSummary();
+    if (summary.dirtyTabIds.length === 0) return state.collections;
+
+    const confirmed = window.confirm(buildUnsavedRequestTabsConfirmMessage('push', summary));
+    if (!confirmed) {
+      setStatus('idle');
+      setMsg('Push canceled');
+      return null;
+    }
+
+    const result = await saveExistingRequestTabs(summary.existingDirtyTabIds);
+    return result.updatedCollections;
   }
 
   function setField(key: string, value: string) {
-    setFields(prev => ({ ...prev, [key]: value }));
+    setFields(prev => {
+      const next = { ...prev, [key]: value };
+      setProviderDrafts(drafts => ({ ...drafts, [provider]: next }));
+      return next;
+    });
+  }
+
+  function switchProvider(nextProvider: SyncProvider) {
+    setProvider(prevProvider => {
+      if (prevProvider === nextProvider) return prevProvider;
+      setProviderDrafts(drafts => {
+        const nextDrafts = {
+          ...drafts,
+          [prevProvider]: fields,
+        };
+        setFields(nextDrafts[nextProvider] ?? {});
+        return nextDrafts;
+      });
+      setConflict(null);
+      setConflictPackage(null);
+      setMsg('');
+      setStatus('idle');
+      return nextProvider;
+    });
   }
 
   async function handlePush() {
     setStatus('busy'); setMsg('Pushing…'); setConflict(null);
     try {
+      const syncedCollections = await prepareCollectionsForPush();
+      if (!syncedCollections) return;
+
       await saveConfig();
-      const data = await StorageDriver.readWorkspace(workspaceId);
-      if (!data) throw new Error('No workspace data to push');
-      const cfg: SyncConfig = { workspaceId, provider, config: fields };
+      const data = { ...getCurrentWorkspaceData(), collections: syncedCollections };
+      const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
       await syncPush(cfg, data);
+      const remoteState = await getRemoteSyncState(cfg);
+      const mergeBaseSnapshotId = await SnapshotEngine.createSnapshot(workspaceId, data, 'sync base after push');
+      const nextMetadata: SyncMetadata = {
+        ...(syncMetadata ?? {}),
+        lastSyncedAt: remoteState.timestamp ?? new Date().toISOString(),
+        lastSyncedVersion: remoteState.version ?? syncMetadata?.lastSyncedVersion,
+        lastMergeBaseSnapshotId: mergeBaseSnapshotId,
+      };
+      setSyncMetadata(nextMetadata);
+      await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata);
+      await StorageDriver.writeWorkspace(workspaceId, data);
       dispatch({ type: 'SET_SYNC_STATUS', payload: { workspaceId, status: 'idle' } });
+      await logActivity('push', 'success', 'Push completed', remoteState.version ? `Version ${remoteState.version.slice(0, 8)}` : undefined);
       setStatus('ok'); setMsg('Pushed successfully');
     } catch (err: unknown) {
+      dispatch({ type: 'SET_SYNC_STATUS', payload: { workspaceId, status: 'error' } });
+      await logActivity('push', 'error', 'Push failed', (err as Error).message);
       setStatus('error'); setMsg((err as Error).message);
     }
   }
 
   async function handlePull(resolution?: 'keep-local' | 'keep-remote') {
-    setStatus('busy'); setMsg('Pulling…'); setConflict(null);
+    setStatus('busy'); setMsg('Pulling…'); setConflict(null); setConflictPackage(null);
     try {
       await saveConfig();
-      const cfg: SyncConfig = { workspaceId, provider, config: fields };
-      const data = await syncPull(cfg, resolution);
+      const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
+      const result = await syncPullWithMeta(cfg, resolution);
+      const data = result.data;
       if (data) {
         dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...data, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
         await StorageDriver.writeWorkspace(workspaceId, data);
+        const mergeBaseSnapshotId = await SnapshotEngine.createSnapshot(workspaceId, data, 'sync base after pull');
+        const nextMetadata: SyncMetadata = {
+          ...(syncMetadata ?? {}),
+          lastSyncedAt: result.remoteState.timestamp ?? new Date().toISOString(),
+          lastSyncedVersion: result.remoteState.version ?? syncMetadata?.lastSyncedVersion,
+          lastMergeBaseSnapshotId: mergeBaseSnapshotId,
+        };
+        setSyncMetadata(nextMetadata);
+        await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata);
+        await logActivity('pull', 'success', 'Pull completed', result.remoteState.version ? `Version ${result.remoteState.version.slice(0, 8)}` : undefined);
         setStatus('ok'); setMsg('Pulled successfully');
       } else {
+        await logActivity('pull', 'info', 'Pull completed', 'Remote is empty');
         setStatus('ok'); setMsg('Remote is empty — nothing to pull');
       }
     } catch (err: unknown) {
       if (err instanceof ConflictError) {
-        setConflict({ remoteTimestamp: err.remoteLastModified, localTimestamp: err.localLastSaved });
-        setStatus('idle'); setMsg('');
+        await logActivity('conflict-detected', 'warning', 'Remote conflict detected', err.remoteVersion ? `Version ${err.remoteVersion.slice(0, 8)}` : undefined);
+        setStatus('busy'); setMsg('Loading merge data…');
+        try {
+          const localData = getCurrentWorkspaceData();
+          const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
+          const pkg = await pullForMerge(cfg, localData);
+          setConflictPackage(pkg);
+          await logActivity('merge-opened', 'warning', 'Opened merge review', `${pkg.mergeResult.conflicts.length} conflict(s)`);
+          setStatus('idle'); setMsg('');
+        } catch {
+          setConflict({ remoteTimestamp: err.remoteLastModified, localTimestamp: err.localLastSaved });
+          setStatus('idle'); setMsg('');
+        }
       } else {
+        dispatch({ type: 'SET_SYNC_STATUS', payload: { workspaceId, status: 'error' } });
+        await logActivity('pull', 'error', 'Pull failed', (err as Error).message);
         setStatus('error'); setMsg((err as Error).message);
       }
     }
   }
 
-  async function handleCloneOnce() {
-    setStatus('busy'); setMsg('Importing…'); setConflict(null);
+  async function handleMergeResolved(mergedData: WorkspaceData) {
+    if (!conflictPackage) return;
+    const currentConflictPackage = conflictPackage;
+    setConflictPackage(null);
+    setStatus('busy'); setMsg('Applying merge…');
     try {
-      const cfg: SyncConfig = { workspaceId, provider, config: fields };
-      const data = await syncPull(cfg);
+      const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
+      const localData = getCurrentWorkspaceData();
+      if (localData) await SnapshotEngine.createSnapshot(workspaceId, localData, 'pre-merge backup');
+      if (currentConflictPackage.remoteVersion) {
+        await syncApplyMerged(cfg, mergedData, currentConflictPackage.remoteVersion);
+      } else {
+        await syncPush(cfg, mergedData);
+      }
+      const remoteState = await getRemoteSyncState(cfg);
+      const mergeBaseSnapshotId = await SnapshotEngine.createSnapshot(workspaceId, mergedData, 'sync base after merge apply');
+      const nextMetadata: SyncMetadata = {
+        ...(syncMetadata ?? {}),
+        lastSyncedAt: remoteState.timestamp ?? new Date().toISOString(),
+        lastSyncedVersion: remoteState.version ?? syncMetadata?.lastSyncedVersion,
+        lastMergeBaseSnapshotId: mergeBaseSnapshotId,
+      };
+      setSyncMetadata(nextMetadata);
+      await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata);
+      dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...mergedData, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
+      await StorageDriver.writeWorkspace(workspaceId, mergedData);
+      await logActivity('merge-applied', 'success', 'Merged workspace applied', remoteState.version ? `Version ${remoteState.version.slice(0, 8)}` : undefined);
+      setStatus('ok'); setMsg('Merge applied successfully');
+    } catch (err: unknown) {
+      if (err instanceof StaleVersionError) {
+        setStatus('busy'); setMsg('Remote changed during apply. Rebuilding merge…');
+        try {
+          const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
+          const nextPackage = await rebaseAfterStale(cfg, mergedData, currentConflictPackage.remoteData);
+          setConflictPackage(nextPackage);
+          await logActivity('merge-stale-rebase', 'warning', 'Remote changed during merge apply', `${nextPackage.mergeResult.conflicts.length} conflict(s) after rebase`);
+          setStatus('idle');
+          setMsg('Remote changed during apply. Review the updated merge.');
+        } catch (rebaseErr: unknown) {
+          await logActivity('merge-stale-rebase', 'error', 'Failed to rebuild merge after remote change', (rebaseErr as Error).message);
+          setStatus('error');
+          setMsg((rebaseErr as Error).message);
+        }
+        return;
+      }
+      await logActivity('merge-applied', 'error', 'Merge apply failed', (err as Error).message);
+      setStatus('error'); setMsg((err as Error).message);
+    }
+  }
+
+  async function handleCloneOnce() {
+    setStatus('busy'); setMsg('Importing…'); setConflict(null); setConflictPackage(null);
+    try {
+      const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
+      const result = await syncPullWithMeta(cfg);
+      const data = result.data;
       if (data) {
         dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...data, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
         await StorageDriver.writeWorkspace(workspaceId, data);
+        await logActivity('import', 'success', 'Imported remote workspace once');
         setStatus('ok'); setMsg('Imported successfully — config was not saved');
       } else {
+        await logActivity('import', 'info', 'Import completed', 'Remote is empty');
         setStatus('ok'); setMsg('Remote is empty — nothing to import');
       }
     } catch (err: unknown) {
       if (err instanceof ConflictError) {
+        await logActivity('conflict-detected', 'warning', 'Conflict detected during import');
         setConflict({ remoteTimestamp: err.remoteLastModified, localTimestamp: err.localLastSaved });
         setStatus('idle'); setMsg('');
       } else {
+        await logActivity('import', 'error', 'Import failed', (err as Error).message);
         setStatus('error'); setMsg((err as Error).message);
       }
     }
@@ -344,7 +593,8 @@ function SyncTab() {
   if (!loaded) return <div className="py-8 text-center text-xs text-slate-500">Loading…</div>;
 
   return (
-    <div className="space-y-4">
+    <>
+      <div className="space-y-4">
       {/* Provider selector */}
       <div>
         <label className="block text-xs font-medium text-slate-400 mb-1.5">Provider</label>
@@ -352,7 +602,7 @@ function SyncTab() {
           {(Object.keys(PROVIDER_LABELS) as SyncProvider[]).map(p => (
             <button
               key={p}
-              onClick={() => { setProvider(p); setFields({}); }}
+              onClick={() => switchProvider(p)}
               className={`px-3 py-1.5 rounded text-xs font-medium border transition-colors ${
                 provider === p
                   ? 'bg-orange-500/20 border-orange-500/50 text-orange-300'
@@ -381,12 +631,38 @@ function SyncTab() {
         ))}
       </div>
 
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-[11px] text-slate-500">Provider capabilities</span>
+          {syncMetadata?.lastSyncedVersion && (
+            <span className="text-[10px] font-mono text-slate-500">
+              last version {syncMetadata.lastSyncedVersion.slice(0, 8)}
+            </span>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {PROVIDER_CAPABILITIES[provider].map(cap => (
+            <span
+              key={cap.label}
+              className={`px-2 py-1 rounded text-[10px] border ${
+                cap.tone === 'success'
+                  ? 'bg-green-950/30 border-green-800/40 text-green-300'
+                  : 'bg-yellow-950/30 border-yellow-800/40 text-yellow-300'
+              }`}
+            >
+              {cap.label}
+            </span>
+          ))}
+        </div>
+      </div>
+
       {/* Conflict resolution */}
       {conflict && (
         <div className="p-3 bg-yellow-950/40 border border-yellow-700/50 rounded-lg text-xs text-slate-300 space-y-2">
           <p className="font-medium text-yellow-300">Conflict detected</p>
           <p>Remote was last modified: <strong>{new Date(conflict.remoteTimestamp).toLocaleString()}</strong></p>
           {conflict.localTimestamp && <p>Local last synced: <strong>{new Date(conflict.localTimestamp).toLocaleString()}</strong></p>}
+          <p className="text-slate-400">Merge data could not be loaded. Choose how to proceed:</p>
           <div className="flex gap-2 pt-1">
             <button onClick={() => handlePull('keep-remote')} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors">Use Remote</button>
             <button onClick={() => handlePull('keep-local')} className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors">Keep Local</button>
@@ -435,7 +711,52 @@ function SyncTab() {
       >
         Import once (don't save config) ↓
       </button>
-    </div>
+
+      <div className="space-y-2 pt-1">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs font-medium text-slate-300">Recent sync activity</span>
+          <span className="text-[10px] text-slate-500">local telemetry</span>
+        </div>
+        <div className="max-h-44 overflow-auto rounded-lg border border-slate-800 bg-slate-950/40 divide-y divide-slate-800">
+          {activity.length === 0 ? (
+            <div className="px-3 py-4 text-xs text-slate-500">No sync activity yet.</div>
+          ) : (
+            activity.slice(0, 12).map(entry => (
+              <div key={entry.id} className="px-3 py-2.5 text-xs">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                      entry.level === 'success' ? 'bg-green-500' :
+                      entry.level === 'warning' ? 'bg-yellow-400' :
+                      entry.level === 'error' ? 'bg-red-500' :
+                      'bg-slate-500'
+                    }`} />
+                    <span className="text-slate-200 truncate">{entry.message}</span>
+                  </div>
+                  <span className="text-[10px] font-mono text-slate-500 shrink-0">{new Date(entry.timestamp).toLocaleTimeString()}</span>
+                </div>
+                <div className="mt-1 flex items-center gap-2 text-[10px] text-slate-500">
+                  <span className="uppercase tracking-wide">{entry.provider}</span>
+                  <span>{entry.action}</span>
+                  {entry.detail && <span className="truncate text-slate-400">{entry.detail}</span>}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+      </div>
+
+      {conflictPackage && (
+        <ConflictMergeModal
+          conflictPackage={conflictPackage}
+          onResolved={(merged) => handleMergeResolved(merged)}
+          onKeepLocal={() => { setConflictPackage(null); handlePull('keep-local'); }}
+          onKeepRemote={() => { setConflictPackage(null); handlePull('keep-remote'); }}
+          onClose={() => { setConflictPackage(null); }}
+        />
+      )}
+    </>
   );
 }
 

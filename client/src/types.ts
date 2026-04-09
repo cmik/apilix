@@ -312,12 +312,99 @@ export interface WorkspaceData {
 
 export type SyncProvider = 's3' | 'git' | 'http' | 'team';
 
+export interface SyncMetadata {
+  lastSyncedAt?: string;
+  lastSyncedVersion?: string;
+  lastMergeBaseSnapshotId?: string;
+}
+
+export interface SyncRemoteState {
+  timestamp: string | null;
+  version: string | null;
+}
+
+export interface SyncPullResult {
+  data: WorkspaceData | null;
+  remoteState: SyncRemoteState;
+}
+
 export interface SyncConfig {
   workspaceId: string;
   provider: SyncProvider;
   /** Provider-specific fields (encrypted when stored to disk) */
   config: Record<string, string>;
+  metadata?: SyncMetadata;
   lastSynced?: string;
+}
+
+export type SyncActivityLevel = 'info' | 'success' | 'warning' | 'error';
+
+export interface SyncActivityEntry {
+  id: string;
+  timestamp: string;
+  provider: SyncProvider;
+  action:
+    | 'push'
+    | 'pull'
+    | 'import'
+    | 'conflict-detected'
+    | 'merge-opened'
+    | 'merge-applied'
+    | 'merge-stale-rebase'
+    | 'save-config';
+  level: SyncActivityLevel;
+  message: string;
+  detail?: string;
+}
+
+// ─── Three-way merge types ────────────────────────────────────────────────────
+
+export type ConflictDomain =
+  | 'request'
+  | 'collection'
+  | 'environment'
+  | 'globalVariables'
+  | 'collectionVariables'
+  | 'mockRoute';
+
+export type ConflictKind =
+  | 'field-overlap'
+  | 'move-vs-edit'
+  | 'delete-vs-edit'
+  | 'rename-vs-rename'
+  | 'json-conflict'
+  | 'json-parse-fallback';
+
+export interface MergeConflictNode {
+  id: string;
+  domain: ConflictDomain;
+  kind: ConflictKind;
+  label: string;
+  /** Breadcrumb path within the collection tree (requests only) */
+  path?: string[];
+  /** JSON-serialised base value or null if the entity was absent */
+  base: string | null;
+  local: string;
+  remote: string;
+  /** User-chosen resolution; undefined = unresolved */
+  resolved?: string;
+}
+
+export interface MergeResult {
+  merged: WorkspaceData;
+  conflicts: MergeConflictNode[];
+  autoMergedCount: number;
+}
+
+/** Carries all three versions plus the computed merge result for the UI */
+export interface ConflictPackage {
+  baseData: WorkspaceData;
+  localData: WorkspaceData;
+  remoteData: WorkspaceData;
+  mergeResult: MergeResult;
+  /** Version tag to use for the optimistic push after resolution */
+  remoteVersion: string | null;
+  syncConfig: SyncConfig;
 }
 
 export interface HistoryEntry {

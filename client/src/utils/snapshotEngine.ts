@@ -24,7 +24,7 @@ export async function createSnapshot(
   workspaceId: string,
   data: WorkspaceData,
   summary?: string,
-): Promise<void> {
+): Promise<string> {
   const snapshotId = generateId();
   const timestamp = new Date().toISOString();
   const autoSummary = summary ?? `${data.collections.length} collection(s), auto-save`;
@@ -42,6 +42,7 @@ export async function createSnapshot(
   };
   const updated = [entry, ...idx].slice(0, MAX_SNAPSHOTS);
   await StorageDriver.writeHistoryIndex(workspaceId, updated);
+  return snapshotId;
 }
 
 /**

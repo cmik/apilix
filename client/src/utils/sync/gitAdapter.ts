@@ -19,6 +19,7 @@
 import type { WorkspaceData } from '../../types';
 import type { SyncAdapter } from '../syncEngine';
 import { getDataDir } from '../storageDriver';
+import { throwSyncRequestError } from './errors';
 
 function serverUrl(): string {
   const port = (window as any).electronAPI?.serverPort ?? 3001;
@@ -26,16 +27,27 @@ function serverUrl(): string {
 }
 
 export const gitAdapter: SyncAdapter = {
-  async push(workspaceId, data, config) {
+  async push(workspaceId, data, config, options) {
     const dataDir = await getDataDir();
     const res = await fetch(`${serverUrl()}/api/sync/git/push`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workspaceId, data, config, dataDir }),
+      body: JSON.stringify({ workspaceId, data, config, dataDir, expectedVersion: options?.expectedVersion }),
     });
     if (!res.ok) {
-      const body = await res.json().catch(() => ({})) as { error?: string };
-      throw new Error(`Git push failed: ${body.error ?? res.statusText}`);
+      await throwSyncRequestError(res, 'Git push');
+    }
+  },
+
+  async applyMerged(workspaceId, mergedData, config, expectedVersion) {
+    const dataDir = await getDataDir();
+    const res = await fetch(`${serverUrl()}/api/sync/git/push`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspaceId, data: mergedData, config, dataDir, expectedVersion }),
+    });
+    if (!res.ok) {
+      await throwSyncRequestError(res, 'Git apply merged');
     }
   },
 
@@ -48,11 +60,37 @@ export const gitAdapter: SyncAdapter = {
     });
     if (res.status === 404) return null;
     if (!res.ok) {
-      const body = await res.json().catch(() => ({})) as { error?: string };
-      throw new Error(`Git pull failed: ${body.error ?? res.statusText}`);
+      await throwSyncRequestError(res, 'Git pull');
     }
     const body = await res.json() as { data: WorkspaceData };
     return body.data;
+  },
+
+  async pullWithMeta(workspaceId, config) {
+    const dataDir = await getDataDir();
+    const res = await fetch(`${serverUrl()}/api/sync/git/pull`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspaceId, config, dataDir }),
+    });
+    if (res.status === 404) {
+      return { data: null, remoteState: { timestamp: null, version: null } };
+    }
+    if (!res.ok) {
+      await throwSyncRequestError(res, 'Git pull');
+    }
+    const body = await res.json() as {
+      data: WorkspaceData;
+      timestamp?: string | null;
+      version?: string | null;
+    };
+    return {
+      data: body.data,
+      remoteState: {
+        timestamp: body.timestamp ?? null,
+        version: body.version ?? null,
+      },
+    };
   },
 
   async getRemoteTimestamp(workspaceId, config) {
@@ -68,6 +106,25 @@ export const gitAdapter: SyncAdapter = {
       return body.timestamp;
     } catch {
       return null;
+    }
+  },
+
+  async getRemoteState(workspaceId, config) {
+    try {
+      const dataDir = await getDataDir();
+      const res = await fetch(`${serverUrl()}/api/sync/git/timestamp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceId, config, dataDir }),
+      });
+      if (!res.ok) return { timestamp: null, version: null };
+      const body = await res.json() as { timestamp: string | null; version?: string | null };
+      return {
+        timestamp: body.timestamp ?? null,
+        version: body.version ?? null,
+      };
+    } catch {
+      return { timestamp: null, version: null };
     }
   },
 };

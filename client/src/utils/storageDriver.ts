@@ -9,7 +9,7 @@
  * is used, and the module remains crash-free.
  */
 
-import type { WorkspaceData, Workspace } from '../types';
+import type { WorkspaceData, Workspace, SyncMetadata, SyncActivityEntry } from '../types';
 
 // ─── Electron API shim ────────────────────────────────────────────────────────
 
@@ -23,6 +23,8 @@ interface ElectronAPI {
   openFileDialog: (filters: Array<{ name: string; extensions: string[] }>) => Promise<string | null>;
   encryptString: (value: string) => Promise<string | null>;
   decryptString: (encrypted: string) => Promise<string | null>;
+  onWillClose: (cb: () => void) => void;
+  respondClose: (confirmed: boolean) => void;
 }
 
 function eAPI(): ElectronAPI | null {
@@ -35,6 +37,7 @@ const LS_MANIFEST = 'apilix_workspaces';
 const LS_WORKSPACE = (id: string) => `apilix_workspace_${id}`;
 const LS_SETTINGS = 'apilix_settings';
 const LS_SYNC_CONFIG = 'apilix_sync_config';
+const LS_SYNC_ACTIVITY = 'apilix_sync_activity';
 
 function lsRead<T>(key: string): T | null {
   try {
@@ -157,10 +160,19 @@ export async function writeSettings(settings: AppSettings): Promise<void> {
 
 // ─── Sync config (encrypted credentials) ────────────────────────────────────
 
-export type SyncConfigStore = Record<string, Record<string, string>>;
+export interface StoredSyncConfig {
+  provider: string;
+  config: Record<string, string>;
+  metadata?: SyncMetadata;
+  /** legacy key kept for backward compatibility */
+  lastSynced?: string;
+}
+
+export type SyncConfigStore = Record<string, StoredSyncConfig>;
+export type SyncActivityStore = Record<string, SyncActivityEntry[]>;
 
 /** Read the sync config for a specific workspace. */
-export async function readSyncConfig(workspaceId: string): Promise<{ provider: string; config: Record<string, string> } | null> {
+export async function readSyncConfig(workspaceId: string): Promise<StoredSyncConfig | null> {
   const api = eAPI();
   let store: SyncConfigStore | null = null;
   if (api) {
@@ -171,23 +183,73 @@ export async function readSyncConfig(workspaceId: string): Promise<{ provider: s
   }
   if (!store) store = lsRead<SyncConfigStore>(LS_SYNC_CONFIG);
   if (!store || !store[workspaceId]) return null;
-  const entry = store[workspaceId] as unknown as { provider: string; config: Record<string, string> };
-  return entry;
+  const raw = store[workspaceId] as unknown as Record<string, unknown>;
+  const provider = typeof raw.provider === 'string' ? raw.provider : '';
+  const config = (raw.config && typeof raw.config === 'object') ? raw.config as Record<string, string> : {};
+  const metadata = (raw.metadata && typeof raw.metadata === 'object') ? raw.metadata as SyncMetadata : undefined;
+  const lastSynced = typeof raw.lastSynced === 'string' ? raw.lastSynced : undefined;
+  if (!provider) return null;
+  return { provider, config, metadata, lastSynced };
 }
 
 /** Write the sync config for a specific workspace (merges into the store file). */
-export async function writeSyncConfig(workspaceId: string, provider: string, config: Record<string, string>): Promise<void> {
+export async function writeSyncConfig(
+  workspaceId: string,
+  provider: string,
+  config: Record<string, string>,
+  metadata?: SyncMetadata,
+): Promise<void> {
   const api = eAPI();
   let store: SyncConfigStore = {};
+  const entry: StoredSyncConfig = {
+    provider,
+    config,
+    metadata,
+    lastSynced: metadata?.lastSyncedAt,
+  };
   if (api) {
     try {
       const dir = await api.getDataDir();
       store = (await api.readJsonFile(`${dir}/sync-config.json`) as SyncConfigStore | null) ?? {};
-      store[workspaceId] = { provider, config } as unknown as Record<string, string>;
+      store[workspaceId] = entry;
       await api.writeJsonFile(`${dir}/sync-config.json`, store);
     } catch { /* fall through */ }
   }
-  lsWrite(LS_SYNC_CONFIG, { ...store, [workspaceId]: { provider, config } });
+  lsWrite(LS_SYNC_CONFIG, { ...store, [workspaceId]: entry });
+}
+
+export async function readSyncActivity(workspaceId: string): Promise<SyncActivityEntry[]> {
+  const api = eAPI();
+  let store: SyncActivityStore | null = null;
+  if (api) {
+    try {
+      const dir = await api.getDataDir();
+      store = await api.readJsonFile(`${dir}/sync-activity.json`) as SyncActivityStore | null;
+    } catch {
+      // fall through
+    }
+  }
+  if (!store) store = lsRead<SyncActivityStore>(LS_SYNC_ACTIVITY);
+  return Array.isArray(store?.[workspaceId]) ? store![workspaceId] : [];
+}
+
+export async function appendSyncActivity(workspaceId: string, entry: SyncActivityEntry): Promise<void> {
+  const api = eAPI();
+  let diskStore: SyncActivityStore = {};
+  if (api) {
+    try {
+      const dir = await api.getDataDir();
+      diskStore = (await api.readJsonFile(`${dir}/sync-activity.json`) as SyncActivityStore | null) ?? {};
+      diskStore[workspaceId] = [entry, ...(diskStore[workspaceId] ?? [])].slice(0, 100);
+      await api.writeJsonFile(`${dir}/sync-activity.json`, diskStore);
+    } catch {
+      // fall through
+    }
+  }
+
+  const localStore = lsRead<SyncActivityStore>(LS_SYNC_ACTIVITY) ?? {};
+  localStore[workspaceId] = [entry, ...(localStore[workspaceId] ?? [])].slice(0, 100);
+  lsWrite(LS_SYNC_ACTIVITY, localStore);
 }
 
 // ─── Encryption helpers ───────────────────────────────────────────────────────
