@@ -10,6 +10,7 @@ const isDev = !app.isPackaged;
 let mainWindow = null;
 let serverProcess = null;
 let appLoaded = false;
+let serverPort = null;
 let closeGuardTimeout = null;
 
 function writeLog(msg) {
@@ -244,11 +245,19 @@ async function waitAndLoadApp(port) {
     ? 'http://localhost:5173'
     : `file://${path.join(__dirname, '..', 'client', 'dist', 'index.html')}`;
 
-  // Up to 8 seconds (40 × 200 ms) — covers slow machines and cold starts.
-  for (let i = 0; i < 40; i++) {
-    if (await checkServerReady(port)) break;
-    await new Promise(r => setTimeout(r, 200));
-  }
+  // Run health polling and a minimum splash display time concurrently.
+  // The minimum ensures the splash is always visible long enough to be seen,
+  // even when the server is already warm (e.g. macOS reopen-from-tray).
+  const minDelay = new Promise(r => setTimeout(r, 600));
+
+  const pollReady = async () => {
+    for (let i = 0; i < 40; i++) {
+      if (await checkServerReady(port)) return;
+      await new Promise(r => setTimeout(r, 200));
+    }
+  };
+
+  await Promise.all([pollReady(), minDelay]);
 
   if (mainWindow) {
     appLoaded = true;
@@ -260,13 +269,17 @@ app.whenReady().then(async () => {
   // In dev, keep port 3001 so Vite's proxy config stays valid.
   // In production, find a free port dynamically.
   const port = isDev ? 3001 : await findFreePort();
+  serverPort = port;
   writeLog('Using port ' + port);
   startServer(port);
   createWindow();
   waitAndLoadApp(port);
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
+      waitAndLoadApp(serverPort);
+    }
   });
 });
 
