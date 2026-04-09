@@ -1007,6 +1007,18 @@ async function ensureRepo(repoDir, config) {
   if (!isRepo) {
     await git.init();
   }
+
+  // Self-heal interrupted git operations from previous failed sync attempts.
+  // This prevents errors like:
+  // "needs merge" / "resolve your current index first".
+  await git.raw(['merge', '--abort']).catch(() => {});
+  await git.raw(['rebase', '--abort']).catch(() => {});
+  await git.raw(['cherry-pick', '--abort']).catch(() => {});
+  const repoStatus = await git.status().catch(() => null);
+  if (repoStatus?.conflicted?.length) {
+    await git.reset(['--hard']).catch(() => {});
+  }
+
   // Set remote
   const remotes = await git.getRemotes();
   if (!remotes.find(r => r.name === 'origin')) {
@@ -1112,7 +1124,24 @@ app.post('/api/sync/git/pull', async (req, res) => {
       url.password = encodeURIComponent(config.token);
       remote = url.toString();
     }
-    await git.pull(remote, branch, ['--no-rebase']);
+    // Deterministic pull behavior:
+    // fetch remote branch and hard-reset local branch to fetched HEAD.
+    // This avoids merge conflicts in the local mirror repo used for sync.
+    try {
+      await git.fetch(remote, branch);
+    } catch (fetchErr) {
+      const message = String(fetchErr?.message || fetchErr);
+      if (
+        message.includes('couldn\'t find remote ref') ||
+        message.includes('Remote branch') ||
+        message.includes('not found in upstream origin')
+      ) {
+        return res.status(404).json({ error: `No remote branch ${branch}` });
+      }
+      throw fetchErr;
+    }
+    await git.checkout(branch);
+    await git.reset(['--hard', 'FETCH_HEAD']);
     const filePath = path.join(repoDir, 'workspace.json');
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ error: 'No workspace.json in remote' });
