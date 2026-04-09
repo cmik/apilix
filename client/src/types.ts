@@ -337,6 +337,26 @@ export interface SyncConfig {
   lastSynced?: string;
 }
 
+export type SyncActivityLevel = 'info' | 'success' | 'warning' | 'error';
+
+export interface SyncActivityEntry {
+  id: string;
+  timestamp: string;
+  provider: SyncProvider;
+  action:
+    | 'push'
+    | 'pull'
+    | 'import'
+    | 'conflict-detected'
+    | 'merge-opened'
+    | 'merge-applied'
+    | 'merge-stale-rebase'
+    | 'save-config';
+  level: SyncActivityLevel;
+  message: string;
+  detail?: string;
+}
+
 // ─── Three-way merge types ────────────────────────────────────────────────────
 
 export type ConflictDomain =

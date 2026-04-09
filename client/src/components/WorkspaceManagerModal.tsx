@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { Workspace, WorkspaceData, SyncConfig, SyncProvider, HistoryEntry, SyncMetadata, ConflictPackage } from '../types';
+import type { Workspace, WorkspaceData, SyncConfig, SyncProvider, HistoryEntry, SyncMetadata, ConflictPackage, SyncActivityEntry, SyncActivityLevel } from '../types';
 import { useApp, generateId } from '../store';
 import * as StorageDriver from '../utils/storageDriver';
 import {
@@ -18,6 +18,29 @@ import ConflictMergeModal from './ConflictMergeModal';
 type Tab = 'workspaces' | 'sync' | 'team' | 'history';
 
 const PRESET_COLORS = ['#f97316', '#3b82f6', '#22c55e', '#a855f7', '#ef4444', '#eab308'];
+
+const PROVIDER_CAPABILITIES: Record<SyncProvider, Array<{ label: string; tone: 'success' | 'warning' }>> = {
+  git: [
+    { label: 'Versioned writes', tone: 'success' },
+    { label: 'Remote state metadata', tone: 'success' },
+    { label: 'Three-way merge recovery', tone: 'success' },
+  ],
+  http: [
+    { label: 'Versioned writes', tone: 'success' },
+    { label: 'Remote state metadata', tone: 'success' },
+    { label: 'Three-way merge recovery', tone: 'success' },
+  ],
+  team: [
+    { label: 'Versioned writes', tone: 'success' },
+    { label: 'Remote state metadata', tone: 'success' },
+    { label: 'Three-way merge recovery', tone: 'success' },
+  ],
+  s3: [
+    { label: 'Remote state metadata', tone: 'success' },
+    { label: 'Three-way merge recovery', tone: 'success' },
+    { label: 'Conditional writes depend on backend support', tone: 'warning' },
+  ],
+};
 
 interface Props {
   onClose: () => void;
@@ -268,11 +291,15 @@ function SyncTab() {
   const [msg, setMsg] = useState('');
   const [conflict, setConflict] = useState<null | { remoteTimestamp: string; localTimestamp: string | null }>(null);
   const [conflictPackage, setConflictPackage] = useState<ConflictPackage | null>(null);
+  const [activity, setActivity] = useState<SyncActivityEntry[]>([]);
 
   // Load persisted sync config on mount / workspace change
   useEffect(() => {
     let active = true;
-    StorageDriver.readSyncConfig(workspaceId).then(cfg => {
+    Promise.all([
+      StorageDriver.readSyncConfig(workspaceId),
+      StorageDriver.readSyncActivity(workspaceId),
+    ]).then(([cfg, entries]) => {
       if (!active) return;
       if (cfg) {
         setProvider(cfg.provider as SyncProvider);
@@ -282,13 +309,29 @@ function SyncTab() {
         setFields({});
         setSyncMetadata(undefined);
       }
+      setActivity(entries);
       setLoaded(true);
     });
     return () => { active = false; };
   }, [workspaceId]);
 
+  async function logActivity(action: SyncActivityEntry['action'], level: SyncActivityLevel, message: string, detail?: string) {
+    const entry: SyncActivityEntry = {
+      id: generateId(),
+      timestamp: new Date().toISOString(),
+      provider,
+      action,
+      level,
+      message,
+      detail,
+    };
+    setActivity(prev => [entry, ...prev].slice(0, 100));
+    await StorageDriver.appendSyncActivity(workspaceId, entry);
+  }
+
   async function saveConfig() {
     await StorageDriver.writeSyncConfig(workspaceId, provider, fields, syncMetadata);
+    await logActivity('save-config', 'info', 'Sync configuration saved');
   }
 
   function setField(key: string, value: string) {
@@ -312,8 +355,11 @@ function SyncTab() {
       setSyncMetadata(nextMetadata);
       await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata);
       dispatch({ type: 'SET_SYNC_STATUS', payload: { workspaceId, status: 'idle' } });
+      await logActivity('push', 'success', 'Push completed', remoteState.version ? `Version ${remoteState.version.slice(0, 8)}` : undefined);
       setStatus('ok'); setMsg('Pushed successfully');
     } catch (err: unknown) {
+      dispatch({ type: 'SET_SYNC_STATUS', payload: { workspaceId, status: 'error' } });
+      await logActivity('push', 'error', 'Push failed', (err as Error).message);
       setStatus('error'); setMsg((err as Error).message);
     }
   }
@@ -335,12 +381,15 @@ function SyncTab() {
         };
         setSyncMetadata(nextMetadata);
         await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata);
+        await logActivity('pull', 'success', 'Pull completed', result.remoteState.version ? `Version ${result.remoteState.version.slice(0, 8)}` : undefined);
         setStatus('ok'); setMsg('Pulled successfully');
       } else {
+        await logActivity('pull', 'info', 'Pull completed', 'Remote is empty');
         setStatus('ok'); setMsg('Remote is empty — nothing to pull');
       }
     } catch (err: unknown) {
       if (err instanceof ConflictError) {
+        await logActivity('conflict-detected', 'warning', 'Remote conflict detected', err.remoteVersion ? `Version ${err.remoteVersion.slice(0, 8)}` : undefined);
         setStatus('busy'); setMsg('Loading merge data…');
         try {
           const localData = await StorageDriver.readWorkspace(workspaceId);
@@ -348,12 +397,15 @@ function SyncTab() {
           const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
           const pkg = await pullForMerge(cfg, localData);
           setConflictPackage(pkg);
+          await logActivity('merge-opened', 'warning', 'Opened merge review', `${pkg.mergeResult.conflicts.length} conflict(s)`);
           setStatus('idle'); setMsg('');
         } catch {
           setConflict({ remoteTimestamp: err.remoteLastModified, localTimestamp: err.localLastSaved });
           setStatus('idle'); setMsg('');
         }
       } else {
+        dispatch({ type: 'SET_SYNC_STATUS', payload: { workspaceId, status: 'error' } });
+        await logActivity('pull', 'error', 'Pull failed', (err as Error).message);
         setStatus('error'); setMsg((err as Error).message);
       }
     }
@@ -383,6 +435,7 @@ function SyncTab() {
       await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata);
       dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...mergedData, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
       await StorageDriver.writeWorkspace(workspaceId, mergedData);
+      await logActivity('merge-applied', 'success', 'Merged workspace applied', remoteState.version ? `Version ${remoteState.version.slice(0, 8)}` : undefined);
       setStatus('ok'); setMsg('Merge applied successfully');
     } catch (err: unknown) {
       if (err instanceof StaleVersionError) {
@@ -391,14 +444,17 @@ function SyncTab() {
           const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
           const nextPackage = await rebaseAfterStale(cfg, mergedData, currentConflictPackage.remoteData);
           setConflictPackage(nextPackage);
+          await logActivity('merge-stale-rebase', 'warning', 'Remote changed during merge apply', `${nextPackage.mergeResult.conflicts.length} conflict(s) after rebase`);
           setStatus('idle');
           setMsg('Remote changed during apply. Review the updated merge.');
         } catch (rebaseErr: unknown) {
+          await logActivity('merge-stale-rebase', 'error', 'Failed to rebuild merge after remote change', (rebaseErr as Error).message);
           setStatus('error');
           setMsg((rebaseErr as Error).message);
         }
         return;
       }
+      await logActivity('merge-applied', 'error', 'Merge apply failed', (err as Error).message);
       setStatus('error'); setMsg((err as Error).message);
     }
   }
@@ -412,15 +468,19 @@ function SyncTab() {
       if (data) {
         dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...data, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
         await StorageDriver.writeWorkspace(workspaceId, data);
+        await logActivity('import', 'success', 'Imported remote workspace once');
         setStatus('ok'); setMsg('Imported successfully — config was not saved');
       } else {
+        await logActivity('import', 'info', 'Import completed', 'Remote is empty');
         setStatus('ok'); setMsg('Remote is empty — nothing to import');
       }
     } catch (err: unknown) {
       if (err instanceof ConflictError) {
+        await logActivity('conflict-detected', 'warning', 'Conflict detected during import');
         setConflict({ remoteTimestamp: err.remoteLastModified, localTimestamp: err.localLastSaved });
         setStatus('idle'); setMsg('');
       } else {
+        await logActivity('import', 'error', 'Import failed', (err as Error).message);
         setStatus('error'); setMsg((err as Error).message);
       }
     }
@@ -465,6 +525,31 @@ function SyncTab() {
             />
           </div>
         ))}
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-[11px] text-slate-500">Provider capabilities</span>
+          {syncMetadata?.lastSyncedVersion && (
+            <span className="text-[10px] font-mono text-slate-500">
+              last version {syncMetadata.lastSyncedVersion.slice(0, 8)}
+            </span>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {PROVIDER_CAPABILITIES[provider].map(cap => (
+            <span
+              key={cap.label}
+              className={`px-2 py-1 rounded text-[10px] border ${
+                cap.tone === 'success'
+                  ? 'bg-green-950/30 border-green-800/40 text-green-300'
+                  : 'bg-yellow-950/30 border-yellow-800/40 text-yellow-300'
+              }`}
+            >
+              {cap.label}
+            </span>
+          ))}
+        </div>
       </div>
 
       {/* Conflict resolution */}
@@ -522,6 +607,40 @@ function SyncTab() {
       >
         Import once (don't save config) ↓
       </button>
+
+      <div className="space-y-2 pt-1">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs font-medium text-slate-300">Recent sync activity</span>
+          <span className="text-[10px] text-slate-500">local telemetry</span>
+        </div>
+        <div className="max-h-44 overflow-auto rounded-lg border border-slate-800 bg-slate-950/40 divide-y divide-slate-800">
+          {activity.length === 0 ? (
+            <div className="px-3 py-4 text-xs text-slate-500">No sync activity yet.</div>
+          ) : (
+            activity.slice(0, 12).map(entry => (
+              <div key={entry.id} className="px-3 py-2.5 text-xs">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                      entry.level === 'success' ? 'bg-green-500' :
+                      entry.level === 'warning' ? 'bg-yellow-400' :
+                      entry.level === 'error' ? 'bg-red-500' :
+                      'bg-slate-500'
+                    }`} />
+                    <span className="text-slate-200 truncate">{entry.message}</span>
+                  </div>
+                  <span className="text-[10px] font-mono text-slate-500 shrink-0">{new Date(entry.timestamp).toLocaleTimeString()}</span>
+                </div>
+                <div className="mt-1 flex items-center gap-2 text-[10px] text-slate-500">
+                  <span className="uppercase tracking-wide">{entry.provider}</span>
+                  <span>{entry.action}</span>
+                  {entry.detail && <span className="truncate text-slate-400">{entry.detail}</span>}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
       </div>
 
       {conflictPackage && (

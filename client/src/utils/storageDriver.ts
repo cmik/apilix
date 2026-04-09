@@ -9,7 +9,7 @@
  * is used, and the module remains crash-free.
  */
 
-import type { WorkspaceData, Workspace, SyncMetadata } from '../types';
+import type { WorkspaceData, Workspace, SyncMetadata, SyncActivityEntry } from '../types';
 
 // ─── Electron API shim ────────────────────────────────────────────────────────
 
@@ -35,6 +35,7 @@ const LS_MANIFEST = 'apilix_workspaces';
 const LS_WORKSPACE = (id: string) => `apilix_workspace_${id}`;
 const LS_SETTINGS = 'apilix_settings';
 const LS_SYNC_CONFIG = 'apilix_sync_config';
+const LS_SYNC_ACTIVITY = 'apilix_sync_activity';
 
 function lsRead<T>(key: string): T | null {
   try {
@@ -166,6 +167,7 @@ export interface StoredSyncConfig {
 }
 
 export type SyncConfigStore = Record<string, StoredSyncConfig>;
+export type SyncActivityStore = Record<string, SyncActivityEntry[]>;
 
 /** Read the sync config for a specific workspace. */
 export async function readSyncConfig(workspaceId: string): Promise<StoredSyncConfig | null> {
@@ -212,6 +214,40 @@ export async function writeSyncConfig(
     } catch { /* fall through */ }
   }
   lsWrite(LS_SYNC_CONFIG, { ...store, [workspaceId]: entry });
+}
+
+export async function readSyncActivity(workspaceId: string): Promise<SyncActivityEntry[]> {
+  const api = eAPI();
+  let store: SyncActivityStore | null = null;
+  if (api) {
+    try {
+      const dir = await api.getDataDir();
+      store = await api.readJsonFile(`${dir}/sync-activity.json`) as SyncActivityStore | null;
+    } catch {
+      // fall through
+    }
+  }
+  if (!store) store = lsRead<SyncActivityStore>(LS_SYNC_ACTIVITY);
+  return Array.isArray(store?.[workspaceId]) ? store![workspaceId] : [];
+}
+
+export async function appendSyncActivity(workspaceId: string, entry: SyncActivityEntry): Promise<void> {
+  const api = eAPI();
+  let diskStore: SyncActivityStore = {};
+  if (api) {
+    try {
+      const dir = await api.getDataDir();
+      diskStore = (await api.readJsonFile(`${dir}/sync-activity.json`) as SyncActivityStore | null) ?? {};
+      diskStore[workspaceId] = [entry, ...(diskStore[workspaceId] ?? [])].slice(0, 100);
+      await api.writeJsonFile(`${dir}/sync-activity.json`, diskStore);
+    } catch {
+      // fall through
+    }
+  }
+
+  const localStore = lsRead<SyncActivityStore>(LS_SYNC_ACTIVITY) ?? {};
+  localStore[workspaceId] = [entry, ...(localStore[workspaceId] ?? [])].slice(0, 100);
+  lsWrite(LS_SYNC_ACTIVITY, localStore);
 }
 
 // ─── Encryption helpers ───────────────────────────────────────────────────────
