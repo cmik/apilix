@@ -3,6 +3,12 @@ import type { Workspace, WorkspaceData, SyncConfig, SyncProvider, HistoryEntry, 
 import { useApp, generateId } from '../store';
 import * as StorageDriver from '../utils/storageDriver';
 import {
+  requestWorkspaceSwitchGuard,
+  saveExistingRequestTabs,
+  buildUnsavedRequestTabsConfirmMessage,
+  getUnsavedRequestTabSummary,
+} from '../utils/requestTabSyncGuard';
+import {
   push as syncPush,
   pullWithMeta as syncPullWithMeta,
   getRemoteSyncState,
@@ -107,6 +113,25 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
 
   async function handleSwitch(workspace: Workspace) {
     if (workspace.id === state.activeWorkspaceId) return;
+    const { decision, summary } = await requestWorkspaceSwitchGuard();
+    if (decision === 'cancel') return;
+    if (decision === 'save-and-switch') {
+      const saveResult = await saveExistingRequestTabs(summary.existingDirtyTabIds);
+      // Flush updated collections to disk immediately — the debounced persist effect
+      // fires after SWITCH_WORKSPACE changes activeWorkspaceId, so without this write
+      // the saved data would be written to the new workspace's slot instead.
+      await StorageDriver.writeWorkspace(state.activeWorkspaceId, {
+        collections: saveResult.updatedCollections,
+        environments: state.environments,
+        activeEnvironmentId: state.activeEnvironmentId,
+        collectionVariables: state.collectionVariables,
+        globalVariables: state.globalVariables,
+        cookieJar: state.cookieJar,
+        mockCollections: state.mockCollections,
+        mockRoutes: state.mockRoutes,
+        mockPort: state.mockPort,
+      });
+    }
     const data = await StorageDriver.readWorkspace(workspace.id) ?? emptyWorkspaceData();
     dispatch({ type: 'SWITCH_WORKSPACE', payload: { workspace, data } });
     onClose();
@@ -367,6 +392,21 @@ function SyncTab() {
     };
   }
 
+  async function prepareCollectionsForPush(): Promise<typeof state.collections | null> {
+    const summary = await getUnsavedRequestTabSummary();
+    if (summary.dirtyTabIds.length === 0) return state.collections;
+
+    const confirmed = window.confirm(buildUnsavedRequestTabsConfirmMessage('push', summary));
+    if (!confirmed) {
+      setStatus('idle');
+      setMsg('Push canceled');
+      return null;
+    }
+
+    const result = await saveExistingRequestTabs(summary.existingDirtyTabIds);
+    return result.updatedCollections;
+  }
+
   function setField(key: string, value: string) {
     setFields(prev => {
       const next = { ...prev, [key]: value };
@@ -397,8 +437,11 @@ function SyncTab() {
   async function handlePush() {
     setStatus('busy'); setMsg('Pushing…'); setConflict(null);
     try {
+      const syncedCollections = await prepareCollectionsForPush();
+      if (!syncedCollections) return;
+
       await saveConfig();
-      const data = getCurrentWorkspaceData();
+      const data = { ...getCurrentWorkspaceData(), collections: syncedCollections };
       const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
       await syncPush(cfg, data);
       const remoteState = await getRemoteSyncState(cfg);

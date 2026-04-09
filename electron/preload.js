@@ -18,4 +18,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   shellOpenPath: (dirPath) => ipcRenderer.invoke('shell-open-path', { dirPath }),
   encryptString: (value) => ipcRenderer.invoke('encrypt-string', { value }),
   decryptString: (encrypted) => ipcRenderer.invoke('decrypt-string', { encrypted }),
+  // Close guard: main process notifies renderer before closing the window.
+  onWillClose: (cb) => ipcRenderer.on('app:will-close', () => cb()),
+  respondClose: (confirmed) => ipcRenderer.send('app:close-response', { confirmed }),
 });

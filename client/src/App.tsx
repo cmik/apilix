@@ -29,6 +29,14 @@ import {
   ConflictError,
   StaleVersionError,
 } from './utils/syncEngine';
+import {
+  buildUnsavedRequestTabsConfirmMessage,
+  getUnsavedRequestTabSummary,
+  saveExistingRequestTabs,
+  requestWorkspaceSwitchGuard,
+  type WorkspaceSwitchDecision,
+  type UnsavedRequestTabSummary,
+} from './utils/requestTabSyncGuard';
 
 // --- Env Quick Panel ---
 
@@ -237,6 +245,69 @@ const DEFAULT_CONSOLE_HEIGHT = 240;
 
 type ServerStatus = 'checking' | 'online' | 'offline';
 
+// ─── Workspace switch guard modal ────────────────────────────────────────────
+
+function WorkspaceSwitchGuardModal({
+  summary,
+  onDecide,
+}: {
+  summary: UnsavedRequestTabSummary;
+  onDecide: (d: WorkspaceSwitchDecision) => void;
+}) {
+  const existingCount = summary.existingDirtyTabIds.length;
+  const draftCount = summary.draftDirtyTabIds.length;
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60">
+      <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-[420px] p-5 space-y-4">
+        <h3 className="text-sm font-semibold text-slate-200">Unsaved changes</h3>
+        <div className="text-xs text-slate-400 space-y-1.5">
+          {existingCount > 0 && (
+            <p>
+              You have{' '}
+              <strong className="text-slate-200">
+                {existingCount} unsaved request{existingCount !== 1 ? 's' : ''}
+              </strong>{' '}
+              in existing collection items.
+            </p>
+          )}
+          {draftCount > 0 && (
+            <p className="text-yellow-400/80">
+              {draftCount} draft request{draftCount !== 1 ? 's' : ''} will always be lost when switching workspaces.
+            </p>
+          )}
+        </div>
+        <div className="flex flex-col gap-2 pt-1">
+          {existingCount > 0 && (
+            <button
+              onClick={() => onDecide('save-and-switch')}
+              className="w-full py-2 px-3 rounded text-xs font-medium bg-orange-600 hover:bg-orange-500 text-white transition-colors text-left"
+            >
+              Save &amp; Switch
+              <span className="text-orange-200 font-normal">
+                {' '}— save {existingCount} request{existingCount !== 1 ? 's' : ''} then switch
+                {draftCount > 0 ? `, ${draftCount} draft${draftCount !== 1 ? 's' : ''} will be lost` : ''}
+              </span>
+            </button>
+          )}
+          <button
+            onClick={() => onDecide('switch-anyway')}
+            className="w-full py-2 px-3 rounded text-xs font-medium bg-slate-700 hover:bg-slate-600 text-slate-200 transition-colors text-left"
+          >
+            Switch anyway
+            <span className="text-slate-400 font-normal"> — discard all unsaved changes</span>
+          </button>
+          <button
+            onClick={() => onDecide('cancel')}
+            className="w-full py-2 px-3 rounded text-xs font-medium border border-slate-700 hover:border-slate-600 text-slate-400 hover:text-slate-200 transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const { state, dispatch } = useApp();
   const isBrowserMode = !(window as { electronAPI?: unknown }).electronAPI;
@@ -259,6 +330,12 @@ export default function App() {
   const [quickSyncMsg, setQuickSyncMsg] = useState<string>('');
   const [quickSyncStatus, setQuickSyncStatus] = useState<'ok' | 'warning' | 'error' | 'info'>('info');
   const [lastSuccessfulSyncAt, setLastSuccessfulSyncAt] = useState<string | null>(null);
+  const [workspaceSwitchGuard, setWorkspaceSwitchGuard] = useState<{
+    summary: UnsavedRequestTabSummary;
+    resolve: (d: WorkspaceSwitchDecision) => void;
+  } | null>(null);
+  const [closeGuardOpen, setCloseGuardOpen] = useState(false);
+  const closeGuardDirtyCountRef = useRef(0);
   const dragging = useRef(false);
   const startX = useRef(0);
   const startWidth = useRef(0);
@@ -353,6 +430,45 @@ export default function App() {
   }, [state.view, state.activeTabId, state.collections, dispatch, syncConfigured, syncBusy]);
 
   useEffect(() => {
+    function onGuardRequest(e: Event) {
+      const detail = (e as CustomEvent<{
+        summary: UnsavedRequestTabSummary;
+        resolve: (d: WorkspaceSwitchDecision) => void;
+      }>).detail;
+      setWorkspaceSwitchGuard({ summary: detail.summary, resolve: detail.resolve });
+    }
+    document.addEventListener('apilix:workspace-switch-guard', onGuardRequest);
+    return () => document.removeEventListener('apilix:workspace-switch-guard', onGuardRequest);
+  }, []);
+
+  function handleWorkspaceSwitchDecide(decision: WorkspaceSwitchDecision) {
+    if (!workspaceSwitchGuard) return;
+    workspaceSwitchGuard.resolve(decision);
+    setWorkspaceSwitchGuard(null);
+  }
+
+  useEffect(() => {
+    if (isBrowserMode) return;
+    const api = (window as { electronAPI?: { onWillClose?: (cb: () => void) => void; respondClose?: (confirmed: boolean) => void } }).electronAPI;
+    if (!api?.onWillClose || !api?.respondClose) return;
+    api.onWillClose(async () => {
+      const summary = await getUnsavedRequestTabSummary();
+      if (summary.dirtyTabIds.length === 0) {
+        api.respondClose!(true);
+        return;
+      }
+      closeGuardDirtyCountRef.current = summary.dirtyTabIds.length;
+      setCloseGuardOpen(true);
+    });
+  }, [isBrowserMode]);
+
+  function handleCloseGuard(confirmed: boolean) {
+    setCloseGuardOpen(false);
+    const api = (window as { electronAPI?: { respondClose?: (confirmed: boolean) => void } }).electronAPI;
+    api?.respondClose?.(confirmed);
+  }
+
+  useEffect(() => {
     let cancelled = false;
     async function check() {
       try {
@@ -430,6 +546,20 @@ export default function App() {
     setQuickSyncStatus(status);
   }
 
+  async function prepareCollectionsForSync(): Promise<typeof state.collections | null> {
+    const summary = await getUnsavedRequestTabSummary();
+    if (summary.dirtyTabIds.length === 0) return state.collections;
+
+    const confirmed = window.confirm(buildUnsavedRequestTabsConfirmMessage('sync', summary));
+    if (!confirmed) {
+      setQuickSyncFeedback('Sync canceled', 'info');
+      return null;
+    }
+
+    const result = await saveExistingRequestTabs(summary.existingDirtyTabIds);
+    return result.updatedCollections;
+  }
+
   function getQuickSyncTooltip(): string {
     if (quickSyncStatus === 'ok' && lastSuccessfulSyncAt) {
       return `${quickSyncMsg || 'Synced successfully'}\nLast successful sync: ${new Date(lastSuccessfulSyncAt).toLocaleString()}`;
@@ -442,6 +572,9 @@ export default function App() {
     setQuickSyncFeedback('', 'info');
     setSyncBusy(true);
     try {
+      const syncedCollections = await prepareCollectionsForSync();
+      if (!syncedCollections) return;
+
       const cfg = await loadCurrentSyncConfig();
       if (!cfg) {
         setQuickSyncFeedback('No sync provider configured for this workspace', 'warning');
@@ -449,7 +582,7 @@ export default function App() {
       }
       setQuickSyncConfig(cfg);
       let currentCfg = cfg;
-      const localData = getCurrentWorkspaceData();
+      const localData = { ...getCurrentWorkspaceData(), collections: syncedCollections };
 
       const hasUnpushed = await hasLocalUnpushedChanges(currentCfg, localData);
       if (hasUnpushed) {
@@ -719,7 +852,43 @@ export default function App() {
         <CookieManagerModal onClose={() => setCookieManagerOpen(false)} />
       )}
 
-      {/* Quick Sync conflict merge modal */}
+      {/* App close guard */}
+      {closeGuardOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-[380px] p-5 space-y-4">
+            <h3 className="text-sm font-semibold text-slate-200">Unsaved changes</h3>
+            <p className="text-xs text-slate-400">
+              You have{' '}
+              <strong className="text-slate-200">
+                {closeGuardDirtyCountRef.current} unsaved request tab{closeGuardDirtyCountRef.current !== 1 ? 's' : ''}
+              </strong>
+              . Closing the app will discard all unsaved work.
+            </p>
+            <div className="flex flex-col gap-2 pt-1">
+              <button
+                onClick={() => handleCloseGuard(true)}
+                className="w-full py-2 px-3 rounded text-xs font-medium bg-red-700 hover:bg-red-600 text-white transition-colors"
+              >
+                Close anyway
+              </button>
+              <button
+                onClick={() => handleCloseGuard(false)}
+                className="w-full py-2 px-3 rounded text-xs font-medium border border-slate-700 hover:border-slate-600 text-slate-400 hover:text-slate-200 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {workspaceSwitchGuard && (
+        <WorkspaceSwitchGuardModal
+          summary={workspaceSwitchGuard.summary}
+          onDecide={handleWorkspaceSwitchDecide}
+        />
+      )}
+
       {quickSyncConflictPackage && (
         <ConflictMergeModal
           conflictPackage={quickSyncConflictPackage}
@@ -741,6 +910,7 @@ export default function App() {
                 await StorageDriver.writeWorkspace(state.activeWorkspaceId, result.data);
                 const meta = await persistSyncBase(quickSyncConfig, result.data, result.remoteState.timestamp, result.remoteState.version, 'sync base after keep-remote');
                 setQuickSyncConfig({ ...quickSyncConfig, metadata: meta });
+                setLastSuccessfulSyncAt(meta.lastSyncedAt ?? null);
               }
               setQuickSyncFeedback('Applied remote changes', 'ok');
             } catch (err: unknown) {

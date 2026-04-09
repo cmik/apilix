@@ -23,6 +23,8 @@ interface ElectronAPI {
   openFileDialog: (filters: Array<{ name: string; extensions: string[] }>) => Promise<string | null>;
   encryptString: (value: string) => Promise<string | null>;
   decryptString: (encrypted: string) => Promise<string | null>;
+  onWillClose: (cb: () => void) => void;
+  respondClose: (confirmed: boolean) => void;
 }
 
 function eAPI(): ElectronAPI | null {

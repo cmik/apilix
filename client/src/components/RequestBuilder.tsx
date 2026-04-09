@@ -11,6 +11,7 @@ import GraphQLPanel from './GraphQLPanel';
 import CodeGenModal from './CodeGenModal';
 import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
 import ScriptEditor from './ScriptEditor';
+import type { SaveExistingRequestTabsResult, UnsavedRequestTabSummary } from '../utils/requestTabSyncGuard';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'WS'];
 
@@ -119,6 +120,29 @@ function getScript(item: CollectionItem, type: 'prerequest' | 'test'): string {
   const ev = (item.event ?? []).find(e => e.listen === type);
   if (!ev) return '';
   return Array.isArray(ev.script.exec) ? ev.script.exec.join('\n') : (ev.script.exec ?? '');
+}
+
+function buildUpdatedRequestItem(item: CollectionItem, edit: EditState): CollectionItem {
+  return {
+    ...item,
+    description: edit.description || undefined,
+    request: {
+      ...(item.request ?? {}),
+      method: edit.method,
+      url: { raw: edit.url, variable: edit.pathParams.filter(p => p.key).map(p => ({ key: p.key, value: p.value })) },
+      header: edit.headers,
+      body: edit.bodyMode !== 'none' ? {
+        mode: edit.bodyMode as NonNullable<NonNullable<CollectionItem['request']>['body']>['mode'],
+        raw: edit.bodyMode === 'raw' ? edit.bodyRaw : undefined,
+        urlencoded: edit.bodyMode === 'urlencoded' ? edit.bodyUrlEncoded : undefined,
+        formdata: edit.bodyMode === 'formdata' ? edit.bodyFormData : undefined,
+        graphql: edit.bodyMode === 'graphql' ? { query: edit.bodyGraphqlQuery, variables: edit.bodyGraphqlVariables || undefined } : undefined,
+        options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as 'json' | 'text' } } : undefined,
+      } : undefined,
+      auth: buildAuth(edit),
+    },
+    event: buildEvents(edit),
+  };
 }
 
 // ─── Script tab with snippet library ─────────────────────────────────────────
@@ -622,20 +646,116 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
     onDirtyChange(ids);
   }, [dirty, onDirtyChange]);
 
+  function emitDirtyChange() {
+    if (!onDirtyChange) return;
+    const ids = new Set<string>();
+    cacheRef.current.forEach((value, key) => {
+      if (value.dirty) ids.add(key);
+    });
+    onDirtyChange(ids);
+  }
+
+  function getUnsavedSummary(): UnsavedRequestTabSummary {
+    const dirtyTabIds: string[] = [];
+    const existingDirtyTabIds: string[] = [];
+    const draftDirtyTabIds: string[] = [];
+
+    for (const tab of state.tabs) {
+      const cached = cacheRef.current.get(tab.id);
+      if (!cached?.dirty) continue;
+      dirtyTabIds.push(tab.id);
+
+      const collection = state.collections.find(c => c._id === tab.collectionId);
+      const itemStillExists = collection && tab.item.id ? findItemInTree(collection.item, tab.item.id) !== null : false;
+      if (collection && itemStillExists && tab.item.id) existingDirtyTabIds.push(tab.id);
+      else draftDirtyTabIds.push(tab.id);
+    }
+
+    return { dirtyTabIds, existingDirtyTabIds, draftDirtyTabIds };
+  }
+
+  function saveExistingDirtyTabs(tabIds?: string[]): SaveExistingRequestTabsResult {
+    const targetIds = new Set(tabIds ?? getUnsavedSummary().existingDirtyTabIds);
+    const updatedCollectionsById = new Map(state.collections.map(collection => [collection._id, collection]));
+    const changedCollectionIds = new Set<string>();
+    const tabUpdates: Array<{ tabId: string; item: CollectionItem }> = [];
+    const savedTabIds: string[] = [];
+    const skippedTabIds: string[] = [];
+
+    for (const tab of state.tabs) {
+      if (!targetIds.has(tab.id)) continue;
+      const cached = cacheRef.current.get(tab.id);
+      if (!cached?.dirty || !tab.item.id) continue;
+
+      const collection = updatedCollectionsById.get(tab.collectionId);
+      const itemStillExists = collection ? findItemInTree(collection.item, tab.item.id) !== null : false;
+      if (!collection || !itemStillExists) {
+        skippedTabIds.push(tab.id);
+        continue;
+      }
+
+      const updatedItem = buildUpdatedRequestItem(tab.item, cached.edit);
+      const updatedCollection = {
+        ...collection,
+        item: updateItemById(collection.item, tab.item.id, updatedItem),
+      };
+
+      updatedCollectionsById.set(collection._id, updatedCollection);
+      changedCollectionIds.add(collection._id);
+      tabUpdates.push({ tabId: tab.id, item: updatedItem });
+      savedTabIds.push(tab.id);
+      cacheRef.current.set(tab.id, { ...cached, dirty: false });
+    }
+
+    const updatedCollections = state.collections.map(collection => updatedCollectionsById.get(collection._id) ?? collection);
+
+    for (const collectionId of changedCollectionIds) {
+      const updatedCollection = updatedCollectionsById.get(collectionId);
+      if (updatedCollection) dispatch({ type: 'UPDATE_COLLECTION', payload: updatedCollection });
+    }
+    for (const update of tabUpdates) {
+      dispatch({ type: 'UPDATE_TAB_ITEM', payload: update });
+    }
+
+    if (activeTab) {
+      const activeCached = cacheRef.current.get(activeTab.id);
+      setDirty(activeCached?.dirty ?? false);
+    }
+    emitDirtyChange();
+
+    return {
+      savedTabIds,
+      skippedTabIds,
+      updatedCollections,
+    };
+  }
+
   // Listen for global keyboard shortcut events from App
   useEffect(() => {
     const onSend = () => _sendRef.current();
     const onSave = () => _saveRef.current();
+    const onSyncSummary = (event: Event) => {
+      const detail = (event as CustomEvent<{ resolve?: (summary: UnsavedRequestTabSummary) => void }>).detail;
+      detail?.resolve?.(getUnsavedSummary());
+    };
+    const onSyncSaveExisting = (event: Event) => {
+      const detail = (event as CustomEvent<{ resolve?: (result: SaveExistingRequestTabsResult) => void; tabIds?: string[] }>).detail;
+      detail?.resolve?.(saveExistingDirtyTabs(detail?.tabIds));
+    };
     const onFocusUrl = () => { urlInputRef.current?.focus(); urlInputRef.current?.select(); };
     document.addEventListener('apilix:send', onSend);
     document.addEventListener('apilix:save', onSave);
+    document.addEventListener('apilix:request-tab-sync-summary', onSyncSummary as EventListener);
+    document.addEventListener('apilix:request-tab-sync-save-existing', onSyncSaveExisting as EventListener);
     document.addEventListener('apilix:focusUrl', onFocusUrl);
     return () => {
       document.removeEventListener('apilix:send', onSend);
       document.removeEventListener('apilix:save', onSave);
+      document.removeEventListener('apilix:request-tab-sync-summary', onSyncSummary as EventListener);
+      document.removeEventListener('apilix:request-tab-sync-save-existing', onSyncSaveExisting as EventListener);
       document.removeEventListener('apilix:focusUrl', onFocusUrl);
     };
-  }, []);
+  }, [activeTab, onDirtyChange, state.collections, state.tabs]);
 
   // Wrapper: update edit + cache + dirty in one call
   function setEdit(updater: (prev: EditState) => EditState) {
@@ -1050,29 +1170,13 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
       return;
     }
     if (!activeTab.item.id) return;
-    const updatedItem: CollectionItem = {
-      ...activeTab.item,
-      description: edit.description || undefined,
-      request: {
-        ...(activeTab.item.request ?? {}),
-        method: edit.method,
-        url: { raw: edit.url, variable: edit.pathParams.filter(p => p.key).map(p => ({ key: p.key, value: p.value })) },
-        header: edit.headers,
-        body: edit.bodyMode !== 'none' ? {
-          mode: edit.bodyMode as NonNullable<NonNullable<CollectionItem['request']>['body']>['mode'],
-          raw: edit.bodyMode === 'raw' ? edit.bodyRaw : undefined,
-          urlencoded: edit.bodyMode === 'urlencoded' ? edit.bodyUrlEncoded : undefined,
-          formdata: edit.bodyMode === 'formdata' ? edit.bodyFormData : undefined,          graphql: edit.bodyMode === 'graphql' ? { query: edit.bodyGraphqlQuery, variables: edit.bodyGraphqlVariables || undefined } : undefined,          options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as 'json' | 'text' } } : undefined,
-        } : undefined,
-        auth: buildAuth(edit),
-      },
-      event: buildEvents(edit),
-    };
+    const updatedItem = buildUpdatedRequestItem(activeTab.item, edit);
     dispatch({ type: 'UPDATE_COLLECTION', payload: { ...col, item: updateItemById(col.item, activeTab.item.id, updatedItem) } });
     dispatch({ type: 'UPDATE_TAB_ITEM', payload: { tabId: activeTab.id, item: updatedItem } });
     // Mark clean in cache
     cacheRef.current.set(activeTab.id, { edit, dirty: false, activeRequestTab });
     setDirty(false);
+    emitDirtyChange();
   }
   _saveRef.current = handleSave;
 

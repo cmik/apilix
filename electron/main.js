@@ -9,6 +9,7 @@ const isDev = !app.isPackaged;
 
 let mainWindow = null;
 let serverProcess = null;
+let appLoaded = false;
 
 function writeLog(msg) {
   try {
@@ -92,17 +93,24 @@ function createWindow() {
     return { action: 'allow' };
   });
 
-  const startURL = isDev
-    ? 'http://localhost:5173'
-    : `file://${path.join(__dirname, '..', 'client', 'dist', 'index.html')}`;
-
-  // Wait for the server to be ready, then load the UI
-  setTimeout(() => {
-    mainWindow.loadURL(startURL);
-  }, 2000);
+  // Show splash immediately — eliminates blank window during server startup.
+  mainWindow.loadFile(path.join(__dirname, 'splash.html'));
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+    appLoaded = false;
+  });
+
+  // Intercept close so the renderer can warn about unsaved tabs.
+  // If the splash is still showing (app not loaded yet), close without asking.
+  // The renderer responds via 'app:close-response' (see ipcMain.on below).
+  mainWindow.on('close', (e) => {
+    e.preventDefault();
+    if (!appLoaded) {
+      mainWindow.destroy();
+      return;
+    }
+    mainWindow.webContents.send('app:will-close');
   });
 }
 
@@ -209,6 +217,37 @@ ipcMain.handle('decrypt-string', (_event, { encrypted }) => {
   }
 });
 
+// Poll the Express health endpoint using Node's built-in http module.
+// Returns true as soon as it responds 200, false after 500 ms or on error.
+function checkServerReady(port) {
+  return new Promise((resolve) => {
+    const req = require('http').get(`http://127.0.0.1:${port}/health`, (res) => {
+      resolve(res.statusCode === 200);
+      res.resume();
+    });
+    req.on('error', () => resolve(false));
+    req.setTimeout(500, () => { req.destroy(); resolve(false); });
+  });
+}
+
+// Poll health endpoint then navigate the window to the real app URL.
+async function waitAndLoadApp(port) {
+  const startURL = isDev
+    ? 'http://localhost:5173'
+    : `file://${path.join(__dirname, '..', 'client', 'dist', 'index.html')}`;
+
+  // Up to 8 seconds (40 × 200 ms) — covers slow machines and cold starts.
+  for (let i = 0; i < 40; i++) {
+    if (await checkServerReady(port)) break;
+    await new Promise(r => setTimeout(r, 200));
+  }
+
+  if (mainWindow) {
+    appLoaded = true;
+    mainWindow.loadURL(startURL);
+  }
+}
+
 app.whenReady().then(async () => {
   // In dev, keep port 3001 so Vite's proxy config stays valid.
   // In production, find a free port dynamically.
@@ -216,10 +255,18 @@ app.whenReady().then(async () => {
   writeLog('Using port ' + port);
   startServer(port);
   createWindow();
+  waitAndLoadApp(port);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+// Renderer confirmed it is safe to close.
+ipcMain.on('app:close-response', (_, { confirmed }) => {
+  if (confirmed && mainWindow) {
+    mainWindow.destroy();
+  }
 });
 
 app.on('window-all-closed', () => {
