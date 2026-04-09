@@ -255,6 +255,7 @@ export default function App() {
   const [quickSyncConflictPackage, setQuickSyncConflictPackage] = useState<ConflictPackage | null>(null);
   const [quickSyncConfig, setQuickSyncConfig] = useState<SyncConfig | null>(null);
   const [quickSyncMsg, setQuickSyncMsg] = useState<string>('');
+  const [quickSyncStatus, setQuickSyncStatus] = useState<'ok' | 'warning' | 'error' | 'info'>('info');
   const dragging = useRef(false);
   const startX = useRef(0);
   const startWidth = useRef(0);
@@ -415,14 +416,19 @@ export default function App() {
     return nextMetadata;
   }
 
+  function setQuickSyncFeedback(message: string, status: 'ok' | 'warning' | 'error' | 'info') {
+    setQuickSyncMsg(message);
+    setQuickSyncStatus(status);
+  }
+
   async function handleQuickSync() {
     if (syncBusy) return;
-    setQuickSyncMsg('');
+    setQuickSyncFeedback('', 'info');
     setSyncBusy(true);
     try {
       const cfg = await loadCurrentSyncConfig();
       if (!cfg) {
-        setQuickSyncMsg('No sync provider configured for this workspace');
+        setQuickSyncFeedback('No sync provider configured for this workspace', 'warning');
         return;
       }
       setQuickSyncConfig(cfg);
@@ -444,21 +450,21 @@ export default function App() {
           await StorageDriver.writeWorkspace(currentCfg.workspaceId, result.data);
           const meta = await persistSyncBase(currentCfg, result.data, result.remoteState.timestamp, result.remoteState.version, 'sync base after quick-sync pull');
           currentCfg = { ...currentCfg, metadata: meta };
-          setQuickSyncMsg(hasUnpushed ? 'Synced (pushed + pulled)' : 'Synced (pulled)');
+          setQuickSyncFeedback(hasUnpushed ? 'Synced (pushed + pulled)' : 'Synced (pulled)', 'ok');
         } else {
-          setQuickSyncMsg(hasUnpushed ? 'Pushed local changes (remote empty)' : 'Remote is empty — nothing to pull');
+          setQuickSyncFeedback(hasUnpushed ? 'Pushed local changes (remote empty)' : 'Remote is empty — nothing to pull', 'info');
         }
       } catch (err: unknown) {
         if (err instanceof ConflictError) {
           const pkg = await pullForMerge(currentCfg, localData);
           setQuickSyncConflictPackage(pkg);
-          setQuickSyncMsg('Conflict detected — review merge');
+          setQuickSyncFeedback('Conflict detected — review merge', 'warning');
         } else {
           throw err;
         }
       }
     } catch (err: unknown) {
-      setQuickSyncMsg((err as Error).message);
+      setQuickSyncFeedback((err as Error).message, 'error');
     } finally {
       setSyncBusy(false);
     }
@@ -470,7 +476,7 @@ export default function App() {
     let currentCfg = quickSyncConfig;
     setQuickSyncConflictPackage(null);
     setSyncBusy(true);
-    setQuickSyncMsg('Applying merge…');
+    setQuickSyncFeedback('Applying merge…', 'info');
     try {
       const preMergeLocal = getCurrentWorkspaceData();
       await SnapshotEngine.createSnapshot(state.activeWorkspaceId, preMergeLocal, 'pre-quick-sync-merge backup');
@@ -488,19 +494,19 @@ export default function App() {
 
       dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...mergedData, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
       await StorageDriver.writeWorkspace(state.activeWorkspaceId, mergedData);
-      setQuickSyncMsg('Sync merge applied successfully');
+      setQuickSyncFeedback('Sync merge applied successfully', 'ok');
     } catch (err: unknown) {
       if (err instanceof StaleVersionError) {
-        setQuickSyncMsg('Remote changed during apply. Rebuilding merge…');
+        setQuickSyncFeedback('Remote changed during apply. Rebuilding merge…', 'warning');
         try {
           const rebased = await rebaseAfterStale(currentCfg, mergedData, currentPackage.remoteData);
           setQuickSyncConflictPackage(rebased);
-          setQuickSyncMsg('Remote changed during apply. Review updated merge.');
+          setQuickSyncFeedback('Remote changed during apply. Review updated merge.', 'warning');
         } catch (rebaseErr: unknown) {
-          setQuickSyncMsg((rebaseErr as Error).message);
+          setQuickSyncFeedback((rebaseErr as Error).message, 'error');
         }
       } else {
-        setQuickSyncMsg((err as Error).message);
+        setQuickSyncFeedback((err as Error).message, 'error');
       }
     } finally {
       setSyncBusy(false);
@@ -561,19 +567,33 @@ export default function App() {
         <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-700 bg-slate-900 shrink-0">
           <div className="flex items-center gap-2 min-w-0">
             {syncConfigured && (
-              <button
-                onClick={handleQuickSync}
-                disabled={syncBusy}
-                aria-label="Sync workspace"
-                title="Sync workspace"
-                className={`px-3 py-1 rounded text-xs font-medium border transition-colors focus:outline-none focus:ring-2 focus:ring-orange-500 ${
-                  syncBusy
-                    ? 'bg-slate-700 border-slate-600 text-slate-400 cursor-not-allowed'
-                    : 'bg-orange-600 border-orange-600 text-white hover:bg-orange-500'
-                }`}
-              >
-                {syncBusy ? 'Syncing…' : 'Sync'}
-              </button>
+              <div className="flex items-center gap-1.5" title={quickSyncMsg || 'Ready to sync'}>
+                <button
+                  onClick={handleQuickSync}
+                  disabled={syncBusy}
+                  aria-label={`Sync workspace. Status: ${quickSyncMsg || 'Ready to sync'}`}
+                  title={quickSyncMsg || 'Ready to sync'}
+                  className={`px-3 py-1 rounded text-xs font-medium border transition-colors focus:outline-none focus:ring-2 focus:ring-orange-500 ${
+                    syncBusy
+                      ? 'bg-slate-700 border-slate-600 text-slate-400 cursor-not-allowed'
+                      : 'bg-orange-600 border-orange-600 text-white hover:bg-orange-500'
+                  }`}
+                >
+                  {syncBusy ? 'Syncing…' : 'Sync'}
+                </button>
+                <span
+                  role="status"
+                  aria-label={`Sync status: ${quickSyncMsg || 'Ready to sync'}`}
+                  title={quickSyncMsg || 'Ready to sync'}
+                  className={`inline-flex w-2.5 h-2.5 rounded-full ${
+                    syncBusy ? 'bg-sky-400 animate-pulse' :
+                    quickSyncStatus === 'ok' ? 'bg-green-500' :
+                    quickSyncStatus === 'warning' ? 'bg-yellow-400' :
+                    quickSyncStatus === 'error' ? 'bg-red-500' :
+                    'bg-slate-500'
+                  }`}
+                />
+              </div>
             )}
           </div>
 
@@ -607,12 +627,6 @@ export default function App() {
             )}
           </div>
         </div>
-
-        {quickSyncMsg && (
-          <div className="px-4 py-1 text-[11px] border-b border-slate-800 bg-slate-950 text-slate-300 truncate" title={quickSyncMsg}>
-            {quickSyncMsg}
-          </div>
-        )}
 
         {/* Tab bar — shown only in request view */}
         {state.view === 'request' && <TabBar dirtyIds={dirtyIds} />}
@@ -685,7 +699,7 @@ export default function App() {
           onResolved={(merged) => handleQuickSyncMergeResolved(merged)}
           onKeepLocal={() => {
             setQuickSyncConflictPackage(null);
-            setQuickSyncMsg('Kept local changes');
+            setQuickSyncFeedback('Kept local changes', 'warning');
           }}
           onKeepRemote={async () => {
             if (!quickSyncConfig) {
@@ -701,9 +715,9 @@ export default function App() {
                 const meta = await persistSyncBase(quickSyncConfig, result.data, result.remoteState.timestamp, result.remoteState.version, 'sync base after keep-remote');
                 setQuickSyncConfig({ ...quickSyncConfig, metadata: meta });
               }
-              setQuickSyncMsg('Applied remote changes');
+              setQuickSyncFeedback('Applied remote changes', 'ok');
             } catch (err: unknown) {
-              setQuickSyncMsg((err as Error).message);
+              setQuickSyncFeedback((err as Error).message, 'error');
             } finally {
               setSyncBusy(false);
               setQuickSyncConflictPackage(null);
