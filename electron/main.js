@@ -10,6 +10,7 @@ const isDev = !app.isPackaged;
 let mainWindow = null;
 let serverProcess = null;
 let appLoaded = false;
+let closeGuardTimeout = null;
 
 function writeLog(msg) {
   try {
@@ -102,15 +103,22 @@ function createWindow() {
   });
 
   // Intercept close so the renderer can warn about unsaved tabs.
-  // If the splash is still showing (app not loaded yet), close without asking.
-  // The renderer responds via 'app:close-response' (see ipcMain.on below).
+  // If the splash is still showing (app not loaded yet), allow the window to
+  // close naturally (no preventDefault).  Once the app is loaded we prevent
+  // default, ask the renderer, and set a 5-second safety timeout so that a
+  // hung/crashed renderer never leaves the window unclosable.
   mainWindow.on('close', (e) => {
-    e.preventDefault();
     if (!appLoaded) {
-      mainWindow.destroy();
-      return;
+      return; // Let the OS close the window normally during splash.
     }
+    e.preventDefault();
     mainWindow.webContents.send('app:will-close');
+    // Safety fallback: destroy the window if the renderer never replies.
+    if (closeGuardTimeout) clearTimeout(closeGuardTimeout);
+    closeGuardTimeout = setTimeout(() => {
+      closeGuardTimeout = null;
+      if (mainWindow) mainWindow.destroy();
+    }, 5000);
   });
 }
 
@@ -264,6 +272,10 @@ app.whenReady().then(async () => {
 
 // Renderer confirmed it is safe to close.
 ipcMain.on('app:close-response', (_, { confirmed }) => {
+  if (closeGuardTimeout) {
+    clearTimeout(closeGuardTimeout);
+    closeGuardTimeout = null;
+  }
   if (confirmed && mainWindow) {
     mainWindow.destroy();
   }
