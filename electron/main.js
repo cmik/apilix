@@ -221,7 +221,7 @@ ipcMain.handle('decrypt-string', (_event, { encrypted }) => {
 // Returns true as soon as it responds 200, false after 500 ms or on error.
 function checkServerReady(port) {
   return new Promise((resolve) => {
-    const req = require('http').get(`http://127.0.0.1:${port}/health`, (res) => {
+    const req = require('http').get(`http://127.0.0.1:${port}/api/health`, (res) => {
       resolve(res.statusCode === 200);
       res.resume();
     });
