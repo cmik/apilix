@@ -19,6 +19,7 @@
 import type { WorkspaceData } from '../../types';
 import type { SyncAdapter } from '../syncEngine';
 import { getDataDir } from '../storageDriver';
+import { throwSyncRequestError } from './errors';
 
 function serverUrl(): string {
   const port = (window as any).electronAPI?.serverPort ?? 3001;
@@ -34,8 +35,7 @@ export const gitAdapter: SyncAdapter = {
       body: JSON.stringify({ workspaceId, data, config, dataDir, expectedVersion: options?.expectedVersion }),
     });
     if (!res.ok) {
-      const body = await res.json().catch(() => ({})) as { error?: string };
-      throw new Error(`Git push failed: ${body.error ?? res.statusText}`);
+      await throwSyncRequestError(res, 'Git push');
     }
   },
 
@@ -47,8 +47,7 @@ export const gitAdapter: SyncAdapter = {
       body: JSON.stringify({ workspaceId, data: mergedData, config, dataDir, expectedVersion }),
     });
     if (!res.ok) {
-      const body = await res.json().catch(() => ({})) as { error?: string };
-      throw new Error(`Git apply merged failed: ${body.error ?? res.statusText}`);
+      await throwSyncRequestError(res, 'Git apply merged');
     }
   },
 
@@ -61,8 +60,7 @@ export const gitAdapter: SyncAdapter = {
     });
     if (res.status === 404) return null;
     if (!res.ok) {
-      const body = await res.json().catch(() => ({})) as { error?: string };
-      throw new Error(`Git pull failed: ${body.error ?? res.statusText}`);
+      await throwSyncRequestError(res, 'Git pull');
     }
     const body = await res.json() as { data: WorkspaceData };
     return body.data;
@@ -79,8 +77,7 @@ export const gitAdapter: SyncAdapter = {
       return { data: null, remoteState: { timestamp: null, version: null } };
     }
     if (!res.ok) {
-      const body = await res.json().catch(() => ({})) as { error?: string };
-      throw new Error(`Git pull failed: ${body.error ?? res.statusText}`);
+      await throwSyncRequestError(res, 'Git pull');
     }
     const body = await res.json() as {
       data: WorkspaceData;

@@ -14,6 +14,7 @@ import type {
 } from '../types';
 import { loadSnapshot } from './snapshotEngine';
 import { mergeWorkspaces } from './merge/workspaceMerge';
+import { StaleVersionError } from './sync/errors';
 
 export type ConflictResolution = 'keep-local' | 'keep-remote';
 
@@ -177,6 +178,42 @@ export async function pullForMerge(
   };
 }
 
+/**
+ * Rebase a user-produced merged candidate onto the newest remote snapshot after
+ * an optimistic write loses the race. The previous remote snapshot becomes the
+ * merge base so we only ask the user to resolve changes introduced after the
+ * original merge started.
+ */
+export async function rebaseAfterStale(
+  syncConfig: SyncConfig,
+  localData: WorkspaceData,
+  previousRemoteData: WorkspaceData,
+): Promise<ConflictPackage> {
+  const adapter = getAdapter(syncConfig.provider as string);
+  let remoteResult: SyncPullResult;
+  if (adapter.pullWithMeta) {
+    remoteResult = await adapter.pullWithMeta(syncConfig.workspaceId, syncConfig.config);
+  } else {
+    const [data, remoteState] = await Promise.all([
+      adapter.pull(syncConfig.workspaceId, syncConfig.config),
+      getAdapterRemoteState(adapter, syncConfig.workspaceId, syncConfig.config),
+    ]);
+    remoteResult = { data, remoteState };
+  }
+
+  const remoteData = remoteResult.data ?? localData;
+  const mergeResult = mergeWorkspaces(previousRemoteData, localData, remoteData);
+
+  return {
+    baseData: previousRemoteData,
+    localData,
+    remoteData,
+    mergeResult,
+    remoteVersion: remoteResult.remoteState.version,
+    syncConfig,
+  };
+}
+
 async function getAdapterRemoteState(
   adapter: SyncAdapter,
   workspaceId: string,
@@ -203,6 +240,8 @@ export class ConflictError extends Error {
     super(`Sync conflict for workspace ${workspaceId}: remote is newer`);
   }
 }
+
+export { StaleVersionError };
 
 // ─── Adapter registry ─────────────────────────────────────────────────────────
 

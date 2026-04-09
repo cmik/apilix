@@ -12,6 +12,7 @@
 
 import type { WorkspaceData } from '../../types';
 import type { SyncAdapter } from '../syncEngine';
+import { throwSyncRequestError } from './errors';
 
 function readVersionHeader(headers: Headers): string | null {
   const raw = headers.get('ETag') ?? headers.get('X-Version') ?? headers.get('X-Workspace-Version');
@@ -39,8 +40,7 @@ export const httpAdapter: SyncAdapter = {
       }),
     });
     if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(`HTTP push failed (${res.status}): ${text}`);
+      await throwSyncRequestError(res, 'HTTP push');
     }
   },
 
@@ -59,8 +59,7 @@ export const httpAdapter: SyncAdapter = {
       }),
     });
     if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(`HTTP apply merged failed (${res.status}): ${text}`);
+      await throwSyncRequestError(res, 'HTTP apply merged');
     }
   },
 
@@ -73,8 +72,7 @@ export const httpAdapter: SyncAdapter = {
     });
     if (res.status === 404) return null;
     if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(`HTTP pull failed (${res.status}): ${text}`);
+      await throwSyncRequestError(res, 'HTTP pull');
     }
     const body = await res.json() as { data: WorkspaceData };
     return body.data;
@@ -91,8 +89,7 @@ export const httpAdapter: SyncAdapter = {
       return { data: null, remoteState: { timestamp: null, version: null } };
     }
     if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(`HTTP pull failed (${res.status}): ${text}`);
+      await throwSyncRequestError(res, 'HTTP pull');
     }
     const body = await res.json() as { data: WorkspaceData };
     return {

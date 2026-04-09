@@ -16,6 +16,7 @@
 
 import type { WorkspaceData } from '../../types';
 import type { SyncAdapter } from '../syncEngine';
+import { throwSyncRequestError } from './errors';
 
 function readVersionHeader(headers: Headers): string | null {
   const raw = headers.get('ETag') ?? headers.get('X-Version') ?? headers.get('X-Workspace-Version');
@@ -62,7 +63,7 @@ export const s3Adapter: SyncAdapter = {
         expectedVersion: options?.expectedVersion,
       }),
     });
-    if (!res.ok) throw new Error(`S3 PUT failed: ${res.status} ${res.statusText}`);
+    if (!res.ok) await throwSyncRequestError(res, 'S3 push');
   },
 
   async applyMerged(workspaceId, mergedData, config, expectedVersion) {
@@ -76,14 +77,14 @@ export const s3Adapter: SyncAdapter = {
         expectedVersion,
       }),
     });
-    if (!res.ok) throw new Error(`S3 apply merged failed: ${res.status} ${res.statusText}`);
+    if (!res.ok) await throwSyncRequestError(res, 'S3 apply merged');
   },
 
   async pull(workspaceId, config) {
     const url = await getPresignedUrl('GET', config, workspaceId);
     const res = await fetch(url);
     if (res.status === 404) return null;
-    if (!res.ok) throw new Error(`S3 GET failed: ${res.status} ${res.statusText}`);
+    if (!res.ok) await throwSyncRequestError(res, 'S3 pull');
     const body = await res.json() as { data: WorkspaceData };
     return body.data;
   },
@@ -94,7 +95,7 @@ export const s3Adapter: SyncAdapter = {
     if (res.status === 404) {
       return { data: null, remoteState: { timestamp: null, version: null } };
     }
-    if (!res.ok) throw new Error(`S3 GET failed: ${res.status} ${res.statusText}`);
+    if (!res.ok) await throwSyncRequestError(res, 'S3 pull');
     const body = await res.json() as { data: WorkspaceData };
     return {
       data: body.data,

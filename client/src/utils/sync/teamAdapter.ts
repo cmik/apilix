@@ -12,6 +12,7 @@
 
 import type { WorkspaceData } from '../../types';
 import type { SyncAdapter } from '../syncEngine';
+import { throwSyncRequestError } from './errors';
 
 function readVersionHeader(headers: Headers): string | null {
   const raw = headers.get('ETag') ?? headers.get('X-Version') ?? headers.get('X-Workspace-Version');
@@ -36,8 +37,7 @@ export const teamAdapter: SyncAdapter = {
       body: JSON.stringify({ data, expectedVersion: options?.expectedVersion }),
     });
     if (!res.ok) {
-      const body = await res.json().catch(() => ({})) as { error?: string };
-      throw new Error(`Team push failed (${res.status}): ${body.error ?? res.statusText}`);
+      await throwSyncRequestError(res, 'Team push');
     }
   },
 
@@ -53,8 +53,7 @@ export const teamAdapter: SyncAdapter = {
       body: JSON.stringify({ data: mergedData, expectedVersion }),
     });
     if (!res.ok) {
-      const body = await res.json().catch(() => ({})) as { error?: string };
-      throw new Error(`Team apply merged failed (${res.status}): ${body.error ?? res.statusText}`);
+      await throwSyncRequestError(res, 'Team apply merged');
     }
   },
 
@@ -66,8 +65,7 @@ export const teamAdapter: SyncAdapter = {
     });
     if (res.status === 404) return null;
     if (!res.ok) {
-      const body = await res.json().catch(() => ({})) as { error?: string };
-      throw new Error(`Team pull failed (${res.status}): ${body.error ?? res.statusText}`);
+      await throwSyncRequestError(res, 'Team pull');
     }
     const body = await res.json() as { data: WorkspaceData };
     return body.data;
@@ -83,8 +81,7 @@ export const teamAdapter: SyncAdapter = {
       return { data: null, remoteState: { timestamp: null, version: null } };
     }
     if (!res.ok) {
-      const body = await res.json().catch(() => ({})) as { error?: string };
-      throw new Error(`Team pull failed (${res.status}): ${body.error ?? res.statusText}`);
+      await throwSyncRequestError(res, 'Team pull');
     }
     const body = await res.json() as { data: WorkspaceData };
     return {

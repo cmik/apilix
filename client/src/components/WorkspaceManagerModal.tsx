@@ -8,7 +8,9 @@ import {
   getRemoteSyncState,
   applyMerged as syncApplyMerged,
   pullForMerge,
+  rebaseAfterStale,
   ConflictError,
+  StaleVersionError,
 } from '../utils/syncEngine';
 import * as SnapshotEngine from '../utils/snapshotEngine';
 import ConflictMergeModal from './ConflictMergeModal';
@@ -359,14 +361,15 @@ function SyncTab() {
 
   async function handleMergeResolved(mergedData: WorkspaceData) {
     if (!conflictPackage) return;
+    const currentConflictPackage = conflictPackage;
     setConflictPackage(null);
     setStatus('busy'); setMsg('Applying merge…');
     try {
       const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
       const localData = await StorageDriver.readWorkspace(workspaceId);
       if (localData) await SnapshotEngine.createSnapshot(workspaceId, localData, 'pre-merge backup');
-      if (conflictPackage.remoteVersion) {
-        await syncApplyMerged(cfg, mergedData, conflictPackage.remoteVersion);
+      if (currentConflictPackage.remoteVersion) {
+        await syncApplyMerged(cfg, mergedData, currentConflictPackage.remoteVersion);
       } else {
         await syncPush(cfg, mergedData);
       }
@@ -382,6 +385,20 @@ function SyncTab() {
       await StorageDriver.writeWorkspace(workspaceId, mergedData);
       setStatus('ok'); setMsg('Merge applied successfully');
     } catch (err: unknown) {
+      if (err instanceof StaleVersionError) {
+        setStatus('busy'); setMsg('Remote changed during apply. Rebuilding merge…');
+        try {
+          const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
+          const nextPackage = await rebaseAfterStale(cfg, mergedData, currentConflictPackage.remoteData);
+          setConflictPackage(nextPackage);
+          setStatus('idle');
+          setMsg('Remote changed during apply. Review the updated merge.');
+        } catch (rebaseErr: unknown) {
+          setStatus('error');
+          setMsg((rebaseErr as Error).message);
+        }
+        return;
+      }
       setStatus('error'); setMsg((err as Error).message);
     }
   }
