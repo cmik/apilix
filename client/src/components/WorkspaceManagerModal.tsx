@@ -285,6 +285,9 @@ function SyncTab() {
 
   const [provider, setProvider] = useState<SyncProvider>('s3');
   const [fields, setFields] = useState<Record<string, string>>({});
+  const [providerDrafts, setProviderDrafts] = useState<Record<SyncProvider, Record<string, string>>>(
+    () => ({ s3: {}, git: {}, http: {}, team: {} })
+  );
   const [syncMetadata, setSyncMetadata] = useState<SyncMetadata | undefined>(undefined);
   const [loaded, setLoaded] = useState(false);
   const [status, setStatus] = useState<'idle' | 'busy' | 'ok' | 'error'>('idle');
@@ -302,8 +305,14 @@ function SyncTab() {
     ]).then(([cfg, entries]) => {
       if (!active) return;
       if (cfg) {
-        setProvider(cfg.provider as SyncProvider);
-        setFields(cfg.config);
+        const loadedProvider = cfg.provider as SyncProvider;
+        const loadedConfig = cfg.config;
+        setProvider(loadedProvider);
+        setFields(loadedConfig);
+        setProviderDrafts(prev => ({
+          ...prev,
+          [loadedProvider]: loadedConfig,
+        }));
         setSyncMetadata(cfg.metadata ?? (cfg.lastSynced ? { lastSyncedAt: cfg.lastSynced } : undefined));
       } else {
         setFields({});
@@ -335,7 +344,30 @@ function SyncTab() {
   }
 
   function setField(key: string, value: string) {
-    setFields(prev => ({ ...prev, [key]: value }));
+    setFields(prev => {
+      const next = { ...prev, [key]: value };
+      setProviderDrafts(drafts => ({ ...drafts, [provider]: next }));
+      return next;
+    });
+  }
+
+  function switchProvider(nextProvider: SyncProvider) {
+    setProvider(prevProvider => {
+      if (prevProvider === nextProvider) return prevProvider;
+      setProviderDrafts(drafts => {
+        const nextDrafts = {
+          ...drafts,
+          [prevProvider]: fields,
+        };
+        setFields(nextDrafts[nextProvider] ?? {});
+        return nextDrafts;
+      });
+      setConflict(null);
+      setConflictPackage(null);
+      setMsg('');
+      setStatus('idle');
+      return nextProvider;
+    });
   }
 
   async function handlePush() {
@@ -498,7 +530,7 @@ function SyncTab() {
           {(Object.keys(PROVIDER_LABELS) as SyncProvider[]).map(p => (
             <button
               key={p}
-              onClick={() => { setProvider(p); setFields({}); }}
+              onClick={() => switchProvider(p)}
               className={`px-3 py-1.5 rounded text-xs font-medium border transition-colors ${
                 provider === p
                   ? 'bg-orange-500/20 border-orange-500/50 text-orange-300'
