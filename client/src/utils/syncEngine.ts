@@ -92,9 +92,13 @@ export async function pullWithMeta(
     // Check for conflict before pulling
     const remoteState = await getAdapterRemoteState(adapter, syncConfig.workspaceId, syncConfig.config);
     const localTs = syncConfig.metadata?.lastSyncedAt ?? syncConfig.lastSynced ?? null;
-    if (remoteState.timestamp && localTs && remoteState.timestamp > localTs) {
-      const err = new ConflictError(syncConfig.workspaceId, localTs, remoteState.timestamp, remoteState.version);
-      throw err;
+    if (remoteState.timestamp && localTs) {
+      const remoteMs = Date.parse(remoteState.timestamp);
+      const localMs = Date.parse(localTs);
+      if (!isNaN(remoteMs) && !isNaN(localMs) && remoteMs > localMs) {
+        const err = new ConflictError(syncConfig.workspaceId, localTs, remoteState.timestamp, remoteState.version);
+        throw err;
+      }
     }
   }
 
@@ -121,8 +125,12 @@ export async function checkConflict(syncConfig: SyncConfig): Promise<SyncConflic
   const adapter = getAdapter(syncConfig.provider as string);
   const remoteState = await getAdapterRemoteState(adapter, syncConfig.workspaceId, syncConfig.config);
   const localTs = syncConfig.metadata?.lastSyncedAt ?? syncConfig.lastSynced ?? null;
-  if (remoteState.timestamp && localTs && remoteState.timestamp > localTs) {
-    return { workspaceId: syncConfig.workspaceId, localLastSaved: localTs, remoteLastModified: remoteState.timestamp };
+  if (remoteState.timestamp && localTs) {
+    const remoteMs = Date.parse(remoteState.timestamp);
+    const localMs = Date.parse(localTs);
+    if (!isNaN(remoteMs) && !isNaN(localMs) && remoteMs > localMs) {
+      return { workspaceId: syncConfig.workspaceId, localLastSaved: localTs, remoteLastModified: remoteState.timestamp };
+    }
   }
   return null;
 }

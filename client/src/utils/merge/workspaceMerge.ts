@@ -13,6 +13,7 @@
  *  - delete-vs-edit: one side deleted an entity the other modified
  *  - rename-vs-rename: both sides renamed the same entity to different names
  *  - move-vs-edit: one side moved an item, the other edited it
+ *  - json-conflict: body merge succeeded as JSON but has key-level conflicts
  *  - json-parse-fallback: body/script merge fell back to line-based diff
  */
 
@@ -281,7 +282,9 @@ function mergeRequestItem(
     const rRaw = r.request?.body?.raw ?? '';
 
     if (lRaw !== rRaw) {
-      const textResult = mergeJson(bRaw, lRaw, rRaw) ?? mergeText(bRaw, lRaw, rRaw);
+      const jsonResult = mergeJson(bRaw, lRaw, rRaw);
+      const usedJsonMerge = jsonResult !== null;
+      const textResult = jsonResult ?? mergeText(bRaw, lRaw, rRaw);
       if (textResult.autoMerged) {
         merged.request = {
           ...(l.request ?? r.request!),
@@ -293,7 +296,7 @@ function mergeRequestItem(
         conflicts.push({
           id: `${id}#body`,
           domain: 'request',
-          kind: textResult.hunks.length ? 'json-parse-fallback' : 'field-overlap',
+          kind: usedJsonMerge ? 'json-conflict' : (textResult.hunks.length ? 'json-parse-fallback' : 'field-overlap'),
           label: `${l.name} — body`,
           path,
           base: bRaw || null,

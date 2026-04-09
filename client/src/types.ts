@@ -372,6 +372,7 @@ export type ConflictKind =
   | 'move-vs-edit'
   | 'delete-vs-edit'
   | 'rename-vs-rename'
+  | 'json-conflict'
   | 'json-parse-fallback';
 
 export interface MergeConflictNode {

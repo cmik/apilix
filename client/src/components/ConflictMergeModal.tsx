@@ -38,6 +38,7 @@ const KIND_LABELS: Record<string, string> = {
   'move-vs-edit': 'Move vs edit',
   'delete-vs-edit': 'Delete vs edit',
   'rename-vs-rename': 'Rename conflict',
+  'json-conflict': 'JSON key conflict',
   'json-parse-fallback': 'Text merge conflict',
 };
 
