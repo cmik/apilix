@@ -1,14 +1,17 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { Workspace, WorkspaceData, SyncConfig, SyncProvider, HistoryEntry, SyncMetadata } from '../types';
+import type { Workspace, WorkspaceData, SyncConfig, SyncProvider, HistoryEntry, SyncMetadata, ConflictPackage } from '../types';
 import { useApp, generateId } from '../store';
 import * as StorageDriver from '../utils/storageDriver';
 import {
   push as syncPush,
   pullWithMeta as syncPullWithMeta,
   getRemoteSyncState,
+  applyMerged as syncApplyMerged,
+  pullForMerge,
   ConflictError,
 } from '../utils/syncEngine';
 import * as SnapshotEngine from '../utils/snapshotEngine';
+import ConflictMergeModal from './ConflictMergeModal';
 
 type Tab = 'workspaces' | 'sync' | 'team' | 'history';
 
@@ -262,6 +265,7 @@ function SyncTab() {
   const [status, setStatus] = useState<'idle' | 'busy' | 'ok' | 'error'>('idle');
   const [msg, setMsg] = useState('');
   const [conflict, setConflict] = useState<null | { remoteTimestamp: string; localTimestamp: string | null }>(null);
+  const [conflictPackage, setConflictPackage] = useState<ConflictPackage | null>(null);
 
   // Load persisted sync config on mount / workspace change
   useEffect(() => {
@@ -313,7 +317,7 @@ function SyncTab() {
   }
 
   async function handlePull(resolution?: 'keep-local' | 'keep-remote') {
-    setStatus('busy'); setMsg('Pulling…'); setConflict(null);
+    setStatus('busy'); setMsg('Pulling…'); setConflict(null); setConflictPackage(null);
     try {
       await saveConfig();
       const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
@@ -335,16 +339,55 @@ function SyncTab() {
       }
     } catch (err: unknown) {
       if (err instanceof ConflictError) {
-        setConflict({ remoteTimestamp: err.remoteLastModified, localTimestamp: err.localLastSaved });
-        setStatus('idle'); setMsg('');
+        setStatus('busy'); setMsg('Loading merge data…');
+        try {
+          const localData = await StorageDriver.readWorkspace(workspaceId);
+          if (!localData) throw new Error('Could not read local workspace data');
+          const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
+          const pkg = await pullForMerge(cfg, localData);
+          setConflictPackage(pkg);
+          setStatus('idle'); setMsg('');
+        } catch {
+          setConflict({ remoteTimestamp: err.remoteLastModified, localTimestamp: err.localLastSaved });
+          setStatus('idle'); setMsg('');
+        }
       } else {
         setStatus('error'); setMsg((err as Error).message);
       }
     }
   }
 
+  async function handleMergeResolved(mergedData: WorkspaceData) {
+    if (!conflictPackage) return;
+    setConflictPackage(null);
+    setStatus('busy'); setMsg('Applying merge…');
+    try {
+      const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
+      const localData = await StorageDriver.readWorkspace(workspaceId);
+      if (localData) await SnapshotEngine.createSnapshot(workspaceId, localData, 'pre-merge backup');
+      if (conflictPackage.remoteVersion) {
+        await syncApplyMerged(cfg, mergedData, conflictPackage.remoteVersion);
+      } else {
+        await syncPush(cfg, mergedData);
+      }
+      const remoteState = await getRemoteSyncState(cfg);
+      const nextMetadata: SyncMetadata = {
+        ...(syncMetadata ?? {}),
+        lastSyncedAt: remoteState.timestamp ?? new Date().toISOString(),
+        lastSyncedVersion: remoteState.version ?? syncMetadata?.lastSyncedVersion,
+      };
+      setSyncMetadata(nextMetadata);
+      await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata);
+      dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...mergedData, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
+      await StorageDriver.writeWorkspace(workspaceId, mergedData);
+      setStatus('ok'); setMsg('Merge applied successfully');
+    } catch (err: unknown) {
+      setStatus('error'); setMsg((err as Error).message);
+    }
+  }
+
   async function handleCloneOnce() {
-    setStatus('busy'); setMsg('Importing…'); setConflict(null);
+    setStatus('busy'); setMsg('Importing…'); setConflict(null); setConflictPackage(null);
     try {
       const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
       const result = await syncPullWithMeta(cfg);
@@ -369,7 +412,8 @@ function SyncTab() {
   if (!loaded) return <div className="py-8 text-center text-xs text-slate-500">Loading…</div>;
 
   return (
-    <div className="space-y-4">
+    <>
+      <div className="space-y-4">
       {/* Provider selector */}
       <div>
         <label className="block text-xs font-medium text-slate-400 mb-1.5">Provider</label>
@@ -412,6 +456,7 @@ function SyncTab() {
           <p className="font-medium text-yellow-300">Conflict detected</p>
           <p>Remote was last modified: <strong>{new Date(conflict.remoteTimestamp).toLocaleString()}</strong></p>
           {conflict.localTimestamp && <p>Local last synced: <strong>{new Date(conflict.localTimestamp).toLocaleString()}</strong></p>}
+          <p className="text-slate-400">Merge data could not be loaded. Choose how to proceed:</p>
           <div className="flex gap-2 pt-1">
             <button onClick={() => handlePull('keep-remote')} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors">Use Remote</button>
             <button onClick={() => handlePull('keep-local')} className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors">Keep Local</button>
@@ -460,7 +505,18 @@ function SyncTab() {
       >
         Import once (don't save config) ↓
       </button>
-    </div>
+      </div>
+
+      {conflictPackage && (
+        <ConflictMergeModal
+          conflictPackage={conflictPackage}
+          onResolved={(merged) => handleMergeResolved(merged)}
+          onKeepLocal={() => { setConflictPackage(null); handlePull('keep-local'); }}
+          onKeepRemote={() => { setConflictPackage(null); handlePull('keep-remote'); }}
+          onClose={() => { setConflictPackage(null); }}
+        />
+      )}
+    </>
   );
 }
 

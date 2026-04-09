@@ -337,6 +337,55 @@ export interface SyncConfig {
   lastSynced?: string;
 }
 
+// ─── Three-way merge types ────────────────────────────────────────────────────
+
+export type ConflictDomain =
+  | 'request'
+  | 'collection'
+  | 'environment'
+  | 'globalVariables'
+  | 'collectionVariables'
+  | 'mockRoute';
+
+export type ConflictKind =
+  | 'field-overlap'
+  | 'move-vs-edit'
+  | 'delete-vs-edit'
+  | 'rename-vs-rename'
+  | 'json-parse-fallback';
+
+export interface MergeConflictNode {
+  id: string;
+  domain: ConflictDomain;
+  kind: ConflictKind;
+  label: string;
+  /** Breadcrumb path within the collection tree (requests only) */
+  path?: string[];
+  /** JSON-serialised base value or null if the entity was absent */
+  base: string | null;
+  local: string;
+  remote: string;
+  /** User-chosen resolution; undefined = unresolved */
+  resolved?: string;
+}
+
+export interface MergeResult {
+  merged: WorkspaceData;
+  conflicts: MergeConflictNode[];
+  autoMergedCount: number;
+}
+
+/** Carries all three versions plus the computed merge result for the UI */
+export interface ConflictPackage {
+  baseData: WorkspaceData;
+  localData: WorkspaceData;
+  remoteData: WorkspaceData;
+  mergeResult: MergeResult;
+  /** Version tag to use for the optimistic push after resolution */
+  remoteVersion: string | null;
+  syncConfig: SyncConfig;
+}
+
 export interface HistoryEntry {
   snapshotId: string;
   timestamp: string;

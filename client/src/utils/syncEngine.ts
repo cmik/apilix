@@ -10,7 +10,10 @@ import type {
   SyncConfig,
   SyncRemoteState,
   SyncPullResult,
+  ConflictPackage,
 } from '../types';
+import { loadSnapshot } from './snapshotEngine';
+import { mergeWorkspaces } from './merge/workspaceMerge';
 
 export type ConflictResolution = 'keep-local' | 'keep-remote';
 
@@ -125,6 +128,53 @@ export async function checkConflict(syncConfig: SyncConfig): Promise<SyncConflic
 export async function getRemoteSyncState(syncConfig: SyncConfig): Promise<SyncRemoteState> {
   const adapter = getAdapter(syncConfig.provider as string);
   return getAdapterRemoteState(adapter, syncConfig.workspaceId, syncConfig.config);
+}
+
+/**
+ * Pull the remote workspace, load the last-known merge base from snapshot history,
+ * run three-way merge, and return a ConflictPackage ready for the merge UI.
+ *
+ * Falls back to using `localData` as the base when no merge-base snapshot is found
+ * (i.e. the first time conflict resolution runs after migration).
+ */
+export async function pullForMerge(
+  syncConfig: SyncConfig,
+  localData: WorkspaceData,
+): Promise<ConflictPackage> {
+  const adapter = getAdapter(syncConfig.provider as string);
+  let remoteResult: SyncPullResult;
+  if (adapter.pullWithMeta) {
+    remoteResult = await adapter.pullWithMeta(syncConfig.workspaceId, syncConfig.config);
+  } else {
+    const [data, remoteState] = await Promise.all([
+      adapter.pull(syncConfig.workspaceId, syncConfig.config),
+      getAdapterRemoteState(adapter, syncConfig.workspaceId, syncConfig.config),
+    ]);
+    remoteResult = { data, remoteState };
+  }
+
+  const remoteData = remoteResult.data ?? localData;
+
+  // Load the merge base snapshot (the last version both sides agreed on)
+  const baseSnapshotId = syncConfig.metadata?.lastMergeBaseSnapshotId;
+  let baseData: WorkspaceData = localData; // fallback
+  if (baseSnapshotId) {
+    const snap = await loadSnapshot(syncConfig.workspaceId, baseSnapshotId);
+    if (snap) {
+      baseData = snap.data;
+    }
+  }
+
+  const mergeResult = mergeWorkspaces(baseData, localData, remoteData);
+
+  return {
+    baseData,
+    localData,
+    remoteData,
+    mergeResult,
+    remoteVersion: remoteResult.remoteState.version,
+    syncConfig,
+  };
 }
 
 async function getAdapterRemoteState(
