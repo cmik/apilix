@@ -343,6 +343,20 @@ function SyncTab() {
     await logActivity('save-config', 'info', 'Sync configuration saved');
   }
 
+  function getCurrentWorkspaceData(): WorkspaceData {
+    return {
+      collections: state.collections,
+      environments: state.environments,
+      activeEnvironmentId: state.activeEnvironmentId,
+      collectionVariables: state.collectionVariables,
+      globalVariables: state.globalVariables,
+      cookieJar: state.cookieJar,
+      mockCollections: state.mockCollections,
+      mockRoutes: state.mockRoutes,
+      mockPort: state.mockPort,
+    };
+  }
+
   function setField(key: string, value: string) {
     setFields(prev => {
       const next = { ...prev, [key]: value };
@@ -374,18 +388,20 @@ function SyncTab() {
     setStatus('busy'); setMsg('Pushing…'); setConflict(null);
     try {
       await saveConfig();
-      const data = await StorageDriver.readWorkspace(workspaceId);
-      if (!data) throw new Error('No workspace data to push');
+      const data = getCurrentWorkspaceData();
       const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
       await syncPush(cfg, data);
       const remoteState = await getRemoteSyncState(cfg);
+      const mergeBaseSnapshotId = await SnapshotEngine.createSnapshot(workspaceId, data, 'sync base after push');
       const nextMetadata: SyncMetadata = {
         ...(syncMetadata ?? {}),
         lastSyncedAt: remoteState.timestamp ?? new Date().toISOString(),
         lastSyncedVersion: remoteState.version ?? syncMetadata?.lastSyncedVersion,
+        lastMergeBaseSnapshotId: mergeBaseSnapshotId,
       };
       setSyncMetadata(nextMetadata);
       await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata);
+      await StorageDriver.writeWorkspace(workspaceId, data);
       dispatch({ type: 'SET_SYNC_STATUS', payload: { workspaceId, status: 'idle' } });
       await logActivity('push', 'success', 'Push completed', remoteState.version ? `Version ${remoteState.version.slice(0, 8)}` : undefined);
       setStatus('ok'); setMsg('Pushed successfully');
@@ -406,10 +422,12 @@ function SyncTab() {
       if (data) {
         dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...data, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
         await StorageDriver.writeWorkspace(workspaceId, data);
+        const mergeBaseSnapshotId = await SnapshotEngine.createSnapshot(workspaceId, data, 'sync base after pull');
         const nextMetadata: SyncMetadata = {
           ...(syncMetadata ?? {}),
           lastSyncedAt: result.remoteState.timestamp ?? new Date().toISOString(),
           lastSyncedVersion: result.remoteState.version ?? syncMetadata?.lastSyncedVersion,
+          lastMergeBaseSnapshotId: mergeBaseSnapshotId,
         };
         setSyncMetadata(nextMetadata);
         await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata);
@@ -424,8 +442,7 @@ function SyncTab() {
         await logActivity('conflict-detected', 'warning', 'Remote conflict detected', err.remoteVersion ? `Version ${err.remoteVersion.slice(0, 8)}` : undefined);
         setStatus('busy'); setMsg('Loading merge data…');
         try {
-          const localData = await StorageDriver.readWorkspace(workspaceId);
-          if (!localData) throw new Error('Could not read local workspace data');
+          const localData = getCurrentWorkspaceData();
           const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
           const pkg = await pullForMerge(cfg, localData);
           setConflictPackage(pkg);
@@ -450,7 +467,7 @@ function SyncTab() {
     setStatus('busy'); setMsg('Applying merge…');
     try {
       const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
-      const localData = await StorageDriver.readWorkspace(workspaceId);
+      const localData = getCurrentWorkspaceData();
       if (localData) await SnapshotEngine.createSnapshot(workspaceId, localData, 'pre-merge backup');
       if (currentConflictPackage.remoteVersion) {
         await syncApplyMerged(cfg, mergedData, currentConflictPackage.remoteVersion);
@@ -458,10 +475,12 @@ function SyncTab() {
         await syncPush(cfg, mergedData);
       }
       const remoteState = await getRemoteSyncState(cfg);
+      const mergeBaseSnapshotId = await SnapshotEngine.createSnapshot(workspaceId, mergedData, 'sync base after merge apply');
       const nextMetadata: SyncMetadata = {
         ...(syncMetadata ?? {}),
         lastSyncedAt: remoteState.timestamp ?? new Date().toISOString(),
         lastSyncedVersion: remoteState.version ?? syncMetadata?.lastSyncedVersion,
+        lastMergeBaseSnapshotId: mergeBaseSnapshotId,
       };
       setSyncMetadata(nextMetadata);
       await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata);

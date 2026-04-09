@@ -12,8 +12,9 @@ import type {
   SyncPullResult,
   ConflictPackage,
 } from '../types';
-import { loadSnapshot } from './snapshotEngine';
+import { loadSnapshot, listHistory } from './snapshotEngine';
 import { mergeWorkspaces } from './merge/workspaceMerge';
+import { deepEqual } from './merge/workspaceDiffer';
 import { StaleVersionError } from './sync/errors';
 
 export type ConflictResolution = 'keep-local' | 'keep-remote';
@@ -156,15 +157,7 @@ export async function pullForMerge(
 
   const remoteData = remoteResult.data ?? localData;
 
-  // Load the merge base snapshot (the last version both sides agreed on)
-  const baseSnapshotId = syncConfig.metadata?.lastMergeBaseSnapshotId;
-  let baseData: WorkspaceData = localData; // fallback
-  if (baseSnapshotId) {
-    const snap = await loadSnapshot(syncConfig.workspaceId, baseSnapshotId);
-    if (snap) {
-      baseData = snap.data;
-    }
-  }
+  const baseData = await resolveMergeBaseData(syncConfig, localData);
 
   const mergeResult = mergeWorkspaces(baseData, localData, remoteData);
 
@@ -176,6 +169,46 @@ export async function pullForMerge(
     remoteVersion: remoteResult.remoteState.version,
     syncConfig,
   };
+}
+
+/**
+ * Returns true when local workspace differs from the last known sync base.
+ * If no sync metadata exists yet, treat local workspace as having unsynced changes.
+ */
+export async function hasLocalUnpushedChanges(
+  syncConfig: SyncConfig,
+  localData: WorkspaceData,
+): Promise<boolean> {
+  if (!syncConfig.metadata?.lastMergeBaseSnapshotId && !syncConfig.metadata?.lastSyncedAt) {
+    return true;
+  }
+  const baseData = await resolveMergeBaseData(syncConfig, localData);
+  return !deepEqual(baseData, localData);
+}
+
+async function resolveMergeBaseData(
+  syncConfig: SyncConfig,
+  localData: WorkspaceData,
+): Promise<WorkspaceData> {
+  // Load the merge base snapshot (the last version both sides agreed on)
+  const baseSnapshotId = syncConfig.metadata?.lastMergeBaseSnapshotId;
+  if (baseSnapshotId) {
+    const snap = await loadSnapshot(syncConfig.workspaceId, baseSnapshotId);
+    if (snap) return snap.data;
+  }
+
+  if (syncConfig.metadata?.lastSyncedAt) {
+    // Backward-compatible fallback for older metadata that only has timestamps.
+    // Choose the newest snapshot at or before lastSyncedAt.
+    const history = await listHistory(syncConfig.workspaceId);
+    const target = history.find(h => h.timestamp <= syncConfig.metadata!.lastSyncedAt!);
+    if (target) {
+      const snap = await loadSnapshot(syncConfig.workspaceId, target.snapshotId);
+      if (snap) return snap.data;
+    }
+  }
+
+  return localData;
 }
 
 /**

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { API_BASE } from './api';
 import { useApp, generateId } from './store';
-import type { AppEnvironment, CollectionItem } from './types';
+import type { AppEnvironment, CollectionItem, WorkspaceData, SyncConfig, SyncMetadata, ConflictPackage } from './types';
 import Sidebar from './components/Sidebar';
 import ActivityBar from './components/ActivityBar';
 import RequestBuilder from './components/RequestBuilder';
@@ -14,6 +14,20 @@ import TabBar from './components/TabBar';
 import CookieManagerModal from './components/CookieManagerModal';
 import MockServerPanel from './components/MockServerPanel';
 import GlobalVariablesPanel from './components/GlobalVariablesPanel';
+import ConflictMergeModal from './components/ConflictMergeModal';
+import * as StorageDriver from './utils/storageDriver';
+import * as SnapshotEngine from './utils/snapshotEngine';
+import {
+  push as syncPush,
+  pullWithMeta as syncPullWithMeta,
+  pullForMerge,
+  applyMerged as syncApplyMerged,
+  rebaseAfterStale,
+  getRemoteSyncState,
+  hasLocalUnpushedChanges,
+  ConflictError,
+  StaleVersionError,
+} from './utils/syncEngine';
 
 // --- Env Quick Panel ---
 
@@ -157,8 +171,6 @@ function EnvironmentSelector() {
     setQuery('');
   }
 
-  if (state.environments.length === 0) return null;
-
   return (
     <div ref={containerRef} className="relative">
       <button
@@ -204,7 +216,10 @@ function EnvironmentSelector() {
                 </button>
               </li>
             ))}
-            {filtered.length === 0 && (
+            {state.environments.length === 0 && (
+              <li className="px-3 py-2 text-xs text-slate-500 italic">No environments available</li>
+            )}
+            {state.environments.length > 0 && filtered.length === 0 && (
               <li className="px-3 py-2 text-xs text-slate-500 italic">No match</li>
             )}
           </ul>
@@ -235,6 +250,11 @@ export default function App() {
   const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
   const [serverStatus, setServerStatus] = useState<ServerStatus>('checking');
   const [cookieManagerOpen, setCookieManagerOpen] = useState(false);
+  const [syncConfigured, setSyncConfigured] = useState(false);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [quickSyncConflictPackage, setQuickSyncConflictPackage] = useState<ConflictPackage | null>(null);
+  const [quickSyncConfig, setQuickSyncConfig] = useState<SyncConfig | null>(null);
+  const [quickSyncMsg, setQuickSyncMsg] = useState<string>('');
   const dragging = useRef(false);
   const startX = useRef(0);
   const startWidth = useRef(0);
@@ -264,6 +284,13 @@ export default function App() {
           document.dispatchEvent(new CustomEvent('apilix:send'));
           break;
         case 's':
+          if (e.shiftKey) {
+            if (inInput) return;
+            if (!syncConfigured || syncBusy) return;
+            e.preventDefault();
+            void handleQuickSync();
+            break;
+          }
           if (state.view !== 'request') break;
           e.preventDefault();
           document.dispatchEvent(new CustomEvent('apilix:save'));
@@ -319,7 +346,7 @@ export default function App() {
     }
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [state.view, state.activeTabId, state.collections, dispatch]);
+  }, [state.view, state.activeTabId, state.collections, dispatch, syncConfigured, syncBusy]);
 
   useEffect(() => {
     let cancelled = false;
@@ -335,6 +362,150 @@ export default function App() {
     const id = setInterval(check, 10000);
     return () => { cancelled = true; clearInterval(id); };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    StorageDriver.readSyncConfig(state.activeWorkspaceId)
+      .then(cfg => {
+        if (!active) return;
+        const configured = Boolean(cfg?.provider && cfg?.config && Object.keys(cfg.config).length > 0);
+        setSyncConfigured(configured);
+      })
+      .catch(() => {
+        if (!active) return;
+        setSyncConfigured(false);
+      });
+    return () => { active = false; };
+  }, [state.activeWorkspaceId]);
+
+  function getCurrentWorkspaceData(): WorkspaceData {
+    return {
+      collections: state.collections,
+      environments: state.environments,
+      activeEnvironmentId: state.activeEnvironmentId,
+      collectionVariables: state.collectionVariables,
+      globalVariables: state.globalVariables,
+      cookieJar: state.cookieJar,
+      mockCollections: state.mockCollections,
+      mockRoutes: state.mockRoutes,
+      mockPort: state.mockPort,
+    };
+  }
+
+  async function loadCurrentSyncConfig(): Promise<SyncConfig | null> {
+    const stored = await StorageDriver.readSyncConfig(state.activeWorkspaceId);
+    if (!stored?.provider || !stored?.config || Object.keys(stored.config).length === 0) return null;
+    return {
+      workspaceId: state.activeWorkspaceId,
+      provider: stored.provider as SyncConfig['provider'],
+      config: stored.config,
+      metadata: stored.metadata ?? (stored.lastSynced ? { lastSyncedAt: stored.lastSynced } : undefined),
+    };
+  }
+
+  async function persistSyncBase(cfg: SyncConfig, data: WorkspaceData, timestamp: string | null, version: string | null, summary: string): Promise<SyncMetadata> {
+    const baseSnapshotId = await SnapshotEngine.createSnapshot(cfg.workspaceId, data, summary);
+    const nextMetadata: SyncMetadata = {
+      ...(cfg.metadata ?? {}),
+      lastSyncedAt: timestamp ?? new Date().toISOString(),
+      lastSyncedVersion: version ?? cfg.metadata?.lastSyncedVersion,
+      lastMergeBaseSnapshotId: baseSnapshotId,
+    };
+    await StorageDriver.writeSyncConfig(cfg.workspaceId, cfg.provider, cfg.config, nextMetadata);
+    return nextMetadata;
+  }
+
+  async function handleQuickSync() {
+    if (syncBusy) return;
+    setQuickSyncMsg('');
+    setSyncBusy(true);
+    try {
+      const cfg = await loadCurrentSyncConfig();
+      if (!cfg) {
+        setQuickSyncMsg('No sync provider configured for this workspace');
+        return;
+      }
+      setQuickSyncConfig(cfg);
+      let currentCfg = cfg;
+      const localData = getCurrentWorkspaceData();
+
+      const hasUnpushed = await hasLocalUnpushedChanges(currentCfg, localData);
+      if (hasUnpushed) {
+        await syncPush(currentCfg, localData);
+        const pushedState = await getRemoteSyncState(currentCfg);
+        const meta = await persistSyncBase(currentCfg, localData, pushedState.timestamp, pushedState.version, 'sync base after quick-sync push');
+        currentCfg = { ...currentCfg, metadata: meta };
+      }
+
+      try {
+        const result = await syncPullWithMeta(currentCfg);
+        if (result.data) {
+          dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...result.data, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
+          await StorageDriver.writeWorkspace(currentCfg.workspaceId, result.data);
+          const meta = await persistSyncBase(currentCfg, result.data, result.remoteState.timestamp, result.remoteState.version, 'sync base after quick-sync pull');
+          currentCfg = { ...currentCfg, metadata: meta };
+          setQuickSyncMsg(hasUnpushed ? 'Synced (pushed + pulled)' : 'Synced (pulled)');
+        } else {
+          setQuickSyncMsg(hasUnpushed ? 'Pushed local changes (remote empty)' : 'Remote is empty — nothing to pull');
+        }
+      } catch (err: unknown) {
+        if (err instanceof ConflictError) {
+          const pkg = await pullForMerge(currentCfg, localData);
+          setQuickSyncConflictPackage(pkg);
+          setQuickSyncMsg('Conflict detected — review merge');
+        } else {
+          throw err;
+        }
+      }
+    } catch (err: unknown) {
+      setQuickSyncMsg((err as Error).message);
+    } finally {
+      setSyncBusy(false);
+    }
+  }
+
+  async function handleQuickSyncMergeResolved(mergedData: WorkspaceData) {
+    if (!quickSyncConflictPackage || !quickSyncConfig) return;
+    const currentPackage = quickSyncConflictPackage;
+    let currentCfg = quickSyncConfig;
+    setQuickSyncConflictPackage(null);
+    setSyncBusy(true);
+    setQuickSyncMsg('Applying merge…');
+    try {
+      const preMergeLocal = getCurrentWorkspaceData();
+      await SnapshotEngine.createSnapshot(state.activeWorkspaceId, preMergeLocal, 'pre-quick-sync-merge backup');
+
+      if (currentPackage.remoteVersion) {
+        await syncApplyMerged(currentCfg, mergedData, currentPackage.remoteVersion);
+      } else {
+        await syncPush(currentCfg, mergedData);
+      }
+
+      const remoteState = await getRemoteSyncState(currentCfg);
+      const meta = await persistSyncBase(currentCfg, mergedData, remoteState.timestamp, remoteState.version, 'sync base after quick-sync merge apply');
+      currentCfg = { ...currentCfg, metadata: meta };
+      setQuickSyncConfig(currentCfg);
+
+      dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...mergedData, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
+      await StorageDriver.writeWorkspace(state.activeWorkspaceId, mergedData);
+      setQuickSyncMsg('Sync merge applied successfully');
+    } catch (err: unknown) {
+      if (err instanceof StaleVersionError) {
+        setQuickSyncMsg('Remote changed during apply. Rebuilding merge…');
+        try {
+          const rebased = await rebaseAfterStale(currentCfg, mergedData, currentPackage.remoteData);
+          setQuickSyncConflictPackage(rebased);
+          setQuickSyncMsg('Remote changed during apply. Review updated merge.');
+        } catch (rebaseErr: unknown) {
+          setQuickSyncMsg((rebaseErr as Error).message);
+        }
+      } else {
+        setQuickSyncMsg((err as Error).message);
+      }
+    } finally {
+      setSyncBusy(false);
+    }
+  }
 
   const onHandleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -387,35 +558,61 @@ export default function App() {
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* Top bar */}
-        <div className="flex items-center justify-end gap-2 px-4 py-2 border-b border-slate-700 bg-slate-900 shrink-0">
-          {/* Cookie manager button */}
-          <button
-            onClick={() => setCookieManagerOpen(o => !o)}
-            title="Cookie Manager"
-            className={`px-2 py-1 rounded text-xs transition-colors border ${
-              cookieManagerOpen
-                ? 'bg-orange-600 border-orange-600 text-white'
-                : 'bg-slate-700 border-slate-600 text-slate-400 hover:text-white hover:border-orange-500'
-            }`}
-          >
-            🍪
-          </button>
-          <span className="text-slate-500 text-xs">Environment:</span>
-          <EnvironmentSelector />
-          {state.activeEnvironmentId && (
+        <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-700 bg-slate-900 shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            {syncConfigured && (
+              <button
+                onClick={handleQuickSync}
+                disabled={syncBusy}
+                aria-label="Sync workspace"
+                title="Sync workspace"
+                className={`px-3 py-1 rounded text-xs font-medium border transition-colors focus:outline-none focus:ring-2 focus:ring-orange-500 ${
+                  syncBusy
+                    ? 'bg-slate-700 border-slate-600 text-slate-400 cursor-not-allowed'
+                    : 'bg-orange-600 border-orange-600 text-white hover:bg-orange-500'
+                }`}
+              >
+                {syncBusy ? 'Syncing…' : 'Sync'}
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Cookie manager button */}
             <button
-              onClick={() => setEnvQuickOpen(o => !o)}
-              title="Quick view environment variables"
+              onClick={() => setCookieManagerOpen(o => !o)}
+              title="Cookie Manager"
               className={`px-2 py-1 rounded text-xs transition-colors border ${
-                envQuickOpen
+                cookieManagerOpen
                   ? 'bg-orange-600 border-orange-600 text-white'
                   : 'bg-slate-700 border-slate-600 text-slate-400 hover:text-white hover:border-orange-500'
               }`}
             >
-              👁
+              🍪
             </button>
-          )}
+            <span className="text-slate-500 text-xs">Environment:</span>
+            <EnvironmentSelector />
+            {state.activeEnvironmentId && (
+              <button
+                onClick={() => setEnvQuickOpen(o => !o)}
+                title="Quick view environment variables"
+                className={`px-2 py-1 rounded text-xs transition-colors border ${
+                  envQuickOpen
+                    ? 'bg-orange-600 border-orange-600 text-white'
+                    : 'bg-slate-700 border-slate-600 text-slate-400 hover:text-white hover:border-orange-500'
+                }`}
+              >
+                👁
+              </button>
+            )}
+          </div>
         </div>
+
+        {quickSyncMsg && (
+          <div className="px-4 py-1 text-[11px] border-b border-slate-800 bg-slate-950 text-slate-300 truncate" title={quickSyncMsg}>
+            {quickSyncMsg}
+          </div>
+        )}
 
         {/* Tab bar — shown only in request view */}
         {state.view === 'request' && <TabBar dirtyIds={dirtyIds} />}
@@ -479,6 +676,41 @@ export default function App() {
       {/* Cookie manager modal */}
       {cookieManagerOpen && (
         <CookieManagerModal onClose={() => setCookieManagerOpen(false)} />
+      )}
+
+      {/* Quick Sync conflict merge modal */}
+      {quickSyncConflictPackage && (
+        <ConflictMergeModal
+          conflictPackage={quickSyncConflictPackage}
+          onResolved={(merged) => handleQuickSyncMergeResolved(merged)}
+          onKeepLocal={() => {
+            setQuickSyncConflictPackage(null);
+            setQuickSyncMsg('Kept local changes');
+          }}
+          onKeepRemote={async () => {
+            if (!quickSyncConfig) {
+              setQuickSyncConflictPackage(null);
+              return;
+            }
+            setSyncBusy(true);
+            try {
+              const result = await syncPullWithMeta(quickSyncConfig, 'keep-remote');
+              if (result.data) {
+                dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...result.data, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
+                await StorageDriver.writeWorkspace(state.activeWorkspaceId, result.data);
+                const meta = await persistSyncBase(quickSyncConfig, result.data, result.remoteState.timestamp, result.remoteState.version, 'sync base after keep-remote');
+                setQuickSyncConfig({ ...quickSyncConfig, metadata: meta });
+              }
+              setQuickSyncMsg('Applied remote changes');
+            } catch (err: unknown) {
+              setQuickSyncMsg((err as Error).message);
+            } finally {
+              setSyncBusy(false);
+              setQuickSyncConflictPackage(null);
+            }
+          }}
+          onClose={() => setQuickSyncConflictPackage(null)}
+        />
       )}
     </div>
   );
