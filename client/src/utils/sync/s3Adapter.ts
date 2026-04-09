@@ -17,6 +17,16 @@
 import type { WorkspaceData } from '../../types';
 import type { SyncAdapter } from '../syncEngine';
 
+function readVersionHeader(headers: Headers): string | null {
+  const raw = headers.get('ETag') ?? headers.get('X-Version') ?? headers.get('X-Workspace-Version');
+  if (!raw) return null;
+  return raw.replace(/^W\//, '').replace(/^"|"$/g, '');
+}
+
+function readTimestampHeader(headers: Headers): string | null {
+  return headers.get('Last-Modified') ?? headers.get('X-Last-Modified');
+}
+
 async function getPresignedUrl(
   operation: 'PUT' | 'GET' | 'HEAD',
   config: Record<string, string>,
@@ -39,14 +49,34 @@ async function getPresignedUrl(
 }
 
 export const s3Adapter: SyncAdapter = {
-  async push(workspaceId, data, config) {
+  async push(workspaceId, data, config, options) {
+    const url = await getPresignedUrl('PUT', config, workspaceId);
+    // S3 presigned URLs don't support conditional writes by default. We still
+    // pass expectedVersion in the body so custom backends can consume it.
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        data,
+        lastModified: new Date().toISOString(),
+        expectedVersion: options?.expectedVersion,
+      }),
+    });
+    if (!res.ok) throw new Error(`S3 PUT failed: ${res.status} ${res.statusText}`);
+  },
+
+  async applyMerged(workspaceId, mergedData, config, expectedVersion) {
     const url = await getPresignedUrl('PUT', config, workspaceId);
     const res = await fetch(url, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data, lastModified: new Date().toISOString() }),
+      body: JSON.stringify({
+        data: mergedData,
+        lastModified: new Date().toISOString(),
+        expectedVersion,
+      }),
     });
-    if (!res.ok) throw new Error(`S3 PUT failed: ${res.status} ${res.statusText}`);
+    if (!res.ok) throw new Error(`S3 apply merged failed: ${res.status} ${res.statusText}`);
   },
 
   async pull(workspaceId, config) {
@@ -58,14 +88,45 @@ export const s3Adapter: SyncAdapter = {
     return body.data;
   },
 
+  async pullWithMeta(workspaceId, config) {
+    const url = await getPresignedUrl('GET', config, workspaceId);
+    const res = await fetch(url);
+    if (res.status === 404) {
+      return { data: null, remoteState: { timestamp: null, version: null } };
+    }
+    if (!res.ok) throw new Error(`S3 GET failed: ${res.status} ${res.statusText}`);
+    const body = await res.json() as { data: WorkspaceData };
+    return {
+      data: body.data,
+      remoteState: {
+        timestamp: readTimestampHeader(res.headers),
+        version: readVersionHeader(res.headers),
+      },
+    };
+  },
+
   async getRemoteTimestamp(workspaceId, config) {
     try {
       const url = await getPresignedUrl('HEAD', config, workspaceId);
       const res = await fetch(url, { method: 'HEAD' });
       if (!res.ok) return null;
-      return res.headers.get('Last-Modified');
+      return readTimestampHeader(res.headers);
     } catch {
       return null;
+    }
+  },
+
+  async getRemoteState(workspaceId, config) {
+    try {
+      const url = await getPresignedUrl('HEAD', config, workspaceId);
+      const res = await fetch(url, { method: 'HEAD' });
+      if (!res.ok) return { timestamp: null, version: null };
+      return {
+        timestamp: readTimestampHeader(res.headers),
+        version: readVersionHeader(res.headers),
+      };
+    } catch {
+      return { timestamp: null, version: null };
     }
   },
 };

@@ -1,8 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { Workspace, WorkspaceData, SyncConfig, SyncProvider, HistoryEntry } from '../types';
+import type { Workspace, WorkspaceData, SyncConfig, SyncProvider, HistoryEntry, SyncMetadata } from '../types';
 import { useApp, generateId } from '../store';
 import * as StorageDriver from '../utils/storageDriver';
-import { push as syncPush, pull as syncPull, ConflictError } from '../utils/syncEngine';
+import {
+  push as syncPush,
+  pullWithMeta as syncPullWithMeta,
+  getRemoteSyncState,
+  ConflictError,
+} from '../utils/syncEngine';
 import * as SnapshotEngine from '../utils/snapshotEngine';
 
 type Tab = 'workspaces' | 'sync' | 'team' | 'history';
@@ -252,6 +257,7 @@ function SyncTab() {
 
   const [provider, setProvider] = useState<SyncProvider>('s3');
   const [fields, setFields] = useState<Record<string, string>>({});
+  const [syncMetadata, setSyncMetadata] = useState<SyncMetadata | undefined>(undefined);
   const [loaded, setLoaded] = useState(false);
   const [status, setStatus] = useState<'idle' | 'busy' | 'ok' | 'error'>('idle');
   const [msg, setMsg] = useState('');
@@ -265,8 +271,10 @@ function SyncTab() {
       if (cfg) {
         setProvider(cfg.provider as SyncProvider);
         setFields(cfg.config);
+        setSyncMetadata(cfg.metadata ?? (cfg.lastSynced ? { lastSyncedAt: cfg.lastSynced } : undefined));
       } else {
         setFields({});
+        setSyncMetadata(undefined);
       }
       setLoaded(true);
     });
@@ -274,7 +282,7 @@ function SyncTab() {
   }, [workspaceId]);
 
   async function saveConfig() {
-    await StorageDriver.writeSyncConfig(workspaceId, provider, fields);
+    await StorageDriver.writeSyncConfig(workspaceId, provider, fields, syncMetadata);
   }
 
   function setField(key: string, value: string) {
@@ -287,8 +295,16 @@ function SyncTab() {
       await saveConfig();
       const data = await StorageDriver.readWorkspace(workspaceId);
       if (!data) throw new Error('No workspace data to push');
-      const cfg: SyncConfig = { workspaceId, provider, config: fields };
+      const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
       await syncPush(cfg, data);
+      const remoteState = await getRemoteSyncState(cfg);
+      const nextMetadata: SyncMetadata = {
+        ...(syncMetadata ?? {}),
+        lastSyncedAt: remoteState.timestamp ?? new Date().toISOString(),
+        lastSyncedVersion: remoteState.version ?? syncMetadata?.lastSyncedVersion,
+      };
+      setSyncMetadata(nextMetadata);
+      await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata);
       dispatch({ type: 'SET_SYNC_STATUS', payload: { workspaceId, status: 'idle' } });
       setStatus('ok'); setMsg('Pushed successfully');
     } catch (err: unknown) {
@@ -300,11 +316,19 @@ function SyncTab() {
     setStatus('busy'); setMsg('Pulling…'); setConflict(null);
     try {
       await saveConfig();
-      const cfg: SyncConfig = { workspaceId, provider, config: fields };
-      const data = await syncPull(cfg, resolution);
+      const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
+      const result = await syncPullWithMeta(cfg, resolution);
+      const data = result.data;
       if (data) {
         dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...data, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
         await StorageDriver.writeWorkspace(workspaceId, data);
+        const nextMetadata: SyncMetadata = {
+          ...(syncMetadata ?? {}),
+          lastSyncedAt: result.remoteState.timestamp ?? new Date().toISOString(),
+          lastSyncedVersion: result.remoteState.version ?? syncMetadata?.lastSyncedVersion,
+        };
+        setSyncMetadata(nextMetadata);
+        await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata);
         setStatus('ok'); setMsg('Pulled successfully');
       } else {
         setStatus('ok'); setMsg('Remote is empty — nothing to pull');
@@ -322,8 +346,9 @@ function SyncTab() {
   async function handleCloneOnce() {
     setStatus('busy'); setMsg('Importing…'); setConflict(null);
     try {
-      const cfg: SyncConfig = { workspaceId, provider, config: fields };
-      const data = await syncPull(cfg);
+      const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
+      const result = await syncPullWithMeta(cfg);
+      const data = result.data;
       if (data) {
         dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...data, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
         await StorageDriver.writeWorkspace(workspaceId, data);

@@ -312,11 +312,28 @@ export interface WorkspaceData {
 
 export type SyncProvider = 's3' | 'git' | 'http' | 'team';
 
+export interface SyncMetadata {
+  lastSyncedAt?: string;
+  lastSyncedVersion?: string;
+  lastMergeBaseSnapshotId?: string;
+}
+
+export interface SyncRemoteState {
+  timestamp: string | null;
+  version: string | null;
+}
+
+export interface SyncPullResult {
+  data: WorkspaceData | null;
+  remoteState: SyncRemoteState;
+}
+
 export interface SyncConfig {
   workspaceId: string;
   provider: SyncProvider;
   /** Provider-specific fields (encrypted when stored to disk) */
   config: Record<string, string>;
+  metadata?: SyncMetadata;
   lastSynced?: string;
 }
 

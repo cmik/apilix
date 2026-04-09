@@ -5,7 +5,12 @@
  * The engine negotiates conflict resolution between local and remote state.
  */
 
-import type { WorkspaceData, SyncConfig } from '../types';
+import type {
+  WorkspaceData,
+  SyncConfig,
+  SyncRemoteState,
+  SyncPullResult,
+} from '../types';
 
 export type ConflictResolution = 'keep-local' | 'keep-remote';
 
@@ -16,9 +21,22 @@ export interface SyncConflict {
 }
 
 export interface SyncAdapter {
-  push(workspaceId: string, data: WorkspaceData, config: Record<string, string>): Promise<void>;
+  push(
+    workspaceId: string,
+    data: WorkspaceData,
+    config: Record<string, string>,
+    options?: { expectedVersion?: string },
+  ): Promise<void>;
   pull(workspaceId: string, config: Record<string, string>): Promise<WorkspaceData | null>;
   getRemoteTimestamp(workspaceId: string, config: Record<string, string>): Promise<string | null>;
+  getRemoteState?(workspaceId: string, config: Record<string, string>): Promise<SyncRemoteState>;
+  pullWithMeta?(workspaceId: string, config: Record<string, string>): Promise<SyncPullResult>;
+  applyMerged?(
+    workspaceId: string,
+    mergedData: WorkspaceData,
+    config: Record<string, string>,
+    expectedVersion: string,
+  ): Promise<void>;
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -32,6 +50,20 @@ export async function push(syncConfig: SyncConfig, data: WorkspaceData): Promise
   await adapter.push(syncConfig.workspaceId, data, syncConfig.config);
 }
 
+export async function applyMerged(
+  syncConfig: SyncConfig,
+  mergedData: WorkspaceData,
+  expectedVersion: string,
+): Promise<void> {
+  const adapter = getAdapter(syncConfig.provider as string);
+  if (adapter.applyMerged) {
+    await adapter.applyMerged(syncConfig.workspaceId, mergedData, syncConfig.config, expectedVersion);
+    return;
+  }
+  // Fallback for providers that don't support optimistic conditional writes yet.
+  await adapter.push(syncConfig.workspaceId, mergedData, syncConfig.config, { expectedVersion });
+}
+
 /**
  * Pull workspace data from the configured provider.
  * Returns null if no remote data exists yet.
@@ -41,21 +73,39 @@ export async function pull(
   syncConfig: SyncConfig,
   resolution?: ConflictResolution,
 ): Promise<WorkspaceData | null> {
+  const result = await pullWithMeta(syncConfig, resolution);
+  return result.data;
+}
+
+export async function pullWithMeta(
+  syncConfig: SyncConfig,
+  resolution?: ConflictResolution,
+): Promise<SyncPullResult> {
   const adapter = getAdapter(syncConfig.provider as string);
 
   if (!resolution) {
     // Check for conflict before pulling
-    const remoteTs = await adapter.getRemoteTimestamp(syncConfig.workspaceId, syncConfig.config);
-    const localTs = syncConfig.lastSynced ?? null;
-    if (remoteTs && localTs && remoteTs > localTs) {
-      const err = new ConflictError(syncConfig.workspaceId, localTs, remoteTs);
+    const remoteState = await getAdapterRemoteState(adapter, syncConfig.workspaceId, syncConfig.config);
+    const localTs = syncConfig.metadata?.lastSyncedAt ?? syncConfig.lastSynced ?? null;
+    if (remoteState.timestamp && localTs && remoteState.timestamp > localTs) {
+      const err = new ConflictError(syncConfig.workspaceId, localTs, remoteState.timestamp, remoteState.version);
       throw err;
     }
   }
 
-  if (resolution === 'keep-local') return null; // caller will push instead
+  if (resolution === 'keep-local') {
+    return { data: null, remoteState: await getAdapterRemoteState(adapter, syncConfig.workspaceId, syncConfig.config) };
+  }
 
-  return adapter.pull(syncConfig.workspaceId, syncConfig.config);
+  if (adapter.pullWithMeta) {
+    return adapter.pullWithMeta(syncConfig.workspaceId, syncConfig.config);
+  }
+
+  const [data, remoteState] = await Promise.all([
+    adapter.pull(syncConfig.workspaceId, syncConfig.config),
+    getAdapterRemoteState(adapter, syncConfig.workspaceId, syncConfig.config),
+  ]);
+  return { data, remoteState };
 }
 
 /**
@@ -64,12 +114,31 @@ export async function pull(
  */
 export async function checkConflict(syncConfig: SyncConfig): Promise<SyncConflict | null> {
   const adapter = getAdapter(syncConfig.provider as string);
-  const remoteTs = await adapter.getRemoteTimestamp(syncConfig.workspaceId, syncConfig.config);
-  const localTs = syncConfig.lastSynced ?? null;
-  if (remoteTs && localTs && remoteTs > localTs) {
-    return { workspaceId: syncConfig.workspaceId, localLastSaved: localTs, remoteLastModified: remoteTs };
+  const remoteState = await getAdapterRemoteState(adapter, syncConfig.workspaceId, syncConfig.config);
+  const localTs = syncConfig.metadata?.lastSyncedAt ?? syncConfig.lastSynced ?? null;
+  if (remoteState.timestamp && localTs && remoteState.timestamp > localTs) {
+    return { workspaceId: syncConfig.workspaceId, localLastSaved: localTs, remoteLastModified: remoteState.timestamp };
   }
   return null;
+}
+
+export async function getRemoteSyncState(syncConfig: SyncConfig): Promise<SyncRemoteState> {
+  const adapter = getAdapter(syncConfig.provider as string);
+  return getAdapterRemoteState(adapter, syncConfig.workspaceId, syncConfig.config);
+}
+
+async function getAdapterRemoteState(
+  adapter: SyncAdapter,
+  workspaceId: string,
+  config: Record<string, string>,
+): Promise<SyncRemoteState> {
+  if (adapter.getRemoteState) {
+    return adapter.getRemoteState(workspaceId, config);
+  }
+  return {
+    timestamp: await adapter.getRemoteTimestamp(workspaceId, config),
+    version: null,
+  };
 }
 
 // ─── ConflictError ────────────────────────────────────────────────────────────
@@ -79,6 +148,7 @@ export class ConflictError extends Error {
     public workspaceId: string,
     public localLastSaved: string,
     public remoteLastModified: string,
+    public remoteVersion: string | null = null,
   ) {
     super(`Sync conflict for workspace ${workspaceId}: remote is newer`);
   }

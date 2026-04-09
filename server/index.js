@@ -1033,7 +1033,7 @@ async function ensureRepo(repoDir, config) {
 // POST /api/sync/git/push
 app.post('/api/sync/git/push', async (req, res) => {
   if (!assertGitAvailable(res)) return;
-  const { workspaceId, data, config } = req.body;
+  const { workspaceId, data, config, expectedVersion } = req.body;
   const dataDir = req.body.dataDir || process.env.APILIX_DATA_DIR;
   if (!workspaceId || !data || !config?.remote || !dataDir) {
     return res.status(400).json({ error: 'workspaceId, data, config.remote, and dataDir are required' });
@@ -1046,6 +1046,25 @@ app.post('/api/sync/git/push', async (req, res) => {
   }
   try {
     const git = await ensureRepo(repoDir, config);
+    if (expectedVersion) {
+      let remote = config.remote;
+      if (config.token && config.username) {
+        const remoteUrl = new URL(remote);
+        remoteUrl.username = encodeURIComponent(config.username);
+        remoteUrl.password = encodeURIComponent(config.token);
+        remote = remoteUrl.toString();
+      }
+      await git.fetch(remote, config.branch || 'main');
+      const fetchedVersion = await git.revparse(['FETCH_HEAD']).catch(() => null);
+      if (!fetchedVersion || fetchedVersion !== expectedVersion) {
+        return res.status(409).json({
+          error: 'Remote changed since merge started',
+          code: 'STALE_VERSION',
+          expectedVersion,
+          currentVersion: fetchedVersion,
+        });
+      }
+    }
     const filePath = path.join(repoDir, 'workspace.json');
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
     const branch = config.branch || 'main';
@@ -1099,7 +1118,13 @@ app.post('/api/sync/git/pull', async (req, res) => {
       return res.status(404).json({ error: 'No workspace.json in remote' });
     }
     const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    res.json({ data });
+    const log = await git.log(['HEAD', '-1']).catch(() => null);
+    const version = await git.revparse(['HEAD']).catch(() => null);
+    res.json({
+      data,
+      timestamp: log?.latest?.date ?? null,
+      version,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1129,13 +1154,14 @@ app.post('/api/sync/git/timestamp', async (req, res) => {
     }
     // Fetch only — don't merge
     await git.fetch(remote, config.branch || 'main');
+    const version = await git.revparse(['FETCH_HEAD']).catch(() => null);
     const log = await git.log(['FETCH_HEAD', '-1']).catch(() => null);
     if (!log || !log.latest) {
-      return res.json({ timestamp: null });
+      return res.json({ timestamp: null, version });
     }
-    res.json({ timestamp: log.latest.date });
+    res.json({ timestamp: log.latest.date, version });
   } catch (err) {
-    res.json({ timestamp: null });
+    res.json({ timestamp: null, version: null });
   }
 });
 
