@@ -24,6 +24,7 @@ import {
   applyMerged as syncApplyMerged,
   rebaseAfterStale,
   getRemoteSyncState,
+  checkConflict,
   hasLocalUnpushedChanges,
   ConflictError,
   StaleVersionError,
@@ -238,6 +239,7 @@ type ServerStatus = 'checking' | 'online' | 'offline';
 
 export default function App() {
   const { state, dispatch } = useApp();
+  const isBrowserMode = !(window as { electronAPI?: unknown }).electronAPI;
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     const saved = localStorage.getItem('apilix_theme');
     if (saved === 'light' || saved === 'dark') return saved;
@@ -256,6 +258,7 @@ export default function App() {
   const [quickSyncConfig, setQuickSyncConfig] = useState<SyncConfig | null>(null);
   const [quickSyncMsg, setQuickSyncMsg] = useState<string>('');
   const [quickSyncStatus, setQuickSyncStatus] = useState<'ok' | 'warning' | 'error' | 'info'>('info');
+  const [lastSuccessfulSyncAt, setLastSuccessfulSyncAt] = useState<string | null>(null);
   const dragging = useRef(false);
   const startX = useRef(0);
   const startWidth = useRef(0);
@@ -365,19 +368,25 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (isBrowserMode) {
+      setSyncConfigured(false);
+      return;
+    }
     let active = true;
     StorageDriver.readSyncConfig(state.activeWorkspaceId)
       .then(cfg => {
         if (!active) return;
         const configured = Boolean(cfg?.provider && cfg?.config && Object.keys(cfg.config).length > 0);
         setSyncConfigured(configured);
+        setLastSuccessfulSyncAt(cfg?.metadata?.lastSyncedAt ?? cfg?.lastSynced ?? null);
       })
       .catch(() => {
         if (!active) return;
         setSyncConfigured(false);
+        setLastSuccessfulSyncAt(null);
       });
     return () => { active = false; };
-  }, [state.activeWorkspaceId]);
+  }, [isBrowserMode, state.activeWorkspaceId]);
 
   function getCurrentWorkspaceData(): WorkspaceData {
     return {
@@ -421,6 +430,13 @@ export default function App() {
     setQuickSyncStatus(status);
   }
 
+  function getQuickSyncTooltip(): string {
+    if (quickSyncStatus === 'ok' && lastSuccessfulSyncAt) {
+      return `${quickSyncMsg || 'Synced successfully'}\nLast successful sync: ${new Date(lastSuccessfulSyncAt).toLocaleString()}`;
+    }
+    return quickSyncMsg || 'Ready to sync';
+  }
+
   async function handleQuickSync() {
     if (syncBusy) return;
     setQuickSyncFeedback('', 'info');
@@ -437,6 +453,13 @@ export default function App() {
 
       const hasUnpushed = await hasLocalUnpushedChanges(currentCfg, localData);
       if (hasUnpushed) {
+        const remoteAhead = await checkConflict(currentCfg);
+        if (remoteAhead) {
+          const pkg = await pullForMerge(currentCfg, localData);
+          setQuickSyncConflictPackage(pkg);
+          setQuickSyncFeedback('Remote has newer changes — review merge before pushing', 'warning');
+          return;
+        }
         await syncPush(currentCfg, localData);
         const pushedState = await getRemoteSyncState(currentCfg);
         const meta = await persistSyncBase(currentCfg, localData, pushedState.timestamp, pushedState.version, 'sync base after quick-sync push');
@@ -450,6 +473,7 @@ export default function App() {
           await StorageDriver.writeWorkspace(currentCfg.workspaceId, result.data);
           const meta = await persistSyncBase(currentCfg, result.data, result.remoteState.timestamp, result.remoteState.version, 'sync base after quick-sync pull');
           currentCfg = { ...currentCfg, metadata: meta };
+          setLastSuccessfulSyncAt(meta.lastSyncedAt ?? null);
           setQuickSyncFeedback(hasUnpushed ? 'Synced (pushed + pulled)' : 'Synced (pulled)', 'ok');
         } else {
           setQuickSyncFeedback(hasUnpushed ? 'Pushed local changes (remote empty)' : 'Remote is empty — nothing to pull', 'info');
@@ -491,6 +515,7 @@ export default function App() {
       const meta = await persistSyncBase(currentCfg, mergedData, remoteState.timestamp, remoteState.version, 'sync base after quick-sync merge apply');
       currentCfg = { ...currentCfg, metadata: meta };
       setQuickSyncConfig(currentCfg);
+      setLastSuccessfulSyncAt(meta.lastSyncedAt ?? null);
 
       dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...mergedData, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
       await StorageDriver.writeWorkspace(state.activeWorkspaceId, mergedData);
@@ -543,6 +568,8 @@ export default function App() {
     };
   }, []);
 
+  const quickSyncTooltip = getQuickSyncTooltip();
+
   return (
     <div className="flex flex-col h-screen bg-slate-950 text-slate-100 overflow-hidden">
       <div className="flex flex-1 min-h-0 overflow-hidden">
@@ -566,13 +593,13 @@ export default function App() {
         {/* Top bar */}
         <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-700 bg-slate-900 shrink-0">
           <div className="flex items-center gap-2 min-w-0">
-            {syncConfigured && (
-              <div className="flex items-center gap-1.5" title={quickSyncMsg || 'Ready to sync'}>
+            {!isBrowserMode && syncConfigured && (
+              <div className="flex items-center gap-1.5" title={quickSyncTooltip}>
                 <button
                   onClick={handleQuickSync}
                   disabled={syncBusy}
-                  aria-label={`Sync workspace. Status: ${quickSyncMsg || 'Ready to sync'}`}
-                  title={quickSyncMsg || 'Ready to sync'}
+                  aria-label={`Sync workspace. Status: ${quickSyncTooltip}`}
+                  title={quickSyncTooltip}
                   className={`px-3 py-1 rounded text-xs font-medium border transition-colors focus:outline-none focus:ring-2 focus:ring-orange-500 ${
                     syncBusy
                       ? 'bg-slate-700 border-slate-600 text-slate-400 cursor-not-allowed'
@@ -583,8 +610,8 @@ export default function App() {
                 </button>
                 <span
                   role="status"
-                  aria-label={`Sync status: ${quickSyncMsg || 'Ready to sync'}`}
-                  title={quickSyncMsg || 'Ready to sync'}
+                  aria-label={`Sync status: ${quickSyncTooltip}`}
+                  title={quickSyncTooltip}
                   className={`inline-flex w-2.5 h-2.5 rounded-full ${
                     syncBusy ? 'bg-sky-400 animate-pulse' :
                     quickSyncStatus === 'ok' ? 'bg-green-500' :

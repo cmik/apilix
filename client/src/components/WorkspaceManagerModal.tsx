@@ -48,6 +48,16 @@ interface Props {
 
 export default function WorkspaceManagerModal({ onClose }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>('workspaces');
+  const isBrowserMode = !(window as { electronAPI?: unknown }).electronAPI;
+  const visibleTabs: Tab[] = isBrowserMode
+    ? ['workspaces', 'history']
+    : ['workspaces', 'sync', 'team', 'history'];
+
+  useEffect(() => {
+    if (!visibleTabs.includes(activeTab)) {
+      setActiveTab('workspaces');
+    }
+  }, [activeTab, visibleTabs]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
@@ -60,7 +70,7 @@ export default function WorkspaceManagerModal({ onClose }: Props) {
 
         {/* Tabs */}
         <div className="flex border-b border-slate-800 px-4">
-          {(['workspaces', 'sync', 'team', 'history'] as Tab[]).map(tab => (
+          {visibleTabs.map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -78,8 +88,8 @@ export default function WorkspaceManagerModal({ onClose }: Props) {
         {/* Tab content */}
         <div className="flex-1 overflow-y-auto p-4">
           {activeTab === 'workspaces' && <WorkspacesTab onClose={onClose} />}
-          {activeTab === 'sync' && <SyncTab />}
-          {activeTab === 'team' && <TeamTab />}
+          {!isBrowserMode && activeTab === 'sync' && <SyncTab />}
+          {!isBrowserMode && activeTab === 'team' && <TeamTab />}
           {activeTab === 'history' && <HistoryTab />}
         </div>
       </div>
