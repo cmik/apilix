@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, shell, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, dialog, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
@@ -32,12 +32,13 @@ function findFreePort() {
 function startServer(port) {
   process.env.PORT = String(port);
   process.env.API_PORT = String(port);
+  process.env.APILIX_DATA_DIR = app.getPath('userData');
 
   if (isDev) {
     const { fork } = require('child_process');
     const serverPath = path.join(__dirname, '..', 'server', 'index.js');
     serverProcess = fork(serverPath, [], {
-      env: { ...process.env, PORT: String(port) },
+      env: { ...process.env, PORT: String(port), APILIX_DATA_DIR: app.getPath('userData') },
       stdio: 'pipe',
     });
     serverProcess.stdout.on('data', (d) => writeLog('[server] ' + d.toString().trim()));
@@ -117,6 +118,95 @@ ipcMain.handle('choose-export-folder', async () => {
 // IPC: write a file straight to disk (used after folder is chosen)
 ipcMain.handle('save-file-to-disk', async (_event, { filePath, content }) => {
   fs.writeFileSync(filePath, content, 'utf8');
+});
+
+// ─── Workspace / Persistence IPC ─────────────────────────────────────────────
+
+function getUserDataDir() {
+  return app.getPath('userData');
+}
+
+function assertInsideUserData(filePath) {
+  const base = path.resolve(getUserDataDir());
+  const resolved = path.resolve(filePath);
+  if (!resolved.startsWith(base + path.sep) && resolved !== base) {
+    throw new Error('Path traversal detected: path must be inside userData');
+  }
+}
+
+// Returns the userData directory path
+ipcMain.handle('get-data-dir', () => getUserDataDir());
+
+// Read and parse a JSON file from disk (must be inside userData)
+ipcMain.handle('read-json-file', async (_event, { filePath }) => {
+  assertInsideUserData(filePath);
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    return JSON.parse(content);
+  } catch (err) {
+    if (err.code === 'ENOENT') return null;
+    throw err;
+  }
+});
+
+// Write JSON data to a file (must be inside userData); creates parent directories
+ipcMain.handle('write-json-file', async (_event, { filePath, data }) => {
+  assertInsideUserData(filePath);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+});
+
+// Delete a file (must be inside userData); no-ops if not found
+ipcMain.handle('delete-file', async (_event, { filePath }) => {
+  assertInsideUserData(filePath);
+  try {
+    fs.unlinkSync(filePath);
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+});
+
+// List files in a directory (must be inside userData)
+ipcMain.handle('list-dir', async (_event, { dirPath }) => {
+  assertInsideUserData(dirPath);
+  try {
+    return fs.readdirSync(dirPath);
+  } catch (err) {
+    if (err.code === 'ENOENT') return [];
+    throw err;
+  }
+});
+
+// Open a file picker dialog for import
+ipcMain.handle('open-file-dialog', async (_event, { filters } = {}) => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Open file',
+    properties: ['openFile'],
+    filters: filters ?? [{ name: 'All Files', extensions: ['*'] }],
+  });
+  return result.canceled ? null : result.filePaths[0];
+});
+
+// Reveal a path in Finder / Explorer
+ipcMain.handle('shell-open-path', async (_event, { dirPath }) => {
+  assertInsideUserData(dirPath);
+  shell.showItemInFolder(dirPath);
+});
+
+// Encrypt a string using OS keychain (safeStorage)
+ipcMain.handle('encrypt-string', (_event, { value }) => {
+  if (!safeStorage.isEncryptionAvailable()) return null;
+  return safeStorage.encryptString(value).toString('base64');
+});
+
+// Decrypt a base64-encoded string previously encrypted with encrypt-string
+ipcMain.handle('decrypt-string', (_event, { encrypted }) => {
+  if (!safeStorage.isEncryptionAvailable()) return null;
+  try {
+    return safeStorage.decryptString(Buffer.from(encrypted, 'base64'));
+  } catch {
+    return null;
+  }
 });
 
 app.whenReady().then(async () => {

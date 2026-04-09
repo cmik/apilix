@@ -297,3 +297,244 @@ pm.sendRequest({
 
 `pm.sendRequest` accepts a URL string or a Postman-format options object and provides the callback response with `.code`, `.status`, `.headers.get(name)`, `.json()`, and `.text()`.
 Works in both **pre-request** and **test** scripts. All chained requests complete before the next request in the collection starts.
+
+---
+
+## Workspaces
+
+Workspaces let you keep separate sets of collections, environments, and variables. Switch between them from the sidebar — each workspace is stored independently on disk.
+
+Open **Manage Workspaces** (gear icon next to the workspace name) to:
+
+- Create, rename, duplicate, or delete workspaces
+- Assign a colour to each workspace for quick identification
+- Sync a workspace to a remote provider (Git, S3, HTTP, or a Team server)
+- Browse and restore automatic snapshots (History tab)
+
+### Git Sync
+
+The **Sync** tab lets you back up and share a workspace via a Git repository.
+
+#### Prerequisites
+
+- Git must be installed on the machine running the Apilix server (`git --version` to verify)
+- A remote repository (GitHub, GitLab, Gitea, etc.) — **create it empty** (no initial README) for a clean first push
+
+#### Setting up
+
+1. Create an **empty** repository on your Git host.
+2. Generate a **Personal Access Token** with repo write access:
+   - GitHub: Settings → Developer settings → Personal access tokens → `repo` scope
+   - GitLab: Settings → Access Tokens → `read_repository` + `write_repository`
+3. Open **Manage Workspaces → Sync**, select **Git Repository**, and fill in the fields:
+
+| Field | Required | Notes |
+|---|:---:|---|
+| Remote URL | ✅ | `https://github.com/user/repo.git` |
+| Branch | — | Defaults to `main` if left blank |
+| Username | — | Required only for HTTPS auth (not SSH) |
+| Token / Password | — | Required together with Username for private repos |
+| Author Name | ⚠ | Used for git commits — needed if no global `git config user.name` |
+| Author Email | ⚠ | Used for git commits — needed if no global `git config user.email` |
+
+4. Click **Push ↑** — Apilix initialises a local git repo and pushes `workspace.json` to the remote.
+5. On any other machine, fill in the same config and click **Pull ↓** (or **Import once ↓** if you don't want to save the config).
+
+#### Buttons
+
+| Button | Behaviour |
+|---|---|
+| **Push ↑** | Saves config, commits the current workspace, and pushes to the remote |
+| **Pull ↓** | Saves config, fetches the remote, and replaces the local workspace |
+| **Save config** | Persists the connection details without pushing or pulling |
+| **Import once ↓** | Pulls once without saving the config — useful for a one-time clone |
+
+> **Tip:** If the remote already has commits (not empty), click **Import once ↓** before pushing to avoid a divergent-branches error.
+
+### Amazon S3 Sync
+
+Stores the workspace as a JSON object in an S3 bucket using presigned URLs generated inside the Electron main process — AWS credentials never reach the renderer.
+
+> **Electron only** — S3 sync is not available in browser/web mode.
+
+#### Setting up
+
+1. Create an S3 bucket (or reuse an existing one).
+2. Create an IAM user or role with the following permissions on the bucket:
+   ```
+   s3:GetObject
+   s3:PutObject
+   s3:HeadObject
+   ```
+3. Generate an **Access Key ID** and **Secret Access Key** for that user.
+4. Open **Manage Workspaces → Sync**, select **Amazon S3**, and fill in the fields:
+
+| Field | Required | Notes |
+|---|:---:|---|
+| Bucket | ✅ | S3 bucket name (e.g. `my-apilix-bucket`) |
+| Region | ✅ | AWS region (e.g. `us-east-1`) |
+| Prefix | — | Key prefix for the object, defaults to `apilix/` |
+| Access Key ID | ✅ | AWS credential — stored encrypted on disk |
+| Secret Access Key | ✅ | AWS credential — stored encrypted on disk |
+
+5. Click **Push ↑** to upload. The workspace is stored at `{prefix}{workspaceId}.json` in the bucket.
+
+---
+
+### HTTP Endpoint Sync
+
+Pushes and pulls workspace JSON to/from any HTTP endpoint that accepts a JSON body — useful for a self-hosted sync service or a serverless function.
+
+#### Expected API contract
+
+| Operation | Method | Body / Response |
+|---|---|---|
+| Push | `PUT {endpoint}` | Body: `{ data, lastModified }` → any 2xx |
+| Pull | `GET {endpoint}` | Response: `{ data: WorkspaceData }` or 404 |
+| Timestamp | `HEAD {endpoint}` | `Last-Modified` or `X-Last-Modified` header |
+
+#### Setting up
+
+1. Deploy (or identify) an HTTP endpoint that implements the contract above.
+2. Open **Manage Workspaces → Sync**, select **HTTP Endpoint**, and fill in the fields:
+
+| Field | Required | Notes |
+|---|:---:|---|
+| Endpoint URL | ✅ | Full URL, e.g. `https://api.example.com/workspaces/prod` |
+| Bearer Token | — | Sent as `Authorization: Bearer <token>` if provided |
+
+3. Click **Push ↑** to upload or **Pull ↓** to download.
+
+---
+
+### Team Server Sync
+
+Syncs with a self-hosted **Apilix team server** that provides role-based access control (RBAC) for shared workspaces. Deploy the standalone `apilix-team-server` project and follow its README for setup instructions.
+
+#### Connecting a workspace
+
+1. Obtain a JWT token from the team server (login endpoint or admin console).
+2. Note the **Server Workspace ID** assigned to your workspace on the server.
+3. Open **Manage Workspaces → Sync**, select **Team Server**, and fill in the fields:
+
+| Field | Required | Notes |
+|---|:---:|---|
+| Server URL | ✅ | Base URL of the team server, e.g. `https://apilix.yourcompany.com` |
+| Server Workspace ID | ✅ | The workspace ID as registered on the server (for example, a server-generated hex ID) |
+| JWT Token | ✅ | Session token — RBAC is enforced server-side |
+
+4. Use the **Team** tab to test the connection before pushing.
+5. Click **Push ↑** to upload or **Pull ↓** to sync the latest version from the server.
+
+---
+
+## Team Management
+
+The Apilix team server is a self-hosted Express service available as the standalone `apilix-team-server` project. It lets multiple users share workspaces with role-based access control and runs as a separate process from the main API server.
+
+### Roles
+
+| Role | Pull data | Push data | Manage members | Delete workspace |
+|---|:---:|:---:|:---:|:---:|
+| **viewer** | ✅ | ✗ | ✗ | ✗ |
+| **editor** | ✅ | ✅ | ✗ | ✗ |
+| **owner** | ✅ | ✅ | ✅ | ✅ |
+
+The workspace creator is automatically the **owner**. The bootstrap admin (see below) is also an owner globally.
+
+### Starting the server
+
+See the `apilix-team-server` project for full setup instructions.
+
+Environment variables:
+
+| Variable | Default | Description |
+|---|---|---|
+| `TEAM_PORT` | `3003` | Port the team server listens on |
+| `TEAM_DATA_DIR` | `~/.apilix-team` | Directory where user and workspace data is stored |
+| `ADMIN_EMAIL` | — | Email for the bootstrap admin user (created on first run) |
+| `ADMIN_PASSWORD` | — | Password for the bootstrap admin user |
+
+Example:
+
+```bash
+TEAM_PORT=3003 \
+ADMIN_EMAIL=admin@yourcompany.com \
+ADMIN_PASSWORD=changeme \
+node index.js
+```
+
+The admin credentials are only used on **first run** to create the admin user. The password is hashed (bcrypt when available, SHA-512 otherwise) and the plaintext is never stored.
+
+Data is stored as JSON files under `TEAM_DATA_DIR/team/`:
+
+```
+~/.apilix-team/team/
+  users.json          ← user accounts
+  workspaces.json     ← workspace metadata and member lists
+  .secret             ← JWT signing secret (auto-generated, mode 600)
+  data/
+    {workspaceId}.json  ← workspace data blobs
+```
+
+### API reference
+
+All routes except `/auth/login` and `/health` require a `Authorization: Bearer <token>` header.
+
+#### Authentication
+
+```
+POST /auth/login
+Body: { "email": "...", "password": "..." }
+Response: { "token": "eyJ...", "user": { "id", "name", "email", "role" } }
+```
+
+Tokens are valid for **30 days**.
+
+#### Workspaces
+
+| Method | Path | Min role | Description |
+|---|---|---|---|
+| `GET` | `/workspaces` | any member | List workspaces the caller belongs to |
+| `POST` | `/workspaces` | authenticated | Create a new workspace |
+| `GET` | `/workspaces/:id` | viewer | Get workspace metadata |
+| `DELETE` | `/workspaces/:id` | owner | Delete a workspace and its data |
+| `PUT` | `/workspaces/:id/members` | owner | Add or update a member |
+| `DELETE` | `/workspaces/:id/members/:uid` | owner | Remove a member |
+| `GET` | `/workspaces/:id/data` | viewer | Pull workspace data |
+| `PUT` | `/workspaces/:id/data` | editor | Push workspace data |
+| `HEAD` | `/workspaces/:id/data` | viewer | Get `X-Last-Modified` timestamp |
+| `GET` | `/health` | — | Health check |
+
+#### Creating a workspace (curl example)
+
+```bash
+# 1. Log in and capture the token
+TOKEN=$(curl -s -X POST http://localhost:3003/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@yourcompany.com","password":"changeme"}' \
+  | jq -r .token)
+
+# 2. Create a workspace
+curl -X POST http://localhost:3003/workspaces \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"My Team Workspace"}'
+# → { "workspace": { "id": "a1b2c3d4", "name": "My Team Workspace", ... } }
+
+# 3. Add a member (replace USER_ID and role as needed)
+curl -X PUT http://localhost:3003/workspaces/a1b2c3d4/members \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"userId":"<USER_ID>","role":"editor"}'
+```
+
+#### Connecting Apilix to the team server
+
+1. Start the team server and note its URL (e.g. `http://localhost:3003` or your public hostname).
+2. Each team member logs in to get their JWT token (via the `/auth/login` endpoint above or a future login UI).
+3. In **Manage Workspaces → Sync**, select **Team Server** and enter:
+   - **Server URL** — base URL of the team server
+   - **Server Workspace ID** — the `id` returned when the workspace was created (`a1b2c3d4` in the example above)
+   - **JWT Token** — the member's personal token
+4. Click **Test connection** in the **Team** tab to verify, then **Push ↑** / **Pull ↓** to sync.

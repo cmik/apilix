@@ -966,6 +966,179 @@ app.delete('/api/mock-log', (_req, res) => {
   res.json({ ok: true });
 });
 
+// ─── Git Sync Routes ───────────────────────────────────────────────────────────
+//
+// These routes use `simple-git` to maintain a local git repository per
+// workspace inside {userData}/git-sync/workspaces/{workspaceId}/.
+// The userData path is supplied by the renderer via the request body
+// because the server process may not have direct access to Electron's
+// app.getPath('userData') — it receives it once per call.
+//
+// All three routes share the same validation and git-repo bootstrap logic.
+
+let simpleGit;
+try {
+  simpleGit = require('simple-git');
+} catch {
+  // simple-git is optional — git sync routes will return 501 if missing
+}
+
+const path = require('path');
+const fs = require('fs');
+
+function assertGitAvailable(res) {
+  if (!simpleGit) {
+    res.status(501).json({ error: 'simple-git package not installed. Run: npm install simple-git in the server directory.' });
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Bootstrap a local git repo for the given workspace.
+ * Returns a simple-git instance pointing at `repoDir`.
+ */
+async function ensureRepo(repoDir, config) {
+  if (!fs.existsSync(repoDir)) {
+    fs.mkdirSync(repoDir, { recursive: true });
+  }
+  const git = simpleGit(repoDir);
+  const isRepo = await git.checkIsRepo().catch(() => false);
+  if (!isRepo) {
+    await git.init();
+  }
+  // Set remote
+  const remotes = await git.getRemotes();
+  if (!remotes.find(r => r.name === 'origin')) {
+    await git.addRemote('origin', config.remote);
+  } else {
+    await git.remote(['set-url', 'origin', config.remote]);
+  }
+  // Configure author
+  if (config.authorName) await git.addConfig('user.name', config.authorName);
+  if (config.authorEmail) await git.addConfig('user.email', config.authorEmail);
+  // Always use merge strategy on pull (avoids "divergent branches" error)
+  await git.addConfig('pull.rebase', 'false');
+  // Ensure the target branch exists locally and is checked out before commit/push.
+  const branch = config.branch || 'main';
+  const localBranches = await git.branchLocal();
+  if (localBranches.all.includes(branch)) {
+    await git.checkout(branch);
+  } else {
+    await git.checkoutLocalBranch(branch);
+  }
+  return git;
+}
+
+// POST /api/sync/git/push
+app.post('/api/sync/git/push', async (req, res) => {
+  if (!assertGitAvailable(res)) return;
+  const { workspaceId, data, config } = req.body;
+  const dataDir = req.body.dataDir || process.env.APILIX_DATA_DIR;
+  if (!workspaceId || !data || !config?.remote || !dataDir) {
+    return res.status(400).json({ error: 'workspaceId, data, config.remote, and dataDir are required' });
+  }
+  // Guard path traversal
+  const repoBase = path.join(dataDir, 'git-sync', 'workspaces');
+  const repoDir = path.resolve(repoBase, workspaceId);
+  if (!repoDir.startsWith(path.resolve(repoBase))) {
+    return res.status(400).json({ error: 'Invalid workspaceId' });
+  }
+  try {
+    const git = await ensureRepo(repoDir, config);
+    const filePath = path.join(repoDir, 'workspace.json');
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+    const branch = config.branch || 'main';
+    await git.add('.');
+    const status = await git.status();
+    if (status.files.length === 0) {
+      return res.json({ ok: true, message: 'Nothing to commit' });
+    }
+    await git.commit(`chore: sync workspace ${workspaceId} at ${new Date().toISOString()}`);
+    // Build authenticated remote URL if token provided
+    let remote = config.remote;
+    if (config.token && config.username) {
+      const url = new URL(remote);
+      url.username = encodeURIComponent(config.username);
+      url.password = encodeURIComponent(config.token);
+      remote = url.toString();
+    }
+    await git.push(remote, branch, ['--set-upstream']);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/sync/git/pull
+app.post('/api/sync/git/pull', async (req, res) => {
+  if (!assertGitAvailable(res)) return;
+  const { workspaceId, config } = req.body;
+  const dataDir = req.body.dataDir || process.env.APILIX_DATA_DIR;
+  if (!workspaceId || !config?.remote || !dataDir) {
+    return res.status(400).json({ error: 'workspaceId, config.remote, and dataDir are required' });
+  }
+  const repoBase = path.join(dataDir, 'git-sync', 'workspaces');
+  const repoDir = path.resolve(repoBase, workspaceId);
+  if (!repoDir.startsWith(path.resolve(repoBase))) {
+    return res.status(400).json({ error: 'Invalid workspaceId' });
+  }
+  try {
+    const git = await ensureRepo(repoDir, config);
+    const branch = config.branch || 'main';
+    let remote = config.remote;
+    if (config.token && config.username) {
+      const url = new URL(remote);
+      url.username = encodeURIComponent(config.username);
+      url.password = encodeURIComponent(config.token);
+      remote = url.toString();
+    }
+    await git.pull(remote, branch, ['--no-rebase']);
+    const filePath = path.join(repoDir, 'workspace.json');
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'No workspace.json in remote' });
+    }
+    const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    res.json({ data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/sync/git/timestamp
+app.post('/api/sync/git/timestamp', async (req, res) => {
+  if (!assertGitAvailable(res)) return;
+  const { workspaceId, config } = req.body;
+  const dataDir = req.body.dataDir || process.env.APILIX_DATA_DIR;
+  if (!workspaceId || !config?.remote || !dataDir) {
+    return res.status(400).json({ error: 'workspaceId, config.remote, and dataDir are required' });
+  }
+  const repoBase = path.join(dataDir, 'git-sync', 'workspaces');
+  const repoDir = path.resolve(repoBase, workspaceId);
+  if (!repoDir.startsWith(path.resolve(repoBase))) {
+    return res.status(400).json({ error: 'Invalid workspaceId' });
+  }
+  try {
+    const git = await ensureRepo(repoDir, config);
+    let remote = config.remote;
+    if (config.token && config.username) {
+      const url = new URL(remote);
+      url.username = encodeURIComponent(config.username);
+      url.password = encodeURIComponent(config.token);
+      remote = url.toString();
+    }
+    // Fetch only — don't merge
+    await git.fetch(remote, config.branch || 'main');
+    const log = await git.log(['FETCH_HEAD', '-1']).catch(() => null);
+    if (!log || !log.latest) {
+      return res.json({ timestamp: null });
+    }
+    res.json({ timestamp: log.latest.date });
+  } catch (err) {
+    res.json({ timestamp: null });
+  }
+});
+
 // ─── Start ─────────────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {

@@ -1,7 +1,9 @@
-import React, { createContext, useContext, useEffect, useReducer, type ReactNode } from 'react';
-import type { AppState, AppAction, AppCollection, AppEnvironment, CollectionItem, RequestTab, CookieJar, Cookie, MockRoute, MockCollection } from './types';
+import React, { createContext, useContext, useEffect, useReducer, useState, type ReactNode } from 'react';
+import type { AppState, AppAction, AppCollection, AppEnvironment, CollectionItem, RequestTab, CookieJar, Cookie, MockRoute, MockCollection, Workspace, WorkspaceData } from './types';
+import * as StorageDriver from './utils/storageDriver';
+import * as SnapshotEngine from './utils/snapshotEngine';
 
-const STORAGE_KEY = 'apilix_persist';
+const STORAGE_KEY = 'apilix_persist'; // legacy key — kept for migration only
 
 function ensureIds(items: CollectionItem[]): CollectionItem[] {
   return items.map(item => ({
@@ -41,6 +43,12 @@ function loadPersisted(): PersistedState | null {
 }
 
 const initialState: AppState = {
+  // ── Workspace ────────────────────────────────────────────────────────────
+  workspaces: [],
+  activeWorkspaceId: '',
+  storageReady: false,
+  syncStatus: {},
+  // ── Data ─────────────────────────────────────────────────────────────────
   collections: [],
   environments: [],
   activeEnvironmentId: null,
@@ -380,6 +388,168 @@ function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, environments: updatedEnvs };
     }
 
+    // ── Workspace actions ────────────────────────────────────────────────────
+
+    case 'SET_STORAGE_READY':
+      return { ...state, storageReady: action.payload };
+
+    case 'HYDRATE_WORKSPACE': {
+      const { workspaces, activeWorkspaceId, ...data } = action.payload;
+      const restoredCollections = (data.collections ?? []).map(col => ({
+        ...col,
+        item: ensureIds(col.item),
+      }));
+      return {
+        ...state,
+        workspaces,
+        activeWorkspaceId,
+        storageReady: true,
+        collections: restoredCollections,
+        environments: data.environments ?? [],
+        activeEnvironmentId: data.activeEnvironmentId ?? null,
+        collectionVariables: data.collectionVariables ?? {},
+        globalVariables: data.globalVariables ?? {},
+        cookieJar: data.cookieJar ?? {},
+        mockCollections: data.mockCollections ?? [],
+        mockRoutes: data.mockRoutes ?? [],
+        mockPort: data.mockPort ?? 3002,
+      };
+    }
+
+    case 'CREATE_WORKSPACE':
+      return {
+        ...state,
+        workspaces: [...state.workspaces, action.payload],
+        activeWorkspaceId: action.payload.id,
+        collections: [],
+        environments: [],
+        activeEnvironmentId: null,
+        collectionVariables: {},
+        globalVariables: {},
+        cookieJar: {},
+        mockCollections: [],
+        mockRoutes: [],
+        mockPort: 3002,
+        tabs: [],
+        activeTabId: null,
+        activeRequest: null,
+        response: null,
+        consoleLogs: [],
+        runnerResults: null,
+        isRunning: false,
+        view: 'request',
+        mockServerRunning: false,
+      };
+
+    case 'SWITCH_WORKSPACE': {
+      const { workspace, data } = action.payload;
+      const restoredCollections = (data.collections ?? []).map(col => ({
+        ...col,
+        item: ensureIds(col.item),
+      }));
+      return {
+        ...state,
+        activeWorkspaceId: workspace.id,
+        collections: restoredCollections,
+        environments: data.environments ?? [],
+        activeEnvironmentId: data.activeEnvironmentId ?? null,
+        collectionVariables: data.collectionVariables ?? {},
+        globalVariables: data.globalVariables ?? {},
+        cookieJar: data.cookieJar ?? {},
+        mockCollections: data.mockCollections ?? [],
+        mockRoutes: data.mockRoutes ?? [],
+        mockPort: data.mockPort ?? 3002,
+        tabs: [],
+        activeTabId: null,
+        activeRequest: null,
+        response: null,
+        consoleLogs: [],
+        runnerResults: null,
+        isRunning: false,
+        view: 'request',
+        mockServerRunning: false,
+      };
+    }
+
+    case 'RENAME_WORKSPACE':
+      return {
+        ...state,
+        workspaces: state.workspaces.map(w =>
+          w.id === action.payload.id ? { ...w, name: action.payload.name } : w
+        ),
+      };
+
+    case 'SET_WORKSPACE_COLOR':
+      return {
+        ...state,
+        workspaces: state.workspaces.map(w =>
+          w.id === action.payload.id ? { ...w, color: action.payload.color } : w
+        ),
+      };
+
+    case 'DELETE_WORKSPACE': {
+      const { id, fallbackId } = action.payload;
+      const remaining = state.workspaces.filter(w => w.id !== id);
+      return { ...state, workspaces: remaining, activeWorkspaceId: state.activeWorkspaceId === id ? fallbackId : state.activeWorkspaceId };
+    }
+
+    case 'DUPLICATE_WORKSPACE': {
+      const { workspace, data } = action.payload;
+      const restoredCollections = (data.collections ?? []).map(col => ({
+        ...col,
+        item: ensureIds(col.item),
+      }));
+      return {
+        ...state,
+        workspaces: [...state.workspaces, workspace],
+        activeWorkspaceId: workspace.id,
+        collections: restoredCollections,
+        environments: data.environments ?? [],
+        activeEnvironmentId: data.activeEnvironmentId ?? null,
+        collectionVariables: data.collectionVariables ?? {},
+        globalVariables: data.globalVariables ?? {},
+        cookieJar: data.cookieJar ?? {},
+        mockCollections: data.mockCollections ?? [],
+        mockRoutes: data.mockRoutes ?? [],
+        mockPort: data.mockPort ?? 3002,
+        tabs: [],
+        activeTabId: null,
+        activeRequest: null,
+        response: null,
+        consoleLogs: [],
+        runnerResults: null,
+        isRunning: false,
+        view: 'request',
+        mockServerRunning: false,
+      };
+    }
+
+    case 'SET_SYNC_STATUS':
+      return {
+        ...state,
+        syncStatus: { ...state.syncStatus, [action.payload.workspaceId]: action.payload.status },
+      };
+
+    case 'RESTORE_SNAPSHOT': {
+      const data = action.payload;
+      const restoredCollections = (data.collections ?? []).map(col => ({
+        ...col,
+        item: ensureIds(col.item),
+      }));
+      return {
+        ...state,
+        collections: restoredCollections,
+        environments: data.environments ?? [],
+        activeEnvironmentId: data.activeEnvironmentId ?? null,
+        collectionVariables: data.collectionVariables ?? {},
+        globalVariables: data.globalVariables ?? {},
+        cookieJar: data.cookieJar ?? {},
+        mockCollections: data.mockCollections ?? [],
+        mockRoutes: data.mockRoutes ?? [],
+        mockPort: data.mockPort ?? 3002,
+      };
+    }
+
     default:
       return state;
   }
@@ -398,77 +568,106 @@ interface AppContextValue {
 const AppContext = createContext<AppContextValue | null>(null);
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(appReducer, initialState, (base) => {
-    const saved = loadPersisted();
-    if (!saved) return base;
-    const restoredCollections = (saved.collections ?? base.collections).map(col => ({
-      ...col,
-      item: ensureIds(col.item),
-    }));
+  const [state, dispatch] = useReducer(appReducer, initialState);
+  // Track whether a debounced write is in flight to avoid unnecessary I/O
+  const [saveTimer, setSaveTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
 
-    let restoredTabs: RequestTab[] = [];
-    let restoredActiveTabId: string | null = null;
-    if (saved.tabSession) {
-      restoredTabs = saved.tabSession.tabs
-        .map(ref => {
-          const col = restoredCollections.find(c => c._id === ref.collectionId);
-          if (!col) return null;
-          const item = findItemInTree(col.item, ref.itemId);
-          if (!item || !item.request) return null;
-          return { id: ref.id, collectionId: ref.collectionId, item, response: null, isLoading: false } as RequestTab;
-        })
-        .filter((t): t is RequestTab => t !== null);
-
-      if (saved.tabSession.activeTabId && restoredTabs.some(t => t.id === saved.tabSession!.activeTabId)) {
-        restoredActiveTabId = saved.tabSession.activeTabId;
-      } else {
-        restoredActiveTabId = restoredTabs[0]?.id ?? null;
-      }
-    }
-
-    const activeTab = restoredTabs.find(t => t.id === restoredActiveTabId) ?? null;
-
-    return {
-      ...base,
-      collections: restoredCollections,
-      environments: saved.environments ?? base.environments,
-      activeEnvironmentId: saved.activeEnvironmentId ?? base.activeEnvironmentId,
-      collectionVariables: saved.collectionVariables ?? base.collectionVariables,
-      globalVariables: saved.globalVariables ?? base.globalVariables,
-      cookieJar: saved.cookieJar ?? base.cookieJar,
-      mockRoutes: saved.mockRoutes ?? base.mockRoutes,
-      mockCollections: saved.mockCollections ?? base.mockCollections,
-      mockPort: saved.mockPort ?? base.mockPort,
-      tabs: restoredTabs,
-      activeTabId: restoredActiveTabId,
-      activeRequest: activeTab ? { collectionId: activeTab.collectionId, item: activeTab.item } : null,
-    };
-  });
-
+  // ── Async init ───────────────────────────────────────────────────────────
   useEffect(() => {
-    const snapshot: PersistedState = {
-      collections: state.collections,
-      environments: state.environments,
-      activeEnvironmentId: state.activeEnvironmentId,
-      collectionVariables: state.collectionVariables,
-      globalVariables: state.globalVariables,
-      cookieJar: state.cookieJar,
-      mockCollections: state.mockCollections,
-      mockRoutes: state.mockRoutes,
-      mockPort: state.mockPort,
-      tabSession: {
-        tabs: state.tabs
-          .filter(t => t.item.id != null)
-          .map(t => ({ id: t.id, collectionId: t.collectionId, itemId: t.item.id! })),
-        activeTabId: state.activeTabId,
-      },
-    };
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
-    } catch {
-      // localStorage unavailable or quota exceeded — fail silently
+    async function init() {
+      let manifest = await StorageDriver.readManifest();
+
+      // ── Migration: old apilix_persist → Default workspace ────────────────
+      if (!manifest) {
+        const legacy = loadPersisted();
+        if (legacy) {
+          const defaultId = generateId();
+          const defaultWorkspace: Workspace = {
+            id: defaultId,
+            name: 'Default',
+            createdAt: new Date().toISOString(),
+            type: 'local',
+          };
+          const workspaceData: WorkspaceData = {
+            collections: legacy.collections ?? [],
+            environments: legacy.environments ?? [],
+            activeEnvironmentId: legacy.activeEnvironmentId ?? null,
+            collectionVariables: legacy.collectionVariables ?? {},
+            globalVariables: legacy.globalVariables ?? {},
+            cookieJar: legacy.cookieJar ?? {},
+            mockCollections: legacy.mockCollections ?? [],
+            mockRoutes: legacy.mockRoutes ?? [],
+            mockPort: legacy.mockPort ?? 3002,
+          };
+          manifest = { workspaces: [defaultWorkspace], activeWorkspaceId: defaultId };
+          await StorageDriver.writeManifest(manifest);
+          await StorageDriver.writeWorkspace(defaultId, workspaceData);
+          try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+        }
+      }
+
+      // ── First-ever launch: create Default workspace ───────────────────────
+      if (!manifest) {
+        const defaultId = generateId();
+        const defaultWorkspace: Workspace = {
+          id: defaultId,
+          name: 'Default',
+          createdAt: new Date().toISOString(),
+          type: 'local',
+        };
+        manifest = { workspaces: [defaultWorkspace], activeWorkspaceId: defaultId };
+        await StorageDriver.writeManifest(manifest);
+      }
+
+      const workspaceData = await StorageDriver.readWorkspace(manifest.activeWorkspaceId);
+      dispatch({
+        type: 'HYDRATE_WORKSPACE',
+        payload: {
+          workspaces: manifest.workspaces,
+          activeWorkspaceId: manifest.activeWorkspaceId,
+          ...(workspaceData ?? {
+            collections: [],
+            environments: [],
+            activeEnvironmentId: null,
+            collectionVariables: {},
+            globalVariables: {},
+            cookieJar: {},
+            mockCollections: [],
+            mockRoutes: [],
+            mockPort: 3002,
+          }),
+        },
+      });
     }
-  }, [state.collections, state.environments, state.activeEnvironmentId, state.collectionVariables, state.globalVariables, state.cookieJar, state.mockCollections, state.mockRoutes, state.mockPort, state.tabs, state.activeTabId]);
+    init();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Debounced workspace persistence ──────────────────────────────────────
+  useEffect(() => {
+    if (!state.storageReady) return;
+    if (saveTimer) clearTimeout(saveTimer);
+    const t = setTimeout(async () => {
+      const workspaceData: WorkspaceData = {
+        collections: state.collections,
+        environments: state.environments,
+        activeEnvironmentId: state.activeEnvironmentId,
+        collectionVariables: state.collectionVariables,
+        globalVariables: state.globalVariables,
+        cookieJar: state.cookieJar,
+        mockCollections: state.mockCollections,
+        mockRoutes: state.mockRoutes,
+        mockPort: state.mockPort,
+      };
+      await StorageDriver.writeWorkspace(state.activeWorkspaceId, workspaceData);
+      await StorageDriver.writeManifest({ workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId });
+      // Create a snapshot for history
+      await SnapshotEngine.createSnapshot(state.activeWorkspaceId, workspaceData);
+    }, 300);
+    setSaveTimer(t);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.collections, state.environments, state.activeEnvironmentId, state.collectionVariables, state.globalVariables, state.cookieJar, state.mockCollections, state.mockRoutes, state.mockPort, state.workspaces, state.activeWorkspaceId, state.storageReady]);
 
   function getActiveEnvironment(): AppEnvironment | null {
     if (!state.activeEnvironmentId) return null;
@@ -487,6 +686,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   function getCollectionVars(collectionId: string): Record<string, string> {
     return state.collectionVariables[collectionId] || {};
+  }
+
+  // Show a simple loading screen until storage has been read from disk
+  if (!state.storageReady) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#1a1a2e', color: '#ccc', fontFamily: 'sans-serif', fontSize: 14 }}>
+        Loading…
+      </div>
+    );
   }
 
   return (

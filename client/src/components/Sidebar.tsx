@@ -3,6 +3,8 @@ import { useApp, generateId } from '../store';
 import CollectionTree from './CollectionTree';
 import ImportModal from './ImportModal';
 import ExportModal from './ExportModal';
+import WorkspaceSwitcher from './WorkspaceSwitcher';
+import WorkspaceManagerModal from './WorkspaceManagerModal';
 
 export default function Sidebar() {
   const { state, dispatch } = useApp(); // dispatch used by collection actions
@@ -13,9 +15,15 @@ export default function Sidebar() {
   const [collapseSignal, setCollapseSignal] = useState(0);
   const [expandSignal, setExpandSignal] = useState(0);
   const [sortAZ, setSortAZ] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
 
   return (
     <div className="w-full bg-slate-900 flex flex-col h-full overflow-hidden">
+      {/* Workspace switcher */}
+      <div className="px-2 pt-2 pb-1 border-b border-slate-700 shrink-0">
+        <WorkspaceSwitcher onManage={() => setManageOpen(true)} />
+      </div>
+      {manageOpen && <WorkspaceManagerModal onClose={() => setManageOpen(false)} />}
       {/* Collections toolbar */}
       <div className="px-3 py-2 border-b border-slate-700 flex items-center shrink-0">
         <button

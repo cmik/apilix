@@ -1071,7 +1071,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
     dispatch({ type: 'UPDATE_COLLECTION', payload: { ...col, item: updateItemById(col.item, activeTab.item.id, updatedItem) } });
     dispatch({ type: 'UPDATE_TAB_ITEM', payload: { tabId: activeTab.id, item: updatedItem } });
     // Mark clean in cache
-    cacheRef.current.set(activeTab.id, { edit, dirty: false });
+    cacheRef.current.set(activeTab.id, { edit, dirty: false, activeRequestTab });
     setDirty(false);
   }
   _saveRef.current = handleSave;
@@ -1727,7 +1727,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
                     };
                     dispatch({ type: 'UPDATE_COLLECTION', payload: { ...targetCol, item: [...targetCol.item, updatedItem] } });
                     dispatch({ type: 'UPDATE_TAB', payload: { tabId: activeTab.id, collectionId: saveTargetCollectionId, item: updatedItem } });
-                    cacheRef.current.set(activeTab.id, { edit, dirty: false });
+                    cacheRef.current.set(activeTab.id, { edit, dirty: false, activeRequestTab });
                     setDirty(false);
                     setShowSaveToCollection(false);
                   }}
