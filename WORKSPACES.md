@@ -69,6 +69,7 @@ File layout:
   workspaces.json              ← manifest: list of workspaces + activeWorkspaceId
   settings.json                ← app-level settings (theme, etc.)
   sync-config.json             ← per-workspace sync credentials (encrypted)
+  sync-activity.json           ← per-workspace sync activity log (newest first, max 100)
   workspaces/
     {workspaceId}.json         ← workspace data (collections, envs, …)
     {workspaceId}/
@@ -87,6 +88,7 @@ When running without Electron, all data is stored in `localStorage` with the fol
 | `apilix_workspace_{id}` | Workspace data per ID |
 | `apilix_settings` | App settings |
 | `apilix_sync_config` | Sync credentials |
+| `apilix_sync_activity` | Per-workspace sync activity log |
 
 > **Note:** localStorage is limited to ~5 MB and is cleared when the browser cache is cleared. Use desktop mode for reliable persistence.
 
@@ -170,10 +172,43 @@ The **Sync tab** in Manage Workspaces lets you push and pull a workspace to/from
 
 ### Conflict detection
 
-Before every pull Apilix compares the remote `Last-Modified` timestamp against the local `lastSynced` timestamp. If the remote is newer a **conflict banner** appears offering two choices:
+Before every pull Apilix compares the remote timestamp against the local sync metadata (`lastSyncedAt`). If the remote is newer, Apilix opens a **three-way merge review**:
+
+- **Base**: last known common snapshot (`lastMergeBaseSnapshotId`) when available
+- **Local**: current workspace state
+- **Remote**: latest provider state
+
+The merge modal lists request-level and code-level conflicts and lets you:
+
+- take local or remote per conflict,
+- manually edit resolved content,
+- apply the merged result with optimistic version checks where supported.
+
+If merge data cannot be loaded, the UI falls back to the legacy binary choices:
 
 - **Use Remote** — overwrite local with remote data
-- **Keep Local** — discard the remote, keep the local version as-is
+- **Keep Local** — keep local and cancel pull
+
+### Provider capability notes
+
+All providers support conflict detection and merge UI, but write guarantees differ:
+
+- **Git / HTTP / Team**: support optimistic versioned writes (conditional apply) where stale remote versions return `409 STALE_VERSION`.
+- **S3**: presigned URL flow does not guarantee conditional writes in the default setup; optimistic protection depends on a custom backend contract.
+
+When an optimistic merge apply loses the race (`STALE_VERSION`), Apilix automatically rebuilds a fresh merge package against the newest remote and reopens merge review.
+
+### Sync activity telemetry
+
+The Sync tab now shows **Recent sync activity** (local telemetry), including:
+
+- push/pull/import outcomes,
+- conflict detection,
+- merge review open/apply,
+- stale-apply rebase attempts,
+- save-config events.
+
+Entries are persisted per workspace in `sync-activity.json` (desktop) or `apilix_sync_activity` (browser mode).
 
 ---
 
@@ -265,6 +300,8 @@ Stores the workspace as a JSON object in an S3-compatible bucket. Presigned URLs
 2. The renderer fetches the presigned URL and performs the HTTP operation directly with S3.
 3. The object key is `{prefix}{workspaceId}.json` (default prefix: `apilix/`).
 
+> S3 note: default presigned URL writes are not inherently conditional. If strict optimistic locking is required, prefer Git/HTTP/Team providers or an HTTP backend that enforces version checks.
+
 ### IAM permissions required
 
 ```json
@@ -319,11 +356,16 @@ Your endpoint must implement these three HTTP operations:
 
 | Operation | Method | Request | Response |
 |---|---|---|---|
-| Push | `PUT {endpoint}` | JSON body `{ "data": WorkspaceData, "lastModified": "ISO string" }` | Any 2xx |
+| Push | `PUT {endpoint}` | JSON body `{ "data": WorkspaceData, "lastModified": "ISO string", "expectedVersion"?: string }` and optional `If-Match` header | Any 2xx |
 | Pull | `GET {endpoint}` | No body | JSON `{ "data": WorkspaceData }` or `404` |
-| Timestamp | `HEAD {endpoint}` | No body | `Last-Modified` or `X-Last-Modified` header |
+| Timestamp | `HEAD {endpoint}` | No body | `Last-Modified`/`X-Last-Modified` and optional `ETag`/`X-Version` header |
 
 Returning `404` on GET signals an empty remote (nothing to pull) — this is not treated as an error.
+
+To support stale-apply recovery, return:
+
+- `409` with body `{ "code": "STALE_VERSION", "expectedVersion": "...", "currentVersion": "..." }` when `If-Match` / `expectedVersion` does not match,
+- a version header (`ETag` or `X-Version`) on GET/HEAD responses.
 
 ### Field reference
 
@@ -625,28 +667,48 @@ sudo systemctl start apilix-team
 
 ## 11. Conflict resolution
 
-A conflict occurs when the remote copy was modified after the local copy was last synced. This typically happens when two people push independently without pulling first.
+A conflict occurs when the remote copy was modified after the local copy was last synced. This typically happens when multiple collaborators push independently without pulling first.
 
 ### Detection
 
 Before every pull the sync engine compares:
 - **Remote timestamp** — `Last-Modified` / `X-Last-Modified` header (or git commit time)
-- **Local `lastSynced`** — saved when the config was last written
+- **Local `lastSyncedAt`** — stored in sync metadata
 
-If the remote timestamp is newer a `ConflictError` is thrown and the UI shows a banner.
+If the remote timestamp is newer, a `ConflictError` is raised and the merge review flow starts.
+
+### Three-way merge flow
+
+1. Pull remote state and version metadata.
+2. Load the merge-base snapshot (`lastMergeBaseSnapshotId`) when available.
+3. Build a three-way merge result (`base` + `local` + `remote`).
+4. Open conflict UI with request-level and text-level conflicts.
+5. Apply merged output using provider optimistic write (if supported).
+
+### Stale apply recovery
+
+If the remote changes during merge apply:
+
+1. Provider returns `409 STALE_VERSION` (when supported).
+2. Apilix fetches the latest remote snapshot.
+3. Apilix rebases the user-merged candidate against the new remote.
+4. Merge modal reopens with updated conflicts.
 
 ### Resolution options
 
 | Choice | Effect |
 |---|---|
-| **Use Remote** | Downloads the remote and replaces the local workspace entirely. Local changes are lost. |
-| **Keep Local** | Cancels the pull. Your local workspace is unchanged. You should push or reconcile manually. |
+| **Apply Merged** | Applies the reviewed merge result to remote and local workspace. |
+| **Keep All Remote** | Replace local with remote during conflict handling. |
+| **Keep All Local** | Abort remote adoption and keep local state. |
+| **Use Remote / Keep Local** (fallback banner) | Legacy fallback when merge package cannot be constructed. |
 
 ### Best practices to avoid conflicts
 
 - **Pull before you Push** — always pull the latest version before making changes and pushing.
 - **Use the team server** — it provides per-user sessions so conflicts are easier to coordinate.
-- **One writer at a time** — for Git and S3 providers, agree on who pushes at any given time.
+- **Prefer versioned providers for high-concurrency edits** — Git, HTTP, and Team support strict stale-version checks.
+- **One writer at a time on S3** — unless your backend adds conditional write enforcement.
 - **Use workspaces as branches** — duplicate your workspace before making large changes, then merge manually.
 
 ---
@@ -669,11 +731,15 @@ If the remote timestamp is newer a `ConflictError` is thrown and the UI shows a 
 | Requires Electron | ✗ | ✅ | ✗ | ✗ |
 | Requires git on server | ✅ | ✗ | ✗ | ✗ |
 | Full version history | ✅ | ✗ | ✗ | ✗ |
+| Optimistic conditional writes | ✅ | ⚠ | ✅ | ✅ |
 | Role-based access control | ✗ | ✗* | ✗* | ✅ |
 | Self-hostable | ✅ | ✗† | ✅ | ✅ |
 | No third-party dependency | ✗‡ | ✗ | ✅ | ✅ |
 | Conflict detection | ✅ | ✅ | ✅ | ✅ |
+| Three-way merge UI | ✅ | ✅ | ✅ | ✅ |
+| Stale-apply rebase recovery | ✅ | ⚠ | ✅ | ✅ |
 
 \* IAM policies can provide coarse access control at the infrastructure level.  
 † S3-compatible self-hosted (MinIO) works but requires manual endpoint configuration.  
 ‡ Git requires a remote host (GitHub, GitLab, Gitea, etc.).
+⚠ Supported only when the backing implementation enforces/returns version constraints.
