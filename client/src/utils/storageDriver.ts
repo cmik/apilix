@@ -18,6 +18,7 @@ interface ElectronAPI {
   readJsonFile: (filePath: string) => Promise<unknown>;
   writeJsonFile: (filePath: string, data: unknown) => Promise<void>;
   deleteFile: (filePath: string) => Promise<void>;
+  deleteDirectory: (dirPath: string) => Promise<void>;
   listDir: (dirPath: string) => Promise<string[]>;
   shellOpenPath: (dirPath: string) => Promise<void>;
   openFileDialog: (filters: Array<{ name: string; extensions: string[] }>) => Promise<string | null>;
@@ -120,12 +121,50 @@ export async function writeWorkspace(id: string, data: WorkspaceData): Promise<v
 }
 
 export async function deleteWorkspace(id: string): Promise<void> {
+  // ── localStorage ──────────────────────────────────────────────────────────
   lsDelete(LS_WORKSPACE(id));
-  const api = eAPI();
-  if (api) {
-    const dir = await api.getDataDir();
-    await api.deleteFile(`${dir}/workspaces/${id}.json`);
+
+  // Remove entry from sync-config store
+  const lsSyncConfig = lsRead<SyncConfigStore>(LS_SYNC_CONFIG);
+  if (lsSyncConfig) {
+    delete lsSyncConfig[id];
+    lsWrite(LS_SYNC_CONFIG, lsSyncConfig);
   }
+
+  // Remove entry from sync-activity store
+  const lsSyncActivity = lsRead<SyncActivityStore>(LS_SYNC_ACTIVITY);
+  if (lsSyncActivity) {
+    delete lsSyncActivity[id];
+    lsWrite(LS_SYNC_ACTIVITY, lsSyncActivity);
+  }
+
+  // ── Electron (disk) ───────────────────────────────────────────────────────
+  const api = eAPI();
+  if (!api) return;
+  const dir = await api.getDataDir();
+
+  // Workspace data file
+  await api.deleteFile(`${dir}/workspaces/${id}.json`).catch(() => {});
+
+  // Snapshot / history directory: workspaces/{id}/
+  await api.deleteDirectory(`${dir}/workspaces/${id}`).catch(() => {});
+
+  // Remove entry from shared sync-config.json
+  try {
+    const syncCfg = (await api.readJsonFile(`${dir}/sync-config.json`) as SyncConfigStore | null) ?? {};
+    delete syncCfg[id];
+    await api.writeJsonFile(`${dir}/sync-config.json`, syncCfg);
+  } catch { /* ignore */ }
+
+  // Remove entry from shared sync-activity.json
+  try {
+    const syncAct = (await api.readJsonFile(`${dir}/sync-activity.json`) as SyncActivityStore | null) ?? {};
+    delete syncAct[id];
+    await api.writeJsonFile(`${dir}/sync-activity.json`, syncAct);
+  } catch { /* ignore */ }
+
+  // Remove local git-sync repository for this workspace
+  await api.deleteDirectory(`${dir}/git-sync/workspaces/${id}`).catch(() => {});
 }
 
 // ─── Settings ────────────────────────────────────────────────────────────────
@@ -166,10 +205,25 @@ export interface StoredSyncConfig {
   metadata?: SyncMetadata;
   /** legacy key kept for backward compatibility */
   lastSynced?: string;
+  /** When true, push operations are blocked — workspace syncs in pull-only mode */
+  readOnly?: boolean;
 }
 
 export type SyncConfigStore = Record<string, StoredSyncConfig>;
 export type SyncActivityStore = Record<string, SyncActivityEntry[]>;
+
+/** Read the full sync config store (all workspaces). */
+export async function readSyncConfigStore(): Promise<SyncConfigStore> {
+  const api = eAPI();
+  if (api) {
+    try {
+      const dir = await api.getDataDir();
+      const store = await api.readJsonFile(`${dir}/sync-config.json`) as SyncConfigStore | null;
+      if (store) return store;
+    } catch { /* fall through */ }
+  }
+  return lsRead<SyncConfigStore>(LS_SYNC_CONFIG) ?? {};
+}
 
 /** Read the sync config for a specific workspace. */
 export async function readSyncConfig(workspaceId: string): Promise<StoredSyncConfig | null> {
@@ -188,8 +242,9 @@ export async function readSyncConfig(workspaceId: string): Promise<StoredSyncCon
   const config = (raw.config && typeof raw.config === 'object') ? raw.config as Record<string, string> : {};
   const metadata = (raw.metadata && typeof raw.metadata === 'object') ? raw.metadata as SyncMetadata : undefined;
   const lastSynced = typeof raw.lastSynced === 'string' ? raw.lastSynced : undefined;
+  const readOnly = raw.readOnly === true ? true : undefined;
   if (!provider) return null;
-  return { provider, config, metadata, lastSynced };
+  return { provider, config, metadata, lastSynced, readOnly };
 }
 
 /** Write the sync config for a specific workspace (merges into the store file). */
@@ -198,6 +253,7 @@ export async function writeSyncConfig(
   provider: string,
   config: Record<string, string>,
   metadata?: SyncMetadata,
+  readOnly?: boolean,
 ): Promise<void> {
   const api = eAPI();
   let store: SyncConfigStore = {};
@@ -206,6 +262,7 @@ export async function writeSyncConfig(
     config,
     metadata,
     lastSynced: metadata?.lastSyncedAt,
+    ...(readOnly ? { readOnly: true } : {}),
   };
   if (api) {
     try {

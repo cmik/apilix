@@ -48,6 +48,7 @@ const initialState: AppState = {
   activeWorkspaceId: '',
   storageReady: false,
   syncStatus: {},
+  syncConfigVersion: 0,
   // ── Data ─────────────────────────────────────────────────────────────────
   collections: [],
   environments: [],
@@ -529,6 +530,9 @@ function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         syncStatus: { ...state.syncStatus, [action.payload.workspaceId]: action.payload.status },
       };
+
+    case 'BUMP_SYNC_CONFIG_VERSION':
+      return { ...state, syncConfigVersion: state.syncConfigVersion + 1 };
 
     case 'RESTORE_SNAPSHOT': {
       const data = action.payload;

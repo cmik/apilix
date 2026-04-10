@@ -183,6 +183,16 @@ ipcMain.handle('delete-file', async (_event, { filePath }) => {
   }
 });
 
+// Recursively delete a directory (must be inside userData)
+ipcMain.handle('delete-directory', async (_event, { dirPath }) => {
+  assertInsideUserData(dirPath);
+  try {
+    fs.rmSync(dirPath, { recursive: true, force: true });
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+});
+
 // List files in a directory (must be inside userData)
 ipcMain.handle('list-dir', async (_event, { dirPath }) => {
   assertInsideUserData(dirPath);

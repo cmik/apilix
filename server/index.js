@@ -1057,16 +1057,18 @@ app.post('/api/sync/git/push', async (req, res) => {
     return res.status(400).json({ error: 'Invalid workspaceId' });
   }
   try {
+    const branch = config.branch || 'main';
     const git = await ensureRepo(repoDir, config);
+    // Build authenticated remote URL once — reused for fetch and push.
+    let remote = config.remote;
+    if (config.token && config.username) {
+      const remoteUrl = new URL(remote);
+      remoteUrl.username = encodeURIComponent(config.username);
+      remoteUrl.password = encodeURIComponent(config.token);
+      remote = remoteUrl.toString();
+    }
     if (expectedVersion) {
-      let remote = config.remote;
-      if (config.token && config.username) {
-        const remoteUrl = new URL(remote);
-        remoteUrl.username = encodeURIComponent(config.username);
-        remoteUrl.password = encodeURIComponent(config.token);
-        remote = remoteUrl.toString();
-      }
-      await git.fetch(remote, config.branch || 'main');
+      await git.fetch(remote, branch);
       const fetchedVersion = await git.revparse(['FETCH_HEAD']).catch(() => null);
       if (!fetchedVersion || fetchedVersion !== expectedVersion) {
         return res.status(409).json({
@@ -1077,23 +1079,37 @@ app.post('/api/sync/git/push', async (req, res) => {
         });
       }
     }
+    // Sync local history with remote before committing so the push is always a
+    // fast-forward. This fixes non-fast-forward rejections on a fresh local repo
+    // whose history doesn't include the remote's existing commits.
+    // Skip this fetch when expectedVersion was already verified above.
+    if (!expectedVersion) {
+      try {
+        await git.fetch(remote, branch);
+        try {
+          await git.checkout(branch);
+        } catch {
+          await git.checkoutBranch(branch, 'FETCH_HEAD');
+        }
+        await git.reset(['--hard', 'FETCH_HEAD']);
+      } catch (fetchErr) {
+        const msg = String(fetchErr?.message || fetchErr);
+        const branchMissing =
+          msg.includes("couldn't find remote ref") ||
+          msg.includes('not found in upstream') ||
+          msg.includes('Remote branch');
+        if (!branchMissing) throw fetchErr;
+        // Remote branch doesn't exist yet — first push will create it, which is fine.
+      }
+    }
     const filePath = path.join(repoDir, 'workspace.json');
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
-    const branch = config.branch || 'main';
     await git.add('.');
     const status = await git.status();
     if (status.files.length === 0) {
       return res.json({ ok: true, message: 'Nothing to commit' });
     }
     await git.commit(`chore: sync workspace ${workspaceId} at ${new Date().toISOString()}`);
-    // Build authenticated remote URL if token provided
-    let remote = config.remote;
-    if (config.token && config.username) {
-      const url = new URL(remote);
-      url.username = encodeURIComponent(config.username);
-      url.password = encodeURIComponent(config.token);
-      remote = url.toString();
-    }
     await git.push(remote, branch, ['--set-upstream']);
     res.json({ ok: true });
   } catch (err) {
@@ -1140,7 +1156,14 @@ app.post('/api/sync/git/pull', async (req, res) => {
       }
       throw fetchErr;
     }
-    await git.checkout(branch);
+    // Checkout the branch — on a fresh repo the local branch is unborn so a plain
+    // `git checkout main` fails with "pathspec 'main' did not match any file(s)".
+    // In that case, create the branch pointing directly at FETCH_HEAD instead.
+    try {
+      await git.checkout(branch);
+    } catch {
+      await git.checkoutBranch(branch, 'FETCH_HEAD');
+    }
     await git.reset(['--hard', 'FETCH_HEAD']);
     const filePath = path.join(repoDir, 'workspace.json');
     if (!fs.existsSync(filePath)) {
