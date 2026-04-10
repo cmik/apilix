@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readJsonFile: (filePath) => ipcRenderer.invoke('read-json-file', { filePath }),
   writeJsonFile: (filePath, data) => ipcRenderer.invoke('write-json-file', { filePath, data }),
   deleteFile: (filePath) => ipcRenderer.invoke('delete-file', { filePath }),
+  deleteDirectory: (dirPath) => ipcRenderer.invoke('delete-directory', { dirPath }),
   listDir: (dirPath) => ipcRenderer.invoke('list-dir', { dirPath }),
   openFileDialog: (filters) => ipcRenderer.invoke('open-file-dialog', { filters }),
   shellOpenPath: (dirPath) => ipcRenderer.invoke('shell-open-path', { dirPath }),

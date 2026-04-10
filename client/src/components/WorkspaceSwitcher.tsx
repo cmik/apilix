@@ -20,6 +20,13 @@ export default function WorkspaceSwitcher({ onManage }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const activeWorkspace = state.workspaces.find(w => w.id === state.activeWorkspaceId);
+  const [syncedIds, setSyncedIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    StorageDriver.readSyncConfigStore().then(store => {
+      setSyncedIds(new Set(Object.keys(store).filter(id => !!store[id]?.provider)));
+    });
+  }, [state.workspaces, state.syncConfigVersion]);
 
   // Close popover on outside click
   useEffect(() => {
@@ -118,6 +125,7 @@ export default function WorkspaceSwitcher({ onManage }: Props) {
                   key={w.id}
                   workspace={w}
                   active={w.id === state.activeWorkspaceId}
+                  hasSyncConfig={syncedIds.has(w.id)}
                   onSelect={() => handleSwitch(w)}
                 />
               ))}
@@ -133,6 +141,7 @@ export default function WorkspaceSwitcher({ onManage }: Props) {
                   key={w.id}
                   workspace={w}
                   active={w.id === state.activeWorkspaceId}
+                  hasSyncConfig={syncedIds.has(w.id)}
                   onSelect={() => handleSwitch(w)}
                 />
               ))}
@@ -179,7 +188,7 @@ export default function WorkspaceSwitcher({ onManage }: Props) {
   );
 }
 
-function WorkspaceRow({ workspace, active, onSelect }: { workspace: Workspace; active: boolean; onSelect: () => void }) {
+function WorkspaceRow({ workspace, active, hasSyncConfig, onSelect }: { workspace: Workspace; active: boolean; hasSyncConfig: boolean; onSelect: () => void }) {
   return (
     <button
       onClick={onSelect}
@@ -187,6 +196,11 @@ function WorkspaceRow({ workspace, active, onSelect }: { workspace: Workspace; a
     >
       <span className="shrink-0 w-2 h-2 rounded-full" style={{ background: workspace.color ?? '#94a3b8' }} />
       <span className="flex-1 truncate">{workspace.name}</span>
+      {hasSyncConfig && (
+        <svg className="w-3 h-3 text-slate-500 shrink-0" viewBox="0 0 16 16" fill="currentColor" aria-label="Sync configured">
+          <path d="M5 3.5a.5.5 0 1 0-1 0v6.793L2.354 8.646a.5.5 0 1 0-.708.708l2 2a.5.5 0 0 0 .708 0l2-2a.5.5 0 0 0-.708-.708L5 10.293V3.5zM11.5 2a.5.5 0 0 0-.5.5v6.793l-1.646-1.647a.5.5 0 0 0-.708.708l2 2a.5.5 0 0 0 .708 0l2-2a.5.5 0 0 0-.708-.708L12 9.293V2.5a.5.5 0 0 0-.5-.5zM3 1a2 2 0 1 1 4 0A2 2 0 0 1 3 1zm8.5 7a2 2 0 1 1 0 4 2 2 0 0 1 0-4z" />
+        </svg>
+      )}
       {workspace.role && workspace.type === 'team' && (
         <span className="text-[9px] text-slate-500 font-medium uppercase">{workspace.role}</span>
       )}

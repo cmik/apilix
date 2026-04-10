@@ -335,6 +335,8 @@ export interface SyncConfig {
   config: Record<string, string>;
   metadata?: SyncMetadata;
   lastSynced?: string;
+  /** When true, push operations are blocked — workspace syncs in pull-only mode */
+  readOnly?: boolean;
 }
 
 export type SyncActivityLevel = 'info' | 'success' | 'warning' | 'error';
@@ -435,6 +437,8 @@ export interface AppState {
   activeWorkspaceId: string;
   storageReady: boolean;
   syncStatus: Record<string, 'idle' | 'syncing' | 'error'>;
+  /** Incremented whenever sync config is saved — used to re-check sync icons */
+  syncConfigVersion: number;
   // ── Data ──────────────────────────────────────────────────────────────────
   collections: AppCollection[];
   environments: AppEnvironment[];
@@ -532,4 +536,5 @@ export type AppAction =
   | { type: 'DELETE_WORKSPACE'; payload: { id: string; fallbackId: string } }
   | { type: 'DUPLICATE_WORKSPACE'; payload: { workspace: Workspace; data: WorkspaceData } }
   | { type: 'SET_SYNC_STATUS'; payload: { workspaceId: string; status: 'idle' | 'syncing' | 'error' } }
+  | { type: 'BUMP_SYNC_CONFIG_VERSION' }
   | { type: 'RESTORE_SNAPSHOT'; payload: WorkspaceData };

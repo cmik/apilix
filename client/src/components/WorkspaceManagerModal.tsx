@@ -110,6 +110,15 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [syncedIds, setSyncedIds] = useState<Set<string>>(new Set());
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+
+  useEffect(() => {
+    StorageDriver.readSyncConfigStore().then(store => {
+      setSyncedIds(new Set(Object.keys(store).filter(id => !!store[id]?.provider)));
+    });
+  }, [state.workspaces, state.syncConfigVersion]);
 
   async function handleSwitch(workspace: Workspace) {
     if (workspace.id === state.activeWorkspaceId) return;
@@ -191,6 +200,23 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
     StorageDriver.writeManifest({ workspaces: updated, activeWorkspaceId: state.activeWorkspaceId });
   }
 
+  async function handleCreate() {
+    const name = newName.trim() || 'New Workspace';
+    const newWorkspace: Workspace = {
+      id: generateId(),
+      name,
+      color: PRESET_COLORS[state.workspaces.length % PRESET_COLORS.length],
+      createdAt: new Date().toISOString(),
+      type: 'local',
+    };
+    const emptyData = emptyWorkspaceData();
+    await StorageDriver.writeWorkspace(newWorkspace.id, emptyData);
+    dispatch({ type: 'CREATE_WORKSPACE', payload: newWorkspace });
+    await StorageDriver.writeManifest({ workspaces: [...state.workspaces, newWorkspace], activeWorkspaceId: state.activeWorkspaceId });
+    setCreating(false);
+    setNewName('');
+  }
+
   return (
     <div className="space-y-2">
       <div className="flex justify-between items-center mb-3">
@@ -238,11 +264,16 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
             ) : (
               <button
                 onClick={() => handleSwitch(w)}
-                className="text-sm font-medium text-slate-200 truncate text-left w-full hover:text-orange-400 transition-colors"
+                className="text-sm font-medium text-slate-200 truncate text-left w-full hover:text-orange-400 transition-colors flex items-center gap-1.5"
               >
-                {w.name}
-                {w.id === state.activeWorkspaceId && <span className="ml-2 text-[10px] text-orange-400 font-normal">active</span>}
-                {w.type === 'team' && w.role && <span className="ml-2 text-[10px] text-slate-500">{w.role}</span>}
+                <span className="truncate">{w.name}</span>
+                {syncedIds.has(w.id) && (
+                  <svg className="w-3.5 h-3.5 text-slate-500 shrink-0" viewBox="0 0 16 16" fill="currentColor" aria-label="Sync configured">
+                    <path d="M5 3.5a.5.5 0 1 0-1 0v6.793L2.354 8.646a.5.5 0 1 0-.708.708l2 2a.5.5 0 0 0 .708 0l2-2a.5.5 0 0 0-.708-.708L5 10.293V3.5zM11.5 2a.5.5 0 0 0-.5.5v6.793l-1.646-1.647a.5.5 0 0 0-.708.708l2 2a.5.5 0 0 0 .708 0l2-2a.5.5 0 0 0-.708-.708L12 9.293V2.5a.5.5 0 0 0-.5-.5zM3 1a2 2 0 1 1 4 0A2 2 0 0 1 3 1zm8.5 7a2 2 0 1 1 0 4 2 2 0 0 1 0-4z" />
+                  </svg>
+                )}
+                {w.id === state.activeWorkspaceId && <span className="ml-1 text-[10px] text-orange-400 font-normal shrink-0">active</span>}
+                {w.type === 'team' && w.role && <span className="ml-1 text-[10px] text-slate-500 shrink-0">{w.role}</span>}
               </button>
             )}
             <p className="text-[10px] text-slate-600 mt-0.5">{new Date(w.createdAt).toLocaleDateString()}</p>
@@ -274,6 +305,35 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
           </div>
         </div>
       )}
+
+      {/* New workspace */}
+      <div className="pt-1">
+        {creating ? (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-orange-500/40 bg-slate-800/40">
+            <input
+              autoFocus
+              value={newName}
+              onChange={e => setNewName(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') handleCreate();
+                if (e.key === 'Escape') { setCreating(false); setNewName(''); }
+              }}
+              placeholder="Workspace name"
+              className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-0.5 text-sm text-slate-200 outline-none focus:border-orange-500"
+            />
+            <button onClick={handleCreate} className="px-3 py-1 text-xs bg-orange-500 hover:bg-orange-400 text-white rounded transition-colors font-medium">Create</button>
+            <button onClick={() => { setCreating(false); setNewName(''); }} className="text-slate-500 hover:text-slate-300 text-xs px-1 transition-colors">✕</button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setCreating(true)}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-500 transition-colors text-sm"
+          >
+            <span className="text-base leading-none">+</span>
+            New workspace
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -327,6 +387,7 @@ function SyncTab() {
   const [loaded, setLoaded] = useState(false);
   const [status, setStatus] = useState<'idle' | 'busy' | 'ok' | 'error'>('idle');
   const [msg, setMsg] = useState('');
+  const [readOnly, setReadOnly] = useState(false);
   const [conflict, setConflict] = useState<null | { remoteTimestamp: string; localTimestamp: string | null }>(null);
   const [conflictPackage, setConflictPackage] = useState<ConflictPackage | null>(null);
   const [activity, setActivity] = useState<SyncActivityEntry[]>([]);
@@ -349,9 +410,11 @@ function SyncTab() {
           [loadedProvider]: loadedConfig,
         }));
         setSyncMetadata(cfg.metadata ?? (cfg.lastSynced ? { lastSyncedAt: cfg.lastSynced } : undefined));
+        setReadOnly(cfg.readOnly === true);
       } else {
         setFields({});
         setSyncMetadata(undefined);
+        setReadOnly(false);
       }
       setActivity(entries);
       setLoaded(true);
@@ -374,8 +437,9 @@ function SyncTab() {
   }
 
   async function saveConfig() {
-    await StorageDriver.writeSyncConfig(workspaceId, provider, fields, syncMetadata);
+    await StorageDriver.writeSyncConfig(workspaceId, provider, fields, syncMetadata, readOnly);
     await logActivity('save-config', 'info', 'Sync configuration saved');
+    dispatch({ type: 'BUMP_SYNC_CONFIG_VERSION' });
   }
 
   function getCurrentWorkspaceData(): WorkspaceData {
@@ -435,6 +499,7 @@ function SyncTab() {
   }
 
   async function handlePush() {
+    if (readOnly) return;
     setStatus('busy'); setMsg('Pushing…'); setConflict(null);
     try {
       const syncedCollections = await prepareCollectionsForPush();
@@ -453,7 +518,7 @@ function SyncTab() {
         lastMergeBaseSnapshotId: mergeBaseSnapshotId,
       };
       setSyncMetadata(nextMetadata);
-      await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata);
+      await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata, readOnly);
       await StorageDriver.writeWorkspace(workspaceId, data);
       dispatch({ type: 'SET_SYNC_STATUS', payload: { workspaceId, status: 'idle' } });
       await logActivity('push', 'success', 'Push completed', remoteState.version ? `Version ${remoteState.version.slice(0, 8)}` : undefined);
@@ -483,7 +548,7 @@ function SyncTab() {
           lastMergeBaseSnapshotId: mergeBaseSnapshotId,
         };
         setSyncMetadata(nextMetadata);
-        await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata);
+        await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata, readOnly);
         await logActivity('pull', 'success', 'Pull completed', result.remoteState.version ? `Version ${result.remoteState.version.slice(0, 8)}` : undefined);
         setStatus('ok'); setMsg('Pulled successfully');
       } else {
@@ -498,9 +563,34 @@ function SyncTab() {
           const localData = getCurrentWorkspaceData();
           const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
           const pkg = await pullForMerge(cfg, localData);
-          setConflictPackage(pkg);
           await logActivity('merge-opened', 'warning', 'Opened merge review', `${pkg.mergeResult.conflicts.length} conflict(s)`);
-          setStatus('idle'); setMsg('');
+          if (pkg.mergeResult.conflicts.length === 0) {
+            // No real conflicts — apply the auto-merged result immediately.
+            const mergedData = pkg.mergeResult.merged;
+            if (localData) await SnapshotEngine.createSnapshot(workspaceId, localData, 'pre-merge backup');
+            if (pkg.remoteVersion) {
+              await syncApplyMerged(cfg, mergedData, pkg.remoteVersion);
+            } else {
+              await syncPush(cfg, mergedData);
+            }
+            const remoteState = await getRemoteSyncState(cfg);
+            const mergeBaseSnapshotId = await SnapshotEngine.createSnapshot(workspaceId, mergedData, 'sync base after auto-merge');
+            const nextMetadata: SyncMetadata = {
+              ...(syncMetadata ?? {}),
+              lastSyncedAt: remoteState.timestamp ?? new Date().toISOString(),
+              lastSyncedVersion: remoteState.version ?? syncMetadata?.lastSyncedVersion,
+              lastMergeBaseSnapshotId: mergeBaseSnapshotId,
+            };
+            setSyncMetadata(nextMetadata);
+            await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata, readOnly);
+            dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...mergedData, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
+            await StorageDriver.writeWorkspace(workspaceId, mergedData);
+            await logActivity('merge-applied', 'success', 'Auto-merge applied (no manual conflicts)');
+            setStatus('ok'); setMsg('Pulled and auto-merged successfully');
+          } else {
+            setConflictPackage(pkg);
+            setStatus('idle'); setMsg('');
+          }
         } catch {
           setConflict({ remoteTimestamp: err.remoteLastModified, localTimestamp: err.localLastSaved });
           setStatus('idle'); setMsg('');
@@ -536,7 +626,7 @@ function SyncTab() {
         lastMergeBaseSnapshotId: mergeBaseSnapshotId,
       };
       setSyncMetadata(nextMetadata);
-      await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata);
+      await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata, readOnly);
       dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...mergedData, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
       await StorageDriver.writeWorkspace(workspaceId, mergedData);
       await logActivity('merge-applied', 'success', 'Merged workspace applied', remoteState.version ? `Version ${remoteState.version.slice(0, 8)}` : undefined);
@@ -679,12 +769,29 @@ function SyncTab() {
         }`}>{msg}</p>
       )}
 
+      {/* Read-only mode */}
+      <div className="flex items-center justify-between py-2 px-3 rounded-lg bg-slate-800/40 border border-slate-800">
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-slate-300">Read-only mode</p>
+          <p className="text-[10px] text-slate-500 mt-0.5">Pull only — push operations are disabled for this workspace</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setReadOnly(v => !v)}
+          className={`relative shrink-0 ml-4 w-9 h-5 rounded-full transition-colors ${readOnly ? 'bg-orange-500' : 'bg-slate-700'}`}
+          aria-pressed={readOnly}
+        >
+          <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${readOnly ? 'translate-x-4' : 'translate-x-0'}`} />
+        </button>
+      </div>
+
       {/* Action buttons */}
       <div className="flex gap-2 pt-1">
         <button
           onClick={handlePush}
-          disabled={status === 'busy'}
-          className="flex-1 py-1.5 text-xs font-medium bg-orange-500 hover:bg-orange-400 disabled:opacity-50 text-white rounded transition-colors"
+          disabled={status === 'busy' || readOnly}
+          title={readOnly ? 'Push is disabled in read-only mode' : undefined}
+          className="flex-1 py-1.5 text-xs font-medium bg-orange-500 hover:bg-orange-400 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded transition-colors"
         >
           Push ↑
         </button>

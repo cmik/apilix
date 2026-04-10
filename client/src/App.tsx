@@ -324,6 +324,7 @@ export default function App() {
   const [serverStatus, setServerStatus] = useState<ServerStatus>('checking');
   const [cookieManagerOpen, setCookieManagerOpen] = useState(false);
   const [syncConfigured, setSyncConfigured] = useState(false);
+  const [syncReadOnly, setSyncReadOnly] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
   const [quickSyncConflictPackage, setQuickSyncConflictPackage] = useState<ConflictPackage | null>(null);
   const [quickSyncConfig, setQuickSyncConfig] = useState<SyncConfig | null>(null);
@@ -486,6 +487,7 @@ export default function App() {
   useEffect(() => {
     if (isBrowserMode) {
       setSyncConfigured(false);
+      setSyncReadOnly(false);
       return;
     }
     let active = true;
@@ -494,15 +496,17 @@ export default function App() {
         if (!active) return;
         const configured = Boolean(cfg?.provider && cfg?.config && Object.keys(cfg.config).length > 0);
         setSyncConfigured(configured);
+        setSyncReadOnly(cfg?.readOnly === true);
         setLastSuccessfulSyncAt(cfg?.metadata?.lastSyncedAt ?? cfg?.lastSynced ?? null);
       })
       .catch(() => {
         if (!active) return;
         setSyncConfigured(false);
+        setSyncReadOnly(false);
         setLastSuccessfulSyncAt(null);
       });
     return () => { active = false; };
-  }, [isBrowserMode, state.activeWorkspaceId]);
+  }, [isBrowserMode, state.activeWorkspaceId, state.syncConfigVersion]);
 
   function getCurrentWorkspaceData(): WorkspaceData {
     return {
@@ -526,6 +530,7 @@ export default function App() {
       provider: stored.provider as SyncConfig['provider'],
       config: stored.config,
       metadata: stored.metadata ?? (stored.lastSynced ? { lastSyncedAt: stored.lastSynced } : undefined),
+      readOnly: stored.readOnly === true ? true : undefined,
     };
   }
 
@@ -537,7 +542,7 @@ export default function App() {
       lastSyncedVersion: version ?? cfg.metadata?.lastSyncedVersion,
       lastMergeBaseSnapshotId: baseSnapshotId,
     };
-    await StorageDriver.writeSyncConfig(cfg.workspaceId, cfg.provider, cfg.config, nextMetadata);
+    await StorageDriver.writeSyncConfig(cfg.workspaceId, cfg.provider, cfg.config, nextMetadata, cfg.readOnly);
     return nextMetadata;
   }
 
@@ -585,10 +590,28 @@ export default function App() {
       const localData = { ...getCurrentWorkspaceData(), collections: syncedCollections };
 
       const hasUnpushed = await hasLocalUnpushedChanges(currentCfg, localData);
-      if (hasUnpushed) {
+      if (hasUnpushed && !currentCfg.readOnly) {
         const remoteAhead = await checkConflict(currentCfg);
         if (remoteAhead) {
           const pkg = await pullForMerge(currentCfg, localData);
+          if (pkg.mergeResult.conflicts.length === 0) {
+            // No real conflicts — apply auto-merged result and continue.
+            const mergedData = pkg.mergeResult.merged;
+            await SnapshotEngine.createSnapshot(state.activeWorkspaceId, localData, 'pre-merge backup');
+            if (pkg.remoteVersion) {
+              await syncApplyMerged(currentCfg, mergedData, pkg.remoteVersion);
+            } else {
+              await syncPush(currentCfg, mergedData);
+            }
+            const pushedState = await getRemoteSyncState(currentCfg);
+            const meta = await persistSyncBase(currentCfg, mergedData, pushedState.timestamp, pushedState.version, 'sync base after auto-merge push');
+            currentCfg = { ...currentCfg, metadata: meta };
+            dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...mergedData, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
+            await StorageDriver.writeWorkspace(currentCfg.workspaceId, mergedData);
+            setLastSuccessfulSyncAt(meta.lastSyncedAt ?? null);
+            setQuickSyncFeedback('Synced (auto-merged)', 'ok');
+            return;
+          }
           setQuickSyncConflictPackage(pkg);
           setQuickSyncFeedback('Remote has newer changes — review merge before pushing', 'warning');
           return;
@@ -607,15 +630,32 @@ export default function App() {
           const meta = await persistSyncBase(currentCfg, result.data, result.remoteState.timestamp, result.remoteState.version, 'sync base after quick-sync pull');
           currentCfg = { ...currentCfg, metadata: meta };
           setLastSuccessfulSyncAt(meta.lastSyncedAt ?? null);
-          setQuickSyncFeedback(hasUnpushed ? 'Synced (pushed + pulled)' : 'Synced (pulled)', 'ok');
+          setQuickSyncFeedback(hasUnpushed && !currentCfg.readOnly ? 'Synced (pushed + pulled)' : 'Synced (pulled)', 'ok');
         } else {
-          setQuickSyncFeedback(hasUnpushed ? 'Pushed local changes (remote empty)' : 'Remote is empty — nothing to pull', 'info');
+          setQuickSyncFeedback(hasUnpushed && !currentCfg.readOnly ? 'Pushed local changes (remote empty)' : 'Remote is empty — nothing to pull', 'info');
         }
       } catch (err: unknown) {
         if (err instanceof ConflictError) {
           const pkg = await pullForMerge(currentCfg, localData);
-          setQuickSyncConflictPackage(pkg);
-          setQuickSyncFeedback('Conflict detected — review merge', 'warning');
+          if (pkg.mergeResult.conflicts.length === 0) {
+            const mergedData = pkg.mergeResult.merged;
+            await SnapshotEngine.createSnapshot(state.activeWorkspaceId, localData, 'pre-merge backup');
+            if (pkg.remoteVersion) {
+              await syncApplyMerged(currentCfg, mergedData, pkg.remoteVersion);
+            } else {
+              await syncPush(currentCfg, mergedData);
+            }
+            const remoteState = await getRemoteSyncState(currentCfg);
+            const meta = await persistSyncBase(currentCfg, mergedData, remoteState.timestamp, remoteState.version, 'sync base after auto-merge');
+            currentCfg = { ...currentCfg, metadata: meta };
+            dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...mergedData, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
+            await StorageDriver.writeWorkspace(currentCfg.workspaceId, mergedData);
+            setLastSuccessfulSyncAt(meta.lastSyncedAt ?? null);
+            setQuickSyncFeedback('Synced (auto-merged)', 'ok');
+          } else {
+            setQuickSyncConflictPackage(pkg);
+            setQuickSyncFeedback('Conflict detected — review merge', 'warning');
+          }
         } else {
           throw err;
         }
@@ -726,7 +766,7 @@ export default function App() {
         {/* Top bar */}
         <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-700 bg-slate-900 shrink-0">
           <div className="flex items-center gap-2 min-w-0">
-            {!isBrowserMode && syncConfigured && (
+            {!isBrowserMode && syncConfigured && !syncReadOnly && (
               <div className="flex items-center gap-1.5" title={quickSyncTooltip}>
                 <button
                   onClick={handleQuickSync}
