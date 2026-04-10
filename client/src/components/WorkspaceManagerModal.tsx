@@ -20,6 +20,7 @@ import {
 } from '../utils/syncEngine';
 import * as SnapshotEngine from '../utils/snapshotEngine';
 import ConflictMergeModal from './ConflictMergeModal';
+import ConfirmModal from './ConfirmModal';
 
 type Tab = 'workspaces' | 'sync' | 'team' | 'history';
 
@@ -391,6 +392,7 @@ function SyncTab() {
   const [conflict, setConflict] = useState<null | { remoteTimestamp: string; localTimestamp: string | null }>(null);
   const [conflictPackage, setConflictPackage] = useState<ConflictPackage | null>(null);
   const [activity, setActivity] = useState<SyncActivityEntry[]>([]);
+  const [pendingPushConfirm, setPendingPushConfirm] = useState<{ message: string; resolve: (v: boolean) => void } | null>(null);
 
   // Load persisted sync config on mount / workspace change
   useEffect(() => {
@@ -460,7 +462,10 @@ function SyncTab() {
     const summary = await getUnsavedRequestTabSummary();
     if (summary.dirtyTabIds.length === 0) return state.collections;
 
-    const confirmed = window.confirm(buildUnsavedRequestTabsConfirmMessage('push', summary));
+    const confirmed = await new Promise<boolean>(resolve =>
+      setPendingPushConfirm({ message: buildUnsavedRequestTabsConfirmMessage('push', summary), resolve })
+    );
+
     if (!confirmed) {
       setStatus('idle');
       setMsg('Push canceled');
@@ -865,6 +870,17 @@ function SyncTab() {
           onKeepLocal={() => { setConflictPackage(null); handlePull('keep-local'); }}
           onKeepRemote={() => { setConflictPackage(null); handlePull('keep-remote'); }}
           onClose={() => { setConflictPackage(null); }}
+        />
+      )}
+
+      {pendingPushConfirm && (
+        <ConfirmModal
+          title="Unsaved changes"
+          message={pendingPushConfirm.message}
+          confirmLabel="Save & Push"
+          danger={false}
+          onConfirm={() => { setPendingPushConfirm(null); pendingPushConfirm.resolve(true); }}
+          onCancel={() => { setPendingPushConfirm(null); pendingPushConfirm.resolve(false); }}
         />
       )}
     </>

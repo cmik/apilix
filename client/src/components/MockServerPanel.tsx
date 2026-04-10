@@ -3,6 +3,7 @@ import { useApp, generateId } from '../store';
 import type { MockRoute, MockCollection, AppCollection, CollectionItem, MockLogEntry, MockRouteRule, WsOnConnectEvent, WsMessageHandler } from '../types';
 import { startMockServer, stopMockServer, syncMockRoutes, getMockStatus, getMockLog, clearMockLog } from '../api';
 import ScriptEditor from './ScriptEditor';
+import ConfirmModal from './ConfirmModal';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', '*'];
 const STATUS_CODES = [200, 201, 204, 301, 302, 400, 401, 403, 404, 409, 422, 500, 502, 503];
@@ -224,6 +225,7 @@ function CollectionSection({
   const [expanded, setExpanded] = useState(true);
   const [renaming, setRenaming] = useState(false);
   const [nameInput, setNameInput] = useState(collection.name);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { if (renaming) nameRef.current?.select(); }, [renaming]);
@@ -258,7 +260,7 @@ function CollectionSection({
         <span className="text-xs text-slate-500 shrink-0">{routes.length} route{routes.length !== 1 ? 's' : ''}</span>
         <button onClick={() => setRenaming(true)} title="Rename" className="text-slate-600 hover:text-slate-300 text-xs transition-colors shrink-0">✎</button>
         <button onClick={onAddRoute} title="Add route to collection" className="text-slate-500 hover:text-orange-400 text-xs transition-colors shrink-0">+ Route</button>
-        <button onClick={() => { if (window.confirm(`Delete collection "${collection.name}"? Routes will become uncollected.`)) onDeleteCollection(); }} title="Delete collection" className="text-slate-600 hover:text-red-400 text-xs transition-colors shrink-0">✕</button>
+        <button onClick={() => setDeleteConfirm(true)} title="Delete collection" className="text-slate-600 hover:text-red-400 text-xs transition-colors shrink-0">✕</button>
       </div>
       {expanded && routes.length > 0 && (
         <div className="space-y-1 pl-4">
@@ -269,6 +271,16 @@ function CollectionSection({
       )}
       {expanded && routes.length === 0 && (
         <div className="pl-4"><p className="text-xs text-slate-600 italic py-1">No routes — click "+ Route" to add one.</p></div>
+      )}
+
+      {deleteConfirm && (
+        <ConfirmModal
+          title="Delete collection?"
+          message={<>Delete <strong className="text-slate-200">{collection.name}</strong>? Its routes will become uncollected. This cannot be undone.</>}
+          confirmLabel="Delete"
+          onConfirm={() => { setDeleteConfirm(false); onDeleteCollection(); }}
+          onCancel={() => setDeleteConfirm(false)}
+        />
       )}
     </div>
   );

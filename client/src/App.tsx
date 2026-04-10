@@ -15,6 +15,7 @@ import CookieManagerModal from './components/CookieManagerModal';
 import MockServerPanel from './components/MockServerPanel';
 import GlobalVariablesPanel from './components/GlobalVariablesPanel';
 import ConflictMergeModal from './components/ConflictMergeModal';
+import ConfirmModal from './components/ConfirmModal';
 import * as StorageDriver from './utils/storageDriver';
 import * as SnapshotEngine from './utils/snapshotEngine';
 import {
@@ -337,6 +338,7 @@ export default function App() {
   } | null>(null);
   const [closeGuardOpen, setCloseGuardOpen] = useState(false);
   const closeGuardDirtyCountRef = useRef(0);
+  const [pendingSyncConfirm, setPendingSyncConfirm] = useState<{ message: string; resolve: (v: boolean) => void } | null>(null);
   const dragging = useRef(false);
   const startX = useRef(0);
   const startWidth = useRef(0);
@@ -555,7 +557,10 @@ export default function App() {
     const summary = await getUnsavedRequestTabSummary();
     if (summary.dirtyTabIds.length === 0) return state.collections;
 
-    const confirmed = window.confirm(buildUnsavedRequestTabsConfirmMessage('sync', summary));
+    const confirmed = await new Promise<boolean>(resolve =>
+      setPendingSyncConfirm({ message: buildUnsavedRequestTabsConfirmMessage('sync', summary), resolve })
+    );
+
     if (!confirmed) {
       setQuickSyncFeedback('Sync canceled', 'info');
       return null;
@@ -961,6 +966,18 @@ export default function App() {
             }
           }}
           onClose={() => setQuickSyncConflictPackage(null)}
+        />
+      )}
+
+      {pendingSyncConfirm && (
+        <ConfirmModal
+          title="Unsaved changes"
+          message={pendingSyncConfirm.message}
+          confirmLabel="Save & Sync"
+          danger={false}
+          onConfirm={() => { setPendingSyncConfirm(null); pendingSyncConfirm.resolve(true); }}
+          onCancel={() => { setPendingSyncConfirm(null); pendingSyncConfirm.resolve(false); }}
+          zIndex="z-[65]"
         />
       )}
     </div>

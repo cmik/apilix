@@ -248,3 +248,26 @@ html.light .text-purple-400  { color: #7e22ce; } /* purple-700 */
 html.light .text-slate-300  { color: #334155; }
 html.light .text-slate-400  { color: #475569; }
 html.light .text-slate-500  { color: #64748b; }
+
+/* ─── Confirm / action buttons — keep white text on colored backgrounds ─── */
+/* Red danger buttons */
+html.light .bg-red-700        { background-color: #dc2626; }
+html.light .bg-red-700:hover,
+html.light .hover\:bg-red-600:hover { background-color: #ef4444; }
+/* Orange primary buttons */
+html.light .bg-orange-600          { background-color: #ea580c; }
+html.light .hover\:bg-orange-500:hover { background-color: #f97316; }
+html.light .bg-orange-500          { background-color: #f97316; }
+html.light .hover\:bg-orange-400:hover { background-color: #fb923c; }
+/* Ensure text stays white on all of the above */
+html.light .bg-red-700 .text-white,
+html.light .bg-red-700.text-white,
+html.light .bg-orange-600 .text-white,
+html.light .bg-orange-600.text-white,
+html.light .bg-orange-500 .text-white,
+html.light .bg-orange-500.text-white { color: #ffffff; }
+/* Button elements inherit their own color — override the global text-white remap */
+html.light button.bg-red-700,
+html.light button.bg-red-600,
+html.light button.bg-orange-600,
+html.light button.bg-orange-500 { color: #ffffff; }

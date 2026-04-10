@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { useApp } from '../store';
 import type { RequestTab } from '../types';
 import { renameItemById } from '../utils/treeHelpers';
+import ConfirmModal from './ConfirmModal';
 
 const METHOD_COLORS: Record<string, string> = {
   GET: 'text-green-400',
@@ -71,6 +72,7 @@ function Tab({
       onDrop={onDrop}
       onDragEnd={onDragEnd}
       onClick={renaming ? undefined : onActivate}
+      onMouseDown={e => { if (e.button === 1) { e.preventDefault(); onClose(e as unknown as React.MouseEvent); } }}
       className={`group relative flex items-center gap-1.5 px-3 py-0 h-full cursor-grab select-none shrink-0 border-r border-slate-800 transition-colors ${
         renaming ? 'max-w-[260px]' : 'max-w-[200px]'
       } ${isDragging ? 'opacity-40' : ''} ${
@@ -141,6 +143,7 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
 
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [insertBefore, setInsertBefore] = useState<number | null>(null);
+  const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
 
   function handleDragStart(e: React.DragEvent, tabId: string) {
     setDraggingId(tabId);
@@ -200,7 +203,8 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
             onClose={e => {
               e.stopPropagation();
               if (dirtyIds.has(tab.id)) {
-                if (!window.confirm('This tab has unsaved changes. Close anyway and discard changes?')) return;
+                setPendingCloseTabId(tab.id);
+                return;
               }
               dispatch({ type: 'CLOSE_TAB', payload: tab.id });
             }}
@@ -237,6 +241,23 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
           <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
         </svg>
       </button>
+
+      {/* Unsaved-tab close confirmation modal */}
+      {pendingCloseTabId && (() => {
+        const tab = tabs.find(t => t.id === pendingCloseTabId);
+        return (
+          <ConfirmModal
+            title="Unsaved changes"
+            message={<><strong className="text-slate-200">{tab?.item.name ?? 'This tab'}</strong> has unsaved changes. Closing it will permanently discard them.</>}
+            confirmLabel="Close anyway — discard changes"
+            onConfirm={() => {
+              dispatch({ type: 'CLOSE_TAB', payload: pendingCloseTabId });
+              setPendingCloseTabId(null);
+            }}
+            onCancel={() => setPendingCloseTabId(null)}
+          />
+        );
+      })()}
     </div>
   );
 }

@@ -15,6 +15,7 @@
 
 import { useState, useMemo, useCallback } from 'react';
 import type { ConflictPackage, MergeConflictNode, WorkspaceData, AppCollection, AppEnvironment, CollectionItem, MockRoute } from '../types';
+import ConfirmModal from './ConfirmModal';
 
 interface ConflictMergeModalProps {
   conflictPackage: ConflictPackage;
@@ -64,6 +65,7 @@ export default function ConflictMergeModal({
   const [filterUnresolved, setFilterUnresolved] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+  const [pendingAction, setPendingAction] = useState<'local' | 'remote' | null>(null);
 
   const unresolvedCount = useMemo(
     () => initialConflicts.filter(c => !resolutions.has(c.id)).length,
@@ -367,21 +369,13 @@ export default function ConflictMergeModal({
         <div className="flex items-center justify-between px-4 py-3 border-t border-slate-700 bg-slate-800/50 shrink-0">
           <div className="flex gap-2">
             <button
-              onClick={() => {
-                if (window.confirm('Keep all local changes and discard remote? This cannot be undone.')) {
-                  onKeepLocal();
-                }
-              }}
+              onClick={() => setPendingAction('local')}
               className="px-3 py-1.5 rounded text-xs bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors"
             >
               Keep All Local
             </button>
             <button
-              onClick={() => {
-                if (window.confirm('Apply all remote changes and discard local? This cannot be undone.')) {
-                  onKeepRemote();
-                }
-              }}
+              onClick={() => setPendingAction('remote')}
               className="px-3 py-1.5 rounded text-xs bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors"
             >
               Keep All Remote
@@ -424,6 +418,25 @@ export default function ConflictMergeModal({
             </div>
           </div>
         </div>
+      )}
+
+      {pendingAction && (
+        <ConfirmModal
+          title={pendingAction === 'local' ? 'Keep all local changes?' : 'Apply all remote changes?'}
+          message={
+            pendingAction === 'local'
+              ? 'All remote changes will be discarded and your local version will be kept. This cannot be undone.'
+              : 'All local changes will be discarded and the remote version will be applied. This cannot be undone.'
+          }
+          confirmLabel={pendingAction === 'local' ? 'Keep Local' : 'Use Remote'}
+          onConfirm={() => {
+            setPendingAction(null);
+            if (pendingAction === 'local') onKeepLocal();
+            else onKeepRemote();
+          }}
+          onCancel={() => setPendingAction(null)}
+          zIndex="z-[60]"
+        />
       )}
     </div>
   );
