@@ -236,6 +236,46 @@ ipcMain.handle('decrypt-string', (_event, { encrypted }) => {
   }
 });
 
+// Generate short-lived S3 presigned URLs in the main process so credentials
+// never need to be exposed to the renderer.
+ipcMain.handle('get-presigned-url', async (_event, payload) => {
+  const {
+    operation,
+    bucket,
+    region,
+    keyId,
+    secret,
+    objectKey,
+  } = payload ?? {};
+
+  if (!operation || !bucket || !region || !keyId || !secret || !objectKey) {
+    throw new Error('Missing required fields for S3 presigned URL generation');
+  }
+
+  if (!['GET', 'PUT', 'HEAD'].includes(operation)) {
+    throw new Error(`Unsupported S3 operation: ${operation}`);
+  }
+
+  const { S3Client, GetObjectCommand, PutObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
+  const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+
+  const client = new S3Client({
+    region,
+    credentials: {
+      accessKeyId: keyId,
+      secretAccessKey: secret,
+    },
+  });
+
+  const commandByOperation = {
+    GET: new GetObjectCommand({ Bucket: bucket, Key: objectKey }),
+    PUT: new PutObjectCommand({ Bucket: bucket, Key: objectKey, ContentType: 'application/json' }),
+    HEAD: new HeadObjectCommand({ Bucket: bucket, Key: objectKey }),
+  };
+
+  return getSignedUrl(client, commandByOperation[operation], { expiresIn: 60 });
+});
+
 // Poll the Express health endpoint using Node's built-in http module.
 // Returns true as soon as it responds 200, false after 500 ms or on error.
 function checkServerReady(port) {

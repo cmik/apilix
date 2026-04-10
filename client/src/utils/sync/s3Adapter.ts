@@ -9,14 +9,49 @@
  * Required config keys:
  *   bucket   — S3 bucket name
  *   region   — AWS region (e.g. "us-east-1")
- *   keyId    — AWS Access Key ID  (stored encrypted in sync-config.json)
- *   secret   — AWS Secret Access Key (stored encrypted)
+ *   keyId / accessKeyId       — AWS Access Key ID (stored encrypted)
+ *   secret / secretAccessKey  — AWS Secret Access Key (stored encrypted)
  *   prefix   — optional key prefix, defaults to "apilix/"
  */
 
 import type { WorkspaceData } from '../../types';
 import type { SyncAdapter } from '../syncEngine';
 import { throwSyncRequestError } from './errors';
+
+/**
+ * Wraps fetch() so that a generic "Failed to fetch" TypeError is replaced with
+ * a diagnostic message that lists the most common S3 causes.
+ */
+async function s3Fetch(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (err: unknown) {
+    const isNetworkError =
+      err instanceof TypeError &&
+      /failed to fetch|network request failed|load failed/i.test((err as TypeError).message);
+    if (isNetworkError) {
+      // Parse bucket/region out of the presigned URL for the diagnostic message.
+      let hint = '';
+      try {
+        const parsed = new URL(url);
+        // Virtual-hosted: <bucket>.s3.<region>.amazonaws.com
+        // Path-style:     s3.<region>.amazonaws.com/<bucket>/…
+        const match =
+          parsed.hostname.match(/^(.+?)\.s3[.-]([^.]+)\.amazonaws\.com$/) ??
+          parsed.hostname.match(/^s3[.-]([^.]+)\.amazonaws\.com$/);
+        hint = match
+          ? ` (host: ${parsed.hostname})`
+          : ` (host: ${parsed.hostname})`;
+      } catch { /* ignore */ }
+      throw new Error(
+        `S3 network error — could not reach the bucket${hint}. ` +
+        `Common causes: wrong bucket name, wrong region, bucket does not exist, ` +
+        `no internet connection, or a firewall/proxy blocking the request.`,
+      );
+    }
+    throw err;
+  }
+}
 
 function readVersionHeader(headers: Headers): string | null {
   const raw = headers.get('ETag') ?? headers.get('X-Version') ?? headers.get('X-Workspace-Version');
@@ -39,12 +74,15 @@ async function getPresignedUrl(
   if (!api?.getPresignedUrl) {
     throw new Error('S3 presigned URL generation requires Electron (not available in browser mode)');
   }
+  const accessKeyId = config.keyId ?? config.accessKeyId;
+  const secretAccessKey = config.secret ?? config.secretAccessKey;
+
   return api.getPresignedUrl({
     operation,
     bucket: config.bucket,
     region: config.region,
-    keyId: config.keyId,
-    secret: config.secret,
+    keyId: accessKeyId,
+    secret: secretAccessKey,
     objectKey: `${config.prefix ?? 'apilix/'}${workspaceId}.json`,
   });
 }
@@ -54,7 +92,7 @@ export const s3Adapter: SyncAdapter = {
     const url = await getPresignedUrl('PUT', config, workspaceId);
     // S3 presigned URLs don't support conditional writes by default. We still
     // pass expectedVersion in the body so custom backends can consume it.
-    const res = await fetch(url, {
+    const res = await s3Fetch(url, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -68,7 +106,7 @@ export const s3Adapter: SyncAdapter = {
 
   async applyMerged(workspaceId, mergedData, config, expectedVersion) {
     const url = await getPresignedUrl('PUT', config, workspaceId);
-    const res = await fetch(url, {
+    const res = await s3Fetch(url, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -82,7 +120,7 @@ export const s3Adapter: SyncAdapter = {
 
   async pull(workspaceId, config) {
     const url = await getPresignedUrl('GET', config, workspaceId);
-    const res = await fetch(url);
+    const res = await s3Fetch(url);
     if (res.status === 404) return null;
     if (!res.ok) await throwSyncRequestError(res, 'S3 pull');
     const body = await res.json() as { data: WorkspaceData };
@@ -91,7 +129,7 @@ export const s3Adapter: SyncAdapter = {
 
   async pullWithMeta(workspaceId, config) {
     const url = await getPresignedUrl('GET', config, workspaceId);
-    const res = await fetch(url);
+    const res = await s3Fetch(url);
     if (res.status === 404) {
       return { data: null, remoteState: { timestamp: null, version: null } };
     }
@@ -109,7 +147,7 @@ export const s3Adapter: SyncAdapter = {
   async getRemoteTimestamp(workspaceId, config) {
     try {
       const url = await getPresignedUrl('HEAD', config, workspaceId);
-      const res = await fetch(url, { method: 'HEAD' });
+      const res = await s3Fetch(url, { method: 'HEAD' });
       if (!res.ok) return null;
       return readTimestampHeader(res.headers);
     } catch {
@@ -120,7 +158,7 @@ export const s3Adapter: SyncAdapter = {
   async getRemoteState(workspaceId, config) {
     try {
       const url = await getPresignedUrl('HEAD', config, workspaceId);
-      const res = await fetch(url, { method: 'HEAD' });
+      const res = await s3Fetch(url, { method: 'HEAD' });
       if (!res.ok) return { timestamp: null, version: null };
       return {
         timestamp: readTimestampHeader(res.headers),
