@@ -568,10 +568,12 @@ function SyncTab() {
             // No real conflicts — apply the auto-merged result immediately.
             const mergedData = pkg.mergeResult.merged;
             if (localData) await SnapshotEngine.createSnapshot(workspaceId, localData, 'pre-merge backup');
-            if (pkg.remoteVersion) {
-              await syncApplyMerged(cfg, mergedData, pkg.remoteVersion);
-            } else {
-              await syncPush(cfg, mergedData);
+            if (!readOnly) {
+              if (pkg.remoteVersion) {
+                await syncApplyMerged(cfg, mergedData, pkg.remoteVersion);
+              } else {
+                await syncPush(cfg, mergedData);
+              }
             }
             const remoteState = await getRemoteSyncState(cfg);
             const mergeBaseSnapshotId = await SnapshotEngine.createSnapshot(workspaceId, mergedData, 'sync base after auto-merge');
