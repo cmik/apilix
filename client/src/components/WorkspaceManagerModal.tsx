@@ -772,14 +772,16 @@ function SyncTab() {
       {/* Read-only mode */}
       <div className="flex items-center justify-between py-2 px-3 rounded-lg bg-slate-800/40 border border-slate-800">
         <div className="min-w-0">
-          <p className="text-xs font-medium text-slate-300">Read-only mode</p>
+          <p id="read-only-mode-label" className="text-xs font-medium text-slate-300">Read-only mode</p>
           <p className="text-[10px] text-slate-500 mt-0.5">Pull only — push operations are disabled for this workspace</p>
         </div>
         <button
           type="button"
           onClick={() => setReadOnly(v => !v)}
           className={`relative shrink-0 ml-4 w-9 h-5 rounded-full transition-colors ${readOnly ? 'bg-orange-500' : 'bg-slate-700'}`}
-          aria-pressed={readOnly}
+          role="switch"
+          aria-checked={readOnly}
+          aria-labelledby="read-only-mode-label"
         >
           <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${readOnly ? 'translate-x-4' : 'translate-x-0'}`} />
         </button>
