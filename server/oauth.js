@@ -21,7 +21,7 @@ function generatePKCEVerifier() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
   let verifier = '';
   for (let i = 0; i < 128; i++) {
-    verifier += chars.charAt(Math.floor(Math.random() * chars.length));
+    verifier += chars.charAt(crypto.randomInt(chars.length));
   }
   return verifier;
 }
