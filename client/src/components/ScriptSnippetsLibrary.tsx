@@ -476,8 +476,133 @@ if (value) {
   },
 ];
 
+const MOCK_CATEGORIES: SnippetCategory[] = [
+  {
+    label: 'Persistent Mock DB',
+    snippets: [
+      {
+        id: 'mock-crud-users-full',
+        name: 'CRUD Router (users)',
+        description: 'Single-script CRUD flow for /api/users and /api/users/:id',
+        code: `// CRUD template for users
+// Works with routes like:
+//   GET/POST   /api/users
+//   GET/PATCH/DELETE /api/users/:id
+
+const storeKey = 'users';
+const id = req.params.id;
+
+if (req.method === 'GET' && !id) {
+  respond(200, db.list(storeKey));
+  return;
+}
+
+if (req.method === 'POST' && !id) {
+  const created = db.push(storeKey, {
+    id: Date.now().toString(),
+    ...req.body,
+  });
+  respond(201, created);
+  return;
+}
+
+if (req.method === 'GET' && id) {
+  const found = db.findById(storeKey, id);
+  if (!found) {
+    respond(404, { error: 'Not found' });
+    return;
+  }
+  respond(200, found);
+  return;
+}
+
+if ((req.method === 'PATCH' || req.method === 'PUT') && id) {
+  const updated = db.upsertById(storeKey, id, req.body || {});
+  respond(200, updated);
+  return;
+}
+
+if (req.method === 'DELETE' && id) {
+  const removed = db.removeById(storeKey, id);
+  if (!removed) {
+    respond(404, { error: 'Not found' });
+    return;
+  }
+  respond(204, '');
+  return;
+}
+
+respond(405, { error: 'Method not allowed' });`,
+      },
+      {
+        id: 'mock-create-list',
+        name: 'Create + List',
+        description: 'POST creates and GET lists entities in a shared array store',
+        code: `const key = 'items';
+
+if (req.method === 'POST') {
+  const created = db.push(key, { id: Date.now().toString(), ...req.body });
+  respond(201, created);
+  return;
+}
+
+if (req.method === 'GET') {
+  respond(200, db.list(key));
+  return;
+}
+
+respond(405, { error: 'Method not allowed' });`,
+      },
+      {
+        id: 'mock-read-update-delete',
+        name: 'Read + Update + Delete by Id',
+        description: 'Handle /:id routes using db.findById, db.upsertById, db.removeById',
+        code: `const key = 'items';
+const id = req.params.id;
+
+if (!id) {
+  respond(400, { error: 'Missing id param' });
+  return;
+}
+
+if (req.method === 'GET') {
+  const found = db.findById(key, id);
+  respond(found ? 200 : 404, found ?? { error: 'Not found' });
+  return;
+}
+
+if (req.method === 'PATCH' || req.method === 'PUT') {
+  const updated = db.upsertById(key, id, req.body || {});
+  respond(200, updated);
+  return;
+}
+
+if (req.method === 'DELETE') {
+  const removed = db.removeById(key, id);
+  respond(removed ? 204 : 404, removed ? '' : { error: 'Not found' });
+  return;
+}
+
+respond(405, { error: 'Method not allowed' });`,
+      },
+      {
+        id: 'mock-reset-state',
+        name: 'Reset State Endpoint',
+        description: 'Clear all persisted state for test setup/teardown endpoints',
+        code: `if (req.method !== 'POST') {
+  respond(405, { error: 'Method not allowed' });
+  return;
+}
+
+db.clear();
+respond(200, { ok: true, message: 'Mock state cleared' });`,
+      },
+    ],
+  },
+];
+
 interface ScriptSnippetsLibraryProps {
-  target: 'prerequest' | 'test';
+  target: 'prerequest' | 'test' | 'mock';
   onInsert: (code: string) => void;
 }
 
@@ -486,7 +611,13 @@ export default function ScriptSnippetsLibrary({ target, onInsert }: ScriptSnippe
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [previewSnippet, setPreviewSnippet] = useState<string | null>(null);
 
-  const categories = [...(target === 'prerequest' ? PRE_REQUEST_CATEGORIES : TEST_CATEGORIES)]
+  const categories = [...(
+    target === 'prerequest'
+      ? PRE_REQUEST_CATEGORIES
+      : target === 'test'
+        ? TEST_CATEGORIES
+        : MOCK_CATEGORIES
+  )]
     .sort((a, b) => a.label.localeCompare(b.label));
 
   function toggleCategory(label: string) {
@@ -529,7 +660,11 @@ export default function ScriptSnippetsLibrary({ target, onInsert }: ScriptSnippe
           {/* Header */}
           <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700">
             <span className="text-xs font-semibold text-slate-200 uppercase tracking-wider">
-              {target === 'prerequest' ? 'Pre-request Snippets' : 'Test Snippets'}
+              {target === 'prerequest'
+                ? 'Pre-request Snippets'
+                : target === 'test'
+                  ? 'Test Snippets'
+                  : 'Mock Script Snippets'}
             </span>
             <button
               type="button"

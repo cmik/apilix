@@ -87,8 +87,23 @@ const MOCK_REQ: Completion[] = [
   { label: 'requestCount',  insert: 'requestCount',  detail: 'number'  },
 ];
 
+const MOCK_DB: Completion[] = [
+  { label: 'get(key, fallback)',        insert: "get('",         detail: 'any' },
+  { label: 'set(key, value)',           insert: "set('",         detail: 'any' },
+  { label: 'has(key)',                  insert: "has('",         detail: 'boolean' },
+  { label: 'delete(key)',               insert: "delete('",      detail: 'boolean' },
+  { label: 'clear()',                   insert: 'clear()',       detail: 'void' },
+  { label: 'keys()',                    insert: 'keys()',        detail: 'string[]' },
+  { label: 'list(key)',                 insert: "list('",        detail: 'any[]' },
+  { label: 'push(key, value)',          insert: "push('",        detail: 'any' },
+  { label: 'findById(key, id)',         insert: "findById('",    detail: 'any | null' },
+  { label: 'upsertById(key, id, patch)', insert: "upsertById('", detail: 'any' },
+  { label: 'removeById(key, id)',       insert: "removeById('",  detail: 'boolean' },
+];
+
 const MOCK_ROOT: Completion[] = [
   { label: 'req',               insert: 'req',               detail: 'object' },
+  { label: 'db',                insert: 'db',                detail: 'object' },
   { label: 'respond(status, body)', insert: 'respond(',       detail: 'void'   },
   { label: 'JSON.stringify()',  insert: 'JSON.stringify(',   detail: 'string' },
   { label: 'JSON.parse()',      insert: 'JSON.parse(',       detail: 'any'    },
@@ -100,6 +115,9 @@ const MOCK_ROOT: Completion[] = [
 
 function getMockContext(textBefore: string): { completions: Completion[]; prefix: string } | null {
   let m: RegExpMatchArray | null;
+
+  m = textBefore.match(/\bdb\.(\w*)$/);
+  if (m) return { completions: MOCK_DB, prefix: m[1] };
 
   m = textBefore.match(/\breq\.headers\.?(\w*)$/);
   if (m) return { completions: MOCK_REQ_HEADERS, prefix: '' };
