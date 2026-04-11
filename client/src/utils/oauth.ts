@@ -7,9 +7,22 @@
  */
 export function generatePKCEVerifier(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+  const verifierLength = 128;
+  const maxRandomValue = 256 - (256 % chars.length);
   let verifier = '';
-  for (let i = 0; i < 128; i++) {
-    verifier += chars.charAt(Math.floor(Math.random() * chars.length));
+
+  while (verifier.length < verifierLength) {
+    const randomBytes = new Uint8Array(verifierLength - verifier.length);
+    crypto.getRandomValues(randomBytes);
+
+    for (const byte of randomBytes) {
+      if (byte < maxRandomValue) {
+        verifier += chars.charAt(byte % chars.length);
+        if (verifier.length === verifierLength) {
+          break;
+        }
+      }
+    }
   }
   return verifier;
 }
