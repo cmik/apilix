@@ -1,5 +1,5 @@
 import { load as yamlLoad } from 'js-yaml';
-import type { CollectionItem, CollectionHeader, CollectionQueryParam, CollectionBody } from '../types';
+import type { CollectionItem, CollectionHeader, CollectionQueryParam, CollectionBody, CollectionAuth, OAuth2Config } from '../types';
 
 // ─── OpenAPI / Swagger type stubs ────────────────────────────────────────────
 
@@ -35,6 +35,33 @@ interface OaOperation {
   // Swagger 2.0 body param is in parameters
 }
 
+// ─── Security Scheme types ────────────────────────────────────────────────────
+
+interface OaOAuth2Flow {
+  authorizationUrl?: string;
+  tokenUrl?: string;
+  scopes?: Record<string, string>;
+}
+
+interface OaSecurityScheme {
+  type: 'http' | 'apiKey' | 'oauth2' | 'openIdConnect' | 'basic'; // 'basic' for Swagger 2.x
+  scheme?: string;     // http: 'bearer' | 'basic' | 'digest' etc.
+  in?: 'header' | 'query' | 'cookie';
+  name?: string;       // apiKey: header/query param name
+  // OpenAPI 3.x OAuth2
+  flows?: {
+    authorizationCode?: OaOAuth2Flow;
+    clientCredentials?: OaOAuth2Flow;
+    implicit?: OaOAuth2Flow;
+    password?: OaOAuth2Flow;
+  };
+  // Swagger 2.x OAuth2
+  flow?: 'implicit' | 'password' | 'application' | 'accessCode';
+  authorizationUrl?: string;
+  tokenUrl?: string;
+  scopes?: Record<string, string>;
+}
+
 interface OaPathItem {
   get?: OaOperation;
   post?: OaOperation;
@@ -55,6 +82,14 @@ interface OaSpec {
   basePath?: string;  // Swagger 2.0
   schemes?: string[]; // Swagger 2.0
   paths?: Record<string, OaPathItem>;
+  // OpenAPI 3.x security schemes
+  components?: {
+    securitySchemes?: Record<string, OaSecurityScheme>;
+  };
+  // Swagger 2.0 security definitions
+  securityDefinitions?: Record<string, OaSecurityScheme>;
+  // Top-level security requirements (applies to all operations)
+  security?: Array<Record<string, string[]>>;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -116,6 +151,128 @@ function paramExample(p: OaParameter): string {
 export interface ParsedOpenApiResult {
   collectionName: string;
   items: CollectionItem[];
+  collectionAuth?: CollectionAuth;
+}
+
+// ─── Security scheme → CollectionAuth ────────────────────────────────────────
+
+function securitySchemeToAuth(scheme: OaSecurityScheme): CollectionAuth | undefined {
+  const t = scheme.type;
+
+  // HTTP bearer
+  if (t === 'http' && scheme.scheme?.toLowerCase() === 'bearer') {
+    return { type: 'bearer', bearer: [{ key: 'token', value: '', type: 'string' }] };
+  }
+
+  // HTTP basic (OpenAPI 3.x) or Swagger 2.x 'basic'
+  if ((t === 'http' && scheme.scheme?.toLowerCase() === 'basic') || t === 'basic') {
+    return {
+      type: 'basic',
+      basic: [
+        { key: 'username', value: '', type: 'string' },
+        { key: 'password', value: '', type: 'string' },
+      ],
+    };
+  }
+
+  // HTTP digest
+  if (t === 'http' && scheme.scheme?.toLowerCase() === 'digest') {
+    return { type: 'digest' };
+  }
+
+  // API Key
+  if (t === 'apiKey') {
+    return {
+      type: 'apikey',
+      apikey: [
+        { key: 'key', value: scheme.name || 'X-API-Key', type: 'string' },
+        { key: 'value', value: '', type: 'string' },
+        { key: 'in', value: scheme.in || 'header', type: 'string' },
+      ],
+    };
+  }
+
+  // OAuth2
+  if (t === 'oauth2') {
+    // OpenAPI 3.x: only map flows we can represent accurately
+    if (scheme.flows) {
+      const { authorizationCode, clientCredentials } = scheme.flows;
+
+      if (authorizationCode) {
+        const scopes = Object.keys(authorizationCode.scopes ?? {});
+        const oauth2Config: OAuth2Config = {
+          grantType: 'authorization_code',
+          clientId: '',
+          clientSecret: '',
+          tokenUrl: authorizationCode.tokenUrl ?? '',
+          authorizationUrl: authorizationCode.authorizationUrl ?? '',
+          scopes,
+        };
+        return { type: 'oauth2', oauth2: oauth2Config };
+      }
+
+      if (clientCredentials) {
+        const scopes = Object.keys(clientCredentials.scopes ?? {});
+        const oauth2Config: OAuth2Config = {
+          grantType: 'client_credentials',
+          clientId: '',
+          clientSecret: '',
+          tokenUrl: clientCredentials.tokenUrl ?? '',
+          authorizationUrl: clientCredentials.authorizationUrl ?? '',
+          scopes,
+        };
+        return { type: 'oauth2', oauth2: oauth2Config };
+      }
+
+      return { type: 'oauth2' };
+    }
+
+    // Swagger 2.x: only map flows we can represent accurately
+    if (scheme.flow === 'accessCode' || scheme.flow === 'application') {
+      const grantType = scheme.flow === 'accessCode'
+        ? 'authorization_code'
+        : 'client_credentials';
+      const scopes = Object.keys(scheme.scopes ?? {});
+      const oauth2Config: OAuth2Config = {
+        grantType,
+        clientId: '',
+        clientSecret: '',
+        tokenUrl: scheme.tokenUrl ?? '',
+        authorizationUrl: scheme.authorizationUrl ?? '',
+        scopes,
+      };
+      return { type: 'oauth2', oauth2: oauth2Config };
+    }
+
+    return { type: 'oauth2' };
+  }
+
+  // openIdConnect — treat as bearer
+  if (t === 'openIdConnect') {
+    return { type: 'bearer', bearer: [{ key: 'token', value: '', type: 'string' }] };
+  }
+
+  return undefined;
+}
+
+function resolveTopLevelAuth(spec: OaSpec): CollectionAuth | undefined {
+  const schemes: Record<string, OaSecurityScheme> =
+    spec.components?.securitySchemes ??
+    spec.securityDefinitions ??
+    {};
+
+  if (Object.keys(schemes).length === 0) return undefined;
+
+  // If a top-level security requirement is declared, honour its first entry
+  let chosenName: string | undefined;
+  if (spec.security && spec.security.length > 0) {
+    chosenName = Object.keys(spec.security[0])[0];
+  }
+  // Otherwise fall back to the first defined scheme
+  chosenName = chosenName ?? Object.keys(schemes)[0];
+
+  const scheme = schemes[chosenName];
+  return scheme ? securitySchemeToAuth(scheme) : undefined;
 }
 
 export function parseOpenApiSpec(text: string, filename?: string): ParsedOpenApiResult {
@@ -271,5 +428,7 @@ export function parseOpenApiSpec(text: string, filename?: string): ParsedOpenApi
   }
   items.push(...untagged);
 
-  return { collectionName, items };
+  const collectionAuth = resolveTopLevelAuth(spec);
+
+  return { collectionName, items, collectionAuth };
 }

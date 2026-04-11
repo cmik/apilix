@@ -1,10 +1,23 @@
 // ─── Postman Format v2.1 Types ─────────────────────────────────────────────
+import type {
+  OAuth2Config,
+  OAuth2GrantType,
+  OAuth2PresetProvider,
+  OAuth2CustomHeader,
+  OAuth2TokenResponse,
+  OAuth2TokenRefreshResult,
+  OAuth2PresetConfig,
+} from './types/oauth';
+
+// Re-export OAuth types
+export type { OAuth2Config, OAuth2GrantType, OAuth2PresetProvider, OAuth2CustomHeader, OAuth2TokenResponse, OAuth2TokenRefreshResult, OAuth2PresetConfig };
 
 export interface CollectionAuth {
   type: 'noauth' | 'inherit' | 'bearer' | 'basic' | 'apikey' | 'oauth1' | 'oauth2' | 'digest' | 'hawk' | 'awsv4' | 'ntlm';
   bearer?: Array<{ key: string; value: string; type?: string }>;
   basic?: Array<{ key: string; value: string; type?: string }>;
   apikey?: Array<{ key: string; value: string; type?: string }>;
+  oauth2?: OAuth2Config;
 }
 
 export interface CollectionHeader {

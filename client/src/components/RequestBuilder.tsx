@@ -1,16 +1,18 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { marked } from 'marked';
-import type { CollectionItem, CollectionRequest, CollectionHeader, CollectionQueryParam } from '../types';
+import type { CollectionItem, CollectionRequest, CollectionHeader, CollectionQueryParam, OAuth2Config } from '../types';
 import { useApp } from '../store';
-import { executeRequest } from '../api';
+import { executeRequest, API_BASE } from '../api';
 import { getUrlDisplay, buildVarMap, resolveVariables } from '../utils/variableResolver';
 import { updateItemById, renameItemById, resolveInheritedAuth, findItemInTree } from '../utils/treeHelpers';
 import { parseCurlCommand } from '../utils/curlUtils';
 import { parseHurlFile } from '../utils/hurlUtils';
+import { openAuthorizationWindow } from '../utils/oauth';
 import GraphQLPanel from './GraphQLPanel';
 import CodeGenModal from './CodeGenModal';
 import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
 import ScriptEditor from './ScriptEditor';
+import OAuthConfigPanel from './OAuthConfigPanel';
 import type { SaveExistingRequestTabsResult, UnsavedRequestTabSummary } from '../utils/requestTabSyncGuard';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'WS'];
@@ -91,6 +93,12 @@ function itemToEditState(item: CollectionItem) {
     authBasicPass: (req.auth?.basic ?? []).find(b => b.key === 'password')?.value ?? '',
     authApiKeyName: (req.auth?.apikey ?? []).find(b => b.key === 'key')?.value ?? 'X-API-Key',
     authApiKeyValue: (req.auth?.apikey ?? []).find(b => b.key === 'value')?.value ?? '',
+    authOAuth2Config: req.auth?.oauth2 ?? ({
+      grantType: 'authorization_code',
+      clientId: '',
+      clientSecret: '',
+      tokenUrl: '',
+    } as OAuth2Config),
     preRequestScript: getScript(item, 'prerequest'),
     testScript: getScript(item, 'test'),
     bodyGraphqlQuery: req.body?.graphql?.query ?? '',
@@ -1159,6 +1167,116 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
     dispatch({ type: 'SET_TAB_LOADING', payload: { tabId, loading: false } });
   }
 
+  // ─── OAuth 2.0 Handlers ──────────────────────────────────────────────────────
+
+  async function handleGetAuthorizationCode() {
+    if (!edit) return;
+    const config = edit.authOAuth2Config;
+    
+    if (!config.authorizationUrl || !config.clientId || !config.tokenUrl) {
+      window.alert('Missing required fields: Authorization URL, Client ID, or Token URL');
+      return;
+    }
+
+    try {
+      const result = await openAuthorizationWindow(
+        config.authorizationUrl,
+        config.clientId,
+        config.redirectUrl || 'http://localhost:3000/oauth/callback',
+        config.scopes || []
+      );
+
+      if (!result) {
+        window.alert('Authorization was cancelled or the popup was blocked.');
+        return;
+      }
+
+      // Exchange code for token
+      try {
+        const response = await fetch(`${API_BASE}/oauth/exchange-code`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            oauth2Config: {
+              ...config,
+              codeVerifier: result.codeVerifier,
+            },
+            authorizationCode: result.code,
+            environment: envVars,
+          }),
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to exchange authorization code');
+        }
+
+        const { accessToken, refreshToken, expiresAt } = await response.json();
+
+        // Update the OAuth config with the new token
+        setEdit(e => e ? {
+          ...e,
+          authOAuth2Config: {
+            ...e.authOAuth2Config,
+            accessToken,
+            ...(refreshToken && { refreshToken }),
+            expiresAt,
+            codeVerifier: undefined, // Clear verifier after use
+          },
+        } : e);
+
+        window.alert('Authorization successful! Token has been obtained.');
+      } catch (err) {
+        window.alert(`Failed to exchange authorization code: ${(err as Error).message}`);
+      }
+    } catch (err) {
+      window.alert(`Failed to get authorization code: ${(err as Error).message}`);
+    }
+  }
+
+  async function handleRefreshOAuthToken() {
+    if (!edit) return;
+    const config = edit.authOAuth2Config;
+
+    if (!config.tokenUrl || !config.clientId) {
+      window.alert('Missing required fields: Token URL or Client ID');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/oauth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          oauth2Config: config,
+          environment: envVars,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to refresh token');
+      }
+
+      const { accessToken, refreshToken, expiresAt } = await response.json();
+
+      // Update the OAuth config with the new token
+      setEdit(e => e ? {
+        ...e,
+        authOAuth2Config: {
+          ...e.authOAuth2Config,
+          accessToken,
+          ...(refreshToken && { refreshToken }),
+          expiresAt,
+        },
+      } : e);
+
+      window.alert('Token refreshed successfully!');
+    } catch (err) {
+      window.alert(`Failed to refresh token: ${(err as Error).message}`);
+    }
+  }
+
   function handleSave() {
     if (!activeTab || !edit) return;
     const col = state.collections.find(c => c._id === activeTab.collectionId);
@@ -1578,6 +1696,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
               <option value="bearer">Bearer Token</option>
               <option value="basic">Basic Auth</option>
               <option value="apikey">API Key</option>
+              <option value="oauth2">OAuth 2.0</option>
             </select>
 
             {edit.authType === 'inherit' && (
@@ -1650,6 +1769,15 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
                   />
                 </div>
               </div>
+            )}
+
+            {edit.authType === 'oauth2' && (
+              <OAuthConfigPanel
+                config={edit.authOAuth2Config}
+                onChange={config => setEdit(x => x ? { ...x, authOAuth2Config: { ...x.authOAuth2Config, ...config } } : x)}
+                onGetAuthorizationCode={handleGetAuthorizationCode}
+                onRefreshToken={handleRefreshOAuthToken}
+              />
             )}
           </div>
           );
@@ -1941,6 +2069,11 @@ function buildAuth(edit: ReturnType<typeof itemToEditState>): CollectionRequest[
           { key: 'value', value: edit.authApiKeyValue },
           { key: 'in', value: 'header' },
         ],
+      };
+    case 'oauth2':
+      return {
+        type: 'oauth2',
+        oauth2: edit.authOAuth2Config,
       };
     default:
       return { type: 'noauth' };
