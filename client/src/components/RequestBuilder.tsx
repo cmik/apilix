@@ -7,7 +7,7 @@ import { getUrlDisplay, buildVarMap, resolveVariables } from '../utils/variableR
 import { updateItemById, renameItemById, resolveInheritedAuth, findItemInTree } from '../utils/treeHelpers';
 import { parseCurlCommand } from '../utils/curlUtils';
 import { parseHurlFile } from '../utils/hurlUtils';
-import { openAuthorizationWindow, generatePKCEVerifier, generatePKCEChallenge } from '../utils/oauth';
+import { openAuthorizationWindow } from '../utils/oauth';
 import GraphQLPanel from './GraphQLPanel';
 import CodeGenModal from './CodeGenModal';
 import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
