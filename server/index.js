@@ -1741,6 +1741,16 @@ app.post('/api/cdp/disconnect', _cdpLoopbackOnly, (_req, res) => {
   res.json({ ok: true });
 });
 
+// ─── Error handler ─────────────────────────────────────────────────────────────
+// Catches errors forwarded by next(err), including CORS rejections.
+// Returns a plain JSON error without leaking internal stack traces.
+// eslint-disable-next-line no-unused-vars
+app.use((err, _req, res, _next) => {
+  const status = err.status || 500;
+  if (status >= 500) console.error('Server error:', err);
+  res.status(status).json({ error: err.message || 'Internal server error' });
+});
+
 // ─── Start ─────────────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
