@@ -41,11 +41,37 @@ async function awaitDelay(runId, delayMs) {
   return 'running';
 }
 
-app.use(cors());
+// Only allow requests originating from localhost (any port) or the Electron app
+// (which uses file:// and has a null/undefined origin).
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || /^https?:\/\/localhost(:\d+)?$/.test(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('CORS: origin not allowed'));
+    }
+  },
+};
+
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+/**
+ * Validate that a URL is a safe http/https URL to use as an OAuth token endpoint.
+ * Rejects non-http(s) protocols to prevent SSRF via dangerous schemes.
+ */
+function validateTokenUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch (_) {
+    return false;
+  }
+}
 
 // ─── Health check ──────────────────────────────────────────────────────────────
 
@@ -87,6 +113,10 @@ app.post('/api/oauth/refresh', async (req, res) => {
       return res.status(400).json({ error: 'Missing oauth2Config in body' });
     }
 
+    if (!validateTokenUrl(oauth2Config.tokenUrl)) {
+      return res.status(400).json({ error: 'Invalid or disallowed tokenUrl' });
+    }
+
     const vars = environment || {};
     const refreshResult = await refreshOAuth2Token(oauth2Config, vars);
 
@@ -107,6 +137,10 @@ app.post('/api/oauth/exchange-code', async (req, res) => {
     const { oauth2Config, authorizationCode, codeVerifier, environment } = req.body;
     if (!oauth2Config || !authorizationCode) {
       return res.status(400).json({ error: 'Missing oauth2Config or authorizationCode in body' });
+    }
+
+    if (!validateTokenUrl(oauth2Config.tokenUrl)) {
+      return res.status(400).json({ error: 'Invalid or disallowed tokenUrl' });
     }
 
     const resolvedCodeVerifier = codeVerifier || oauth2Config.codeVerifier;

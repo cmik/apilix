@@ -109,8 +109,9 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          oauth2Config: { ...config, codeVerifier: result.codeVerifier },
+          oauth2Config: { ...config },
           authorizationCode: result.code,
+          codeVerifier: result.codeVerifier,
           environment: {},
         }),
       });

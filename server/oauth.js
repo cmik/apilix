@@ -78,6 +78,7 @@ async function refreshOAuth2Token(oauth2Config, vars = {}) {
 
   let tokenBody = {};
   const headers = {
+    'Accept': 'application/json',
     'Content-Type': 'application/x-www-form-urlencoded',
     ...buildCustomHeaders(customHeaders, vars),
   };
@@ -129,7 +130,7 @@ async function refreshOAuth2Token(oauth2Config, vars = {}) {
       throw new Error(`Token endpoint returned ${response.status}: ${JSON.stringify(response.data)}`);
     }
 
-    const data = response.data;
+    const data = parseTokenResponseData(response.data);
     if (!data.access_token) {
       throw new Error(`Token endpoint did not return access_token: ${JSON.stringify(data)}`);
     }
@@ -187,6 +188,7 @@ async function exchangeAuthorizationCodeForToken(oauth2Config, authorizationCode
   }
 
   const headers = {
+    'Accept': 'application/json',
     'Content-Type': 'application/x-www-form-urlencoded',
     ...buildCustomHeaders(oauth2Config.customHeaders, vars),
   };
@@ -198,7 +200,7 @@ async function exchangeAuthorizationCodeForToken(oauth2Config, authorizationCode
       throw new Error(`Token endpoint returned ${response.status}: ${JSON.stringify(response.data)}`);
     }
 
-    const data = response.data;
+    const data = parseTokenResponseData(response.data);
     if (!data.access_token) {
       throw new Error(`Token endpoint did not return access_token`);
     }
@@ -263,6 +265,37 @@ function buildCustomHeaders(customHeaders, vars = {}) {
     });
   }
   return headers;
+}
+
+/**
+ * Parse a token endpoint response defensively.
+ * Some providers (e.g. GitHub) return application/x-www-form-urlencoded unless
+ * Accept: application/json is sent. Axios may return the raw string in that case.
+ */
+function parseTokenResponseData(raw) {
+  if (raw && typeof raw === 'object') {
+    return raw; // axios already parsed JSON
+  }
+  if (typeof raw === 'string') {
+    // Try form-encoded (e.g. "access_token=abc&token_type=bearer&...")
+    try {
+      const params = new URLSearchParams(raw);
+      if (params.has('access_token')) {
+        const obj = {};
+        params.forEach((v, k) => { obj[k] = v; });
+        return obj;
+      }
+    } catch (_) {
+      // ignore
+    }
+    // Fall back to JSON parse
+    try {
+      return JSON.parse(raw);
+    } catch (_) {
+      // ignore
+    }
+  }
+  return raw ?? {};
 }
 
 /**
