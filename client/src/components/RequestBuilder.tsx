@@ -1683,6 +1683,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
             : inheritedAuth.type === 'bearer' ? 'Bearer Token'
             : inheritedAuth.type === 'basic' ? 'Basic Auth'
             : inheritedAuth.type === 'apikey' ? 'API Key'
+            : inheritedAuth.type === 'oauth2' ? 'OAuth 2.0'
             : inheritedAuth.type;
           return (
           <div className="flex flex-col gap-3">

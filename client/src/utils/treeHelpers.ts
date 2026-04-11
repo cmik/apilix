@@ -55,9 +55,9 @@ export function applyInheritedAuth(items: CollectionItem[], inherited: Collectio
       const folderAuth = (item.auth && item.auth.type !== 'inherit') ? item.auth : inherited;
       return { ...item, item: applyInheritedAuth(item.item, folderAuth) };
     }
-    // request: if auth is undefined or 'inherit', apply inherited (unless inherited is noauth)
+    // request: if auth is undefined or 'inherit', apply inherited auth
     const shouldInherit = !item.request?.auth || item.request.auth.type === 'inherit';
-    if (item.request && shouldInherit && inherited && inherited.type !== 'noauth') {
+    if (item.request && shouldInherit && inherited) {
       return { ...item, request: { ...item.request, auth: inherited } };
     }
     return item;

@@ -7,7 +7,7 @@ import { API_BASE } from '../api';
 import { openAuthorizationWindow } from '../utils/oauth';
 
 type AuthType = CollectionAuth['type'];
-const SUPPORTED_AUTH: AuthType[] = ['noauth', 'bearer', 'basic', 'apikey', 'oauth2'];
+const SUPPORTED_AUTH: AuthType[] = ['inherit', 'noauth', 'bearer', 'basic', 'apikey', 'oauth2'];
 
 interface Props {
   kind: 'collection' | 'folder';
@@ -39,8 +39,8 @@ function patchEvents(
 
 export default function ItemSettingsModal({ kind, name, auth, event, description: initialDescription, variables: initialVariables, onSave, onClose }: Props) {
   const initialAuthType: AuthType = SUPPORTED_AUTH.includes(auth?.type ?? 'noauth')
-    ? (auth?.type ?? 'noauth')
-    : 'noauth';
+    ? (auth?.type ?? (kind === 'folder' ? 'inherit' : 'noauth'))
+    : (kind === 'folder' ? 'inherit' : 'noauth');
 
   const [activeTab, setActiveTab] = useState<'auth' | 'variables' | 'prerequest' | 'tests' | 'docs'>('auth');
   const [authType, setAuthType] = useState<AuthType>(initialAuthType);
@@ -64,6 +64,7 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
   const [vars, setVars] = useState<CollectionVariable[]>(initialVariables ?? []);
 
   function buildAuth(): CollectionAuth | undefined {
+    if (authType === 'inherit') return undefined;
     if (authType === 'noauth') return { type: 'noauth' };
     if (authType === 'bearer') return { type: 'bearer', bearer: [{ key: 'token', value: authBearer, type: 'string' }] };
     if (authType === 'basic') return {
@@ -234,6 +235,7 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
                   onChange={e => setAuthType(e.target.value as AuthType)}
                   className="w-48 bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-orange-500"
                 >
+                  {kind === 'folder' && <option value="inherit">Inherit auth from parent</option>}
                   <option value="noauth">No Auth</option>
                   <option value="bearer">Bearer Token</option>
                   <option value="basic">Basic Auth</option>
