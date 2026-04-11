@@ -4,8 +4,10 @@ const axios = require('axios');
 const crypto = require('crypto');
 const https = require('https');
 
+const allowInsecureTls = process.env.OAUTH_ALLOW_INSECURE_TLS === 'true';
+
 const httpClient = axios.create({
-  httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+  httpsAgent: new https.Agent({ rejectUnauthorized: !allowInsecureTls }),
   timeout: 30000,
   validateStatus: () => true, // never throw based on status code
 });
