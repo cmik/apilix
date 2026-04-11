@@ -551,7 +551,7 @@ export default function ResponseViewer() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-40 border-t border-slate-700 bg-slate-900">
+      <div className="h-full min-h-0 flex items-center justify-center border-t border-slate-700 bg-slate-900">
         <div className="text-slate-400 text-sm flex items-center gap-2">
           <span className="animate-pulse">⏳</span> Sending request...
         </div>
@@ -561,7 +561,7 @@ export default function ResponseViewer() {
 
   if (!response) {
     return (
-      <div className="flex items-center justify-center h-32 border-t border-slate-700 bg-slate-900">
+      <div className="h-full min-h-0 flex items-center justify-center border-t border-slate-700 bg-slate-900">
         <p className="text-slate-600 text-sm">Hit Send to see the response</p>
       </div>
     );
@@ -571,7 +571,7 @@ export default function ResponseViewer() {
   const failed = response.testResults.filter(t => !t.passed).length;
 
   return (
-    <div className="border-t border-slate-700 bg-slate-900 flex flex-col" style={{ minHeight: '260px', maxHeight: '50vh' }}>
+    <div className="h-full min-h-0 border-t border-slate-700 bg-slate-900 flex flex-col">
       {/* Response status bar */}
       <div className="flex items-center gap-4 px-3 py-2 border-b border-slate-700 shrink-0">
         {response.error ? (

@@ -243,6 +243,9 @@ const MIN_SIDEBAR = 160;
 const MAX_SIDEBAR = 520;
 const DEFAULT_SIDEBAR = 256;
 const DEFAULT_CONSOLE_HEIGHT = 240;
+const MIN_REQUEST_PANEL_HEIGHT = 220;
+const MIN_RESPONSE_PANEL_HEIGHT = 160;
+const DEFAULT_RESPONSE_PANEL_HEIGHT = 320;
 
 type ServerStatus = 'checking' | 'online' | 'offline';
 
@@ -321,6 +324,10 @@ export default function App() {
   const [envQuickOpen, setEnvQuickOpen] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [consoleHeight, setConsoleHeight] = useState(DEFAULT_CONSOLE_HEIGHT);
+  const [responsePanelHeight, setResponsePanelHeight] = useState(() => {
+    const saved = Number(localStorage.getItem('apilix_response_panel_height'));
+    return Number.isFinite(saved) && saved > 0 ? saved : DEFAULT_RESPONSE_PANEL_HEIGHT;
+  });
   const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
   const [serverStatus, setServerStatus] = useState<ServerStatus>('checking');
   const [cookieManagerOpen, setCookieManagerOpen] = useState(false);
@@ -342,6 +349,17 @@ export default function App() {
   const dragging = useRef(false);
   const startX = useRef(0);
   const startWidth = useRef(0);
+  const requestSplitRef = useRef<HTMLDivElement>(null);
+  const responseDragging = useRef(false);
+
+  const clampResponsePanelHeight = useCallback((value: number) => {
+    const totalHeight = requestSplitRef.current?.clientHeight;
+    if (!totalHeight || totalHeight <= 0) {
+      return Math.max(MIN_RESPONSE_PANEL_HEIGHT, value);
+    }
+    const maxHeight = Math.max(MIN_RESPONSE_PANEL_HEIGHT, totalHeight - MIN_REQUEST_PANEL_HEIGHT);
+    return Math.min(maxHeight, Math.max(MIN_RESPONSE_PANEL_HEIGHT, value));
+  }, []);
 
   // ── Theme ──────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -350,6 +368,10 @@ export default function App() {
     else html.classList.remove('light');
     localStorage.setItem('apilix_theme', theme);
   }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem('apilix_response_panel_height', String(Math.round(responsePanelHeight)));
+  }, [responsePanelHeight]);
 
   // ── Global keyboard shortcuts ──────────────────────────────────────────────
   useEffect(() => {
@@ -725,16 +747,31 @@ export default function App() {
     document.body.style.userSelect = 'none';
   }, [sidebarWidth]);
 
+  const onResponseHandleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    responseDragging.current = true;
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+  }, []);
+
   useEffect(() => {
     function onMouseMove(e: MouseEvent) {
-      if (!dragging.current) return;
-      const delta = e.clientX - startX.current;
-      const next = Math.min(MAX_SIDEBAR, Math.max(MIN_SIDEBAR, startWidth.current + delta));
-      setSidebarWidth(next);
+      if (dragging.current) {
+        const delta = e.clientX - startX.current;
+        const next = Math.min(MAX_SIDEBAR, Math.max(MIN_SIDEBAR, startWidth.current + delta));
+        setSidebarWidth(next);
+      }
+
+      if (responseDragging.current) {
+        const rect = requestSplitRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const nextHeight = clampResponsePanelHeight(rect.bottom - e.clientY);
+        setResponsePanelHeight(nextHeight);
+      }
     }
     function onMouseUp() {
-      if (!dragging.current) return;
-      dragging.current = false;
+      if (dragging.current) dragging.current = false;
+      if (responseDragging.current) responseDragging.current = false;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
     }
@@ -744,7 +781,16 @@ export default function App() {
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
     };
-  }, []);
+  }, [clampResponsePanelHeight]);
+
+  useEffect(() => {
+    function onResize() {
+      setResponsePanelHeight(h => clampResponsePanelHeight(h));
+    }
+    window.addEventListener('resize', onResize);
+    onResize();
+    return () => window.removeEventListener('resize', onResize);
+  }, [clampResponsePanelHeight]);
 
   const quickSyncTooltip = getQuickSyncTooltip();
 
@@ -838,9 +884,22 @@ export default function App() {
 
         {/* Content area */}
         {/* RequestBuilder is always mounted to preserve unsaved changes; hidden when not active */}
-        <div className={`flex-1 flex flex-col overflow-hidden ${state.view === 'request' ? '' : 'hidden'}`}>
+        <div
+          ref={requestSplitRef}
+          className={`flex-1 flex flex-col overflow-hidden ${state.view === 'request' ? '' : 'hidden'}`}
+        >
           <RequestBuilder onDirtyChange={setDirtyIds} />
-          <ResponseViewer />
+          <div
+            onMouseDown={onResponseHandleMouseDown}
+            className="h-1.5 shrink-0 cursor-row-resize bg-slate-700 hover:bg-orange-500 transition-colors"
+            title="Drag to resize result panel"
+          />
+          <div
+            className="shrink-0 min-h-0"
+            style={{ height: clampResponsePanelHeight(responsePanelHeight) }}
+          >
+            <ResponseViewer />
+          </div>
         </div>
         {/* RunnerPanel is always mounted to preserve form state; hidden when not active */}
         <div className={`flex-1 flex flex-col overflow-hidden ${state.view === 'runner' ? '' : 'hidden'}`}>
