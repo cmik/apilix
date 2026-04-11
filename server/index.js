@@ -331,6 +331,86 @@ function matchPath(pattern, incoming) {
 /** Per-route hit counters: routeId → number of requests handled. */
 const routeHitCounts = new Map();
 
+/** Shared in-memory state for persistent mock data across routes. */
+let mockDb = Object.create(null);
+
+function cloneJson(value) {
+  if (value === undefined) return undefined;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return value;
+  }
+}
+
+function hasOwn(obj, key) {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+function ensureDbArray(key) {
+  if (!Array.isArray(mockDb[key])) mockDb[key] = [];
+  return mockDb[key];
+}
+
+function createMockDbApi() {
+  return {
+    get(key, fallback = null) {
+      return hasOwn(mockDb, key) ? cloneJson(mockDb[key]) : fallback;
+    },
+    set(key, value) {
+      mockDb[key] = cloneJson(value);
+      return cloneJson(mockDb[key]);
+    },
+    has(key) {
+      return hasOwn(mockDb, key);
+    },
+    delete(key) {
+      if (!hasOwn(mockDb, key)) return false;
+      delete mockDb[key];
+      return true;
+    },
+    clear() {
+      mockDb = Object.create(null);
+    },
+    keys() {
+      return Object.keys(mockDb);
+    },
+    list(key) {
+      return Array.isArray(mockDb[key]) ? cloneJson(mockDb[key]) : [];
+    },
+    push(key, value) {
+      const arr = ensureDbArray(key);
+      const next = cloneJson(value);
+      arr.push(next);
+      return cloneJson(next);
+    },
+    findById(key, id, idField = 'id') {
+      const arr = Array.isArray(mockDb[key]) ? mockDb[key] : [];
+      const found = arr.find(item => item && String(item[idField]) === String(id));
+      return found ? cloneJson(found) : null;
+    },
+    upsertById(key, id, patch = {}, idField = 'id') {
+      const arr = ensureDbArray(key);
+      const idx = arr.findIndex(item => item && String(item[idField]) === String(id));
+      const safePatch = (patch && typeof patch === 'object') ? cloneJson(patch) : {};
+      if (idx >= 0) {
+        arr[idx] = { ...arr[idx], ...safePatch, [idField]: id };
+        return cloneJson(arr[idx]);
+      }
+      const created = { [idField]: id, ...safePatch };
+      arr.push(created);
+      return cloneJson(created);
+    },
+    removeById(key, id, idField = 'id') {
+      const arr = Array.isArray(mockDb[key]) ? mockDb[key] : [];
+      const idx = arr.findIndex(item => item && String(item[idField]) === String(id));
+      if (idx < 0) return false;
+      arr.splice(idx, 1);
+      return true;
+    },
+  };
+}
+
 /**
  * Resolve a dot-notation path (e.g. "user.address.city") against an object.
  * Supports numeric array indices ("items.0.id").
@@ -403,12 +483,12 @@ function interpolate(template, ctx) {
     return ctx[key] != null ? String(ctx[key]) : match;
   });
 
-  // Namespace variables: {{ns.path.to.value}} — supports dot-notation for body
+  // Namespace variables: {{ns.path.to.value}} — supports dot-notation for body and db
   result = result.replace(/\{\{(\w+)\.([\w.]+)\}\}/g, (match, ns, path) => {
     const src = ctx[ns];
     if (src == null) return match;
-    // For body allow deep dot-notation; for others only top-level key
-    if (ns === 'body') {
+    // For body/db allow deep dot-notation; for others only top-level key
+    if (ns === 'body' || ns === 'db') {
       const val = resolveDotPath(src, path);
       return val != null ? String(val) : match;
     }
@@ -463,6 +543,7 @@ function findMatchingRule(rules, ctx) {
 function runMockScript(script, ctx) {
   if (!script || !script.trim()) return null;
   let result = null;
+  const db = createMockDbApi();
   const sandbox = {
     req: {
       method: ctx.method,
@@ -474,6 +555,7 @@ function runMockScript(script, ctx) {
       body: ctx.body,
       requestCount: ctx._requestCount,
     },
+    db,
     respond(status, body, headers) {
       result = {
         status: parseInt(status, 10) || 200,
@@ -565,6 +647,7 @@ function buildMockHandler() {
         param: pathParams,
         query,
         body: bodyObj,
+        db: cloneJson(mockDb),
         header: req.headers,
         method,
         url,
@@ -884,6 +967,7 @@ function startMockServer(port, routes) {
     mockRoutes = routes || [];
     mockServerPort = port;
     mockRequestLog = [];
+    mockDb = Object.create(null);
     routeHitCounts.clear();
     wsClientCounter = 0;
 
@@ -963,6 +1047,17 @@ app.get('/api/mock-log', (_req, res) => {
 // DELETE /api/mock-log — clear traffic log
 app.delete('/api/mock-log', (_req, res) => {
   mockRequestLog = [];
+  res.json({ ok: true });
+});
+
+// GET /api/mock-db — inspect persistent mock state
+app.get('/api/mock-db', (_req, res) => {
+  res.json({ data: cloneJson(mockDb), keys: Object.keys(mockDb) });
+});
+
+// DELETE /api/mock-db — clear persistent mock state
+app.delete('/api/mock-db', (_req, res) => {
+  mockDb = Object.create(null);
   res.json({ ok: true });
 });
 

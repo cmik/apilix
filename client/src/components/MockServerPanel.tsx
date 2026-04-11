@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useApp, generateId } from '../store';
 import type { MockRoute, MockCollection, AppCollection, CollectionItem, MockLogEntry, MockRouteRule, WsOnConnectEvent, WsMessageHandler } from '../types';
-import { startMockServer, stopMockServer, syncMockRoutes, getMockStatus, getMockLog, clearMockLog } from '../api';
+import { startMockServer, stopMockServer, syncMockRoutes, getMockStatus, getMockLog, clearMockLog, getMockDb, clearMockDb } from '../api';
 import ScriptEditor from './ScriptEditor';
+import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
 import ConfirmModal from './ConfirmModal';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', '*'];
@@ -303,6 +304,7 @@ function RouteEditorModal({ initial, collections, onSave, onClose }: {
   const [scriptError, setScriptError] = useState<string | null>(null);
   const [wsOnConnect, setWsOnConnect] = useState<WsOnConnectEvent[]>(initial.wsOnConnect ?? []);
   const [wsHandlers, setWsHandlers] = useState<WsMessageHandler[]>(initial.wsMessageHandlers ?? []);
+  const scriptTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   const isWs = route.type === 'websocket';
 
@@ -319,6 +321,28 @@ function RouteEditorModal({ initial, collections, onSave, onClose }: {
   function updateRule(id: string, patch: Partial<MockRouteRule>) {
     setRules(rs => rs.map(r => r.id === id ? { ...r, ...patch } : r));
   }
+
+  const handleInsertMockSnippet = useCallback((code: string) => {
+    const el = scriptTextareaRef.current;
+    if (!el) {
+      setScript(prev => prev ? prev + '\n\n' + code : code);
+      return;
+    }
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const separator = (script.length > 0 && !script.endsWith('\n')) ? '\n\n' : (script.length > 0 ? '\n' : '');
+    const before = script.slice(0, start);
+    const after = script.slice(end);
+    const insertion = (start === end && start === script.length ? separator : '') + code;
+    setScript(before + insertion + after);
+    requestAnimationFrame(() => {
+      const insertPos = start + insertion.length;
+      el.focus();
+      el.setSelectionRange(insertPos, insertPos);
+    });
+    setShowScript(true);
+    setScriptError(null);
+  }, [script]);
 
   function handleSave() {
     if (!isWs && script.trim()) {
@@ -543,15 +567,22 @@ function RouteEditorModal({ initial, collections, onSave, onClose }: {
                   </button>
                   {showScript && (
                     <div className="px-3 py-3 space-y-2">
-                      <p className="text-xs text-slate-500">
-                        JavaScript snippet. Runs before rules and default response. Call <code className="font-mono text-slate-400">respond(status, body)</code> to override.
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs text-slate-500">
+                          JavaScript snippet. Runs before rules and default response. Call <code className="font-mono text-slate-400">respond(status, body)</code> to override.
+                        </p>
+                        <ScriptSnippetsLibrary target="mock" onInsert={handleInsertMockSnippet} />
+                      </div>
+                      <p className="text-xs text-slate-600">
+                        Persistent state helpers: <code className="font-mono text-slate-500">db.get</code>, <code className="font-mono text-slate-500">db.set</code>, <code className="font-mono text-slate-500">db.push</code>, <code className="font-mono text-slate-500">db.findById</code>, <code className="font-mono text-slate-500">db.upsertById</code>, <code className="font-mono text-slate-500">db.removeById</code>, <code className="font-mono text-slate-500">db.clear</code>.
                       </p>
                       <ScriptEditor
+                        textareaRef={scriptTextareaRef}
                         variant="mock"
                         value={script}
                         onChange={setScript}
                         rows={8}
-                        placeholder={`// Available: req.method, req.path, req.headers, req.query, req.params, req.body, req.requestCount\n// respond(status, body[, headers])\n\nif (!req.headers['authorization']) {\n  respond(401, { error: 'Unauthorized' });\n} else {\n  respond(200, { message: 'Hello, ' + req.body.name });\n}`}
+                        placeholder={`// Available: req.method, req.path, req.headers, req.query, req.params, req.body, req.requestCount\n// respond(status, body[, headers])\n// db.get/set/push/findById/upsertById/removeById/clear\n\nif (req.method === 'POST') {\n  const created = db.push('users', { id: Date.now().toString(), ...req.body });\n  respond(201, created);\n} else {\n  respond(200, db.list('users'));\n}`}
                         className="w-full bg-slate-800 border border-slate-700 focus:border-blue-500 rounded px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none resize-y"
                       />
                       {scriptError && (
@@ -1124,6 +1155,78 @@ function TrafficInspector({ running }: { running: boolean }) {
   );
 }
 
+function MockStateViewer({ running }: { running: boolean }) {
+  const [dbState, setDbState] = useState<Record<string, unknown>>({});
+  const [loading, setLoading] = useState(false);
+  const [clearing, setClearing] = useState(false);
+
+  useEffect(() => {
+    if (!running) {
+      setDbState({});
+      return;
+    }
+    let active = true;
+    function poll() {
+      setLoading(true);
+      getMockDb()
+        .then(data => { if (active) setDbState(data.data || {}); })
+        .catch(() => {})
+        .finally(() => { if (active) setLoading(false); });
+    }
+    poll();
+    const interval = setInterval(poll, 1500);
+    return () => { active = false; clearInterval(interval); };
+  }, [running]);
+
+  async function handleClear() {
+    setClearing(true);
+    try {
+      await clearMockDb();
+      setDbState({});
+    } finally {
+      setClearing(false);
+    }
+  }
+
+  if (!running) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-center pb-16">
+        <p className="text-3xl mb-3">🗃️</p>
+        <p className="text-sm font-medium text-slate-300 mb-1">Server not running</p>
+        <p className="text-xs text-slate-500 max-w-xs">Start the mock server to use and inspect persistent mock state.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-2 border-b border-slate-800 shrink-0">
+        <span className="text-xs text-slate-500">{Object.keys(dbState).length} key{Object.keys(dbState).length !== 1 ? 's' : ''} in state</span>
+        <button
+          onClick={handleClear}
+          disabled={clearing}
+          className="px-3 py-1 text-xs text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded transition-colors disabled:opacity-40"
+        >
+          Clear State
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto px-5 py-4">
+        {loading && Object.keys(dbState).length === 0 ? (
+          <p className="text-xs text-slate-500">Loading state...</p>
+        ) : Object.keys(dbState).length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-center pb-16">
+            <p className="text-3xl mb-3">🧪</p>
+            <p className="text-sm font-medium text-slate-300 mb-1">State is empty</p>
+            <p className="text-xs text-slate-500 max-w-xs">Use route scripts with db helpers to create persistent mock data.</p>
+          </div>
+        ) : (
+          <pre className="bg-slate-900 border border-slate-800 rounded p-3 text-xs font-mono text-slate-200 whitespace-pre-wrap break-all">{JSON.stringify(dbState, null, 2)}</pre>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Panel ────────────────────────────────────────────────────────────────
 
 export default function MockServerPanel() {
@@ -1136,7 +1239,7 @@ export default function MockServerPanel() {
   const [editingRoute, setEditingRoute] = useState<MockRoute | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [showImport, setShowImport] = useState(false);
-  const [activeTab, setActiveTab] = useState<'routes' | 'traffic'>('routes');
+  const [activeTab, setActiveTab] = useState<'routes' | 'traffic' | 'state'>('routes');
 
   useEffect(() => {
     getMockStatus()
@@ -1237,17 +1340,19 @@ export default function MockServerPanel() {
 
       {/* Tabs */}
       <div className="flex border-b border-slate-800 shrink-0 px-5">
-        {(['routes', 'traffic'] as const).map(tab => (
+        {(['routes', 'traffic', 'state'] as const).map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
             className={`px-4 py-2 text-xs font-medium transition-colors ${activeTab === tab ? 'text-orange-400 border-b-2 border-orange-500 -mb-px' : 'text-slate-400 hover:text-slate-200'}`}
           >
-            {tab === 'routes' ? 'Routes' : (
+            {tab === 'routes' ? 'Routes' : tab === 'traffic' ? (
               <span className="flex items-center gap-1.5">
                 Traffic
                 {mockServerRunning && <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />}
               </span>
+            ) : (
+              'State'
             )}
           </button>
         ))}
@@ -1335,6 +1440,13 @@ export default function MockServerPanel() {
       {activeTab === 'traffic' && (
         <div className="flex-1 overflow-hidden">
           <TrafficInspector running={mockServerRunning} />
+        </div>
+      )}
+
+      {/* State tab */}
+      {activeTab === 'state' && (
+        <div className="flex-1 overflow-hidden">
+          <MockStateViewer running={mockServerRunning} />
         </div>
       )}
 

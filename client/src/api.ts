@@ -211,6 +211,20 @@ export async function clearMockLog(): Promise<void> {
   await api.delete('/mock-log');
 }
 
+export interface MockDbResponse {
+  data: Record<string, unknown>;
+  keys: string[];
+}
+
+export async function getMockDb(): Promise<MockDbResponse> {
+  const res = await api.get<MockDbResponse>('/mock-db');
+  return res.data;
+}
+
+export async function clearMockDb(): Promise<void> {
+  await api.delete('/mock-db');
+}
+
 const GRAPHQL_INTROSPECTION_QUERY = `{__schema{queryType{name}mutationType{name}subscriptionType{name}types{kind name fields(includeDeprecated:true){name type{kind name ofType{kind name ofType{kind name ofType{kind name}}}}args{name type{kind name ofType{kind name ofType{kind name}}}}}}}}`;
 
 export async function graphqlIntrospect(
