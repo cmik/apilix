@@ -194,44 +194,57 @@ function securitySchemeToAuth(scheme: OaSecurityScheme): CollectionAuth | undefi
 
   // OAuth2
   if (t === 'oauth2') {
-    // OpenAPI 3.x: pick highest-priority flow
+    // OpenAPI 3.x: only map flows we can represent accurately
     if (scheme.flows) {
-      const { authorizationCode, clientCredentials, implicit, password } = scheme.flows;
-      const flow = authorizationCode ?? clientCredentials ?? password ?? implicit;
-      if (!flow) return { type: 'oauth2' };
+      const { authorizationCode, clientCredentials } = scheme.flows;
 
-      const grantType = authorizationCode
+      if (authorizationCode) {
+        const scopes = Object.keys(authorizationCode.scopes ?? {});
+        const oauth2Config: OAuth2Config = {
+          grantType: 'authorization_code',
+          clientId: '',
+          clientSecret: '',
+          tokenUrl: authorizationCode.tokenUrl ?? '',
+          authorizationUrl: authorizationCode.authorizationUrl ?? '',
+          scopes,
+        };
+        return { type: 'oauth2', oauth2: oauth2Config };
+      }
+
+      if (clientCredentials) {
+        const scopes = Object.keys(clientCredentials.scopes ?? {});
+        const oauth2Config: OAuth2Config = {
+          grantType: 'client_credentials',
+          clientId: '',
+          clientSecret: '',
+          tokenUrl: clientCredentials.tokenUrl ?? '',
+          authorizationUrl: clientCredentials.authorizationUrl ?? '',
+          scopes,
+        };
+        return { type: 'oauth2', oauth2: oauth2Config };
+      }
+
+      return { type: 'oauth2' };
+    }
+
+    // Swagger 2.x: only map flows we can represent accurately
+    if (scheme.flow === 'accessCode' || scheme.flow === 'application') {
+      const grantType = scheme.flow === 'accessCode'
         ? 'authorization_code'
-        : (clientCredentials ?? password)
-          ? 'client_credentials'
-          : 'authorization_code';
-
-      const scopes = Object.keys(flow.scopes ?? {});
+        : 'client_credentials';
+      const scopes = Object.keys(scheme.scopes ?? {});
       const oauth2Config: OAuth2Config = {
         grantType,
         clientId: '',
         clientSecret: '',
-        tokenUrl: flow.tokenUrl ?? '',
-        authorizationUrl: flow.authorizationUrl ?? '',
+        tokenUrl: scheme.tokenUrl ?? '',
+        authorizationUrl: scheme.authorizationUrl ?? '',
         scopes,
       };
       return { type: 'oauth2', oauth2: oauth2Config };
     }
 
-    // Swagger 2.x
-    const grantType = (scheme.flow === 'accessCode' || scheme.flow === 'implicit')
-      ? 'authorization_code'
-      : 'client_credentials';
-    const scopes = Object.keys(scheme.scopes ?? {});
-    const oauth2Config: OAuth2Config = {
-      grantType,
-      clientId: '',
-      clientSecret: '',
-      tokenUrl: scheme.tokenUrl ?? '',
-      authorizationUrl: scheme.authorizationUrl ?? '',
-      scopes,
-    };
-    return { type: 'oauth2', oauth2: oauth2Config };
+    return { type: 'oauth2' };
   }
 
   // openIdConnect — treat as bearer
