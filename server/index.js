@@ -1394,6 +1394,296 @@ app.post('/api/sync/git/timestamp', async (req, res) => {
   }
 });
 
+// ─── CDP Browser Capture ──────────────────────────────────────────────────────
+
+const { WebSocket } = require('ws');
+
+let _cdpWs = null;
+/** @type {Set<import('express').Response>} */
+const _cdpSseClients = new Set();
+/** @type {Map<string, object>} */
+const _cdpRequestMap = new Map();
+let _cdpMsgId = 1;
+/** @type {Map<number, { resolve: Function, reject: Function }>} */
+const _cdpPending = new Map();
+
+function _cdpBroadcast(event, data) {
+  const line = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const res of _cdpSseClients) {
+    try { res.write(line); } catch (_) {}
+  }
+}
+
+function _cdpGetHeaderValue(headers, name) {
+  if (!headers || typeof headers !== 'object') return '';
+  const wanted = String(name).toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === wanted) {
+      return Array.isArray(value) ? value.join('\n') : String(value ?? '');
+    }
+  }
+  return '';
+}
+
+function _cdpParseCookieHeader(raw) {
+  if (!raw) return [];
+  return String(raw)
+    .split(/;\s*/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const idx = part.indexOf('=');
+      return {
+        name: idx === -1 ? part : part.slice(0, idx),
+        value: idx === -1 ? '' : part.slice(idx + 1),
+        raw: part,
+      };
+    });
+}
+
+function _cdpParseSetCookieHeader(raw) {
+  if (!raw) return [];
+  const lines = Array.isArray(raw)
+    ? raw.flatMap((value) => String(value).split(/\r?\n/))
+    : String(raw).split(/\r?\n/);
+
+  return lines
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const parts = line.split(';').map((part) => part.trim()).filter(Boolean);
+      const firstPart = parts[0] || '';
+      const idx = firstPart.indexOf('=');
+      const attributes = parts.slice(1).map((part) => {
+        const attrIdx = part.indexOf('=');
+        return {
+          key: attrIdx === -1 ? part : part.slice(0, attrIdx),
+          value: attrIdx === -1 ? null : part.slice(attrIdx + 1),
+        };
+      });
+      const getAttr = (name) => {
+        const found = attributes.find((attr) => attr.key.toLowerCase() === name);
+        return found ? found.value : undefined;
+      };
+      const hasFlag = (name) => attributes.some((attr) => attr.key.toLowerCase() === name);
+      return {
+        name: idx === -1 ? firstPart : firstPart.slice(0, idx),
+        value: idx === -1 ? '' : firstPart.slice(idx + 1),
+        raw: line,
+        attributes,
+        domain: getAttr('domain'),
+        path: getAttr('path'),
+        expires: getAttr('expires'),
+        maxAge: getAttr('max-age'),
+        sameSite: getAttr('samesite'),
+        secure: hasFlag('secure'),
+        httpOnly: hasFlag('httponly'),
+        partitioned: hasFlag('partitioned'),
+      };
+    });
+}
+
+function _cdpSendCommand(method, params) {
+  return new Promise((resolve, reject) => {
+    if (!_cdpWs || _cdpWs.readyState !== WebSocket.OPEN) {
+      return reject(new Error('CDP WebSocket not connected'));
+    }
+    const id = _cdpMsgId++;
+    _cdpPending.set(id, { resolve, reject });
+    _cdpWs.send(JSON.stringify({ id, method, params }));
+    // Timeout individual commands after 5s
+    setTimeout(() => {
+      if (_cdpPending.has(id)) {
+        _cdpPending.delete(id);
+        reject(new Error(`CDP command ${method} timed out`));
+      }
+    }, 5000);
+  });
+}
+
+function _cdpDisconnect() {
+  if (_cdpWs) {
+    try { _cdpWs.close(); } catch (_) {}
+    _cdpWs = null;
+  }
+  _cdpRequestMap.clear();
+  _cdpPending.clear();
+  _cdpBroadcast('stopped', {});
+}
+
+async function _cdpConnect(port) {
+  return new Promise((resolve, reject) => {
+    const req = http.get(`http://127.0.0.1:${port}/json`, (res) => {
+      let body = '';
+      res.on('data', d => { body += d; });
+      res.on('end', () => {
+        try {
+          const targets = JSON.parse(body);
+          const target = targets.find(t => t.type === 'page');
+          if (!target || !target.webSocketDebuggerUrl) {
+            return reject(new Error('No debuggable page target found. Make sure a tab is open in Chrome.'));
+          }
+          resolve(target.webSocketDebuggerUrl);
+        } catch (e) {
+          reject(new Error('Failed to parse Chrome target list: ' + e.message));
+        }
+      });
+    });
+    req.on('error', (e) => reject(new Error(`Chrome not reachable on port ${port}: ${e.message}`)));
+    req.setTimeout(3000, () => { req.destroy(); reject(new Error(`Connection to Chrome on port ${port} timed out`)); });
+  });
+}
+
+// POST /api/cdp/connect — attach CDP to a running Chrome instance
+app.post('/api/cdp/connect', async (req, res) => {
+  const port = Number(req.body?.port) || 9222;
+
+  if (_cdpWs && _cdpWs.readyState === WebSocket.OPEN) {
+    return res.json({ ok: true, alreadyConnected: true });
+  }
+
+  try {
+    const wsUrl = await _cdpConnect(port);
+    _cdpWs = new WebSocket(wsUrl);
+
+    _cdpWs.on('open', async () => {
+      try {
+        await _cdpSendCommand('Network.enable', {});
+        res.json({ ok: true });
+      } catch (e) {
+        res.status(500).json({ ok: false, error: e.message });
+      }
+    });
+
+    _cdpWs.on('message', async (raw) => {
+      let msg;
+      try { msg = JSON.parse(raw); } catch { return; }
+
+      // Handle command responses
+      if (msg.id !== undefined && _cdpPending.has(msg.id)) {
+        const p = _cdpPending.get(msg.id);
+        _cdpPending.delete(msg.id);
+        if (msg.error) p.reject(new Error(msg.error.message));
+        else p.resolve(msg.result);
+        return;
+      }
+
+      if (!msg.method) return;
+
+      if (msg.method === 'Network.requestWillBeSent') {
+        const { requestId, request, timestamp } = msg.params;
+        let domain = '';
+        try {
+          domain = new URL(request.url).hostname;
+        } catch (_) {}
+        const entry = {
+          id: requestId,
+          timestamp: Math.round(timestamp * 1000),
+          method: request.method,
+          url: request.url,
+          domain,
+          requestHeaders: request.headers || {},
+          requestCookies: _cdpParseCookieHeader(_cdpGetHeaderValue(request.headers, 'cookie')),
+          requestBody: request.postData || null,
+          state: 'pending',
+        };
+        _cdpRequestMap.set(requestId, entry);
+        _cdpBroadcast('request', entry);
+      }
+
+      if (msg.method === 'Network.responseReceived') {
+        const { requestId, response, type } = msg.params;
+        const entry = _cdpRequestMap.get(requestId);
+        if (entry) {
+          entry.status = response.status;
+          entry.statusText = response.statusText;
+          entry.mimeType = response.mimeType;
+          entry.resourceType = type || 'Other';
+          entry.responseHeaders = response.headers || {};
+          entry.responseCookies = _cdpParseSetCookieHeader(_cdpGetHeaderValue(response.headers, 'set-cookie'));
+        }
+      }
+
+      if (msg.method === 'Network.loadingFinished') {
+        const { requestId, encodedDataLength, timestamp } = msg.params;
+        const entry = _cdpRequestMap.get(requestId);
+        if (!entry) return;
+        entry.size = encodedDataLength;
+        if (entry.timestamp) {
+          entry.duration = Math.round(timestamp * 1000) - entry.timestamp;
+        }
+        entry.state = 'complete';
+        try {
+          const bodyResult = await _cdpSendCommand('Network.getResponseBody', { requestId });
+          let body = bodyResult.body || '';
+          if (bodyResult.base64Encoded) {
+            // Keep as truncated base64 marker — don't bloat SSE with binary
+            body = body.length > 512 ? '[binary data]' : body;
+          } else if (body.length > 1_000_000) {
+            body = body.slice(0, 1_000_000) + '\n[truncated]';
+          }
+          entry.responseBody = body;
+        } catch (_) {
+          entry.responseBody = null;
+        }
+        _cdpBroadcast('response', entry);
+        _cdpRequestMap.delete(requestId);
+      }
+
+      if (msg.method === 'Network.loadingFailed') {
+        const { requestId, errorText } = msg.params;
+        const entry = _cdpRequestMap.get(requestId);
+        if (entry) {
+          entry.state = 'failed';
+          entry.errorText = errorText;
+          _cdpBroadcast('failed', { id: requestId, errorText });
+          _cdpRequestMap.delete(requestId);
+        }
+      }
+    });
+
+    _cdpWs.on('close', () => {
+      _cdpWs = null;
+      _cdpBroadcast('stopped', {});
+    });
+
+    _cdpWs.on('error', (e) => {
+      console.error('[CDP] WebSocket error:', e.message);
+      if (res.headersSent) {
+        _cdpDisconnect();
+      } else {
+        _cdpWs = null;
+        res.status(500).json({ ok: false, error: 'CDP WebSocket error: ' + e.message });
+      }
+    });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+// GET /api/cdp/stream — SSE stream of CDP events
+app.get('/api/cdp/stream', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  // Send a heartbeat comment every 15s to keep the connection alive through proxies
+  const heartbeat = setInterval(() => {
+    try { res.write(': heartbeat\n\n'); } catch (_) { clearInterval(heartbeat); }
+  }, 15000);
+  _cdpSseClients.add(res);
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    _cdpSseClients.delete(res);
+  });
+});
+
+// POST /api/cdp/disconnect — close CDP connection
+app.post('/api/cdp/disconnect', (_req, res) => {
+  _cdpDisconnect();
+  res.json({ ok: true });
+});
+
 // ─── Start ─────────────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {

@@ -1,15 +1,17 @@
-import { useState } from 'react';
+import { useState, lazy, Suspense } from 'react';
 import { useApp } from '../store';
 import apilixLogo from '../assets/apilix.svg';
-import WorkspaceManagerModal from './WorkspaceManagerModal';
 
-type View = 'request' | 'runner' | 'environments' | 'mock';
+const WorkspaceManagerModal = lazy(() => import('./WorkspaceManagerModal'));
+
+type View = 'request' | 'runner' | 'environments' | 'mock' | 'capture';
 
 const NAV_ITEMS: { key: View; emoji: string; label: string }[] = [
   { key: 'request',      emoji: '⚡', label: 'Requests' },
   { key: 'runner',       emoji: '▶',  label: 'Runner'   },
   { key: 'environments', emoji: '🌍', label: 'Envs'     },
   { key: 'mock',         emoji: '🎭', label: 'Mock'     },
+  { key: 'capture',      emoji: '📡', label: 'Capture'  },
 ];
 
 interface Props {
@@ -28,7 +30,11 @@ export default function ActivityBar({ theme, onToggleTheme }: Props) {
         <img src={apilixLogo} alt="Apilix" title="APILIX" className="w-16 h-16 object-contain" />
       </div>
 
-      {manageOpen && <WorkspaceManagerModal onClose={() => setManageOpen(false)} />}
+      {manageOpen && (
+        <Suspense fallback={null}>
+          <WorkspaceManagerModal onClose={() => setManageOpen(false)} />
+        </Suspense>
+      )}
 
       {/* Nav icons */}
       <nav className="flex flex-col items-center gap-0.5 flex-1 w-full px-1">

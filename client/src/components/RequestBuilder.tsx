@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { marked } from 'marked';
 import type { CollectionItem, CollectionRequest, CollectionHeader, CollectionQueryParam, OAuth2Config } from '../types';
 import { useApp } from '../store';
@@ -9,11 +9,12 @@ import { parseCurlCommand } from '../utils/curlUtils';
 import { parseHurlFile } from '../utils/hurlUtils';
 import { openAuthorizationWindow } from '../utils/oauth';
 import GraphQLPanel from './GraphQLPanel';
-import CodeGenModal from './CodeGenModal';
 import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
 import ScriptEditor from './ScriptEditor';
 import OAuthConfigPanel from './OAuthConfigPanel';
 import type { SaveExistingRequestTabsResult, UnsavedRequestTabSummary } from '../utils/requestTabSyncGuard';
+
+const CodeGenModal = lazy(() => import('./CodeGenModal'));
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'WS'];
 
@@ -1976,26 +1977,28 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
 
       {/* Code generation modal */}
       {showCodeGen && (
-        <CodeGenModal
-          params={{
-            method: edit.method,
-            url: edit.url,
-            headers: edit.headers,
-            bodyMode: edit.bodyMode,
-            bodyRaw: edit.bodyRaw,
-            bodyFormData: edit.bodyFormData,
-            bodyUrlEncoded: edit.bodyUrlEncoded,
-            bodyGraphqlQuery: edit.bodyGraphqlQuery,
-            bodyGraphqlVariables: edit.bodyGraphqlVariables,
-            authType: edit.authType,
-            authBearer: edit.authBearer,
-            authBasicUser: edit.authBasicUser,
-            authBasicPass: edit.authBasicPass,
-            authApiKeyName: edit.authApiKeyName,
-            authApiKeyValue: edit.authApiKeyValue,
-          }}
-          onClose={() => setShowCodeGen(false)}
-        />
+        <Suspense fallback={null}>
+          <CodeGenModal
+            params={{
+              method: edit.method,
+              url: edit.url,
+              headers: edit.headers,
+              bodyMode: edit.bodyMode,
+              bodyRaw: edit.bodyRaw,
+              bodyFormData: edit.bodyFormData,
+              bodyUrlEncoded: edit.bodyUrlEncoded,
+              bodyGraphqlQuery: edit.bodyGraphqlQuery,
+              bodyGraphqlVariables: edit.bodyGraphqlVariables,
+              authType: edit.authType,
+              authBearer: edit.authBearer,
+              authBasicUser: edit.authBasicUser,
+              authBasicPass: edit.authBasicPass,
+              authApiKeyName: edit.authApiKeyName,
+              authApiKeyValue: edit.authApiKeyValue,
+            }}
+            onClose={() => setShowCodeGen(false)}
+          />
+        </Suspense>
       )}
     </div>
   );
