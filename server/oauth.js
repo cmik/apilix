@@ -66,7 +66,11 @@ async function refreshOAuth2Token(oauth2Config, vars = {}) {
     throw new Error('OAuth 2.0 config is required');
   }
 
-  const { grantType, clientId, clientSecret, tokenUrl, refreshToken, scopes, customHeaders } = oauth2Config;
+  const { grantType, scopes, customHeaders } = oauth2Config;
+  const clientId = resolveVariables(oauth2Config.clientId, vars);
+  const clientSecret = resolveVariables(oauth2Config.clientSecret, vars);
+  const tokenUrl = resolveVariables(oauth2Config.tokenUrl, vars);
+  const refreshToken = resolveVariables(oauth2Config.refreshToken, vars);
 
   if (!clientId || !tokenUrl) {
     throw new Error('Missing required OAuth 2.0 fields: clientId and tokenUrl');
@@ -156,7 +160,10 @@ async function exchangeAuthorizationCodeForToken(oauth2Config, authorizationCode
     throw new Error('OAuth 2.0 config is required');
   }
 
-  const { clientId, clientSecret, tokenUrl, redirectUrl } = oauth2Config;
+  const clientId = resolveVariables(oauth2Config.clientId, vars);
+  const clientSecret = resolveVariables(oauth2Config.clientSecret, vars);
+  const tokenUrl = resolveVariables(oauth2Config.tokenUrl, vars);
+  const redirectUrl = resolveVariables(oauth2Config.redirectUrl, vars);
 
   if (!clientId || !tokenUrl || !authorizationCode) {
     throw new Error('Missing required fields for authorization code exchange');
