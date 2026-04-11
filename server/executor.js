@@ -5,12 +5,13 @@ const http = require('http');
 const https = require('https');
 const FormData = require('form-data');
 const { runScript } = require('./sandbox');
+const { refreshOAuth2Token } = require('./oauth');
 
 const httpClient = axios.create({
   httpsAgent: new https.Agent({ rejectUnauthorized: false }),
   maxRedirects: 10,
   timeout: 30000,
-  validateStatus: null, // never throw based on status code
+  validateStatus: () => true, // never throw based on status code
 });
 
 // ─── Variable resolution ─────────────────────────────────────────────────────
@@ -59,7 +60,7 @@ function resolveUrl(urlObj, vars) {
 
 // ─── Auth handling ───────────────────────────────────────────────────────────
 
-function applyAuth(auth, headers, vars) {
+async function applyAuth(auth, headers, vars) {
   if (!auth || auth.type === 'noauth') return;
 
   switch (auth.type) {
@@ -90,12 +91,62 @@ function applyAuth(auth, headers, vars) {
       }
       break;
     }
+    case 'oauth2': {
+      await handleOAuth2(auth, headers, vars);
+      break;
+    }
     case 'digest':
     case 'oauth1':
-    case 'oauth2':
     default:
       // Not implemented in this version
       break;
+  }
+}
+
+/**
+ * Handle OAuth 2.0 authentication
+ * Check if token is valid; if expired or missing, refresh it
+ */
+async function handleOAuth2(auth, headers, vars) {
+  if (!auth.oauth2) return;
+
+  const oauth2 = auth.oauth2;
+  const now = Date.now();
+
+  let token = oauth2.accessToken;
+  const tokenExpiredOrMissing = !token || (oauth2.expiresAt && oauth2.expiresAt <= now + 60000);
+
+  if (tokenExpiredOrMissing) {
+    // Determine whether we can auto-refresh:
+    //   • client_credentials — always fetch a new token
+    //   • any grant type that already has a refresh_token — use refresh_token grant
+    //   • authorization_code with no refresh_token — cannot auto-refresh; user must authorize first
+    const hasRefreshToken = !!oauth2.refreshToken;
+    const isClientCredentials = oauth2.grantType === 'client_credentials';
+
+    if (isClientCredentials || hasRefreshToken) {
+      try {
+        // When a refresh token is available, always use the refresh_token grant
+        const configForRefresh = hasRefreshToken
+          ? { ...oauth2, grantType: 'refresh_token' }
+          : oauth2;
+        const refreshResult = await refreshOAuth2Token(configForRefresh, vars);
+        token = refreshResult.accessToken;
+      } catch (error) {
+        // Surface the real cause (e.g. ECONNREFUSED, token endpoint 4xx) as a
+        // visible request error rather than silently dropping the auth header.
+        const cause = error.message.replace(/^OAuth 2\.0 token refresh failed:\s*/i, '');
+        throw new Error(`OAuth token refresh failed: ${cause}`);
+      }
+    } else {
+      // authorization_code flow — user has not authorized yet; skip the auth header
+      // so the request proceeds and the target API returns a natural 401
+      console.warn('OAuth 2.0: No access token available for authorization_code flow. User needs to authorize first.');
+    }
+  }
+
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
   }
 }
 
@@ -392,7 +443,7 @@ async function executeRequest(item, context) {
     }
   });
 
-  applyAuth(req.auth, headers, vars);
+  await applyAuth(req.auth, headers, vars);
 
   // Inject cookies from cookie jar
   const cookieHeader = getCookiesForRequest(cookies, url);

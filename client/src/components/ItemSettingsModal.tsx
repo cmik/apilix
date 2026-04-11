@@ -1,10 +1,13 @@
 import { useState } from 'react';
 import { marked } from 'marked';
-import type { CollectionAuth, CollectionEvent, CollectionVariable } from '../types';
+import type { CollectionAuth, CollectionEvent, CollectionVariable, OAuth2Config } from '../types';
 import ScriptEditor from './ScriptEditor';
+import OAuthConfigPanel from './OAuthConfigPanel';
+import { API_BASE } from '../api';
+import { openAuthorizationWindow } from '../utils/oauth';
 
 type AuthType = CollectionAuth['type'];
-const SUPPORTED_AUTH: AuthType[] = ['noauth', 'bearer', 'basic', 'apikey'];
+const SUPPORTED_AUTH: AuthType[] = ['noauth', 'bearer', 'basic', 'apikey', 'oauth2'];
 
 interface Props {
   kind: 'collection' | 'folder';
@@ -46,6 +49,14 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
   const [authBasicPass, setAuthBasicPass] = useState((auth?.basic ?? []).find(b => b.key === 'password')?.value ?? '');
   const [authApiKeyName, setAuthApiKeyName] = useState((auth?.apikey ?? []).find(b => b.key === 'key')?.value ?? 'X-API-Key');
   const [authApiKeyValue, setAuthApiKeyValue] = useState((auth?.apikey ?? []).find(b => b.key === 'value')?.value ?? '');
+  const [authOAuth2Config, setAuthOAuth2Config] = useState<OAuth2Config>(auth?.oauth2 ?? {
+    grantType: 'authorization_code',
+    clientId: '',
+    clientSecret: '',
+    tokenUrl: '',
+  });
+  const [isRefreshingToken, setIsRefreshingToken] = useState(false);
+  const [isGettingAuthCode, setIsGettingAuthCode] = useState(false);
   const [preScript, setPreScript] = useState(getScript(event, 'prerequest'));
   const [testScript, setTestScript] = useState(getScript(event, 'test'));
   const [description, setDescription] = useState(initialDescription ?? '');
@@ -69,7 +80,90 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
         { key: 'value', value: authApiKeyValue, type: 'string' },
       ],
     };
+    if (authType === 'oauth2') return {
+      type: 'oauth2',
+      oauth2: authOAuth2Config,
+    };
     return { type: authType };
+  }
+
+  async function handleGetAuthorizationCode() {
+    const config = authOAuth2Config;
+    if (!config.authorizationUrl || !config.clientId || !config.tokenUrl) {
+      window.alert('Missing required fields: Authorization URL, Client ID, or Token URL');
+      return;
+    }
+    setIsGettingAuthCode(true);
+    try {
+      const result = await openAuthorizationWindow(
+        config.authorizationUrl,
+        config.clientId,
+        config.redirectUrl || 'http://localhost:3000/oauth/callback',
+        config.scopes || []
+      );
+      if (!result) {
+        window.alert('Authorization was cancelled or the popup was blocked.');
+        return;
+      }
+      const response = await fetch(`${API_BASE}/oauth/exchange-code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          oauth2Config: { ...config, codeVerifier: result.codeVerifier },
+          authorizationCode: result.code,
+          environment: {},
+        }),
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to exchange authorization code');
+      }
+      const { accessToken, refreshToken, expiresAt } = await response.json();
+      setAuthOAuth2Config(prev => ({
+        ...prev,
+        accessToken,
+        ...(refreshToken && { refreshToken }),
+        expiresAt,
+        codeVerifier: undefined,
+      }));
+      window.alert('Authorization successful! Token has been obtained.');
+    } catch (err) {
+      window.alert(`Failed to get authorization code: ${(err as Error).message}`);
+    } finally {
+      setIsGettingAuthCode(false);
+    }
+  }
+
+  async function handleRefreshOAuthToken() {
+    const config = authOAuth2Config;
+    if (!config.tokenUrl || !config.clientId) {
+      window.alert('Missing required fields: Token URL or Client ID');
+      return;
+    }
+    setIsRefreshingToken(true);
+    try {
+      const response = await fetch(`${API_BASE}/oauth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ oauth2Config: config, environment: {} }),
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to refresh token');
+      }
+      const { accessToken, refreshToken, expiresAt } = await response.json();
+      setAuthOAuth2Config(prev => ({
+        ...prev,
+        accessToken,
+        ...(refreshToken && { refreshToken }),
+        expiresAt,
+      }));
+      window.alert('Token refreshed successfully!');
+    } catch (err) {
+      window.alert(`Failed to refresh token: ${(err as Error).message}`);
+    } finally {
+      setIsRefreshingToken(false);
+    }
   }
 
   function handleSave() {
@@ -143,6 +237,7 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
                   <option value="bearer">Bearer Token</option>
                   <option value="basic">Basic Auth</option>
                   <option value="apikey">API Key</option>
+                  <option value="oauth2">OAuth 2.0</option>
                 </select>
               </div>
               {authType === 'bearer' && (
@@ -183,6 +278,16 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
                       className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500" />
                   </div>
                 </div>
+              )}
+              {authType === 'oauth2' && (
+                <OAuthConfigPanel
+                  config={authOAuth2Config}
+                  onChange={config => setAuthOAuth2Config(prev => ({ ...prev, ...config }))}
+                  onRefreshToken={handleRefreshOAuthToken}
+                  onGetAuthorizationCode={handleGetAuthorizationCode}
+                  isRefreshing={isRefreshingToken}
+                  isGettingAuthCode={isGettingAuthCode}
+                />
               )}
             </div>
           )}

@@ -63,6 +63,13 @@ function startServer(port) {
     }
 
     try {
+      // Redirect console.error/warn to the log file so server-side errors
+      // (e.g. OAuth failures, execute errors) are visible in the log.
+      const _origError = console.error.bind(console);
+      const _origWarn  = console.warn.bind(console);
+      console.error = (...args) => { writeLog('[server:err] ' + args.join(' ')); _origError(...args); };
+      console.warn  = (...args) => { writeLog('[server:warn] ' + args.join(' ')); _origWarn(...args);  };
+
       require(serverPath);
       writeLog('Server started on port ' + port);
     } catch (err) {

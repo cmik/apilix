@@ -6,6 +6,7 @@ const multer = require('multer');
 const vm = require('vm');
 const { parse: parseCsv } = require('csv-parse/sync');
 const { executeRequest, flattenItems } = require('./executor');
+const { refreshOAuth2Token, exchangeAuthorizationCodeForToken } = require('./oauth');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -74,6 +75,52 @@ app.post('/api/execute', async (req, res) => {
   } catch (err) {
     console.error('Execute error:', err);
     return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── OAuth 2.0 endpoints ───────────────────────────────────────────────────────
+
+app.post('/api/oauth/refresh', async (req, res) => {
+  try {
+    const { oauth2Config, environment } = req.body;
+    if (!oauth2Config) {
+      return res.status(400).json({ error: 'Missing oauth2Config in body' });
+    }
+
+    const vars = environment || {};
+    const refreshResult = await refreshOAuth2Token(oauth2Config, vars);
+
+    return res.json({
+      success: true,
+      accessToken: refreshResult.accessToken,
+      refreshToken: refreshResult.refreshToken,
+      expiresAt: refreshResult.expiresAt,
+    });
+  } catch (err) {
+    console.error('OAuth refresh error:', err);
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/oauth/exchange-code', async (req, res) => {
+  try {
+    const { oauth2Config, authorizationCode, codeVerifier, environment } = req.body;
+    if (!oauth2Config || !authorizationCode) {
+      return res.status(400).json({ error: 'Missing oauth2Config or authorizationCode in body' });
+    }
+
+    const vars = environment || {};
+    const tokenResult = await exchangeAuthorizationCodeForToken(oauth2Config, authorizationCode, codeVerifier, vars);
+
+    return res.json({
+      success: true,
+      accessToken: tokenResult.accessToken,
+      refreshToken: tokenResult.refreshToken,
+      expiresAt: tokenResult.expiresAt,
+    });
+  } catch (err) {
+    console.error('Authorization code exchange error:', err);
+    return res.status(400).json({ error: err.message });
   }
 });
 
