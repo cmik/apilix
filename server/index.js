@@ -10,6 +10,14 @@ const { executeRequest, flattenItems } = require('./executor');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// ─── CORS ─────────────────────────────────────────────────────────────────────
+// Only allow localhost origins (all ports) by default.
+// Set ALLOWED_ORIGINS to a comma-separated list to customise (e.g. for reverse
+// proxies or non-standard ports).
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
+  : null; // null → localhost-only heuristic
+
 // ─── Runner pause/resume/stop state ──────────────────────────────────────────
 
 /** @type {Map<string, { paused: boolean, stopped: boolean }>} */
@@ -40,7 +48,18 @@ async function awaitDelay(runId, delayMs) {
   return 'running';
 }
 
-app.use(cors());
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (Electron renderer via file://, curl, Postman, …)
+    if (!origin) return callback(null, true);
+    // Allow explicitly configured origins
+    if (ALLOWED_ORIGINS && ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    // Allow any localhost origin (http or https, any port) when no explicit list is set
+    if (!ALLOWED_ORIGINS && /^https?:\/\/localhost(:\d+)?$/.test(origin)) return callback(null, true);
+    callback(Object.assign(new Error('CORS: origin not allowed'), { status: 403 }));
+  },
+  credentials: true,
+}));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -581,6 +600,19 @@ function buildMockHandler() {
     const method = req.method.toUpperCase();
     const url = req.url || '/';
 
+    // Handle CORS preflight — respond with permissive headers so browser-based
+    // frontends can call the mock server from any origin.
+    if (method === 'OPTIONS') {
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS',
+        'Access-Control-Allow-Headers': req.headers['access-control-request-headers'] || 'Content-Type, Authorization',
+        'Access-Control-Max-Age': '86400',
+      });
+      res.end();
+      return;
+    }
+
     // Parse query string into object
     const qIdx = url.indexOf('?');
     const pathname = qIdx >= 0 ? url.slice(0, qIdx) : url;
@@ -624,7 +656,7 @@ function buildMockHandler() {
         responseStatus: 404,
         responseBody: notFoundBody,
       });
-      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.writeHead(404, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(notFoundBody);
       return;
     }
@@ -1310,6 +1342,15 @@ app.post('/api/sync/git/timestamp', async (req, res) => {
   } catch (err) {
     res.json({ timestamp: null, version: null });
   }
+});
+
+// ─── Error handler ─────────────────────────────────────────────────────────────
+// Catches errors forwarded by next(err), including CORS rejections.
+// Returns a plain JSON error without leaking internal stack traces.
+// eslint-disable-next-line no-unused-vars
+app.use((err, _req, res, _next) => {
+  const status = err.status || 500;
+  res.status(status).json({ error: err.message || 'Internal server error' });
 });
 
 // ─── Start ─────────────────────────────────────────────────────────────────────
