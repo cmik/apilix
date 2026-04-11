@@ -56,7 +56,7 @@ app.use(cors({
     if (ALLOWED_ORIGINS && ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
     // Allow any localhost origin (http or https, any port) when no explicit list is set
     if (!ALLOWED_ORIGINS && /^https?:\/\/localhost(:\d+)?$/.test(origin)) return callback(null, true);
-    callback(Object.assign(new Error('CORS: origin not allowed'), { status: 403 }));
+    callback(Object.assign(new Error(`CORS: origin '${origin}' not allowed`), { status: 403 }));
   },
   credentials: true,
 }));
@@ -1350,6 +1350,7 @@ app.post('/api/sync/git/timestamp', async (req, res) => {
 // eslint-disable-next-line no-unused-vars
 app.use((err, _req, res, _next) => {
   const status = err.status || 500;
+  if (status >= 500) console.error('Server error:', err);
   res.status(status).json({ error: err.message || 'Internal server error' });
 });
 
