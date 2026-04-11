@@ -1774,7 +1774,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
             {edit.authType === 'oauth2' && (
               <OAuthConfigPanel
                 config={edit.authOAuth2Config}
-                onChange={config => setEdit(x => x ? { ...x, authOAuth2Config: { ...edit.authOAuth2Config, ...config } } : x)}
+                onChange={config => setEdit(x => x ? { ...x, authOAuth2Config: { ...x.authOAuth2Config, ...config } } : x)}
                 onGetAuthorizationCode={handleGetAuthorizationCode}
                 onRefreshToken={handleRefreshOAuthToken}
               />
