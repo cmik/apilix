@@ -109,8 +109,9 @@ app.post('/api/oauth/exchange-code', async (req, res) => {
       return res.status(400).json({ error: 'Missing oauth2Config or authorizationCode in body' });
     }
 
+    const resolvedCodeVerifier = codeVerifier || oauth2Config.codeVerifier;
     const vars = environment || {};
-    const tokenResult = await exchangeAuthorizationCodeForToken(oauth2Config, authorizationCode, codeVerifier, vars);
+    const tokenResult = await exchangeAuthorizationCodeForToken(oauth2Config, authorizationCode, resolvedCodeVerifier, vars);
 
     return res.json({
       success: true,
