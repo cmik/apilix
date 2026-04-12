@@ -1422,6 +1422,7 @@ app.use((err, _req, res, _next) => {
   const status = err.status || 500;
   if (status >= 500) console.error('Server error:', err);
   res.status(status).json({ error: err.message || 'Internal server error' });
+});
   
 // ─── CDP Browser Capture ──────────────────────────────────────────────────────
 
