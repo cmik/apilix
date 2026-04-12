@@ -16,10 +16,12 @@ const VAR_STORE: Completion[] = [
   { label: 'unset(key)',        insert: "unset('",       detail: 'void'    },
   { label: 'has(key)',          insert: "has('",         detail: 'boolean' },
   { label: 'clear()',           insert: 'clear()',       detail: 'void'    },
+  { label: 'toObject()',        insert: 'toObject()',    detail: 'object'  },
 ];
 
 const RESPONSE_HEADERS: Completion[] = [
   { label: 'get(name)', insert: "get('", detail: 'string | undefined' },
+  { label: 'has(name)', insert: "has('", detail: 'boolean' },
 ];
 
 const REQUEST_HEADERS: Completion[] = [
@@ -34,6 +36,23 @@ const RESPONSE: Completion[] = [
   { label: 'text()',       insert: 'text()',        detail: 'string' },
   { label: 'headers',      insert: 'headers',      detail: 'object' },
   { label: 'size',         insert: 'size',         detail: 'number' },
+  { label: 'to',           insert: 'to',           detail: 'assertion helper' },
+];
+
+const RESPONSE_TO: Completion[] = [
+  { label: 'have', insert: 'have', detail: 'helper chain' },
+  { label: 'be',   insert: 'be',   detail: 'helper chain' },
+];
+
+const RESPONSE_TO_HAVE: Completion[] = [
+  { label: 'status(code)',          insert: 'status(',      detail: 'assert status code' },
+  { label: 'header(name, value?)',  insert: "header('",    detail: 'assert header' },
+  { label: 'body(text)',            insert: 'body(',        detail: 'assert body contains text' },
+  { label: 'jsonBody()',            insert: 'jsonBody()',   detail: 'assert valid JSON body' },
+];
+
+const RESPONSE_TO_BE: Completion[] = [
+  { label: 'ok()', insert: 'ok()', detail: 'assert 2xx response' },
 ];
 
 const REQUEST: Completion[] = [
@@ -56,6 +75,10 @@ const INFO: Completion[] = [
   { label: 'requestId', insert: 'requestId', detail: 'string' },
   { label: 'iteration',  insert: 'iteration',  detail: 'number' },
   { label: 'eventName',  insert: 'eventName',  detail: 'string' },
+];
+
+const TEST_FN: Completion[] = [
+  { label: 'skip(name)', insert: 'skip(', detail: 'record skipped test' },
 ];
 
 // ─── Mock-script completions ──────────────────────────────────────────────────
@@ -113,6 +136,64 @@ const MOCK_ROOT: Completion[] = [
   { label: 'new Date()',        insert: 'new Date()',        detail: 'Date'   },
 ];
 
+function normalizeCompletionText(text: string): string {
+  return text
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[^a-zA-Z0-9]+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function compactCompletionText(text: string): string {
+  return text.replace(/[^a-zA-Z0-9]+/g, '').toLowerCase();
+}
+
+function getCompletionScore(completion: Completion, query: string): number | null {
+  if (!query) return 0;
+
+  const normalizedQuery = normalizeCompletionText(query);
+  const compactQuery = compactCompletionText(query);
+  if (!normalizedQuery) return 0;
+
+  const normalizedLabel = normalizeCompletionText(completion.label);
+  const normalizedInsert = normalizeCompletionText(completion.insert);
+  const compactLabel = compactCompletionText(completion.label);
+  const compactInsert = compactCompletionText(completion.insert);
+  const words = Array.from(new Set(
+    `${normalizedLabel} ${normalizedInsert} ${normalizeCompletionText(completion.detail)}`
+      .split(/\s+/)
+      .filter(Boolean),
+  ));
+
+  if (normalizedLabel.startsWith(normalizedQuery) || normalizedInsert.startsWith(normalizedQuery)) {
+    return 0;
+  }
+
+  if (compactQuery && (compactLabel.startsWith(compactQuery) || compactInsert.startsWith(compactQuery))) {
+    return 5;
+  }
+
+  const exactWordIndex = words.findIndex(word => word === normalizedQuery);
+  if (exactWordIndex !== -1) return 10 + exactWordIndex;
+
+  const wordPrefixIndex = words.findIndex(word => word.startsWith(normalizedQuery));
+  if (wordPrefixIndex !== -1) return 20 + wordPrefixIndex;
+
+  const labelIndex = normalizedLabel.indexOf(normalizedQuery);
+  if (labelIndex !== -1) return 30 + labelIndex / 1000;
+
+  const insertIndex = normalizedInsert.indexOf(normalizedQuery);
+  if (insertIndex !== -1) return 40 + insertIndex / 1000;
+
+  const compactLabelIndex = compactQuery ? compactLabel.indexOf(compactQuery) : -1;
+  if (compactLabelIndex !== -1) return 50 + compactLabelIndex / 1000;
+
+  const compactInsertIndex = compactQuery ? compactInsert.indexOf(compactQuery) : -1;
+  if (compactInsertIndex !== -1) return 60 + compactInsertIndex / 1000;
+
+  return null;
+}
+
 function getMockContext(textBefore: string): { completions: Completion[]; prefix: string } | null {
   let m: RegExpMatchArray | null;
 
@@ -147,48 +228,79 @@ function getMockContext(textBefore: string): { completions: Completion[]; prefix
 const EXPECT_CHAIN: Completion[] = [
   // Getters
   { label: 'ok',         insert: 'ok',         detail: 'truthy'   },
-  { label: 'true',       insert: 'true',        detail: 'boolean'  },
-  { label: 'false',      insert: 'false',       detail: 'boolean'  },
-  { label: 'null',       insert: 'null',        detail: 'null'     },
-  { label: 'undefined',  insert: 'undefined',   detail: 'undefined'},
-  { label: 'exist',      insert: 'exist',       detail: '!= null'  },
-  { label: 'empty',      insert: 'empty',       detail: 'empty'    },
-  { label: 'positive',   insert: 'positive',    detail: 'number > 0' },
-  { label: 'negative',   insert: 'negative',    detail: 'number < 0' },
-  { label: 'integer',    insert: 'integer',     detail: 'integer'  },
-  { label: 'finite',     insert: 'finite',      detail: 'finite'   },
+  { label: 'true',       insert: 'true',       detail: 'boolean'  },
+  { label: 'false',      insert: 'false',      detail: 'boolean'  },
+  { label: 'null',       insert: 'null',       detail: 'null'     },
+  { label: 'undefined',  insert: 'undefined',  detail: 'undefined'},
+  { label: 'NaN',        insert: 'NaN',        detail: 'not a number' },
+  { label: 'exist',      insert: 'exist',      detail: '!= null'  },
+  { label: 'empty',      insert: 'empty',      detail: 'empty'    },
+  { label: 'positive',   insert: 'positive',   detail: 'number > 0' },
+  { label: 'negative',   insert: 'negative',   detail: 'number < 0' },
+  { label: 'integer',    insert: 'integer',    detail: 'integer'  },
+  { label: 'finite',     insert: 'finite',     detail: 'finite'   },
   // Methods
-  { label: 'equal(v)',              insert: 'equal(',            detail: 'strict ==='     },
-  { label: 'eql(v)',                insert: 'eql(',              detail: 'deep equal'     },
-  { label: 'include(v)',            insert: 'include(',          detail: 'string|array'   },
-  { label: 'members(arr)',           insert: 'members([',         detail: 'exact set'      },
-  { label: 'includeMembers(arr)',    insert: 'includeMembers([',  detail: 'superset'       },
-  { label: 'oneOf(arr)',             insert: 'oneOf([',           detail: 'one of values'  },
-  { label: 'everyItem(fn)',          insert: 'everyItem(',        detail: 'all items pass' },
-  { label: 'someItem(fn)',           insert: 'someItem(',         detail: 'some item passes'},
-  { label: 'subset(obj)',            insert: 'subset({',          detail: 'partial match'  },
-  { label: 'deepProperty(path)',     insert: "deepProperty('",    detail: 'dot-path key'   },
-  { label: 'satisfy(fn)',            insert: 'satisfy(',          detail: 'custom predicate'},
-  { label: 'satisfies(fn)',          insert: 'satisfies(',        detail: 'custom predicate'},
-  { label: 'matchSchema(schema)',    insert: 'matchSchema({',     detail: 'JSON Schema'    },
-  { label: 'startWith(str)',         insert: "startWith('",       detail: 'string prefix'  },
-  { label: 'endWith(str)',           insert: "endWith('",         detail: 'string suffix'  },
-  { label: 'above(n)',               insert: 'above(',            detail: '> n'            },
-  { label: 'below(n)',               insert: 'below(',            detail: '< n'            },
-  { label: 'least(n)',               insert: 'least(',            detail: '>= n'           },
-  { label: 'most(n)',                insert: 'most(',             detail: '<= n'           },
-  { label: 'within(lo, hi)',         insert: 'within(',           detail: 'range'          },
-  { label: 'lengthOf(n)',            insert: 'lengthOf(',         detail: '.length'        },
-  { label: 'property(name)',         insert: "property('",        detail: 'key exists'     },
-  { label: 'a(type)',                insert: "a('",               detail: 'typeof'         },
-  { label: 'match(regex)',           insert: 'match(',            detail: 'regex'          },
-  { label: 'keys(arr)',              insert: 'keys([',            detail: 'has keys'       },
+  { label: 'equal(value)',           insert: 'equal(',           detail: 'strict equality' },
+  { label: 'equals(value)',          insert: 'equals(',          detail: 'alias of equal' },
+  { label: 'eq(value)',              insert: 'eq(',              detail: 'alias of equal' },
+  { label: 'eql(value)',             insert: 'eql(',             detail: 'deep equal'     },
+  { label: 'eqls(value)',            insert: 'eqls(',            detail: 'alias of eql'   },
+  { label: 'include(value)',         insert: 'include(',         detail: 'contains value' },
+  { label: 'includes(value)',        insert: 'includes(',        detail: 'alias of include' },
+  { label: 'contain(value)',         insert: 'contain(',         detail: 'alias of include' },
+  { label: 'contains(value)',        insert: 'contains(',        detail: 'alias of include' },
+  { label: 'members(array)',         insert: 'members([',        detail: 'exact set'      },
+  { label: 'includeMembers(array)',  insert: 'includeMembers([', detail: 'superset'       },
+  { label: 'oneOf(array)',           insert: 'oneOf([',          detail: 'one of values'  },
+  { label: 'everyItem(fn)',          insert: 'everyItem(',       detail: 'all items pass' },
+  { label: 'someItem(fn)',           insert: 'someItem(',        detail: 'some item passes' },
+  { label: 'subset(object)',         insert: 'subset({',         detail: 'partial match'  },
+  { label: 'deepProperty(path, value?)', insert: "deepProperty('", detail: 'dot path lookup' },
+  { label: 'satisfy(fn)',            insert: 'satisfy(',         detail: 'custom predicate' },
+  { label: 'satisfies(fn)',          insert: 'satisfies(',       detail: 'alias of satisfy' },
+  { label: 'matchSchema(schema)',    insert: 'matchSchema({',    detail: 'JSON Schema validation' },
+  { label: 'startWith(text)',        insert: "startWith('",      detail: 'string prefix'  },
+  { label: 'endWith(text)',          insert: "endWith('",        detail: 'string suffix'  },
+  { label: 'above(number)',          insert: 'above(',           detail: 'greater than'   },
+  { label: 'gt(number)',             insert: 'gt(',              detail: 'alias of above' },
+  { label: 'greaterThan(number)',    insert: 'greaterThan(',     detail: 'alias of above' },
+  { label: 'below(number)',          insert: 'below(',           detail: 'less than'      },
+  { label: 'lt(number)',             insert: 'lt(',              detail: 'alias of below' },
+  { label: 'lessThan(number)',       insert: 'lessThan(',        detail: 'alias of below' },
+  { label: 'least(number)',          insert: 'least(',           detail: 'at least'       },
+  { label: 'gte(number)',            insert: 'gte(',             detail: 'alias of least' },
+  { label: 'most(number)',           insert: 'most(',            detail: 'at most'        },
+  { label: 'lte(number)',            insert: 'lte(',             detail: 'alias of most'  },
+  { label: 'within(min, max)',       insert: 'within(',          detail: 'inclusive range' },
+  { label: 'closeTo(value, delta)',  insert: 'closeTo(',         detail: 'numeric tolerance' },
+  { label: 'lengthOf(number)',       insert: 'lengthOf(',        detail: 'length equals'  },
+  { label: 'property(name, value?)', insert: "property('",       detail: 'property exists or equals' },
+  { label: 'a(type)',                insert: "a('",              detail: 'typeof match'   },
+  { label: 'an(type)',               insert: "an('",             detail: 'alias of a'     },
+  { label: 'instanceOf(Ctor)',       insert: 'instanceOf(',      detail: 'instance check' },
+  { label: 'match(regex)',           insert: 'match(',           detail: 'regex match'    },
+  { label: 'keys(array)',            insert: 'keys([',           detail: 'has all keys'   },
+  { label: 'key(name)',              insert: "key('",            detail: 'single key alias' },
+  { label: 'string(text)',           insert: 'string(',          detail: 'string contains text' },
   // Chainable words
-  { label: 'to',    insert: 'to',    detail: 'chain' },
-  { label: 'be',    insert: 'be',    detail: 'chain' },
-  { label: 'have',  insert: 'have',  detail: 'chain' },
-  { label: 'not',   insert: 'not',   detail: 'negate'},
-  { label: 'deep',  insert: 'deep',  detail: 'chain' },
+  { label: 'to',     insert: 'to',     detail: 'chain word' },
+  { label: 'be',     insert: 'be',     detail: 'chain word' },
+  { label: 'been',   insert: 'been',   detail: 'chain word' },
+  { label: 'is',     insert: 'is',     detail: 'chain word' },
+  { label: 'that',   insert: 'that',   detail: 'chain word' },
+  { label: 'which',  insert: 'which',  detail: 'chain word' },
+  { label: 'and',    insert: 'and',    detail: 'chain word' },
+  { label: 'has',    insert: 'has',    detail: 'chain word' },
+  { label: 'have',   insert: 'have',   detail: 'chain word' },
+  { label: 'with',   insert: 'with',   detail: 'chain word' },
+  { label: 'at',     insert: 'at',     detail: 'chain word' },
+  { label: 'of',     insert: 'of',     detail: 'chain word' },
+  { label: 'same',   insert: 'same',   detail: 'chain word' },
+  { label: 'does',   insert: 'does',   detail: 'chain word' },
+  { label: 'still',  insert: 'still',  detail: 'chain word' },
+  { label: 'also',   insert: 'also',   detail: 'chain word' },
+  { label: 'not',    insert: 'not',    detail: 'negate assertion' },
+  { label: 'deep',   insert: 'deep',   detail: 'deep equality chain' },
 ];
 
 const ROOT: Completion[] = [
@@ -217,8 +329,20 @@ function getContext(textBefore: string, requestNames: string[]): { completions: 
   let m: RegExpMatchArray | null;
 
   // Most specific patterns first
+  m = textBefore.match(/(?:apx|pm)\.response\.to\.have\.(\w*)$/);
+  if (m) return { completions: RESPONSE_TO_HAVE, prefix: m[1] };
+
+  m = textBefore.match(/(?:apx|pm)\.response\.to\.be\.(\w*)$/);
+  if (m) return { completions: RESPONSE_TO_BE, prefix: m[1] };
+
+  m = textBefore.match(/(?:apx|pm)\.response\.to\.(\w*)$/);
+  if (m) return { completions: RESPONSE_TO, prefix: m[1] };
+
   m = textBefore.match(/(?:apx|pm)\.response\.headers\.(\w*)$/);
   if (m) return { completions: RESPONSE_HEADERS, prefix: m[1] };
+
+  m = textBefore.match(/(?:apx|pm)\.test\.(\w*)$/);
+  if (m) return { completions: TEST_FN, prefix: m[1] };
 
   m = textBefore.match(/(?:apx|pm)\.request\.headers\.(\w*)$/);
   if (m) return { completions: REQUEST_HEADERS, prefix: m[1] };
@@ -241,8 +365,8 @@ function getContext(textBefore: string, requestNames: string[]): { completions: 
   m = textBefore.match(/(?:apx|pm)\.info\.(\w*)$/);
   if (m) return { completions: INFO, prefix: m[1] };
 
-  // Expect-chain completions: triggered after one or more chain segments.
-  m = textBefore.match(/\)\.(?:(?:to|be|have|not|and|is|does|that|which|with|at|of|same|also|still|deep)\.)+(\w*)$/);
+  // Expect-chain completions: triggered after expect(...). or after one or more chain segments.
+  m = textBefore.match(/\)\.(?:(?:to|be|been|is|that|which|and|has|have|with|at|of|same|does|still|also|deep|not)\.)*(\w*)$/);
   if (m) return { completions: EXPECT_CHAIN, prefix: m[1] };
 
   // Request-name autocomplete inside apx.executeRequest('...
@@ -382,9 +506,15 @@ export default function ScriptEditor({
       : getContext(textBefore, requestNames ?? []);
     if (!ctx) { setAc(null); return; }
 
-    const filtered = ctx.completions.filter(c =>
-      c.label.toLowerCase().startsWith(ctx.prefix.toLowerCase()),
-    );
+    const filtered = ctx.completions
+      .map((completion, index) => ({
+        completion,
+        index,
+        score: getCompletionScore(completion, ctx.prefix),
+      }))
+      .filter((entry): entry is { completion: Completion; index: number; score: number } => entry.score !== null)
+      .sort((a, b) => a.score - b.score || a.index - b.index || a.completion.label.localeCompare(b.completion.label))
+      .map(entry => entry.completion);
     if (filtered.length === 0) { setAc(null); return; }
 
     const replaceStart = pos - ctx.prefix.length;
