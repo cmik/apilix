@@ -144,6 +144,53 @@ function getMockContext(textBefore: string): { completions: Completion[]; prefix
   return null;
 }
 
+const EXPECT_CHAIN: Completion[] = [
+  // Getters
+  { label: 'ok',         insert: 'ok',         detail: 'truthy'   },
+  { label: 'true',       insert: 'true',        detail: 'boolean'  },
+  { label: 'false',      insert: 'false',       detail: 'boolean'  },
+  { label: 'null',       insert: 'null',        detail: 'null'     },
+  { label: 'undefined',  insert: 'undefined',   detail: 'undefined'},
+  { label: 'exist',      insert: 'exist',       detail: '!= null'  },
+  { label: 'empty',      insert: 'empty',       detail: 'empty'    },
+  { label: 'positive',   insert: 'positive',    detail: 'number > 0' },
+  { label: 'negative',   insert: 'negative',    detail: 'number < 0' },
+  { label: 'integer',    insert: 'integer',     detail: 'integer'  },
+  { label: 'finite',     insert: 'finite',      detail: 'finite'   },
+  // Methods
+  { label: 'equal(v)',              insert: 'equal(',            detail: 'strict ==='     },
+  { label: 'eql(v)',                insert: 'eql(',              detail: 'deep equal'     },
+  { label: 'include(v)',            insert: 'include(',          detail: 'string|array'   },
+  { label: 'members(arr)',           insert: 'members([',         detail: 'exact set'      },
+  { label: 'includeMembers(arr)',    insert: 'includeMembers([',  detail: 'superset'       },
+  { label: 'oneOf(arr)',             insert: 'oneOf([',           detail: 'one of values'  },
+  { label: 'everyItem(fn)',          insert: 'everyItem(',        detail: 'all items pass' },
+  { label: 'someItem(fn)',           insert: 'someItem(',         detail: 'some item passes'},
+  { label: 'subset(obj)',            insert: 'subset({',          detail: 'partial match'  },
+  { label: 'deepProperty(path)',     insert: "deepProperty('",    detail: 'dot-path key'   },
+  { label: 'satisfy(fn)',            insert: 'satisfy(',          detail: 'custom predicate'},
+  { label: 'satisfies(fn)',          insert: 'satisfies(',        detail: 'custom predicate'},
+  { label: 'matchSchema(schema)',    insert: 'matchSchema({',     detail: 'JSON Schema'    },
+  { label: 'startWith(str)',         insert: "startWith('",       detail: 'string prefix'  },
+  { label: 'endWith(str)',           insert: "endWith('",         detail: 'string suffix'  },
+  { label: 'above(n)',               insert: 'above(',            detail: '> n'            },
+  { label: 'below(n)',               insert: 'below(',            detail: '< n'            },
+  { label: 'least(n)',               insert: 'least(',            detail: '>= n'           },
+  { label: 'most(n)',                insert: 'most(',             detail: '<= n'           },
+  { label: 'within(lo, hi)',         insert: 'within(',           detail: 'range'          },
+  { label: 'lengthOf(n)',            insert: 'lengthOf(',         detail: '.length'        },
+  { label: 'property(name)',         insert: "property('",        detail: 'key exists'     },
+  { label: 'a(type)',                insert: "a('",               detail: 'typeof'         },
+  { label: 'match(regex)',           insert: 'match(',            detail: 'regex'          },
+  { label: 'keys(arr)',              insert: 'keys([',            detail: 'has keys'       },
+  // Chainable words
+  { label: 'to',    insert: 'to',    detail: 'chain' },
+  { label: 'be',    insert: 'be',    detail: 'chain' },
+  { label: 'have',  insert: 'have',  detail: 'chain' },
+  { label: 'not',   insert: 'not',   detail: 'negate'},
+  { label: 'deep',  insert: 'deep',  detail: 'chain' },
+];
+
 const ROOT: Completion[] = [
   { label: 'environment',          insert: 'environment',          detail: 'object'     },
   { label: 'globals',              insert: 'globals',              detail: 'object'     },
@@ -156,7 +203,10 @@ const ROOT: Completion[] = [
   { label: 'execution',            insert: 'execution',            detail: 'object'     },
   { label: 'info',                 insert: 'info',                 detail: 'object'     },
   { label: 'test(name, fn)',        insert: 'test(',                detail: 'void'       },
+  { label: 'test.skip(name)',       insert: 'test.skip(',           detail: 'void'       },
   { label: 'expect(value)',         insert: 'expect(',              detail: 'Assertion'  },
+  { label: 'softExpect(value)',     insert: 'softExpect(',          detail: 'SoftAssertion' },
+  { label: 'assertAll(label?)',     insert: 'assertAll(',           detail: 'void'       },
   { label: 'sendRequest(opts, cb)', insert: 'sendRequest(',         detail: 'void'       },
   { label: 'executeRequest(name)',  insert: "executeRequest('",      detail: 'Promise<void>' },
 ];
@@ -190,6 +240,10 @@ function getContext(textBefore: string, requestNames: string[]): { completions: 
 
   m = textBefore.match(/(?:apx|pm)\.info\.(\w*)$/);
   if (m) return { completions: INFO, prefix: m[1] };
+
+  // Expect-chain completions: triggered after .to., .be., .have., etc.
+  m = textBefore.match(/\)\.(?:to|be|have|not|and|is|does|that|which|with|at|of|same|also|still|deep)\.(\w*)$/);
+  if (m) return { completions: EXPECT_CHAIN, prefix: m[1] };
 
   // Request-name autocomplete inside apx.executeRequest('...
   m = textBefore.match(/(?:apx|pm)\.executeRequest\(['"]([^'"]*)$/);

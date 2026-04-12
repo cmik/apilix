@@ -58,7 +58,7 @@ function EntryDetail({ entry }: { entry: ConsoleEntry }) {
   const logCount = entry.scriptLogs?.length ?? 0;
   const testResults = entry.response?.testResults ?? [];
   const testCount = testResults.length;
-  const failCount = testResults.filter(t => !t.passed).length;
+  const failCount = testResults.filter(t => t.passed === false).length;
   const [tab, setTab] = useState<'response' | 'request' | 'tests' | 'logs'>('response');
 
   return (

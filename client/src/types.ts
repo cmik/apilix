@@ -147,8 +147,9 @@ export interface ScriptLog {
 
 export interface TestResult {
   name: string;
-  passed: boolean;
+  passed: boolean | null;
   error: string | null;
+  skipped?: boolean;
 }
 
 export interface RedirectHop {
