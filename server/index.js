@@ -1418,12 +1418,13 @@ app.post('/api/sync/git/timestamp', async (req, res) => {
 // Catches errors forwarded by next(err), including CORS rejections.
 // Returns a plain JSON error without leaking internal stack traces.
 // eslint-disable-next-line no-unused-vars
-app.use((err, _req, res, _next) => {
+// Register this at the very end of the file, just before app.listen(...).
+// eslint-disable-next-line no-unused-vars
+function errorHandler(err, _req, res, _next) {
   const status = err.status || 500;
   if (status >= 500) console.error('Server error:', err);
   res.status(status).json({ error: err.message || 'Internal server error' });
-});
-  
+}
 // ─── CDP Browser Capture ──────────────────────────────────────────────────────
 
 /**
