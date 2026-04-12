@@ -324,10 +324,32 @@ function IterationBlock({ iter }: { iter: RunnerIteration }) {
     ...(r.preChildRequests ?? []),
     ...(r.testChildRequests ?? []),
   ]);
-  const passed = iter.results.reduce((acc, r) => acc + r.testResults.filter(t => t.passed === true).length, 0)
-    + allChildren.reduce((acc, c) => acc + (c.result.testResults ?? []).filter(t => t.passed === true).length, 0);
-  const total = iter.results.reduce((acc, r) => acc + r.testResults.filter(t => !t.skipped).length, 0)
-    + allChildren.reduce((acc, c) => acc + (c.result.testResults ?? []).filter(t => !t.skipped).length, 0);
+  const countTestResults = (testResults: { passed: boolean | null; skipped?: boolean }[]) => ({
+    passed: testResults.filter(t => t.passed === true).length,
+    total: testResults.filter(t => !t.skipped).length,
+  });
+  const parentCounts = iter.results.reduce(
+    (acc, r) => {
+      const counts = countTestResults(r.testResults);
+      return {
+        passed: acc.passed + counts.passed,
+        total: acc.total + counts.total,
+      };
+    },
+    { passed: 0, total: 0 },
+  );
+  const childCounts = allChildren.reduce(
+    (acc, c) => {
+      const counts = countTestResults(c.result.testResults ?? []);
+      return {
+        passed: acc.passed + counts.passed,
+        total: acc.total + counts.total,
+      };
+    },
+    { passed: 0, total: 0 },
+  );
+  const passed = parentCounts.passed + childCounts.passed;
+  const total = parentCounts.total + childCounts.total;
   const errors = iter.results.filter(r => r.error).length
     + allChildren.filter(c => c.result.error).length;
   const totalRequestCount = iter.results.length + allChildren.length;
