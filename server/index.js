@@ -285,6 +285,9 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
 
     const delayMs = Math.min(parseInt(delay, 10) || 0, 5000);
 
+    // Precompute id -> index map once (requests is constant for the run)
+    const requestIdToIndex = new Map(requests.map((r, i) => [r.id, i]));
+
     let stopped = false;
     outer: for (let i = 0; i < dataRows.length; i++) {
       const dataRow = dataRows[i];
@@ -304,7 +307,7 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
         perRequestCount[reqIdx]++;
         if (perRequestCount[reqIdx] > maxPerRequest) {
           const loopName = requests[reqIdx].name;
-          sendEvent('error', { error: `Iteration ${i + 1} aborted: "${loopName}" was reached ${perRequestCount[reqIdx]} times — circular setNextRequest() detected.` });
+          sendEvent('error', { error: `Iteration ${i + 1} aborted: "${loopName}" was reached ${perRequestCount[reqIdx]} times — circular conditional execution detected (setNextRequest() or setNextRequestById()).` });
           break;
         }
         const item = requests[reqIdx];
@@ -360,7 +363,7 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
         // ID-based routing (setNextRequestById) takes precedence over name-based routing.
         if (conditionalExecution !== false && result.nextRequestById !== undefined) {
           if (result.nextRequestById !== null) {
-            const targetIdx = requests.findIndex(r => r.id === result.nextRequestById);
+            const targetIdx = requestIdToIndex.has(result.nextRequestById) ? requestIdToIndex.get(result.nextRequestById) : -1;
             if (targetIdx >= 0) {
               const targetName = requests[targetIdx].name;
               sendEvent('next-request', { from: item.name, to: targetName });
