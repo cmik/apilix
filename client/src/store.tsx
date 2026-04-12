@@ -70,6 +70,18 @@ const initialState: AppState = {
   mockServerRunning: false,
   mockPort: 3002,
   runnerPreselection: null,
+  captureEntries: [],
+  captureRunning: false,
+  captureGeneration: 0,
+  captureViewState: {
+    search: '',
+    filterDomain: '',
+    filterMethod: 'ALL',
+    filterStatus: 'ALL',
+    filterResourceType: 'ALL',
+    sortKey: 'timestamp',
+    sortDirection: 'desc',
+  },
 };
 
 function appReducer(state: AppState, action: AppAction): AppState {
@@ -553,6 +565,39 @@ function appReducer(state: AppState, action: AppAction): AppState {
         mockPort: data.mockPort ?? 3002,
       };
     }
+
+    case 'CAPTURE_ADD_ENTRY':
+      if (action.payload.generation !== state.captureGeneration) return state;
+      return {
+        ...state,
+        captureEntries: state.captureEntries.some(entry => entry.id === action.payload.entry.id)
+          ? state.captureEntries.map(entry => entry.id === action.payload.entry.id ? { ...entry, ...action.payload.entry } : entry)
+          : [...state.captureEntries, action.payload.entry],
+      };
+
+    case 'CAPTURE_UPDATE_ENTRY':
+      if (action.payload.generation !== undefined && action.payload.generation !== state.captureGeneration) return state;
+      return {
+        ...state,
+        captureEntries: state.captureEntries.map(e =>
+          e.id === action.payload.entry.id ? { ...e, ...action.payload.entry } : e
+        ),
+      };
+
+    case 'CAPTURE_CLEAR':
+      return { ...state, captureEntries: [], captureGeneration: state.captureGeneration + 1 };
+
+    case 'SET_CAPTURE_RUNNING':
+      return { ...state, captureRunning: action.payload };
+
+    case 'SET_CAPTURE_VIEW_STATE':
+      return {
+        ...state,
+        captureViewState: {
+          ...state.captureViewState,
+          ...action.payload,
+        },
+      };
 
     default:
       return state;

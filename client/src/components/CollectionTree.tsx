@@ -264,8 +264,13 @@ function InlineRename({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    inputRef.current?.select();
+  }, []);
   return (
     <input
+      ref={inputRef}
       autoFocus
       value={value}
       onChange={e => onChange(e.target.value)}
@@ -331,7 +336,9 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
   const isActive =
     !isFolder &&
     state.activeRequest?.collectionId === collectionId &&
-    state.activeRequest?.item.name === item.name;
+    (item.id
+      ? state.activeRequest?.item.id === item.id
+      : state.activeRequest?.item.name === item.name);
 
   function openMenu(e: React.MouseEvent) {
     e.preventDefault();
@@ -1056,7 +1063,9 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
           const method = r.item.request?.method?.toUpperCase() || 'GET';
           const isActive =
             state.activeRequest?.collectionId === r.collectionId &&
-            state.activeRequest?.item.name === r.item.name;
+            (r.item.id
+              ? state.activeRequest?.item.id === r.item.id
+              : state.activeRequest?.item.name === r.item.name);
           const crumb = [r.collectionName, r.breadcrumb].filter(Boolean).join(' / ');
           return (
             <button

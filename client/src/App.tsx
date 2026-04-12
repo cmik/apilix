@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, lazy, Suspense } from 'react';
 import { API_BASE } from './api';
 import { useApp, generateId } from './store';
 import type { AppEnvironment, CollectionItem, WorkspaceData, SyncConfig, SyncMetadata, ConflictPackage } from './types';
@@ -6,16 +6,18 @@ import Sidebar from './components/Sidebar';
 import ActivityBar from './components/ActivityBar';
 import RequestBuilder from './components/RequestBuilder';
 import ResponseViewer from './components/ResponseViewer';
-import RunnerPanel from './components/RunnerPanel';
 import EnvironmentPanel from './components/EnvironmentPanel';
 import ConsolePanel from './components/ConsolePanel';
 import StatusBar from './components/StatusBar';
 import TabBar from './components/TabBar';
-import CookieManagerModal from './components/CookieManagerModal';
-import MockServerPanel from './components/MockServerPanel';
 import GlobalVariablesPanel from './components/GlobalVariablesPanel';
-import ConflictMergeModal from './components/ConflictMergeModal';
 import ConfirmModal from './components/ConfirmModal';
+
+const RunnerPanel = lazy(() => import('./components/RunnerPanel'));
+const MockServerPanel = lazy(() => import('./components/MockServerPanel'));
+const BrowserCapturePanel = lazy(() => import('./components/BrowserCapturePanel'));
+const CookieManagerModal = lazy(() => import('./components/CookieManagerModal'));
+const ConflictMergeModal = lazy(() => import('./components/ConflictMergeModal'));
 import * as StorageDriver from './utils/storageDriver';
 import * as SnapshotEngine from './utils/snapshotEngine';
 import {
@@ -903,7 +905,9 @@ export default function App() {
         </div>
         {/* RunnerPanel is always mounted to preserve form state; hidden when not active */}
         <div className={`flex-1 flex flex-col overflow-hidden ${state.view === 'runner' ? '' : 'hidden'}`}>
-          <RunnerPanel />
+          <Suspense fallback={null}>
+            <RunnerPanel />
+          </Suspense>
         </div>
         {state.view === 'environments' && (
           <div className="flex-1 flex flex-col overflow-hidden">
@@ -917,7 +921,16 @@ export default function App() {
         )}
         {state.view === 'mock' && (
           <div className="flex-1 flex flex-col overflow-hidden">
-            <MockServerPanel />
+            <Suspense fallback={null}>
+              <MockServerPanel />
+            </Suspense>
+          </div>
+        )}
+        {state.view === 'capture' && (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <Suspense fallback={null}>
+              <BrowserCapturePanel />
+            </Suspense>
           </div>
         )}
 
@@ -953,7 +966,9 @@ export default function App() {
 
       {/* Cookie manager modal */}
       {cookieManagerOpen && (
-        <CookieManagerModal onClose={() => setCookieManagerOpen(false)} />
+        <Suspense fallback={null}>
+          <CookieManagerModal onClose={() => setCookieManagerOpen(false)} />
+        </Suspense>
       )}
 
       {/* App close guard */}
@@ -994,38 +1009,40 @@ export default function App() {
       )}
 
       {quickSyncConflictPackage && (
-        <ConflictMergeModal
-          conflictPackage={quickSyncConflictPackage}
-          onResolved={(merged) => handleQuickSyncMergeResolved(merged)}
-          onKeepLocal={() => {
-            setQuickSyncConflictPackage(null);
-            setQuickSyncFeedback('Kept local changes', 'warning');
-          }}
-          onKeepRemote={async () => {
-            if (!quickSyncConfig) {
+        <Suspense fallback={null}>
+          <ConflictMergeModal
+            conflictPackage={quickSyncConflictPackage}
+            onResolved={(merged) => handleQuickSyncMergeResolved(merged)}
+            onKeepLocal={() => {
               setQuickSyncConflictPackage(null);
-              return;
-            }
-            setSyncBusy(true);
-            try {
-              const result = await syncPullWithMeta(quickSyncConfig, 'keep-remote');
-              if (result.data) {
-                dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...result.data, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
-                await StorageDriver.writeWorkspace(state.activeWorkspaceId, result.data);
-                const meta = await persistSyncBase(quickSyncConfig, result.data, result.remoteState.timestamp, result.remoteState.version, 'sync base after keep-remote');
-                setQuickSyncConfig({ ...quickSyncConfig, metadata: meta });
-                setLastSuccessfulSyncAt(meta.lastSyncedAt ?? null);
+              setQuickSyncFeedback('Kept local changes', 'warning');
+            }}
+            onKeepRemote={async () => {
+              if (!quickSyncConfig) {
+                setQuickSyncConflictPackage(null);
+                return;
               }
-              setQuickSyncFeedback('Applied remote changes', 'ok');
-            } catch (err: unknown) {
-              setQuickSyncFeedback((err as Error).message, 'error');
-            } finally {
-              setSyncBusy(false);
-              setQuickSyncConflictPackage(null);
-            }
-          }}
-          onClose={() => setQuickSyncConflictPackage(null)}
-        />
+              setSyncBusy(true);
+              try {
+                const result = await syncPullWithMeta(quickSyncConfig, 'keep-remote');
+                if (result.data) {
+                  dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...result.data, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
+                  await StorageDriver.writeWorkspace(state.activeWorkspaceId, result.data);
+                  const meta = await persistSyncBase(quickSyncConfig, result.data, result.remoteState.timestamp, result.remoteState.version, 'sync base after keep-remote');
+                  setQuickSyncConfig({ ...quickSyncConfig, metadata: meta });
+                  setLastSuccessfulSyncAt(meta.lastSyncedAt ?? null);
+                }
+                setQuickSyncFeedback('Applied remote changes', 'ok');
+              } catch (err: unknown) {
+                setQuickSyncFeedback((err as Error).message, 'error');
+              } finally {
+                setSyncBusy(false);
+                setQuickSyncConflictPackage(null);
+              }
+            }}
+            onClose={() => setQuickSyncConflictPackage(null)}
+          />
+        </Suspense>
       )}
 
       {pendingSyncConfirm && (

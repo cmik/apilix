@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useState, lazy, Suspense } from 'react';
 import { useApp, generateId } from '../store';
 import CollectionTree from './CollectionTree';
-import ImportModal from './ImportModal';
-import ExportModal from './ExportModal';
 import WorkspaceSwitcher from './WorkspaceSwitcher';
-import WorkspaceManagerModal from './WorkspaceManagerModal';
+
+const ImportModal = lazy(() => import('./ImportModal'));
+const ExportModal = lazy(() => import('./ExportModal'));
+const WorkspaceManagerModal = lazy(() => import('./WorkspaceManagerModal'));
 
 export default function Sidebar() {
   const { state, dispatch } = useApp(); // dispatch used by collection actions
@@ -23,7 +24,11 @@ export default function Sidebar() {
       <div className="px-2 pt-2 pb-1 border-b border-slate-700 shrink-0">
         <WorkspaceSwitcher onManage={() => setManageOpen(true)} />
       </div>
-      {manageOpen && <WorkspaceManagerModal onClose={() => setManageOpen(false)} />}
+      {manageOpen && (
+        <Suspense fallback={null}>
+          <WorkspaceManagerModal onClose={() => setManageOpen(false)} />
+        </Suspense>
+      )}
       {/* Collections toolbar */}
       <div className="px-3 py-2 border-b border-slate-700 flex items-center shrink-0">
         <button
@@ -113,8 +118,16 @@ export default function Sidebar() {
       </div>
       <CollectionTree filter={filter} renamingCollectionId={newCollectionId} onRenamingDone={() => setNewCollectionId(null)} collapseSignal={collapseSignal} expandSignal={expandSignal} sortAZ={sortAZ} />
 
-      {showImport && <ImportModal onClose={() => setShowImport(false)} />}
-      {showExport && <ExportModal onClose={() => setShowExport(false)} />}
+      {showImport && (
+        <Suspense fallback={null}>
+          <ImportModal onClose={() => setShowImport(false)} />
+        </Suspense>
+      )}
+      {showExport && (
+        <Suspense fallback={null}>
+          <ExportModal onClose={() => setShowExport(false)} />
+        </Suspense>
+      )}
     </div>
   );
 }
