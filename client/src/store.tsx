@@ -568,7 +568,12 @@ function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'CAPTURE_ADD_ENTRY':
       if (action.payload.generation !== state.captureGeneration) return state;
-      return { ...state, captureEntries: [...state.captureEntries, action.payload.entry] };
+      return {
+        ...state,
+        captureEntries: state.captureEntries.some(entry => entry.id === action.payload.entry.id)
+          ? state.captureEntries.map(entry => entry.id === action.payload.entry.id ? { ...entry, ...action.payload.entry } : entry)
+          : [...state.captureEntries, action.payload.entry],
+      };
 
     case 'CAPTURE_UPDATE_ENTRY':
       if (action.payload.generation !== undefined && action.payload.generation !== state.captureGeneration) return state;

@@ -1417,6 +1417,7 @@ const _cdpSseClients = new Set();
 /** @type {Map<string, object>} */
 const _cdpRequestMap = new Map();
 let _cdpMsgId = 1;
+let _cdpEntryId = 1;
 /** @type {Map<number, { resolve: Function, reject: Function }>} */
 const _cdpPending = new Map();
 
@@ -1502,6 +1503,10 @@ function _cdpParseSetCookieHeader(raw) {
         partitioned: hasFlag('partitioned'),
       };
     });
+}
+
+function _cdpNormalizeMethod(method) {
+  return String(method || 'GET').trim().toUpperCase();
 }
 
 function _cdpSendCommand(method, params) {
@@ -1598,9 +1603,9 @@ app.post('/api/cdp/connect', _cdpLoopbackOnly, async (req, res) => {
           domain = new URL(request.url).hostname;
         } catch (_) {}
         const entry = {
-          id: requestId,
+          id: `cap_${_cdpEntryId++}`,
           timestamp: Math.round(timestamp * 1000),
-          method: request.method,
+          method: _cdpNormalizeMethod(request.method),
           url: request.url,
           domain,
           requestHeaders: request.headers || {},

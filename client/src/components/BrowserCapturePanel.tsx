@@ -22,6 +22,10 @@ function defaultChromePath(): string {
   return '/usr/bin/google-chrome';
 }
 
+function normalizeMethod(method?: string): string {
+  return String(method || 'GET').trim().toUpperCase();
+}
+
 // ─── Convert CaptureEntry → CollectionItem ────────────────────────────────────
 
 function entryToCollectionItem(entry: CaptureEntry): CollectionItem {
@@ -60,9 +64,9 @@ function entryToCollectionItem(entry: CaptureEntry): CollectionItem {
 
   return {
     id: generateId(),
-    name: `${entry.method} ${rawUrl}`,
+    name: `${normalizeMethod(entry.method)} ${rawUrl}`,
     request: {
-      method: entry.method,
+      method: normalizeMethod(entry.method),
       url: {
         raw: entry.url,
         protocol: parsedUrl?.protocol.replace(':', '') ?? 'https',
@@ -182,11 +186,12 @@ function StatusBadge({ entry }: { entry: CaptureEntry }) {
 // ─── Method badge ─────────────────────────────────────────────────────────────
 
 function MethodBadge({ method }: { method: string }) {
+  const normalizedMethod = normalizeMethod(method);
   const colors: Record<string, string> = {
     GET: 'text-green-400', POST: 'text-orange-400', PUT: 'text-blue-400',
     PATCH: 'text-purple-400', DELETE: 'text-red-400', HEAD: 'text-slate-400', OPTIONS: 'text-slate-400',
   };
-  return <span className={`${colors[method] ?? 'text-slate-300'} text-xs font-bold w-14 shrink-0`}>{method}</span>;
+  return <span className={`${colors[normalizedMethod] ?? 'text-slate-300'} text-xs font-bold w-14 shrink-0`}>{normalizedMethod}</span>;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -612,6 +617,14 @@ export default function BrowserCapturePanel() {
     return ['ALL', ...Array.from(values).sort((a, b) => a.localeCompare(b))];
   }, [state.captureEntries]);
 
+  const methodOptions = useMemo(() => {
+    const values = new Set<string>();
+    for (const entry of state.captureEntries) {
+      values.add(normalizeMethod(entry.method));
+    }
+    return ['ALL', ...Array.from(values).sort((a, b) => a.localeCompare(b))];
+  }, [state.captureEntries]);
+
   function updateCaptureViewState(payload: Partial<typeof captureView>) {
     dispatch({ type: 'SET_CAPTURE_VIEW_STATE', payload });
   }
@@ -644,7 +657,7 @@ export default function BrowserCapturePanel() {
       if (captureView.search && !e.url.toLowerCase().includes(captureView.search.toLowerCase())) return false;
       const domain = (e.domain || urlDomain(e.url)).toLowerCase();
       if (captureView.filterDomain && !domain.includes(captureView.filterDomain.toLowerCase())) return false;
-      if (captureView.filterMethod !== 'ALL' && e.method !== captureView.filterMethod) return false;
+      if (captureView.filterMethod !== 'ALL' && normalizeMethod(e.method) !== normalizeMethod(captureView.filterMethod)) return false;
       if (captureView.filterStatus !== 'ALL') {
         if (captureView.filterStatus === 'pending' && e.state !== 'pending') return false;
         if (captureView.filterStatus === 'failed' && e.state !== 'failed') return false;
@@ -797,7 +810,7 @@ export default function BrowserCapturePanel() {
           onChange={e => updateCaptureViewState({ filterMethod: e.target.value })}
           className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none cursor-pointer"
         >
-          {['ALL', 'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].map(m => (
+          {methodOptions.map(m => (
             <option key={m} value={m}>{m}</option>
           ))}
         </select>
