@@ -1,7 +1,8 @@
-import React, { createContext, useContext, useEffect, useReducer, useState, type ReactNode } from 'react';
-import type { AppState, AppAction, AppCollection, AppEnvironment, CollectionItem, RequestTab, CookieJar, Cookie, MockRoute, MockCollection, Workspace, WorkspaceData } from './types';
+import React, { createContext, useContext, useEffect, useReducer, useRef, useState, type ReactNode } from 'react';
+import type { AppState, AppAction, AppSettings, AppCollection, AppEnvironment, CollectionItem, RequestTab, CookieJar, Cookie, MockRoute, MockCollection, Workspace, WorkspaceData } from './types';
 import * as StorageDriver from './utils/storageDriver';
 import * as SnapshotEngine from './utils/snapshotEngine';
+import { API_BASE } from './api';
 
 const STORAGE_KEY = 'apilix_persist'; // legacy key — kept for migration only
 
@@ -81,6 +82,17 @@ const initialState: AppState = {
     filterResourceType: 'ALL',
     sortKey: 'timestamp',
     sortDirection: 'desc',
+  },
+  settings: {
+    theme: undefined,
+    requestTimeout: 30000,
+    followRedirects: true,
+    sslVerification: false,
+    proxyEnabled: false,
+    httpProxy: '',
+    httpsProxy: '',
+    noProxy: '',
+    corsAllowedOrigins: '',
   },
 };
 
@@ -599,6 +611,12 @@ function appReducer(state: AppState, action: AppAction): AppState {
         },
       };
 
+    case 'SET_SETTINGS':
+      return { ...state, settings: action.payload };
+
+    case 'UPDATE_SETTINGS':
+      return { ...state, settings: { ...state.settings, ...action.payload } };
+
     default:
       return state;
   }
@@ -687,6 +705,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
           }),
         },
       });
+
+      // Load global settings — fall back to legacy apilix_theme key for migration
+      const savedSettings = await StorageDriver.readSettings();
+      const legacyTheme = localStorage.getItem('apilix_theme');
+      const mergedSettings: AppSettings = {
+        ...initialState.settings,
+        ...(savedSettings ?? {}),
+      };
+      if (!mergedSettings.theme && (legacyTheme === 'dark' || legacyTheme === 'light')) {
+        mergedSettings.theme = legacyTheme;
+      }
+      dispatch({ type: 'SET_SETTINGS', payload: mergedSettings });
     }
     init();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -717,6 +747,39 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.collections, state.environments, state.activeEnvironmentId, state.collectionVariables, state.globalVariables, state.cookieJar, state.mockCollections, state.mockRoutes, state.mockPort, state.workspaces, state.activeWorkspaceId, state.storageReady]);
+
+  // ── Debounced settings persistence ───────────────────────────────────────
+  const settingsSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!state.storageReady) return;
+    if (settingsSaveTimerRef.current) clearTimeout(settingsSaveTimerRef.current);
+    settingsSaveTimerRef.current = setTimeout(() => {
+      StorageDriver.writeSettings(state.settings);
+    }, 300);
+    return () => {
+      if (settingsSaveTimerRef.current) clearTimeout(settingsSaveTimerRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.settings, state.storageReady]);
+
+  // ── Push proxy + CORS settings to the local API server ───────────────────
+  useEffect(() => {
+    if (!state.storageReady) return;
+    const { proxyEnabled, httpProxy, httpsProxy, noProxy, corsAllowedOrigins,
+            requestTimeout, followRedirects, sslVerification } = state.settings;
+    fetch(`${API_BASE}/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        proxy: { enabled: proxyEnabled ?? false, httpProxy: httpProxy ?? '', httpsProxy: httpsProxy ?? '', noProxy: noProxy ?? '' },
+        cors: { allowedOrigins: corsAllowedOrigins ?? '' },
+        requests: { timeout: requestTimeout ?? 30000, followRedirects: followRedirects !== false, sslVerification: sslVerification ?? false },
+      }),
+    }).catch(() => { /* server may not be up yet; safe to ignore */ });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.settings.proxyEnabled, state.settings.httpProxy, state.settings.httpsProxy, state.settings.noProxy,
+      state.settings.corsAllowedOrigins, state.settings.requestTimeout, state.settings.followRedirects,
+      state.settings.sslVerification, state.storageReady]);
 
   function getActiveEnvironment(): AppEnvironment | null {
     if (!state.activeEnvironmentId) return null;

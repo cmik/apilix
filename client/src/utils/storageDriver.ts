@@ -9,7 +9,7 @@
  * is used, and the module remains crash-free.
  */
 
-import type { WorkspaceData, Workspace, SyncMetadata, SyncActivityEntry } from '../types';
+import type { WorkspaceData, Workspace, SyncMetadata, SyncActivityEntry, AppSettings } from '../types';
 
 // ─── Electron API shim ────────────────────────────────────────────────────────
 
@@ -169,10 +169,7 @@ export async function deleteWorkspace(id: string): Promise<void> {
 
 // ─── Settings ────────────────────────────────────────────────────────────────
 
-export interface AppSettings {
-  theme?: 'dark' | 'light' | 'system';
-  [key: string]: unknown;
-}
+export type { AppSettings };
 
 export async function readSettings(): Promise<AppSettings | null> {
   const api = eAPI();

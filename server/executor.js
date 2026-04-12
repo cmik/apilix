@@ -14,6 +14,43 @@ const httpClient = axios.create({
   validateStatus: () => true, // never throw based on status code
 });
 
+// ─── Runtime config (updated by POST /api/settings) ─────────────────────────────────────────────────
+
+const executorConfig = {
+  requestTimeout: 30000,
+  followRedirects: true,
+  sslVerification: false,
+  proxyEnabled: false,
+  httpProxy: '',
+  httpsProxy: '',
+  noProxy: '',
+};
+
+function setExecutorConfig(cfg) {
+  Object.assign(executorConfig, cfg);
+}
+
+function buildProxyOption(proxyUrl, targetUrl) {
+  if (!proxyUrl) return undefined;
+  try {
+    const parsed = new URL(proxyUrl);
+    // Check noProxy list
+    if (executorConfig.noProxy) {
+      try {
+        const targetHost = new URL(targetUrl).hostname;
+        const noProxyList = executorConfig.noProxy.split(',').map(h => h.trim()).filter(Boolean);
+        if (noProxyList.some(h => targetHost === h || targetHost.endsWith('.' + h))) return undefined;
+      } catch { /* ignore */ }
+    }
+    return {
+      protocol: parsed.protocol.replace(':', ''),
+      host: parsed.hostname,
+      port: parseInt(parsed.port, 10) || (parsed.protocol === 'https:' ? 443 : 80),
+      ...(parsed.username ? { auth: { username: decodeURIComponent(parsed.username), password: decodeURIComponent(parsed.password) } } : {}),
+    };
+  } catch { return undefined; }
+}
+
 // ─── Variable resolution ─────────────────────────────────────────────────────
 
 function resolveVariables(str, vars) {
@@ -295,7 +332,7 @@ function serializeCertChain(cert) {
   return chain;
 }
 
-function makeTimingAndCertContext() {
+function makeTimingAndCertContext(rejectUnauthorized = false) {
   const timings = { dns: 0, tcp: 0, tls: 0 };
   const certHolder = { chain: null };
   let captured = false;
@@ -320,7 +357,7 @@ function makeTimingAndCertContext() {
     }
   }
 
-  const httpsTimingAgent = new https.Agent({ rejectUnauthorized: false });
+  const httpsTimingAgent = new https.Agent({ rejectUnauthorized });
   const _origHttps = httpsTimingAgent.createConnection.bind(httpsTimingAgent);
   httpsTimingAgent.createConnection = function (opts, cb) {
     const sock = _origHttps(opts, cb);
@@ -460,14 +497,15 @@ async function executeRequest(item, context) {
   }
 
   // Per-request agent with timing and TLS capture
-  const _tc = makeTimingAndCertContext();
+  const _tc = makeTimingAndCertContext(executorConfig.sslVerification === true);
   const startTime = Date.now();
   let testChildRequests = [];
   let nextRequestSignal = undefined; // set by pm.execution.setNextRequest()
 
   try {
     // ─── Redirect chain handling ───────────────────────────────────────────
-    const MAX_REDIRECTS = 10;
+    const MAX_REDIRECTS = executorConfig.followRedirects ? 10 : 0;
+    const rejectUnauthorized = executorConfig.sslVerification === true;
     const redirectChain = [];
     let curMethod = method;
     let curUrl = url;
@@ -477,15 +515,26 @@ async function executeRequest(item, context) {
 
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
       const _isHopHttps = curUrl.toLowerCase().startsWith('https://');
-      // Only instrument the timing agent on the first hop
+      // Per-hop HTTPS agent — honours SSL verification setting
+      const hopHttpsAgent = new https.Agent({ rejectUnauthorized });
+      // Only instrument the timing agent on the first hop (timing agent reuses same TLS setting)
       const agentOpts = hop === 0
         ? (_isHopHttps ? { httpsAgent: _tc.httpsTimingAgent } : { httpAgent: _tc.httpTimingAgent })
-        : (_isHopHttps ? { httpsAgent: new https.Agent({ rejectUnauthorized: false }) } : {});
+        : (_isHopHttps ? { httpsAgent: hopHttpsAgent } : {});
+      // Proxy option — always set `proxy` key so axios never falls back to env vars (HTTP_PROXY etc.)
+      const proxyOpt = (() => {
+        if (!executorConfig.proxyEnabled) return { proxy: false };
+        const pUrl = _isHopHttps ? (executorConfig.httpsProxy || executorConfig.httpProxy) : executorConfig.httpProxy;
+        const p = buildProxyOption(pUrl, curUrl);
+        return p ? { proxy: p } : { proxy: false };
+      })();
       const hopStart = Date.now();
       axiosResponse = await httpClient.request({
         method: curMethod, url: curUrl, headers: curHeaders, data: curData,
         maxRedirects: 0,
+        timeout: executorConfig.requestTimeout ?? 30000,
         ...agentOpts,
+        ...proxyOpt,
       });
       const hopTime = Date.now() - hopStart;
 
@@ -668,4 +717,4 @@ function flattenItems(items) {
   return result;
 }
 
-module.exports = { executeRequest, flattenItems };
+module.exports = { executeRequest, flattenItems, setExecutorConfig };

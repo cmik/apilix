@@ -5,11 +5,23 @@ const cors = require('cors');
 const multer = require('multer');
 const vm = require('vm');
 const { parse: parseCsv } = require('csv-parse/sync');
-const { executeRequest, flattenItems } = require('./executor');
+const { executeRequest, flattenItems, setExecutorConfig } = require('./executor');
 const { refreshOAuth2Token, exchangeAuthorizationCodeForToken } = require('./oauth');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// ─── Mutable server config (updated via POST /api/settings) ──────────────────────────────
+const serverConfig = {
+  proxyEnabled: false,
+  httpProxy: '',
+  httpsProxy: '',
+  noProxy: '',
+  corsAllowedOrigins: '',
+  requestTimeout: 30000,
+  followRedirects: true,
+  sslVerification: false,
+};
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 // Only allow localhost origins (all ports) by default.
@@ -53,8 +65,13 @@ app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (Electron renderer via file://, curl, Postman, …)
     if (!origin) return callback(null, true);
-    // Allow explicitly configured origins
+    // Allow explicitly configured origins (env var takes priority)
     if (ALLOWED_ORIGINS && ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    // Allow dynamically configured origins from settings
+    if (serverConfig.corsAllowedOrigins) {
+      const dynamic = serverConfig.corsAllowedOrigins.split(',').map(o => o.trim()).filter(Boolean);
+      if (dynamic.includes(origin)) return callback(null, true);
+    }
     // Allow any localhost origin (http or https, any port) when no explicit list is set
     if (!ALLOWED_ORIGINS && /^https?:\/\/localhost(:\d+)?$/.test(origin)) return callback(null, true);
     callback(Object.assign(new Error(`CORS: origin '${origin}' not allowed`), { status: 403 }));
@@ -84,6 +101,34 @@ function validateTokenUrl(url) {
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', version: '1.0.0' });
+});
+
+// ─── App settings ──────────────────────────────────────────────────────────────
+
+app.post('/api/settings', (req, res) => {
+  const { proxy, cors: corsConfig, requests } = req.body ?? {};
+  if (proxy && typeof proxy === 'object') {
+    serverConfig.proxyEnabled = proxy.enabled === true;
+    serverConfig.httpProxy = typeof proxy.httpProxy === 'string' ? proxy.httpProxy : '';
+    serverConfig.httpsProxy = typeof proxy.httpsProxy === 'string' ? proxy.httpsProxy : '';
+    serverConfig.noProxy = typeof proxy.noProxy === 'string' ? proxy.noProxy : '';
+  }
+  if (corsConfig && typeof corsConfig === 'object') {
+    serverConfig.corsAllowedOrigins = typeof corsConfig.allowedOrigins === 'string' ? corsConfig.allowedOrigins : '';
+  }
+  if (requests && typeof requests === 'object') {
+    if (typeof requests.timeout === 'number' && requests.timeout >= 0) {
+      serverConfig.requestTimeout = requests.timeout;
+    }
+    if (typeof requests.followRedirects === 'boolean') {
+      serverConfig.followRedirects = requests.followRedirects;
+    }
+    if (typeof requests.sslVerification === 'boolean') {
+      serverConfig.sslVerification = requests.sslVerification;
+    }
+  }
+  setExecutorConfig(serverConfig);
+  res.json({ ok: true });
 });
 
 // ─── Execute a single request ──────────────────────────────────────────────────

@@ -229,6 +229,25 @@ export interface ActiveRequest {
 
 export type AppView = 'request' | 'runner' | 'environments' | 'globals' | 'mock' | 'capture';
 
+// ─── Application Settings ─────────────────────────────────────────────────────────────
+
+export interface AppSettings {
+  // Appearance
+  theme?: 'dark' | 'light' | 'system';
+  // Requests
+  requestTimeout?: number;
+  followRedirects?: boolean;
+  sslVerification?: boolean;
+  // Proxy
+  proxyEnabled?: boolean;
+  httpProxy?: string;
+  httpsProxy?: string;
+  noProxy?: string;
+  // CORS
+  corsAllowedOrigins?: string;
+  [key: string]: unknown;
+}
+
 export interface CaptureCookieAttribute {
   key: string;
   value: string | null;
@@ -533,6 +552,7 @@ export interface AppState {
   captureRunning: boolean;
   captureViewState: CaptureViewState;
   captureGeneration: number;
+  settings: AppSettings;
 }
 
 export interface RequestTab {
@@ -616,4 +636,7 @@ export type AppAction =
   | { type: 'CAPTURE_UPDATE_ENTRY'; payload: { entry: Partial<CaptureEntry> & { id: string }; generation?: number } }
   | { type: 'CAPTURE_CLEAR' }
   | { type: 'SET_CAPTURE_RUNNING'; payload: boolean }
-  | { type: 'SET_CAPTURE_VIEW_STATE'; payload: Partial<CaptureViewState> };
+  | { type: 'SET_CAPTURE_VIEW_STATE'; payload: Partial<CaptureViewState> }
+  // ── Settings actions ──────────────────────────────────────────────────────────────────
+  | { type: 'SET_SETTINGS'; payload: AppSettings }
+  | { type: 'UPDATE_SETTINGS'; payload: Partial<AppSettings> };
