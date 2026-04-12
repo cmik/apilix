@@ -18,6 +18,7 @@ const MockServerPanel = lazy(() => import('./components/MockServerPanel'));
 const BrowserCapturePanel = lazy(() => import('./components/BrowserCapturePanel'));
 const CookieManagerModal = lazy(() => import('./components/CookieManagerModal'));
 const ConflictMergeModal = lazy(() => import('./components/ConflictMergeModal'));
+const SettingsModal = lazy(() => import('./components/SettingsModal'));
 import * as StorageDriver from './utils/storageDriver';
 import * as SnapshotEngine from './utils/snapshotEngine';
 import {
@@ -317,11 +318,20 @@ function WorkspaceSwitchGuardModal({
 export default function App() {
   const { state, dispatch } = useApp();
   const isBrowserMode = !(window as { electronAPI?: unknown }).electronAPI;
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
-    const saved = localStorage.getItem('apilix_theme');
-    if (saved === 'light' || saved === 'dark') return saved;
-    return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-  });
+  // ── Theme — derived from settings; systemDark tracks matchMedia for 'system' option
+  const [systemDark, setSystemDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches);
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const handler = (e: MediaQueryListEvent) => setSystemDark(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+  const settingsTheme = state.settings.theme;
+  const theme: 'dark' | 'light' =
+    settingsTheme === 'light' ? 'light' :
+    settingsTheme === 'system' ? (systemDark ? 'dark' : 'light') :
+    'dark';
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR);
   const [envQuickOpen, setEnvQuickOpen] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
@@ -800,7 +810,14 @@ export default function App() {
     <div className="flex flex-col h-screen bg-slate-950 text-slate-100 overflow-hidden">
       <div className="flex flex-1 min-h-0 overflow-hidden">
       {/* Activity bar – vertical main menu */}
-      <ActivityBar theme={theme} onToggleTheme={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} />
+      <ActivityBar
+        theme={theme}
+        onToggleTheme={() => {
+          const next = settingsTheme === 'dark' ? 'light' : settingsTheme === 'light' ? 'system' : 'dark';
+          dispatch({ type: 'UPDATE_SETTINGS', payload: { theme: next } });
+        }}
+        onOpenSettings={() => setSettingsOpen(true)}
+      />
 
       {/* Left sidebar – width controlled by drag */}
       <div style={{ width: sidebarWidth, minWidth: sidebarWidth }} className="shrink-0 h-full overflow-hidden">
@@ -1055,6 +1072,12 @@ export default function App() {
           onCancel={() => { setPendingSyncConfirm(null); pendingSyncConfirm.resolve(false); }}
           zIndex="z-[65]"
         />
+      )}
+
+      {settingsOpen && (
+        <Suspense fallback={null}>
+          <SettingsModal onClose={() => setSettingsOpen(false)} />
+        </Suspense>
       )}
     </div>
   );
