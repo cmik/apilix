@@ -57,7 +57,8 @@ const LOG_LEVEL_COLOR: Record<string, string> = {
 function EntryDetail({ entry }: { entry: ConsoleEntry }) {
   const logCount = entry.scriptLogs?.length ?? 0;
   const testResults = entry.response?.testResults ?? [];
-  const testCount = testResults.length;
+  const skippedCount = testResults.filter(t => t.skipped).length;
+  const testCount = testResults.length - skippedCount;
   const failCount = testResults.filter(t => t.passed === false).length;
   const [tab, setTab] = useState<'response' | 'request' | 'tests' | 'logs'>('response');
 
@@ -94,7 +95,7 @@ function EntryDetail({ entry }: { entry: ConsoleEntry }) {
                   ? 'bg-red-500/20 text-red-400'
                   : 'bg-green-500/20 text-green-400'
             }`}>
-              {failCount > 0 ? `${failCount} fail` : testCount}
+              {failCount > 0 ? `${failCount} fail` : testCount}{skippedCount > 0 ? ` +${skippedCount}` : ''}
             </span>
           )}
         </button>
@@ -198,13 +199,13 @@ function EntryDetail({ entry }: { entry: ConsoleEntry }) {
               testResults.map((t, i) => (
                 <div key={i} className="flex items-start gap-2">
                   <span className={`shrink-0 font-semibold text-[10px] pt-px w-7 ${
-                    t.passed ? 'text-green-400' : 'text-red-400'
+                    t.skipped ? 'text-slate-500' : t.passed ? 'text-green-400' : 'text-red-400'
                   }`}>
-                    {t.passed ? '✓' : '✗'}
+                    {t.skipped ? '~' : t.passed ? '✓' : '✗'}
                   </span>
-                  <span className={`flex-1 break-all ${t.passed ? 'text-slate-300' : 'text-red-300'}`}>
+                  <span className={`flex-1 break-all ${t.skipped ? 'text-slate-500 italic' : t.passed ? 'text-slate-300' : 'text-red-300'}`}>
                     {t.name}
-                    {!t.passed && t.error && (
+                    {t.passed === false && t.error && (
                       <span className="block text-red-500 mt-0.5">{t.error}</span>
                     )}
                   </span>
@@ -371,10 +372,12 @@ function renderDetail(e) {
     var tr = e.response && e.response.testResults;
     var extra = '';
     if (t === 'tests' && tr && tr.length > 0) {
-      var fails = tr.filter(function(r) { return !r.passed; }).length;
+      var fails = tr.filter(function(r) { return r.passed === false; }).length;
+      var skipped = tr.filter(function(r) { return !!r.skipped; }).length;
+      var countable = tr.length - skipped;
       extra = ' <span style="font-size:10px;font-weight:700;padding:0 3px;border-radius:3px;' +
         (fails > 0 ? 'color:#f87171;background:rgba(248,113,113,.15)' : 'color:#4ade80;background:rgba(74,222,128,.15)') + '">' +
-        (fails > 0 ? fails + ' fail' : tr.length) + '</span>';
+        (fails > 0 ? fails + ' fail' : countable) + (skipped > 0 ? ' +' + skipped : '') + '</span>';
     }
     if (t === 'logs' && e.scriptLogs && e.scriptLogs.length > 0) {
       extra = ' <span style="font-size:10px;font-weight:700;padding:0 3px;border-radius:3px;background:#1e293b;color:#94a3b8">' + e.scriptLogs.length + '</span>';
@@ -422,12 +425,12 @@ function renderDetail(e) {
         var row = document.createElement('div');
         row.style.cssText = 'display:flex;gap:8px;align-items:flex-start;margin-bottom:4px';
         var icon = document.createElement('span');
-        icon.style.cssText = 'flex-shrink:0;font-weight:700;width:14px;' + (t.passed ? 'color:#4ade80' : 'color:#f87171');
-        icon.textContent = t.passed ? '✓' : '✗';
+        icon.style.cssText = 'flex-shrink:0;font-weight:700;width:14px;' + (t.skipped ? 'color:#64748b' : t.passed ? 'color:#4ade80' : 'color:#f87171');
+        icon.textContent = t.skipped ? '~' : t.passed ? '✓' : '✗';
         var label = document.createElement('span');
-        label.style.cssText = 'word-break:break-all;' + (t.passed ? 'color:var(--text)' : 'color:#fca5a5');
+        label.style.cssText = 'word-break:break-all;' + (t.skipped ? 'color:var(--text-dimmer);font-style:italic' : t.passed ? 'color:var(--text)' : 'color:#fca5a5');
         label.textContent = t.name;
-        if (!t.passed && t.error) {
+        if (t.passed === false && t.error) {
           var errNote = document.createElement('span');
           errNote.style.cssText = 'display:block;color:#f87171;margin-top:2px;font-size:10px';
           errNote.textContent = t.error;

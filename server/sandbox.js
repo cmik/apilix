@@ -317,12 +317,10 @@ function createExpect(value, negated, onFail) {
     matchSchema(schema) {
       const ajv = getAjv();
       const valid = ajv.validate(schema, value);
-      if (!valid) {
-        const err = ajv.errors[0];
-        const loc = err.instancePath || '(root)';
-        if (onFail) { onFail(`Expected value to match schema: ${loc} ${err.message}`); return obj; }
-        throw new Error(`Expected value to match schema: ${loc} ${err.message}`);
-      }
+      const err = ajv.errors && ajv.errors[0];
+      const loc = err && err.instancePath ? err.instancePath : '(root)';
+      const message = `Expected value to ${n}match schema${valid ? '' : `: ${loc} ${err && err.message ? err.message : 'validation failed'}`}`;
+      assert(valid, message);
       return obj;
     },
   };
@@ -400,14 +398,18 @@ function createApx(response, variables, updatedVariables, updatedGlobalMutations
     };
   };
 
-  const softFailures = [];
+  let softFailures = [];
 
   function testFn(name, fn) {
+    const previousSoftFailures = softFailures;
+    softFailures = [];
     try {
       fn();
       tests.push({ name, passed: true, error: null, skipped: false });
     } catch (err) {
       tests.push({ name, passed: false, error: err.message, skipped: false });
+    } finally {
+      softFailures = previousSoftFailures;
     }
   }
   testFn.skip = function skipTest(name) {

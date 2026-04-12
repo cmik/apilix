@@ -4,7 +4,8 @@
   "description": "APILIX backend server",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node --test"
   },
   "dependencies": {
     "@xmldom/xmldom": "^0.9.9",

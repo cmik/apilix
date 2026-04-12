@@ -241,8 +241,8 @@ function getContext(textBefore: string, requestNames: string[]): { completions: 
   m = textBefore.match(/(?:apx|pm)\.info\.(\w*)$/);
   if (m) return { completions: INFO, prefix: m[1] };
 
-  // Expect-chain completions: triggered after .to., .be., .have., etc.
-  m = textBefore.match(/\)\.(?:to|be|have|not|and|is|does|that|which|with|at|of|same|also|still|deep)\.(\w*)$/);
+  // Expect-chain completions: triggered after one or more chain segments.
+  m = textBefore.match(/\)\.(?:(?:to|be|have|not|and|is|does|that|which|with|at|of|same|also|still|deep)\.)+(\w*)$/);
   if (m) return { completions: EXPECT_CHAIN, prefix: m[1] };
 
   // Request-name autocomplete inside apx.executeRequest('...
