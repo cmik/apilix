@@ -114,3 +114,30 @@ test('test.skip records skipped tests without executing the callback', async () 
     },
   ]);
 });
+
+test('setNextRequestById sets nextRequestById signal', async () => {
+  const result = await run(`
+    apx.execution.setNextRequestById('abc-123');
+  `);
+
+  assert.equal(result.nextRequestById, 'abc-123');
+  assert.equal(result.nextRequest, undefined);
+});
+
+test('setNextRequestById(null) sets nextRequestById to null', async () => {
+  const result = await run(`
+    apx.execution.setNextRequestById(null);
+  `);
+
+  assert.equal(result.nextRequestById, null);
+});
+
+test('setNextRequest and setNextRequestById can both be set independently', async () => {
+  const result = await run(`
+    apx.execution.setNextRequest('by-name');
+    apx.execution.setNextRequestById('abc-456');
+  `);
+
+  assert.equal(result.nextRequest, 'by-name');
+  assert.equal(result.nextRequestById, 'abc-456');
+});

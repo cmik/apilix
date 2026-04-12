@@ -447,6 +447,7 @@ async function executeRequest(item, context) {
           updatedCookies: cookies,
           skipped: true,
           nextRequest: undefined,
+          nextRequestById: undefined,
           error: null,
         };
       }
@@ -501,6 +502,7 @@ async function executeRequest(item, context) {
   const startTime = Date.now();
   let testChildRequests = [];
   let nextRequestSignal = undefined; // set by pm.execution.setNextRequest()
+  let nextRequestByIdSignal = undefined; // set by pm.execution.setNextRequestById()
 
   try {
     // ─── Redirect chain handling ───────────────────────────────────────────
@@ -611,6 +613,7 @@ async function executeRequest(item, context) {
         scriptLogs = [...scriptLogs, ...result.consoleLogs];
         testChildRequests = result.childRequests || [];
         if (result.nextRequest !== undefined) nextRequestSignal = result.nextRequest;
+        if (result.nextRequestById !== undefined) nextRequestByIdSignal = result.nextRequestById;
         vars = { ...vars, ...updatedVars, ...testUpdatedGlobals };
       }
     }
@@ -673,6 +676,7 @@ async function executeRequest(item, context) {
       tlsCertChain: _tc.certHolder.chain,
       redirectChain,
       nextRequest: nextRequestSignal,
+      nextRequestById: nextRequestByIdSignal,
       error: null,
     };
   } catch (err) {

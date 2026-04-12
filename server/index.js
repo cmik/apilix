@@ -357,7 +357,27 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
 
         // When conditional execution is enabled, setNextRequest() takes priority
         // over sequential order — it drives which request runs next.
-        if (conditionalExecution !== false && result.nextRequest !== undefined) {
+        // ID-based routing (setNextRequestById) takes precedence over name-based routing.
+        if (conditionalExecution !== false && result.nextRequestById !== undefined) {
+          if (result.nextRequestById !== null) {
+            const targetIdx = requests.findIndex(r => r.id === result.nextRequestById);
+            if (targetIdx >= 0) {
+              const targetName = requests[targetIdx].name;
+              sendEvent('next-request', { from: item.name, to: targetName });
+              if (delayMs > 0) {
+                if ((await awaitDelay(runId, delayMs)) === 'stopped') { stopped = true; break outer; }
+              }
+              reqIdx = targetIdx;
+              continue;
+            } else {
+              // Unknown request id — stop iteration (same behaviour as unknown name)
+              break;
+            }
+          } else {
+            // setNextRequestById(null) stops iteration immediately
+            break;
+          }
+        } else if (conditionalExecution !== false && result.nextRequest !== undefined) {
           if (result.nextRequest !== null) {
             // Prefer a forward match to stay within the current chain segment.
             // Fall back to the first occurrence only if nothing is found ahead.

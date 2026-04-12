@@ -19,6 +19,19 @@ function extractSetNextRequestTargets(item: CollectionItem): string[] {
   return [...new Set(targets)];
 }
 
+/** Extract all literal setNextRequestById('id') targets from a request's scripts. */
+function extractSetNextRequestByIdTargets(item: CollectionItem): string[] {
+  const targets: string[] = [];
+  for (const ev of item.event ?? []) {
+    const exec = ev.script?.exec;
+    const code = Array.isArray(exec) ? exec.join('\n') : (exec ?? '');
+    for (const m of code.matchAll(/setNextRequestById\(\s*['"](.*?)['"]\s*\)/g)) {
+      if (m[1]) targets.push(m[1]);
+    }
+  }
+  return [...new Set(targets)];
+}
+
 export interface ChainEntry { item: CollectionItem; autoAdded: boolean; }
 
 /**
@@ -34,6 +47,7 @@ function resolveConditionalChain(
   startIds: string[],
   itemMap: Map<string, CollectionItem>,
   allByName: Map<string, CollectionItem>,
+  allById: Map<string, CollectionItem>,
 ): ChainEntry[][] {
   return startIds
     .map(startId => {
@@ -47,10 +61,17 @@ function resolveConditionalChain(
         if (!item) break;
         visitedInChain.add(currentId);
         chain.push({ item, autoAdded });
-        const targets = extractSetNextRequestTargets(item);
-        if (targets.length === 0) break;
-        const nextItem = allByName.get(targets[0]);
-        currentId = nextItem?.id ?? null;
+        const idTargets = extractSetNextRequestByIdTargets(item);
+        if (idTargets.length > 0) {
+          // ID-based jump takes precedence
+          const nextItem = allById.get(idTargets[0]);
+          currentId = nextItem?.id ?? null;
+        } else {
+          const targets = extractSetNextRequestTargets(item);
+          if (targets.length === 0) break;
+          const nextItem = allByName.get(targets[0]);
+          currentId = nextItem?.id ?? null;
+        }
         autoAdded = true;
       }
       return chain;
@@ -629,10 +650,14 @@ export default function RunnerPanel() {
     if (!conditionalExecution || !selectedCollection) return null;
     const flat = flattenRequestItems(selectedCollection.item);
     const allByName = new Map<string, CollectionItem>();
-    for (const [, item] of flat) { if (item.name) allByName.set(item.name, item); }
+    const allById = new Map<string, CollectionItem>();
+    for (const [, item] of flat) {
+      if (item.name) allByName.set(item.name, item);
+      if (item.id) allById.set(item.id, item);
+    }
     const startIds = executionOrder.filter(id => selectedRequestIds.has(id));
     if (startIds.length === 0) return null;
-    const chains = resolveConditionalChain(startIds, flat, allByName);
+    const chains = resolveConditionalChain(startIds, flat, allByName, allById);
     // Only surface the panel when at least one chain has auto-added requests
     return chains.some(c => c.some(e => e.autoAdded)) ? chains : null;
   }, [conditionalExecution, selectedCollection, executionOrder, selectedRequestIds]);
