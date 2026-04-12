@@ -211,7 +211,7 @@ function statusColor(status: number): string {
   return 'text-slate-400';
 }
 
-type ChildEntry = { tag: 'pre' | 'test'; name: string; method: string; result: { status: number; statusText: string; responseTime: number; error: string | null; testResults?: Array<{ passed: boolean; name: string; error?: string | null }> } };
+type ChildEntry = { tag: 'pre' | 'test'; name: string; method: string; result: { status: number; statusText: string; responseTime: number; error: string | null; testResults?: Array<{ passed: boolean | null; name: string; error?: string | null }> } };
 
 function ChildRow({ child, isLast }: { child: ChildEntry; isLast: boolean }) {
   const [expanded, setExpanded] = useState(false);
