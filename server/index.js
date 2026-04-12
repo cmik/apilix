@@ -1410,7 +1410,15 @@ const _cdpPending = new Map();
 function _cdpBroadcast(event, data) {
   const line = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const res of _cdpSseClients) {
-    try { res.write(line); } catch (_) {}
+    if (res.writableEnded || res.destroyed) {
+      _cdpSseClients.delete(res);
+      continue;
+    }
+    try {
+      res.write(line);
+    } catch (_) {
+      _cdpSseClients.delete(res);
+    }
   }
 }
 
