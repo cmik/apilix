@@ -1396,7 +1396,7 @@ app.post('/api/sync/git/timestamp', async (req, res) => {
 
 // ─── CDP Browser Capture ──────────────────────────────────────────────────────
 
-const { WebSocket } = require('ws');
+const WebSocket = require('ws');
 
 let _cdpWs = null;
 /** @type {Set<import('express').Response>} */
