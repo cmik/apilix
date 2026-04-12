@@ -11,6 +11,7 @@ import ConsolePanel from './components/ConsolePanel';
 import StatusBar from './components/StatusBar';
 import TabBar from './components/TabBar';
 import GlobalVariablesPanel from './components/GlobalVariablesPanel';
+import VariableScopeInspector from './components/VariableScopeInspector';
 import ConfirmModal from './components/ConfirmModal';
 
 const RunnerPanel = lazy(() => import('./components/RunnerPanel'));
@@ -326,7 +327,7 @@ export default function App() {
     mq.addEventListener('change', handler);
     return () => mq.removeEventListener('change', handler);
   }, []);
-  const settingsTheme = state.settings.theme;
+  const settingsTheme: 'dark' | 'light' | 'system' = state.settings.theme ?? 'dark';
   const theme: 'dark' | 'light' =
     settingsTheme === 'light' ? 'light' :
     settingsTheme === 'system' ? (systemDark ? 'dark' : 'light') :
@@ -812,8 +813,9 @@ export default function App() {
       {/* Activity bar – vertical main menu */}
       <ActivityBar
         theme={theme}
+        settingsTheme={settingsTheme}
         onToggleTheme={() => {
-          const next = settingsTheme === 'dark' ? 'light' : settingsTheme === 'light' ? 'system' : 'dark';
+          const next = settingsTheme === 'light' ? 'dark' : settingsTheme === 'dark' ? 'system' : 'light';
           dispatch({ type: 'UPDATE_SETTINGS', payload: { theme: next } });
         }}
         onOpenSettings={() => setSettingsOpen(true)}
@@ -934,6 +936,11 @@ export default function App() {
         {state.view === 'globals' && (
           <div className="flex-1 flex flex-col overflow-hidden">
             <GlobalVariablesPanel />
+          </div>
+        )}
+        {state.view === 'variables' && (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <VariableScopeInspector />
           </div>
         )}
         {state.view === 'mock' && (

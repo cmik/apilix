@@ -227,7 +227,7 @@ export interface ActiveRequest {
   item: CollectionItem;
 }
 
-export type AppView = 'request' | 'runner' | 'environments' | 'globals' | 'mock' | 'capture';
+export type AppView = 'request' | 'runner' | 'environments' | 'globals' | 'variables' | 'mock' | 'capture';
 
 // ─── Application Settings ─────────────────────────────────────────────────────────────
 

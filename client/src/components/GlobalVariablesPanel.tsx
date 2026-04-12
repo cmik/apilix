@@ -17,13 +17,23 @@ function EnvGlobalsTabBar() {
       </button>
       <button
         onClick={() => dispatch({ type: 'SET_VIEW', payload: 'globals' })}
-        className={`pb-2 text-xs font-medium transition-colors border-b-2 ${
+        className={`mr-4 pb-2 text-xs font-medium transition-colors border-b-2 ${
           state.view === 'globals'
             ? 'text-orange-400 border-orange-400'
             : 'text-slate-400 hover:text-slate-200 border-transparent'
         }`}
       >
         🌐 Globals
+      </button>
+      <button
+        onClick={() => dispatch({ type: 'SET_VIEW', payload: 'variables' })}
+        className={`pb-2 text-xs font-medium transition-colors border-b-2 ${
+          state.view === 'variables'
+            ? 'text-orange-400 border-orange-400'
+            : 'text-slate-400 hover:text-slate-200 border-transparent'
+        }`}
+      >
+        🔍 Scope Inspector
       </button>
     </div>
   );

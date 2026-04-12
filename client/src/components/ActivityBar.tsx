@@ -16,11 +16,12 @@ const NAV_ITEMS: { key: View; emoji: string; label: string }[] = [
 
 interface Props {
   theme: 'dark' | 'light';
+  settingsTheme: 'dark' | 'light' | 'system';
   onToggleTheme: () => void;
   onOpenSettings: () => void;
 }
 
-export default function ActivityBar({ theme, onToggleTheme, onOpenSettings }: Props) {
+export default function ActivityBar({ theme, settingsTheme, onToggleTheme, onOpenSettings }: Props) {
   const { state, dispatch } = useApp();
   const [manageOpen, setManageOpen] = useState(false);
 
@@ -42,7 +43,7 @@ export default function ActivityBar({ theme, onToggleTheme, onOpenSettings }: Pr
         {NAV_ITEMS.map(({ key, emoji, label }) => {
           const active =
             state.view === key ||
-            (key === 'environments' && state.view === 'globals');
+            (key === 'environments' && (state.view === 'globals' || state.view === 'variables'));
           return (
             <button
               key={key}
@@ -78,17 +79,29 @@ export default function ActivityBar({ theme, onToggleTheme, onOpenSettings }: Pr
         </button>
         <button
           onClick={onToggleTheme}
-          title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+          title={
+            settingsTheme === 'light' ? 'Switch to dark theme' :
+            settingsTheme === 'dark'  ? 'Switch to system theme' :
+                                        'Switch to light theme'
+          }
           className="w-full flex items-center justify-center py-2.5 rounded text-slate-500 hover:text-slate-200 hover:bg-slate-800/60 transition-colors"
         >
-          {theme === 'dark' ? (
+          {settingsTheme === 'light' ? (
+            /* moon — clicking goes to dark */
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          ) : settingsTheme === 'dark' ? (
+            /* monitor — clicking goes to system */
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <rect x="2" y="3" width="20" height="14" rx="2" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 21h8M12 17v4" />
+            </svg>
+          ) : (
+            /* sun — clicking goes to light */
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <circle cx="12" cy="12" r="4" />
               <path strokeLinecap="round" d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
-            </svg>
-          ) : (
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
             </svg>
           )}
         </button>
