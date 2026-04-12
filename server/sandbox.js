@@ -479,7 +479,8 @@ function createApx(response, variables, updatedVariables, updatedGlobalMutations
         if (executionSignals) executionSignals.nextRequest = name === null ? null : String(name);
       },
       setNextRequestById(id) {
-        if (executionSignals) executionSignals.nextRequestById = id === null ? null : String(id);
+        if (!executionSignals || id === undefined) return;
+        executionSignals.nextRequestById = id === null ? null : String(id);
       },
     },
 
