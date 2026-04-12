@@ -7,6 +7,20 @@ const xpathLib = require('xpath');
 const { DOMParser } = require('@xmldom/xmldom');
 const { webcrypto } = require('crypto');
 
+// Lazy-initialised Ajv instance for matchSchema assertions
+let _ajv = null;
+function getAjv() {
+  if (!_ajv) {
+    const AjvModule = require('ajv');
+    const Ajv = AjvModule.default || AjvModule;
+    const addFormatsModule = require('ajv-formats');
+    const addFormats = addFormatsModule.default || addFormatsModule;
+    _ajv = new Ajv({ allErrors: false });
+    addFormats(_ajv);
+  }
+  return _ajv;
+}
+
 const httpClient = axios.create({
   httpsAgent: new https.Agent({ rejectUnauthorized: false }),
   maxRedirects: 10,
@@ -16,11 +30,12 @@ const httpClient = axios.create({
 
 // ─── Chainable expect ────────────────────────────────────────────────────────
 
-function createExpect(value, negated) {
+function createExpect(value, negated, onFail) {
   if (negated === undefined) negated = false;
 
   function assert(condition, message) {
     if (negated ? condition : !condition) {
+      if (onFail) { onFail(message); return; }
       throw new Error(message);
     }
   }
@@ -30,7 +45,7 @@ function createExpect(value, negated) {
   const obj = {
     // Negation
     get not() {
-      return createExpect(value, !negated);
+      return createExpect(value, !negated, onFail);
     },
 
     // Chainable words (no-op getters)
@@ -200,6 +215,114 @@ function createExpect(value, negated) {
       assert(typeof value === 'string' && value.includes(expected), `Expected string to contain "${expected}"`);
       return obj;
     },
+
+    // ── Number guards ────────────────────────────────────────────────────
+    get positive() {
+      assert(typeof value === 'number' && value > 0, `Expected ${value} to ${n}be positive`);
+      return obj;
+    },
+    get negative() {
+      assert(typeof value === 'number' && value < 0, `Expected ${value} to ${n}be negative`);
+      return obj;
+    },
+    get integer() {
+      assert(Number.isInteger(value), `Expected ${value} to ${n}be an integer`);
+      return obj;
+    },
+    get finite() {
+      assert(Number.isFinite(value), `Expected ${value} to ${n}be finite`);
+      return obj;
+    },
+
+    // ── String boundaries ────────────────────────────────────────────────
+    startWith(str) {
+      assert(typeof value === 'string' && value.startsWith(str), `Expected "${value}" to ${n}start with "${str}"`);
+      return obj;
+    },
+    endWith(str) {
+      assert(typeof value === 'string' && value.endsWith(str), `Expected "${value}" to ${n}end with "${str}"`);
+      return obj;
+    },
+
+    // ── Array membership ────────────────────────────────────────────────
+    members(arr) {
+      if (!Array.isArray(value) || !Array.isArray(arr)) {
+        throw new Error('members() requires both values to be arrays');
+      }
+      const vSorted = [...value].map(x => JSON.stringify(x)).sort();
+      const aSorted = [...arr].map(x => JSON.stringify(x)).sort();
+      const equal = vSorted.length === aSorted.length && vSorted.every((v, i) => v === aSorted[i]);
+      assert(equal, `Expected arrays to ${n}have the same members`);
+      return obj;
+    },
+    includeMembers(arr) {
+      if (!Array.isArray(value) || !Array.isArray(arr)) {
+        throw new Error('includeMembers() requires both values to be arrays');
+      }
+      const vSet = value.map(x => JSON.stringify(x));
+      const allPresent = arr.every(a => vSet.includes(JSON.stringify(a)));
+      assert(allPresent, `Expected array to ${n}include all members ${JSON.stringify(arr)}`);
+      return obj;
+    },
+    oneOf(arr) {
+      assert(Array.isArray(arr) && arr.includes(value), `Expected ${JSON.stringify(value)} to ${n}be one of ${JSON.stringify(arr)}`);
+      return obj;
+    },
+    everyItem(fn) {
+      assert(Array.isArray(value) && value.every(fn), `Expected every item to ${n}satisfy predicate`);
+      return obj;
+    },
+    someItem(fn) {
+      assert(Array.isArray(value) && value.some(fn), `Expected some item to ${n}satisfy predicate`);
+      return obj;
+    },
+
+    // ── Partial object match ─────────────────────────────────────────────
+    subset(expected) {
+      function isSubset(actual, exp) {
+        if (typeof exp !== 'object' || exp === null) return JSON.stringify(actual) === JSON.stringify(exp);
+        if (typeof actual !== 'object' || actual === null) return false;
+        return Object.keys(exp).every(k => k in actual && isSubset(actual[k], exp[k]));
+      }
+      assert(isSubset(value, expected), `Expected object to ${n}contain subset ${JSON.stringify(expected)}`);
+      return obj;
+    },
+
+    // ── Dot-path property ────────────────────────────────────────────────
+    deepProperty(path, val) {
+      const parts = String(path).split('.');
+      let cursor = value;
+      for (const part of parts) {
+        if (cursor == null || !Object.prototype.hasOwnProperty.call(Object(cursor), part)) {
+          assert(false, `Expected object to ${n}have deep property "${path}"`);
+          return obj;
+        }
+        cursor = cursor[part];
+      }
+      if (val !== undefined) {
+        assert(JSON.stringify(cursor) === JSON.stringify(val), `Expected deep property "${path}" to ${n}equal ${JSON.stringify(val)}`);
+      }
+      return obj;
+    },
+
+    // ── Custom predicate ─────────────────────────────────────────────────
+    satisfy(fn) {
+      const result = fn(value);
+      assert(!!result, `Expected value to ${n}satisfy predicate`);
+      return obj;
+    },
+    satisfies(fn) { return obj.satisfy(fn); },
+
+    // ── JSON Schema validation ───────────────────────────────────────────
+    matchSchema(schema) {
+      const ajv = getAjv();
+      const valid = ajv.validate(schema, value);
+      const err = ajv.errors && ajv.errors[0];
+      const loc = err && err.instancePath ? err.instancePath : '(root)';
+      const message = `Expected value to ${n}match schema${valid ? '' : `: ${loc} ${err && err.message ? err.message : 'validation failed'}`}`;
+      assert(valid, message);
+      return obj;
+    },
   };
 
   return obj;
@@ -275,18 +398,41 @@ function createApx(response, variables, updatedVariables, updatedGlobalMutations
     };
   };
 
+  let softFailures = [];
+
+  function testFn(name, fn) {
+    const previousSoftFailures = softFailures;
+    softFailures = [];
+    try {
+      fn();
+      tests.push({ name, passed: true, error: null, skipped: false });
+    } catch (err) {
+      tests.push({ name, passed: false, error: err.message, skipped: false });
+    } finally {
+      softFailures = previousSoftFailures;
+    }
+  }
+  testFn.skip = function skipTest(name) {
+    tests.push({ name, passed: null, error: null, skipped: true });
+  };
+
   const apx = {
-    test(name, fn) {
-      try {
-        fn();
-        tests.push({ name, passed: true, error: null });
-      } catch (err) {
-        tests.push({ name, passed: false, error: err.message });
-      }
-    },
+    test: testFn,
 
     expect(value) {
       return createExpect(value);
+    },
+
+    softExpect(value) {
+      return createExpect(value, false, (msg) => softFailures.push(msg));
+    },
+
+    assertAll(label) {
+      if (softFailures.length > 0) {
+        const msgs = softFailures.splice(0);
+        const prefix = label ? `${label}: ` : '';
+        throw new Error(`${prefix}${msgs.length} soft assertion(s) failed:\n  - ${msgs.join('\n  - ')}`);
+      }
     },
 
     environment: makeVarStore(updatedEnvMutations, execContext.environment || {}),

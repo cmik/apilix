@@ -165,6 +165,16 @@ function NetworkTimeline({ timings }: { timings: NetworkTimings }) {
 }
 
 function TestResultRow({ result }: { result: TestResult }) {
+  if (result.skipped) {
+    return (
+      <div className="flex items-start gap-2 py-1.5 px-2 rounded bg-slate-700/30">
+        <span className="text-sm shrink-0 text-slate-500">~</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm text-slate-500 italic">{result.name}</p>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className={`flex items-start gap-2 py-1.5 px-2 rounded ${result.passed ? 'bg-green-900/20' : 'bg-red-900/20'}`}>
       <span className={`text-sm shrink-0 ${result.passed ? 'text-green-400' : 'text-red-400'}`}>
@@ -567,8 +577,10 @@ export default function ResponseViewer() {
     );
   }
 
-  const passed = response.testResults.filter(t => t.passed).length;
-  const failed = response.testResults.filter(t => !t.passed).length;
+  const passed = response.testResults.filter(t => t.passed === true).length;
+  const skipped = response.testResults.filter(t => t.skipped).length;
+  const failed = response.testResults.filter(t => t.passed === false).length;
+  const countable = response.testResults.length - skipped;
 
   return (
     <div className="h-full min-h-0 border-t border-slate-700 bg-slate-900 flex flex-col">
@@ -589,7 +601,7 @@ export default function ResponseViewer() {
           <span className={`ml-auto text-xs px-2 py-0.5 rounded font-medium ${
             failed > 0 ? 'bg-red-800 text-red-200' : 'bg-green-800 text-green-200'
           }`}>
-            Tests: {passed}/{response.testResults.length} passed
+            Tests: {passed}/{countable} passed{skipped > 0 ? ` (${skipped} skipped)` : ''}
           </span>
         )}
       </div>
@@ -607,7 +619,7 @@ export default function ResponseViewer() {
             }`}
           >
             {t === 'Test Results'
-              ? `Tests ${response.testResults.length > 0 ? `(${passed}/${response.testResults.length})` : ''}`
+              ? `Tests ${response.testResults.length > 0 ? `(${passed}/${countable}${skipped > 0 ? ` +${skipped}` : ''})` : ''}`
               : t}
           </button>
         ))}

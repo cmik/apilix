@@ -248,9 +248,9 @@ function ChildRow({ child, isLast }: { child: ChildEntry; isLast: boolean }) {
 
 function ResultRow({ result }: { result: RunnerIterationResult }) {
   const [expanded, setExpanded] = useState(false);
-  const passed = result.testResults.filter(t => t.passed).length;
-  const total = result.testResults.length;
-  const hasFailed = result.testResults.some(t => !t.passed);
+  const passed = result.testResults.filter(t => t.passed === true).length;
+  const total = result.testResults.filter(t => !t.skipped).length;
+  const hasFailed = result.testResults.some(t => t.passed === false);
 
   const children: ChildEntry[] = [
     ...(result.preChildRequests ?? []).map(c => ({ tag: 'pre' as const, name: c.name, method: c.method, result: c.result })),
@@ -293,11 +293,11 @@ function ResultRow({ result }: { result: RunnerIterationResult }) {
             <div className="px-4 pb-2 flex flex-col gap-1 bg-slate-800/30">
               {result.testResults.map((t, i) => (
                 <div key={i} className="flex items-start gap-2 text-xs py-0.5">
-                  <span className={t.passed ? 'text-green-400' : 'text-red-400'}>
-                    {t.passed ? '✓' : '✗'}
+                  <span className={t.skipped ? 'text-slate-500' : t.passed ? 'text-green-400' : 'text-red-400'}>
+                    {t.skipped ? '~' : t.passed ? '✓' : '✗'}
                   </span>
-                  <span className={t.passed ? 'text-slate-300' : 'text-red-300'}>{t.name}</span>
-                  {!t.passed && t.error && (
+                  <span className={t.skipped ? 'text-slate-500 italic' : t.passed ? 'text-slate-300' : 'text-red-300'}>{t.name}</span>
+                  {t.passed === false && t.error && (
                     <span className="text-red-500 font-mono ml-2">{t.error}</span>
                   )}
                 </div>
@@ -324,10 +324,32 @@ function IterationBlock({ iter }: { iter: RunnerIteration }) {
     ...(r.preChildRequests ?? []),
     ...(r.testChildRequests ?? []),
   ]);
-  const passed = iter.results.reduce((acc, r) => acc + r.testResults.filter(t => t.passed).length, 0)
-    + allChildren.reduce((acc, c) => acc + (c.result.testResults ?? []).filter(t => t.passed).length, 0);
-  const total = iter.results.reduce((acc, r) => acc + r.testResults.length, 0)
-    + allChildren.reduce((acc, c) => acc + (c.result.testResults ?? []).length, 0);
+  const countTestResults = (testResults: { passed: boolean | null; skipped?: boolean }[]) => ({
+    passed: testResults.filter(t => t.passed === true).length,
+    total: testResults.filter(t => !t.skipped).length,
+  });
+  const parentCounts = iter.results.reduce(
+    (acc, r) => {
+      const counts = countTestResults(r.testResults);
+      return {
+        passed: acc.passed + counts.passed,
+        total: acc.total + counts.total,
+      };
+    },
+    { passed: 0, total: 0 },
+  );
+  const childCounts = allChildren.reduce(
+    (acc, c) => {
+      const counts = countTestResults(c.result.testResults ?? []);
+      return {
+        passed: acc.passed + counts.passed,
+        total: acc.total + counts.total,
+      };
+    },
+    { passed: 0, total: 0 },
+  );
+  const passed = parentCounts.passed + childCounts.passed;
+  const total = parentCounts.total + childCounts.total;
   const errors = iter.results.filter(r => r.error).length
     + allChildren.filter(c => c.result.error).length;
   const totalRequestCount = iter.results.length + allChildren.length;

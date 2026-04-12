@@ -147,8 +147,9 @@ export interface ScriptLog {
 
 export interface TestResult {
   name: string;
-  passed: boolean;
+  passed: boolean | null;
   error: string | null;
+  skipped?: boolean;
 }
 
 export interface RedirectHop {
@@ -227,7 +228,7 @@ export interface ActiveRequest {
   item: CollectionItem;
 }
 
-export type AppView = 'request' | 'runner' | 'environments' | 'globals' | 'mock' | 'capture';
+export type AppView = 'request' | 'runner' | 'environments' | 'globals' | 'variables' | 'mock' | 'capture';
 
 // ─── Application Settings ─────────────────────────────────────────────────────────────
 

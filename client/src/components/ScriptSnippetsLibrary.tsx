@@ -474,6 +474,162 @@ if (value) {
       },
     ],
   },
+  {
+    label: 'Advanced Assertions',
+    snippets: [
+      {
+        id: 'schema-validation',
+        name: 'JSON Schema validation',
+        description: 'Validate the response body against a JSON Schema',
+        code: `pm.test("Response matches schema", () => {
+  const json = pm.response.json();
+  pm.expect(json).to.matchSchema({
+    type: 'object',
+    required: ['id', 'email'],
+    properties: {
+      id:    { type: 'integer' },
+      email: { type: 'string', format: 'email' },
+      role:  { type: 'string', enum: ['admin', 'user'] },
+    },
+    additionalProperties: false,
+  });
+});`,
+      },
+      {
+        id: 'partial-object-match',
+        name: 'Partial object match',
+        description: 'Assert the response contains at least these fields (ignores extras)',
+        code: `pm.test("Response contains expected fields", () => {
+  const json = pm.response.json();
+  pm.expect(json).to.subset({
+    status: 'active',
+    role: 'user',
+  });
+});`,
+      },
+      {
+        id: 'deep-property',
+        name: 'Deep property check',
+        description: 'Assert a nested property exists and optionally has a value',
+        code: `pm.test("Nested property exists", () => {
+  const json = pm.response.json();
+  // Assert existence
+  pm.expect(json).to.deepProperty('user.address.city');
+  // Assert value
+  pm.expect(json).to.deepProperty('user.address.city', 'Paris');
+});`,
+      },
+      {
+        id: 'array-members',
+        name: 'Array has exact members',
+        description: 'Assert an array contains exactly these items (order-independent)',
+        code: `pm.test("Array has exact members", () => {
+  const json = pm.response.json();
+  pm.expect(json.roles).to.members(['admin', 'user', 'viewer']);
+});`,
+      },
+      {
+        id: 'include-members',
+        name: 'Array includes members',
+        description: 'Assert an array is a superset of the expected items',
+        code: `pm.test("Array includes required roles", () => {
+  const json = pm.response.json();
+  pm.expect(json.roles).to.includeMembers(['admin', 'user']);
+});`,
+      },
+      {
+        id: 'one-of',
+        name: 'Value is one of',
+        description: 'Assert a value is one of a fixed set of options',
+        code: `pm.test("Status is one of expected values", () => {
+  const json = pm.response.json();
+  pm.expect(json.status).to.oneOf(['active', 'pending', 'archived']);
+});`,
+      },
+      {
+        id: 'every-item',
+        name: 'Every array item satisfies predicate',
+        description: 'Assert all items in an array pass a custom check',
+        code: `pm.test("All items have id and name", () => {
+  const json = pm.response.json();
+  pm.expect(json).to.everyItem(item => item.id && item.name);
+});`,
+      },
+      {
+        id: 'satisfy',
+        name: 'Custom predicate assertion',
+        description: 'Assert a value passes a custom function',
+        code: `pm.test("Discount is valid", () => {
+  const json = pm.response.json();
+  pm.expect(json.discount).to.satisfy(v => v >= 0 && v <= 100);
+});`,
+      },
+      {
+        id: 'number-guards',
+        name: 'Number type guards',
+        description: 'Assert a number is positive, integer, or finite',
+        code: `pm.test("Count is a positive integer", () => {
+  const json = pm.response.json();
+  pm.expect(json.count).to.be.positive;
+  pm.expect(json.count).to.be.integer;
+  pm.expect(json.total).to.be.finite;
+});`,
+      },
+      {
+        id: 'string-boundaries',
+        name: 'String starts / ends with',
+        description: 'Assert a string starts or ends with a specific substring',
+        code: `pm.test("URL has expected shape", () => {
+  const json = pm.response.json();
+  pm.expect(json.avatarUrl).to.startWith('https://');
+  pm.expect(json.filename).to.endWith('.pdf');
+});`,
+      },
+      {
+        id: 'soft-assertions',
+        name: 'Soft assertions block',
+        description: 'Collect multiple assertion failures before reporting — all checks run even if one fails',
+        code: `pm.test("All fields are valid", () => {
+  const json = pm.response.json();
+
+  // Use softExpect — failures are collected, not thrown immediately
+  pm.softExpect(json.id).to.be.positive;
+  pm.softExpect(json.email).to.be.a('string');
+  pm.softExpect(json.status).to.oneOf(['active', 'inactive']);
+
+  // assertAll flushes the buffer — throws if any soft assertion failed
+  pm.assertAll('field validation');
+});`,
+      },
+    ],
+  },
+  {
+    label: 'Test Control',
+    snippets: [
+      {
+        id: 'test-skip',
+        name: 'Skip a test',
+        description: 'Mark a test as skipped — it appears in results but does not run',
+        code: `// Skipped tests appear with a ~ indicator and don't count as failures
+pm.test.skip("Feature not yet released");`,
+      },
+      {
+        id: 'conditional-skip',
+        name: 'Conditionally skip test',
+        description: 'Skip a test based on an environment variable or response value',
+        code: `const isV2 = pm.environment.get('apiVersion') === 'v2';
+
+if (isV2) {
+  pm.test("New pagination format", () => {
+    const json = pm.response.json();
+    pm.expect(json).to.have.property('cursor');
+  });
+} else {
+  pm.test.skip("New pagination format (v2 only)");
+}`,
+      },
+    ],
+  },
 ];
 
 const MOCK_CATEGORIES: SnippetCategory[] = [

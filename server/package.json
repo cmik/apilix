@@ -4,10 +4,13 @@
   "description": "APILIX backend server",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node --test"
   },
   "dependencies": {
     "@xmldom/xmldom": "^0.9.9",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
     "axios": "^1.6.5",
     "cors": "^2.8.5",
     "csv-parse": "^5.5.3",

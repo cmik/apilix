@@ -6,6 +6,7 @@
   "scripts": {
     "start": "concurrently -k -p \"[{name}]\" -n \"SERVER,CLIENT\" -c \"bgYellow.bold,bgCyan.bold\" \"npm run server\" \"npm run client\"",
     "server": "node server/index.js",
+    "test:server": "cd server && npm test",
     "client": "cd client && npm run dev",
     "setup": "npm install && cd server && npm install && cd ../client && npm install",
     "build": "cd client && npm run build",
