@@ -1396,6 +1396,19 @@ app.post('/api/sync/git/timestamp', async (req, res) => {
 
 // ─── CDP Browser Capture ──────────────────────────────────────────────────────
 
+/**
+ * Middleware that restricts access to loopback clients only (127.0.0.1 / ::1).
+ * CDP endpoints expose sensitive network data so they must not be reachable from
+ * external interfaces.
+ */
+function _cdpLoopbackOnly(req, res, next) {
+  const addr = req.socket.remoteAddress;
+  if (addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1') {
+    return next();
+  }
+  return res.status(403).json({ ok: false, error: 'Forbidden: loopback only' });
+}
+
 const WebSocket = require('ws');
 
 let _cdpWs = null;
@@ -1543,7 +1556,7 @@ async function _cdpConnect(port) {
 }
 
 // POST /api/cdp/connect — attach CDP to a running Chrome instance
-app.post('/api/cdp/connect', async (req, res) => {
+app.post('/api/cdp/connect', _cdpLoopbackOnly, async (req, res) => {
   const port = Number(req.body?.port) || 9222;
 
   if (_cdpWs && _cdpWs.readyState === WebSocket.OPEN) {
@@ -1670,7 +1683,7 @@ app.post('/api/cdp/connect', async (req, res) => {
 });
 
 // GET /api/cdp/stream — SSE stream of CDP events
-app.get('/api/cdp/stream', (req, res) => {
+app.get('/api/cdp/stream', _cdpLoopbackOnly, (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -1687,7 +1700,7 @@ app.get('/api/cdp/stream', (req, res) => {
 });
 
 // POST /api/cdp/disconnect — close CDP connection
-app.post('/api/cdp/disconnect', (_req, res) => {
+app.post('/api/cdp/disconnect', _cdpLoopbackOnly, (_req, res) => {
   _cdpDisconnect();
   res.json({ ok: true });
 });
