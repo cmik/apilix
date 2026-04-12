@@ -12,6 +12,7 @@ let serverProcess = null;
 let appLoaded = false;
 let serverPort = null;
 let closeGuardTimeout = null;
+let cdpChromeProcess = null;
 
 function writeLog(msg) {
   try {
@@ -63,6 +64,13 @@ function startServer(port) {
     }
 
     try {
+      // Redirect console.error/warn to the log file so server-side errors
+      // (e.g. OAuth failures, execute errors) are visible in the log.
+      const _origError = console.error.bind(console);
+      const _origWarn  = console.warn.bind(console);
+      console.error = (...args) => { writeLog('[server:err] ' + args.join(' ')); _origError(...args); };
+      console.warn  = (...args) => { writeLog('[server:warn] ' + args.join(' ')); _origWarn(...args);  };
+
       require(serverPath);
       writeLog('Server started on port ' + port);
     } catch (err) {
@@ -333,6 +341,30 @@ app.whenReady().then(async () => {
   });
 });
 
+// IPC: spawn Chrome with remote debugging enabled for CDP capture
+ipcMain.handle('cdp-launch-chrome', async (_event, { chromePath, port }) => {
+  if (cdpChromeProcess) return { ok: true, alreadyRunning: true };
+  const { spawn } = require('child_process');
+  cdpChromeProcess = spawn(chromePath, [
+    `--remote-debugging-port=${port}`,
+    '--user-data-dir=/tmp/apilix-cdp',
+    '--no-first-run',
+    '--no-default-browser-check',
+  ], { detached: false });
+  cdpChromeProcess.on('exit', () => { cdpChromeProcess = null; });
+  cdpChromeProcess.on('error', (err) => { writeLog('CDP Chrome error: ' + err.message); cdpChromeProcess = null; });
+  return { ok: true };
+});
+
+// IPC: kill the Chrome process launched for CDP capture
+ipcMain.handle('cdp-kill-chrome', async () => {
+  if (cdpChromeProcess) {
+    try { cdpChromeProcess.kill(); } catch (_) {}
+    cdpChromeProcess = null;
+  }
+  return { ok: true };
+});
+
 // Renderer confirmed it is safe to close.
 ipcMain.on('app:close-response', (_, { confirmed }) => {
   if (closeGuardTimeout) {
@@ -356,5 +388,9 @@ app.on('before-quit', () => {
   if (serverProcess) {
     serverProcess.kill();
     serverProcess = null;
+  }
+  if (cdpChromeProcess) {
+    try { cdpChromeProcess.kill(); } catch (_) {}
+    cdpChromeProcess = null;
   }
 });

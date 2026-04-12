@@ -34,8 +34,10 @@ export default function ImportModal({ onClose }: ImportModalProps) {
   const [hurlError, setHurlError] = useState<string | null>(null);
   const [hurlSuccess, setHurlSuccess] = useState<string | null>(null);
   const [openApiText, setOpenApiText] = useState('');
+  const [openApiUrl, setOpenApiUrl] = useState('');
   const [openApiError, setOpenApiError] = useState<string | null>(null);
   const [openApiSuccess, setOpenApiSuccess] = useState<string | null>(null);
+  const [openApiLoading, setOpenApiLoading] = useState(false);
   const openApiFileRef = useRef<HTMLInputElement>(null);
   const [harText, setHarText] = useState('');
   const [harError, setHarError] = useState<string | null>(null);
@@ -57,7 +59,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
 
     if (isOpenApiFile) {
       try {
-        const { collectionName, items } = parseOpenApiSpec(text, filename);
+        const { collectionName, items, collectionAuth } = parseOpenApiSpec(text, filename);
         const newColId = generateId();
         dispatch({
           type: 'ADD_COLLECTION',
@@ -68,6 +70,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
               schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
             },
             item: items,
+            ...(collectionAuth && { auth: collectionAuth }),
           },
         });
         const total = items.reduce((sum, i) => sum + (i.item ? i.item.length : 1), 0);
@@ -159,7 +162,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
       } else if (json.openapi || json.swagger) {
         // OpenAPI/Swagger JSON pasted into the paste tab
         try {
-          const { collectionName, items } = parseOpenApiSpec(text);
+          const { collectionName, items, collectionAuth } = parseOpenApiSpec(text);
           const newColId = generateId();
           dispatch({
             type: 'ADD_COLLECTION',
@@ -170,6 +173,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
                 schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
               },
               item: items,
+              ...(collectionAuth && { auth: collectionAuth }),
             },
           });
           const total = items.reduce((sum, i) => sum + (i.item ? i.item.length : 1), 0);
@@ -259,6 +263,55 @@ export default function ImportModal({ onClose }: ImportModalProps) {
       setHarText('');
     } catch (e) {
       setHarError(`${(e as Error).message}`);
+    }
+  }
+
+  async function handleOpenApiUrlImport() {
+    setOpenApiError(null);
+    setOpenApiSuccess(null);
+    
+    if (!openApiUrl.trim()) {
+      setOpenApiError('Please enter a URL.');
+      return;
+    }
+
+    setOpenApiLoading(true);
+    try {
+      const response = await fetch(openApiUrl);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      const contentType = response.headers.get('content-type') || '';
+      let spec: string;
+      
+      if (contentType.includes('application/json')) {
+        const json = await response.json();
+        spec = JSON.stringify(json);
+      } else {
+        spec = await response.text();
+      }
+
+      const { collectionName, items, collectionAuth } = parseOpenApiSpec(spec);
+      const newColId = generateId();
+      dispatch({
+        type: 'ADD_COLLECTION',
+        payload: {
+          _id: newColId,
+          info: {
+            name: collectionName,
+            schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+          },
+          item: items,
+          ...(collectionAuth && { auth: collectionAuth }),
+        },
+      });
+      const total = items.reduce((sum, i) => sum + (i.item ? i.item.length : 1), 0);
+      setOpenApiSuccess(`Collection "${collectionName}" with ${total} request(s) imported!`);
+      setOpenApiUrl('');
+    } catch (e) {
+      setOpenApiError(`Failed to import from URL: ${(e as Error).message}`);
+    } finally {
+      setOpenApiLoading(false);
     }
   }
 
@@ -484,74 +537,105 @@ export default function ImportModal({ onClose }: ImportModalProps) {
                 <span className="text-orange-400 font-mono">Swagger 2.0</span> spec (YAML or JSON).
                 Each tagged group of endpoints becomes a folder in a new collection.
               </div>
-              <div className="flex gap-2">
+
+              {/* Import from URL */}
+              <div className="border-t border-slate-700 pt-3">
+                <label className="text-slate-400 text-sm mb-2 block">Import from URL</label>
+                <div className="flex gap-2">
+                  <input
+                    type="url"
+                    value={openApiUrl}
+                    onChange={e => {
+                      setOpenApiUrl(e.target.value);
+                      setOpenApiError(null);
+                      setOpenApiSuccess(null);
+                    }}
+                    placeholder="https://api.example.com/openapi.json"
+                    className="flex-1 bg-slate-900 border border-slate-600 rounded px-3 py-2 text-slate-100 text-sm focus:outline-none focus:border-orange-500"
+                  />
+                  <button
+                    onClick={handleOpenApiUrlImport}
+                    disabled={openApiLoading}
+                    className="px-4 py-2 bg-orange-600 hover:bg-orange-500 disabled:bg-slate-600 text-white rounded text-sm font-medium transition-colors whitespace-nowrap"
+                  >
+                    {openApiLoading ? 'Fetching...' : 'Import'}
+                  </button>
+                </div>
+              </div>
+
+              {/* File & paste import */}
+              <div className="border-t border-slate-700 pt-3">
+                <div className="flex gap-2 mb-3">
+                  <button
+                    onClick={() => openApiFileRef.current?.click()}
+                    className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded text-sm transition-colors"
+                  >
+                    Browse file
+                  </button>
+                  <input
+                    ref={openApiFileRef}
+                    type="file"
+                    accept=".yaml,.yml,.json"
+                    className="hidden"
+                    onChange={e => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = ev => setOpenApiText(ev.target?.result as string);
+                      reader.readAsText(file);
+                    }}
+                  />
+                  <span className="text-slate-500 text-xs self-center">.yaml / .yml / .json</span>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-slate-400 text-sm">Paste spec (YAML or JSON)</label>
+                  <textarea
+                    value={openApiText}
+                    onChange={e => { setOpenApiText(e.target.value); setOpenApiError(null); setOpenApiSuccess(null); }}
+                    rows={10}
+                    spellCheck={false}
+                    className="w-full bg-slate-900 border border-slate-600 rounded p-3 text-slate-100 text-sm font-mono resize-none focus:outline-none focus:border-orange-500"
+                    placeholder={"openapi: 3.0.0\ninfo:\n  title: My API\n  version: 1.0.0\npaths:\n  /users:\n    get:\n      summary: List users\n      tags: [Users]"}
+                  />
+                </div>
                 <button
-                  onClick={() => openApiFileRef.current?.click()}
-                  className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded text-sm transition-colors"
-                >
-                  Browse file
-                </button>
-                <input
-                  ref={openApiFileRef}
-                  type="file"
-                  accept=".yaml,.yml,.json"
-                  className="hidden"
-                  onChange={e => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    const reader = new FileReader();
-                    reader.onload = ev => setOpenApiText(ev.target?.result as string);
-                    reader.readAsText(file);
+                  onClick={() => {
+                    setOpenApiError(null);
+                    setOpenApiSuccess(null);
+                    try {
+                      const { collectionName, items, collectionAuth } = parseOpenApiSpec(openApiText);
+                      const newColId = generateId();
+                      dispatch({
+                        type: 'ADD_COLLECTION',
+                        payload: {
+                          _id: newColId,
+                          info: {
+                            name: collectionName,
+                            schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+                          },
+                          item: items,
+                          ...(collectionAuth && { auth: collectionAuth }),
+                        },
+                      });
+                      const total = items.reduce((sum, i) => sum + (i.item ? i.item.length : 1), 0);
+                      setOpenApiSuccess(`Collection "${collectionName}" with ${total} request(s) imported!`);
+                      setOpenApiText('');
+                    } catch (e) {
+                      setOpenApiError(`Parse error: ${(e as Error).message}`);
+                    }
                   }}
-                />
-                <span className="text-slate-500 text-xs self-center">.yaml / .yml / .json</span>
+                  className="self-end px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded text-sm font-medium transition-colors"
+                >
+                  Import
+                </button>
               </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-slate-400 text-sm">Paste spec (YAML or JSON)</label>
-                <textarea
-                  value={openApiText}
-                  onChange={e => { setOpenApiText(e.target.value); setOpenApiError(null); setOpenApiSuccess(null); }}
-                  rows={11}
-                  spellCheck={false}
-                  className="w-full bg-slate-900 border border-slate-600 rounded p-3 text-slate-100 text-sm font-mono resize-none focus:outline-none focus:border-orange-500"
-                  placeholder={"openapi: 3.0.0\ninfo:\n  title: My API\n  version: 1.0.0\npaths:\n  /users:\n    get:\n      summary: List users\n      tags: [Users]"}
-                />
-              </div>
+
               {openApiError && (
                 <p className="text-red-400 text-sm bg-red-900/20 border border-red-700 rounded p-2">{openApiError}</p>
               )}
               {openApiSuccess && (
                 <p className="text-green-400 text-sm bg-green-900/20 border border-green-700 rounded p-2">{openApiSuccess}</p>
               )}
-              <button
-                onClick={() => {
-                  setOpenApiError(null);
-                  setOpenApiSuccess(null);
-                  try {
-                    const { collectionName, items } = parseOpenApiSpec(openApiText);
-                    const newColId = generateId();
-                    dispatch({
-                      type: 'ADD_COLLECTION',
-                      payload: {
-                        _id: newColId,
-                        info: {
-                          name: collectionName,
-                          schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
-                        },
-                        item: items,
-                      },
-                    });
-                    const total = items.reduce((sum, i) => sum + (i.item ? i.item.length : 1), 0);
-                    setOpenApiSuccess(`Collection "${collectionName}" with ${total} request(s) imported!`);
-                    setOpenApiText('');
-                  } catch (e) {
-                    setOpenApiError(`Parse error: ${(e as Error).message}`);
-                  }
-                }}
-                className="self-end px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded text-sm font-medium transition-colors"
-              >
-                Import
-              </button>
             </div>
           )}
 

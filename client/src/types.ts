@@ -1,10 +1,23 @@
 // ─── Postman Format v2.1 Types ─────────────────────────────────────────────
+import type {
+  OAuth2Config,
+  OAuth2GrantType,
+  OAuth2PresetProvider,
+  OAuth2CustomHeader,
+  OAuth2TokenResponse,
+  OAuth2TokenRefreshResult,
+  OAuth2PresetConfig,
+} from './types/oauth';
+
+// Re-export OAuth types
+export type { OAuth2Config, OAuth2GrantType, OAuth2PresetProvider, OAuth2CustomHeader, OAuth2TokenResponse, OAuth2TokenRefreshResult, OAuth2PresetConfig };
 
 export interface CollectionAuth {
   type: 'noauth' | 'inherit' | 'bearer' | 'basic' | 'apikey' | 'oauth1' | 'oauth2' | 'digest' | 'hawk' | 'awsv4' | 'ntlm';
   bearer?: Array<{ key: string; value: string; type?: string }>;
   basic?: Array<{ key: string; value: string; type?: string }>;
   apikey?: Array<{ key: string; value: string; type?: string }>;
+  oauth2?: OAuth2Config;
 }
 
 export interface CollectionHeader {
@@ -214,7 +227,63 @@ export interface ActiveRequest {
   item: CollectionItem;
 }
 
-export type AppView = 'request' | 'runner' | 'environments' | 'globals' | 'mock';
+export type AppView = 'request' | 'runner' | 'environments' | 'globals' | 'mock' | 'capture';
+
+export interface CaptureCookieAttribute {
+  key: string;
+  value: string | null;
+}
+
+export interface CaptureCookie {
+  name: string;
+  value: string;
+  raw: string;
+  attributes?: CaptureCookieAttribute[];
+  domain?: string;
+  path?: string;
+  expires?: string;
+  maxAge?: string;
+  sameSite?: string;
+  secure?: boolean;
+  httpOnly?: boolean;
+  partitioned?: boolean;
+}
+
+export interface CaptureEntry {
+  id: string;
+  timestamp: number;
+  method: string;
+  url: string;
+  domain?: string;
+  resourceType?: string;
+  requestHeaders: Record<string, string>;
+  requestCookies?: CaptureCookie[];
+  requestBody?: string | null;
+  status?: number;
+  statusText?: string;
+  mimeType?: string;
+  responseHeaders?: Record<string, string>;
+  responseCookies?: CaptureCookie[];
+  responseBody?: string | null;
+  duration?: number;
+  size?: number;
+  state: 'pending' | 'complete' | 'failed';
+  errorText?: string;
+  selected: boolean;
+}
+
+export type CaptureSortKey = 'timestamp' | 'method' | 'domain' | 'url' | 'type' | 'status' | 'duration' | 'size';
+export type CaptureSortDirection = 'asc' | 'desc';
+
+export interface CaptureViewState {
+  search: string;
+  filterDomain: string;
+  filterMethod: string;
+  filterStatus: string;
+  filterResourceType: string;
+  sortKey: CaptureSortKey;
+  sortDirection: CaptureSortDirection;
+}
 
 export interface MockCollection {
   id: string;
@@ -460,6 +529,10 @@ export interface AppState {
   mockServerRunning: boolean;
   mockPort: number;
   runnerPreselection: { collectionId: string; requestIds: string[] } | null;
+  captureEntries: CaptureEntry[];
+  captureRunning: boolean;
+  captureViewState: CaptureViewState;
+  captureGeneration: number;
 }
 
 export interface RequestTab {
@@ -537,4 +610,10 @@ export type AppAction =
   | { type: 'DUPLICATE_WORKSPACE'; payload: { workspace: Workspace; data: WorkspaceData } }
   | { type: 'SET_SYNC_STATUS'; payload: { workspaceId: string; status: 'idle' | 'syncing' | 'error' } }
   | { type: 'BUMP_SYNC_CONFIG_VERSION' }
-  | { type: 'RESTORE_SNAPSHOT'; payload: WorkspaceData };
+  | { type: 'RESTORE_SNAPSHOT'; payload: WorkspaceData }
+  // ── CDP Capture actions ──────────────────────────────────────────────────
+  | { type: 'CAPTURE_ADD_ENTRY'; payload: { entry: CaptureEntry; generation: number } }
+  | { type: 'CAPTURE_UPDATE_ENTRY'; payload: { entry: Partial<CaptureEntry> & { id: string }; generation?: number } }
+  | { type: 'CAPTURE_CLEAR' }
+  | { type: 'SET_CAPTURE_RUNNING'; payload: boolean }
+  | { type: 'SET_CAPTURE_VIEW_STATE'; payload: Partial<CaptureViewState> };

@@ -5,6 +5,7 @@ A lightweight, open-source alternative API testing tool — available as a **des
 ## Features
 
 - **Import** Postman collections (v2.1) and environments
+- **Browser Capture** — attach to Chrome via CDP, inspect live network traffic, filter/sort requests, review headers/cookies, and import selected requests into a collection
 - **Send HTTP requests** (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS)
 - **Query params, Headers, Body** (raw JSON/text, form-data, url-encoded)
 - **Authentication** (Bearer, Basic, API Key)
@@ -161,6 +162,65 @@ Routes are matched in order — the first enabled route whose method and path ma
 - The mock server runs inside the Apilix backend process, so the Apilix server must be running
 - Routes are **hot-synced** to the running server as you add, edit, or disable them — no restart needed
 - CORS headers are added automatically, so browser-based frontends can call the mock server directly
+
+---
+
+## Browser Capture (Chrome CDP)
+
+The **📡 Capture** tab lets you attach Apilix to a Chrome instance exposing the Chrome DevTools Protocol (CDP) and inspect live browser network traffic.
+
+### Connecting
+
+In the **Electron desktop app**:
+
+1. Open the **📡 Capture** tab in the sidebar.
+2. Leave the default Chrome path or point it at a custom Chrome/Chromium executable.
+3. Keep the default debug port `9222` unless you launched Chrome on a different port.
+4. Click **Launch Chrome** to start Chrome with remote debugging enabled, then connect automatically.
+
+In **web mode** or if Chrome is already running:
+
+1. Start Chrome manually with remote debugging enabled:
+
+```bash
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
+```
+
+1. Open the **📡 Capture** tab.
+2. Set the matching port and click **Connect**.
+
+### What you can inspect
+
+Each captured request shows:
+
+- Method, domain, URL path, resource classification, status, duration, and size
+- Full request headers and response headers
+- Request body and response body (text responses only; large bodies may be truncated)
+- Request cookies and parsed response `Set-Cookie` attributes
+
+### Filtering and sorting
+
+Use the filter bar to narrow captured traffic by:
+
+- URL text search
+- Domain
+- HTTP method
+- Status group (`2xx`, `3xx`, `4xx`, `5xx`, `failed`, `pending`)
+- Chrome resource type (`XHR`, `Fetch`, `Document`, `Script`, `Stylesheet`, `Image`, etc.)
+
+The table headers are sortable for method, domain, URL, type, status, duration, and size. Capture filters and sorting are preserved when switching away from the panel and back during the same session.
+
+### Importing captured requests
+
+1. Select one or more captured rows with the checkbox column.
+2. Click **Import to new collection** to create a new collection from the selected requests.
+3. Or choose **Import to existing…** to append them to an existing collection.
+
+### Capture Notes
+
+- **Clear** removes the current capture session without affecting collections already imported.
+- The Electron-only **Launch Chrome** button is a convenience wrapper around Chrome's `--remote-debugging-port` startup flag.
+- Binary response bodies are not fully displayed in the panel; they are shown as binary placeholders where applicable.
 
 ---
 
