@@ -571,6 +571,8 @@ export default function BrowserCapturePanel() {
     setConnError(null);
     try {
       await connectToChrome();
+    } catch (e: any) {
+      setConnError(e.message ?? String(e));
     } finally {
       setConnecting(false);
     }
