@@ -812,7 +812,6 @@ export default function App() {
       <div className="flex flex-1 min-h-0 overflow-hidden">
       {/* Activity bar – vertical main menu */}
       <ActivityBar
-        theme={theme}
         settingsTheme={settingsTheme}
         onToggleTheme={() => {
           const next = settingsTheme === 'light' ? 'dark' : settingsTheme === 'dark' ? 'system' : 'light';

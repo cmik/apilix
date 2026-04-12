@@ -15,13 +15,12 @@ const NAV_ITEMS: { key: View; emoji: string; label: string }[] = [
 ];
 
 interface Props {
-  theme: 'dark' | 'light';
   settingsTheme: 'dark' | 'light' | 'system';
   onToggleTheme: () => void;
   onOpenSettings: () => void;
 }
 
-export default function ActivityBar({ theme, settingsTheme, onToggleTheme, onOpenSettings }: Props) {
+export default function ActivityBar({ settingsTheme, onToggleTheme, onOpenSettings }: Props) {
   const { state, dispatch } = useApp();
   const [manageOpen, setManageOpen] = useState(false);
 
