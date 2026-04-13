@@ -121,20 +121,36 @@ function itemToEditState(item: CollectionItem) {
   };
 }
 
+function safeDecodeParam(str: string): string {
+  try { return decodeURIComponent(str); } catch { return str; }
+}
+
+function parseQueryString(qs: string): CollectionQueryParam[] {
+  return qs
+    .split('&')
+    .map(p => {
+      const [key, ...rest] = p.split('=');
+      return { key: safeDecodeParam(key), value: safeDecodeParam(rest.join('=')) };
+    })
+    .filter(p => p.key);
+}
+
 function extractQueryParams(url: CollectionRequest['url']): CollectionQueryParam[] {
   if (typeof url === 'string') {
     const idx = url.indexOf('?');
     if (idx === -1) return [];
-    return url
-      .slice(idx + 1)
-      .split('&')
-      .map(p => {
-        const [key, ...rest] = p.split('=');
-        return { key: decodeURIComponent(key), value: decodeURIComponent(rest.join('=')) };
-      })
-      .filter(p => p.key);
+    return parseQueryString(url.slice(idx + 1));
   }
-  return (url?.query ?? []).map(q => ({ ...q }));
+  if (url?.query && url.query.length > 0) {
+    return url.query.map(q => ({ ...q }));
+  }
+  // Saved requests store url as { raw, variable } with no query array — parse raw
+  if (url?.raw) {
+    const idx = url.raw.indexOf('?');
+    if (idx === -1) return [];
+    return parseQueryString(url.raw.slice(idx + 1));
+  }
+  return [];
 }
 
 function getScript(item: CollectionItem, type: 'prerequest' | 'test'): string {
@@ -830,7 +846,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
     const baseUrl = edit!.url.split('?')[0];
     const qs = params
       .filter(p => p.key && !p.disabled)
-      .map(p => `${encodeURIComponent(p.key)}=${encodeURIComponent(p.value ?? '')}`)
+      .map(p => `${p.key.replace(/[&# ]/g, c => c === '&' ? '%26' : c === '#' ? '%23' : '%20')}=${(p.value ?? '').replace(/[&# ]/g, c => c === '&' ? '%26' : c === '#' ? '%23' : '%20')}`)
       .join('&');
     const newUrl = qs ? `${baseUrl}?${qs}` : baseUrl;
     setEdit(e => e ? { ...e, url: newUrl, queryParams: params } : e);

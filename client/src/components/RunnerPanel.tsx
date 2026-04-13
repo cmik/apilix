@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useApp } from '../store';
 import { runCollectionStream, pauseRun, resumeRun, stopRun } from '../api';
-import type { RunnerIteration, RunnerIterationResult, CollectionItem } from '../types';
+import type { RunnerIteration, RunnerIterationResult, CollectionItem, ConditionalFlowRecord } from '../types';
 import { applyInheritedAuth, getAllRequestIds } from '../utils/treeHelpers';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -32,7 +32,7 @@ function extractSetNextRequestByIdTargets(item: CollectionItem): string[] {
   return [...new Set(targets)];
 }
 
-export interface ChainEntry { item: CollectionItem; autoAdded: boolean; }
+export interface ChainEntry { item: CollectionItem; autoAdded: boolean; idTarget?: string; unresolvedTerminal?: { via: 'name' | 'id'; attemptedTarget: string }; }
 
 /**
  * Two-level execution model:
@@ -60,17 +60,31 @@ function resolveConditionalChain(
         const item = itemMap.get(currentId);
         if (!item) break;
         visitedInChain.add(currentId);
-        chain.push({ item, autoAdded });
         const idTargets = extractSetNextRequestByIdTargets(item);
         if (idTargets.length > 0) {
           // ID-based jump takes precedence
           const nextItem = allById.get(idTargets[0]);
-          currentId = nextItem?.id ?? null;
+          chain.push({ item, autoAdded, idTarget: idTargets[0] });
+          if (!nextItem) {
+            // Statically unresolvable — append a terminal marker and stop
+            chain.push({ item: { id: `__unresolved_${idTargets[0]}`, name: idTargets[0] } as CollectionItem, autoAdded: true, unresolvedTerminal: { via: 'id', attemptedTarget: idTargets[0] } });
+            break;
+          }
+          currentId = nextItem.id ?? null;
         } else {
           const targets = extractSetNextRequestTargets(item);
-          if (targets.length === 0) break;
+          if (targets.length === 0) {
+            chain.push({ item, autoAdded });
+            break;
+          }
           const nextItem = allByName.get(targets[0]);
-          currentId = nextItem?.id ?? null;
+          chain.push({ item, autoAdded });
+          if (!nextItem) {
+            // Statically unresolvable — append a terminal marker and stop
+            chain.push({ item: { id: `__unresolved_${targets[0]}`, name: targets[0] } as CollectionItem, autoAdded: true, unresolvedTerminal: { via: 'name', attemptedTarget: targets[0] } });
+            break;
+          }
+          currentId = nextItem.id ?? null;
         }
         autoAdded = true;
       }
@@ -374,6 +388,7 @@ function IterationBlock({ iter }: { iter: RunnerIteration }) {
   const errors = iter.results.filter(r => r.error).length
     + allChildren.filter(c => c.result.error).length;
   const totalRequestCount = iter.results.length + allChildren.length;
+  const unresolvedJumps = (iter.conditionalFlowRecords ?? []).filter(r => r.reason === 'target-not-found').length;
 
   return (
     <div className="shrink-0 mb-2 border border-slate-700 rounded">
@@ -394,12 +409,18 @@ function IterationBlock({ iter }: { iter: RunnerIteration }) {
         }`}>
           {errors > 0 ? `${errors} error(s)` : total > 0 ? `${passed}/${total} tests` : `${totalRequestCount} request${totalRequestCount !== 1 ? 's' : ''}`}
         </span>
+        {unresolvedJumps > 0 && (
+          <span title={`${unresolvedJumps} unresolved jump target${unresolvedJumps !== 1 ? 's' : ''} — check script for typos or missing requests`} className="text-xs font-medium px-2 py-0.5 rounded text-yellow-300 bg-yellow-800/60 border border-yellow-600/40">
+            ⚠ {unresolvedJumps} unresolved
+          </span>
+        )}
         <span className="text-slate-600 text-xs ml-2">{open ? '▴' : '▾'}</span>
       </button>
       {open && (
         <div className="bg-slate-900/30">
           {iter.results.map((r, i) => {
             const jump = (iter.jumps ?? []).find(j => j.afterName === r.name);
+            const flowRecord = (iter.conditionalFlowRecords ?? []).find(rec => rec.afterName === r.name);
             return (
               <div key={i}>
                 <ResultRow result={r} />
@@ -410,8 +431,24 @@ function IterationBlock({ iter }: { iter: RunnerIteration }) {
                     <span className="text-violet-600">→</span>
                     <span className="font-medium text-violet-300">{jump.to}</span>
                     {jump.via === 'id' && jump.targetId && (
-                      <span className="text-[10px] text-violet-300/70 font-mono">{jump.targetId}</span>
+                      <span className="text-[10px] text-violet-300/70 font-mono ml-1">{jump.targetId}</span>
                     )}
+                  </div>
+                )}
+                {flowRecord && flowRecord.reason === 'stopped-by-script' && (
+                  <div className="flex items-center gap-2 px-4 py-1 bg-slate-800/60 border-y border-slate-600/30 text-xs text-slate-400 select-none">
+                    <span>⏹</span>
+                    <span className="font-mono">{flowRecord.via === 'id' ? 'setNextRequestById' : 'setNextRequest'}<span className="text-slate-500">(null)</span></span>
+                    <span className="text-slate-500">— stopped by script</span>
+                  </div>
+                )}
+                {flowRecord && flowRecord.reason === 'target-not-found' && (
+                  <div className="flex items-center gap-2 px-4 py-1 bg-yellow-900/20 border-y border-yellow-700/30 text-xs text-yellow-400 select-none">
+                    <span>⚠</span>
+                    <span className="font-mono">{flowRecord.via === 'id' ? 'setNextRequestById' : 'setNextRequest'}</span>
+                    <span className="text-yellow-600">→</span>
+                    <span className="font-medium text-yellow-300 font-mono">{flowRecord.attemptedTarget}</span>
+                    <span className="text-yellow-600 ml-1">not found — chain stopped</span>
                   </div>
                 )}
               </div>
@@ -940,6 +977,16 @@ export default function RunnerPanel() {
               }
             }
           },
+          onConditionalFlow(data) {
+            if (currentIteration) {
+              const record: ConditionalFlowRecord = { afterName: data.from, via: data.via, reason: data.reason, attemptedTarget: data.attemptedTarget };
+              currentIteration.conditionalFlowRecords = [
+                ...(currentIteration.conditionalFlowRecords ?? []),
+                record,
+              ];
+              setResults([...streamingResults]);
+            }
+          },
           onStopped() {
             // run was stopped — final state already set via streaming
           },
@@ -1247,16 +1294,29 @@ export default function RunnerPanel() {
                     </div>
                   )}
                   <div className="bg-slate-700/40 border border-amber-700/40 rounded px-2 py-1.5 flex flex-col gap-0.5">
-                    {chain.map(({ item, autoAdded }, i) => {
+                    {chain.map(({ item, autoAdded, idTarget, unresolvedTerminal }, i) => {
                       const method = item.request?.method ?? 'GET';
                       const methodColor = METHOD_COLORS[method] ?? 'text-slate-400';
+                      if (unresolvedTerminal) {
+                        return (
+                          <div key={`unresolved-${i}`} className="flex items-center gap-2 py-0.5 opacity-70">
+                            <span className="text-slate-600 text-xs w-4 text-right shrink-0">{i + 1}.</span>
+                            <span className="text-xs font-bold w-14 shrink-0 text-yellow-600">—</span>
+                            <span className="text-sm truncate text-yellow-500 italic">{unresolvedTerminal.attemptedTarget}</span>
+                            <span title={`Target ${unresolvedTerminal.via === 'id' ? 'ID' : 'name'} not found in collection`} className="ml-auto shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-yellow-800/60 text-yellow-300 border border-yellow-600/50">unresolved</span>
+                          </div>
+                        );
+                      }
                       return (
                         <div key={(item.id ?? item.name) + i} className="flex items-center gap-2 py-0.5">
                           <span className="text-slate-600 text-xs w-4 text-right shrink-0">{i + 1}.</span>
                           <span className={`text-xs font-bold w-14 shrink-0 ${methodColor}`}>{method}</span>
                           <span className={`text-sm truncate ${autoAdded ? 'text-amber-300' : 'text-slate-300'}`}>{item.name}</span>
+                          {idTarget && (
+                            <span className="text-[10px] text-amber-300/60 font-mono ml-1 shrink-0">{idTarget}</span>
+                          )}
                           {autoAdded && (
-                            <span title="Auto-added via setNextRequest() or setNextRequestById()" className="ml-auto shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-800/60 text-amber-300 border border-amber-600/50">auto</span>
+                            <span title={idTarget ? 'Auto-added via setNextRequestById()' : 'Auto-added via setNextRequest()'} className="ml-auto shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-800/60 text-amber-300 border border-amber-600/50">{idTarget ? 'auto (id)' : 'auto'}</span>
                           )}
                         </div>
                       );
@@ -1265,7 +1325,7 @@ export default function RunnerPanel() {
                 </div>
               ))}
               <p className="text-xs text-slate-500">
-                <span className="text-slate-400">Amber</span> items are auto-added. Each chain runs in full — a request selected in the primary order runs independently even if already reached by a previous chain.
+                <span className="text-slate-400">Amber</span> items are auto-added. <span className="text-amber-300/70">auto (id)</span> entries use <code className="text-orange-400">setNextRequestById()</code>. <span className="text-yellow-400/80">Unresolved</span> entries indicate literals that could not be matched to a request in this collection. Each chain runs in full — a request selected in the primary order runs independently even if already reached by a previous chain.
               </p>
             </div>
           )}

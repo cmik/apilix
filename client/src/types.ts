@@ -216,11 +216,19 @@ export interface RunnerIterationResult {
   error: string | null;
 }
 
+export interface ConditionalFlowRecord {
+  afterName: string;
+  via: 'name' | 'id';
+  reason: 'stopped-by-script' | 'target-not-found';
+  attemptedTarget?: string;
+}
+
 export interface RunnerIteration {
   iteration: number;
   dataRow: Record<string, string>;
   results: RunnerIterationResult[];
   jumps?: Array<{ afterName: string; to: string; via: 'name' | 'id'; targetId?: string }>;
+  conditionalFlowRecords?: ConditionalFlowRecord[];
 }
 
 export interface ActiveRequest {

@@ -87,6 +87,7 @@ export interface RunStreamCallbacks {
   onResult?: (data: RunnerIterationResult & { iteration: number }) => void;
   onIterationEnd?: (data: { iteration: number }) => void;
   onNextRequest?: (data: { from: string; to: string; via: 'name' | 'id'; targetId?: string }) => void;
+  onConditionalFlow?: (data: { from: string; via: 'name' | 'id'; reason: 'stopped-by-script' | 'target-not-found'; attemptedTarget?: string }) => void;
   onError?: (error: string) => void;
   onStopped?: () => void;
   onDone?: () => void;
@@ -144,6 +145,7 @@ export async function runCollectionStream(
         case 'iteration-end': callbacks.onIterationEnd?.(parsed); break;
         case 'error': callbacks.onError?.(parsed.error); break;
         case 'next-request': callbacks.onNextRequest?.(parsed); break;
+        case 'conditional-flow': callbacks.onConditionalFlow?.(parsed); break;
         case 'stopped': callbacks.onStopped?.(); break;
         case 'done': callbacks.onDone?.(); break;
       }

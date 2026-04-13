@@ -373,11 +373,13 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
               reqIdx = targetIdx;
               continue;
             } else {
-              // Unknown request id — stop iteration (same behaviour as unknown name)
+              // Unknown request id — notify client then stop iteration
+              sendEvent('conditional-flow', { from: item.name, via: 'id', reason: 'target-not-found', attemptedTarget: result.nextRequestById });
               break;
             }
           } else {
-            // setNextRequestById(null) stops iteration immediately
+            // setNextRequestById(null) stops iteration intentionally
+            sendEvent('conditional-flow', { from: item.name, via: 'id', reason: 'stopped-by-script' });
             break;
           }
         } else if (conditionalExecution !== false && result.nextRequest !== undefined) {
@@ -396,11 +398,13 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
               reqIdx = targetIdx;
               continue;
             } else {
-              // Unknown request name — stop iteration (Postman behaviour)
+              // Unknown request name — notify client then stop iteration (Postman behaviour)
+              sendEvent('conditional-flow', { from: item.name, via: 'name', reason: 'target-not-found', attemptedTarget: result.nextRequest });
               break;
             }
           } else {
-            // setNextRequest(null) stops iteration immediately
+            // setNextRequest(null) stops iteration intentionally
+            sendEvent('conditional-flow', { from: item.name, via: 'name', reason: 'stopped-by-script' });
             break;
           }
         }
@@ -466,6 +470,10 @@ function addLogEntry(entry) {
   if (mockRequestLog.length > MAX_LOG_ENTRIES) mockRequestLog.length = MAX_LOG_ENTRIES;
 }
 
+function safeDecode(str) {
+  try { return decodeURIComponent(str); } catch { return str; }
+}
+
 /**
  * Attempt to match a path against a route pattern that may contain :params.
  * Returns param map if matched, null otherwise.
@@ -477,7 +485,7 @@ function matchPath(pattern, incoming) {
   const params = {};
   for (let i = 0; i < patParts.length; i++) {
     if (patParts[i].startsWith(':')) {
-      params[patParts[i].slice(1)] = decodeURIComponent(incParts[i]);
+      params[patParts[i].slice(1)] = safeDecode(incParts[i]);
     } else if (patParts[i] !== incParts[i]) {
       return null;
     }
@@ -759,7 +767,7 @@ function buildMockHandler() {
       const qs = url.slice(qIdx + 1);
       qs.split('&').forEach(pair => {
         const [k, v] = pair.split('=');
-        if (k) query[decodeURIComponent(k)] = decodeURIComponent(v ?? '');
+        if (k) query[safeDecode(k)] = safeDecode(v ?? '');
       });
     }
 
