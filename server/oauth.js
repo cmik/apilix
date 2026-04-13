@@ -6,8 +6,12 @@ const https = require('https');
 
 const allowInsecureTls = process.env.OAUTH_ALLOW_INSECURE_TLS === 'true';
 
+// Pre-created agents for both SSL modes — reused across requests to preserve connection pooling.
+const agentVerify = new https.Agent({ rejectUnauthorized: true });
+const agentInsecure = new https.Agent({ rejectUnauthorized: false });
+
 const httpClient = axios.create({
-  httpsAgent: new https.Agent({ rejectUnauthorized: !allowInsecureTls }),
+  httpsAgent: allowInsecureTls ? agentInsecure : agentVerify,
   timeout: 30000,
   validateStatus: () => true, // never throw based on status code
 });
@@ -16,7 +20,8 @@ const httpClient = axios.create({
  * Build an axios config object that respects the oauth2Config sslVerification setting.
  * Falls back to the global allowInsecureTls env variable when not explicitly set.
  * Returns an empty object when the setting matches the default so the shared
- * httpClient httpsAgent is reused without allocating a new Agent.
+ * httpClient httpsAgent is reused. Otherwise returns a cached Agent to preserve
+ * connection pooling.
  */
 function buildRequestConfig(oauth2Config) {
   // If not explicitly set, inherit the global default (env-based) behaviour.
@@ -28,7 +33,7 @@ function buildRequestConfig(oauth2Config) {
     return {}; // already matches the shared httpClient httpsAgent; no override needed
   }
   return {
-    httpsAgent: new https.Agent({ rejectUnauthorized: sslVerification }),
+    httpsAgent: sslVerification ? agentVerify : agentInsecure,
   };
 }
 
