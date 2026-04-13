@@ -285,6 +285,26 @@ export default function OAuthConfigPanel({
             </div>
           )}
 
+          {/* SSL Verification */}
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-sm text-slate-300">SSL certificate verification</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={config.sslVerification !== false}
+              onClick={() => onChange({ ...config, sslVerification: !(config.sslVerification !== false) })}
+              className={`relative inline-flex w-9 h-5 items-center rounded-full transition-colors ${
+                config.sslVerification !== false ? 'bg-orange-500' : 'bg-slate-700'
+              }`}
+            >
+              <span
+                className={`inline-block w-3.5 h-3.5 bg-white rounded-full shadow transition-transform ${
+                  config.sslVerification !== false ? 'translate-x-4' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+
           {/* Access Token (read-only in most cases) */}
           <div className="flex flex-col gap-1.5">
             <label className="text-xs text-slate-400">Current Access Token (read-only)</label>

@@ -12,6 +12,26 @@ const httpClient = axios.create({
   validateStatus: () => true, // never throw based on status code
 });
 
+/**
+ * Build an axios config object that respects the oauth2Config sslVerification setting.
+ * Falls back to the global allowInsecureTls env variable when not explicitly set.
+ * Returns an empty object when the setting matches the default so the shared
+ * httpClient httpsAgent is reused without allocating a new Agent.
+ */
+function buildRequestConfig(oauth2Config) {
+  // If not explicitly set, inherit the global default (env-based) behaviour.
+  const sslVerification = typeof oauth2Config.sslVerification === 'boolean'
+    ? oauth2Config.sslVerification
+    : !allowInsecureTls;
+  const defaultSslVerification = !allowInsecureTls;
+  if (sslVerification === defaultSslVerification) {
+    return {}; // already matches the shared httpClient httpsAgent; no override needed
+  }
+  return {
+    httpsAgent: new https.Agent({ rejectUnauthorized: sslVerification }),
+  };
+}
+
 // ─── PKCE Helper Functions ────────────────────────────────────────────────────
 
 /**
@@ -124,7 +144,7 @@ async function refreshOAuth2Token(oauth2Config, vars = {}) {
         throw new Error(`Unsupported grant type: ${grantType}`);
     }
 
-    const response = await httpClient.post(tokenUrl, tokenBody, { headers });
+    const response = await httpClient.post(tokenUrl, tokenBody, { headers, ...buildRequestConfig(oauth2Config) });
 
     if (response.status >= 400) {
       throw new Error(`Token endpoint returned ${response.status}: ${JSON.stringify(response.data)}`);
@@ -194,7 +214,7 @@ async function exchangeAuthorizationCodeForToken(oauth2Config, authorizationCode
   };
 
   try {
-    const response = await httpClient.post(tokenUrl, tokenBody, { headers });
+    const response = await httpClient.post(tokenUrl, tokenBody, { headers, ...buildRequestConfig(oauth2Config) });
 
     if (response.status >= 400) {
       throw new Error(`Token endpoint returned ${response.status}: ${JSON.stringify(response.data)}`);
