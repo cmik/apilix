@@ -6,11 +6,26 @@ const https = require('https');
 
 const allowInsecureTls = process.env.OAUTH_ALLOW_INSECURE_TLS === 'true';
 
+// Pre-created agents for both SSL modes — reused across requests to preserve connection pooling.
+const agentVerify = new https.Agent({ rejectUnauthorized: true });
+const agentInsecure = new https.Agent({ rejectUnauthorized: false });
+
 const httpClient = axios.create({
-  httpsAgent: new https.Agent({ rejectUnauthorized: !allowInsecureTls }),
+  httpsAgent: allowInsecureTls ? agentInsecure : agentVerify,
   timeout: 30000,
   validateStatus: () => true, // never throw based on status code
 });
+
+/**
+ * Build an axios config object that respects the oauth2Config sslVerification setting.
+ * Undefined is treated as false (verification disabled). Always returns an explicit
+ * cached Agent to preserve connection pooling.
+ */
+function buildRequestConfig(oauth2Config) {
+  return {
+    httpsAgent: oauth2Config.sslVerification === true ? agentVerify : agentInsecure,
+  };
+}
 
 // ─── PKCE Helper Functions ────────────────────────────────────────────────────
 
@@ -124,7 +139,7 @@ async function refreshOAuth2Token(oauth2Config, vars = {}) {
         throw new Error(`Unsupported grant type: ${grantType}`);
     }
 
-    const response = await httpClient.post(tokenUrl, tokenBody, { headers });
+    const response = await httpClient.post(tokenUrl, tokenBody, { headers, ...buildRequestConfig(oauth2Config) });
 
     if (response.status >= 400) {
       throw new Error(`Token endpoint returned ${response.status}: ${JSON.stringify(response.data)}`);
@@ -194,7 +209,7 @@ async function exchangeAuthorizationCodeForToken(oauth2Config, authorizationCode
   };
 
   try {
-    const response = await httpClient.post(tokenUrl, tokenBody, { headers });
+    const response = await httpClient.post(tokenUrl, tokenBody, { headers, ...buildRequestConfig(oauth2Config) });
 
     if (response.status >= 400) {
       throw new Error(`Token endpoint returned ${response.status}: ${JSON.stringify(response.data)}`);
