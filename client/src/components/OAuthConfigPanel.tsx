@@ -291,16 +291,16 @@ export default function OAuthConfigPanel({
             <button
               type="button"
               role="switch"
-              aria-checked={config.sslVerification !== false}
+              aria-checked={config.sslVerification === true}
               aria-labelledby="ssl-verification-label"
-              onClick={() => onChange({ ...config, sslVerification: !(config.sslVerification !== false) })}
+              onClick={() => onChange({ ...config, sslVerification: config.sslVerification !== true })}
               className={`relative inline-flex w-9 h-5 items-center rounded-full transition-colors ${
-                config.sslVerification !== false ? 'bg-orange-500' : 'bg-slate-700'
+                config.sslVerification === true ? 'bg-orange-500' : 'bg-slate-700'
               }`}
             >
               <span
                 className={`inline-block w-3.5 h-3.5 bg-white rounded-full shadow transition-transform ${
-                  config.sslVerification !== false ? 'translate-x-4' : 'translate-x-1'
+                  config.sslVerification === true ? 'translate-x-4' : 'translate-x-1'
                 }`}
               />
             </button>

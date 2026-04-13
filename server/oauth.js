@@ -18,22 +18,12 @@ const httpClient = axios.create({
 
 /**
  * Build an axios config object that respects the oauth2Config sslVerification setting.
- * Falls back to the global allowInsecureTls env variable when not explicitly set.
- * Returns an empty object when the setting matches the default so the shared
- * httpClient httpsAgent is reused. Otherwise returns a cached Agent to preserve
- * connection pooling.
+ * Undefined is treated as false (verification disabled). Always returns an explicit
+ * cached Agent to preserve connection pooling.
  */
 function buildRequestConfig(oauth2Config) {
-  // If not explicitly set, inherit the global default (env-based) behaviour.
-  const sslVerification = typeof oauth2Config.sslVerification === 'boolean'
-    ? oauth2Config.sslVerification
-    : !allowInsecureTls;
-  const defaultSslVerification = !allowInsecureTls;
-  if (sslVerification === defaultSslVerification) {
-    return {}; // already matches the shared httpClient httpsAgent; no override needed
-  }
   return {
-    httpsAgent: sslVerification ? agentVerify : agentInsecure,
+    httpsAgent: oauth2Config.sslVerification === true ? agentVerify : agentInsecure,
   };
 }
 
