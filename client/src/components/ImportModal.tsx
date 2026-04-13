@@ -45,6 +45,8 @@ export default function ImportModal({ onClose }: ImportModalProps) {
   const [targetCollectionId, setTargetCollectionId] = useState<string>(
     state.collections[0]?._id ?? ''
   );
+  const [urlImport, setUrlImport] = useState('');
+  const [urlImportLoading, setUrlImportLoading] = useState(false);
 
   function parseAndImport(text: string, filename?: string) {
     setError(null);
@@ -204,6 +206,34 @@ export default function ImportModal({ onClose }: ImportModalProps) {
   function handleDrop(e: React.DragEvent) {
     e.preventDefault();
     handleFiles(e.dataTransfer.files);
+  }
+
+  async function handleUrlImport() {
+    setError(null);
+    setSuccess(null);
+    const url = urlImport.trim();
+    if (!url) {
+      setError('Please enter a URL.');
+      return;
+    }
+    setUrlImportLoading(true);
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      const text = await response.text();
+      const contentType = response.headers.get('content-type') || '';
+      const pathname = new URL(url).pathname;
+      const fromPath = pathname.split('/').filter(Boolean).pop() || '';
+      const filename = fromPath || (contentType.includes('yaml') ? 'import.yaml' : contentType.includes('json') ? 'import.json' : undefined);
+      parseAndImport(text, filename);
+      setUrlImport('');
+    } catch (e) {
+      setError(`Failed to import from URL: ${(e as Error).message}`);
+    } finally {
+      setUrlImportLoading(false);
+    }
   }
 
   function handleHurlImport() {
@@ -397,23 +427,48 @@ export default function ImportModal({ onClose }: ImportModalProps) {
 
         <div className="p-4 overflow-y-auto flex-1">
           {tab === 'file' && (
-            <div
-              onDrop={handleDrop}
-              onDragOver={e => e.preventDefault()}
-              onClick={() => fileRef.current?.click()}
-              className="border-2 border-dashed border-slate-600 hover:border-orange-500 rounded-lg p-10 text-center cursor-pointer transition-colors"
-            >
-              <div className="text-4xl mb-3">📂</div>
-              <p className="text-slate-300 font-medium">Click to browse or drag & drop</p>
-              <p className="text-slate-500 text-sm mt-1">Postman Collection v2.1 JSON, Environment JSON, OpenAPI/Swagger (.yaml/.yml/.json), HURL (.hurl), or HAR (.har)</p>
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".json,.hurl,.yaml,.yml,.har"
-                multiple
-                className="hidden"
-                onChange={e => handleFiles(e.target.files)}
-              />
+            <div className="flex flex-col gap-3">
+              <div
+                onDrop={handleDrop}
+                onDragOver={e => e.preventDefault()}
+                onClick={() => fileRef.current?.click()}
+                className="border-2 border-dashed border-slate-600 hover:border-orange-500 rounded-lg p-10 text-center cursor-pointer transition-colors"
+              >
+                <div className="text-4xl mb-3">📂</div>
+                <p className="text-slate-300 font-medium">Click to browse or drag & drop</p>
+                <p className="text-slate-500 text-sm mt-1">Postman Collection v2.1 JSON, Environment JSON, OpenAPI/Swagger (.yaml/.yml/.json), HURL (.hurl), or HAR (.har)</p>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept=".json,.hurl,.yaml,.yml,.har"
+                  multiple
+                  className="hidden"
+                  onChange={e => handleFiles(e.target.files)}
+                />
+              </div>
+              <div className="border-t border-slate-700 pt-3">
+                <label className="text-slate-400 text-sm mb-2 block">Import from URL</label>
+                <div className="flex gap-2">
+                  <input
+                    type="url"
+                    value={urlImport}
+                    onChange={e => {
+                      setUrlImport(e.target.value);
+                      setError(null);
+                      setSuccess(null);
+                    }}
+                    placeholder="https://example.com/collection.json"
+                    className="flex-1 bg-slate-900 border border-slate-600 rounded px-3 py-2 text-slate-100 text-sm focus:outline-none focus:border-orange-500"
+                  />
+                  <button
+                    onClick={handleUrlImport}
+                    disabled={urlImportLoading}
+                    className="px-4 py-2 bg-orange-600 hover:bg-orange-500 disabled:bg-slate-600 text-white rounded text-sm font-medium transition-colors whitespace-nowrap"
+                  >
+                    {urlImportLoading ? 'Fetching...' : 'Import'}
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
