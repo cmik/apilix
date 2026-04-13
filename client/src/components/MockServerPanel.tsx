@@ -5,6 +5,7 @@ import { startMockServer, stopMockServer, syncMockRoutes, getMockStatus, getMock
 import ScriptEditor from './ScriptEditor';
 import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
 import ConfirmModal from './ConfirmModal';
+import { useToast } from './Toast';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', '*'];
 const STATUS_CODES = [200, 201, 204, 301, 302, 400, 401, 403, 404, 409, 422, 500, 502, 503];
@@ -1231,6 +1232,7 @@ function MockStateViewer({ running }: { running: boolean }) {
 
 export default function MockServerPanel() {
   const { state, dispatch } = useApp();
+  const toast = useToast();
   const { mockRoutes, mockCollections, mockServerRunning, mockPort, collections: appCollections } = state;
 
   const [portInput, setPortInput] = useState(String(mockPort));
@@ -1263,6 +1265,7 @@ export default function MockServerPanel() {
       if (mockServerRunning) {
         await stopMockServer();
         dispatch({ type: 'SET_MOCK_SERVER_RUNNING', payload: false });
+        toast.info('Mock server stopped.');
       } else {
         const port = parseInt(portInput, 10) || 3002;
         if (port < 1024 || port > 65535) { setError('Port must be between 1024 and 65535'); setToggling(false); return; }
@@ -1270,9 +1273,12 @@ export default function MockServerPanel() {
         await startMockServer(port, effective);
         dispatch({ type: 'SET_MOCK_PORT', payload: port });
         dispatch({ type: 'SET_MOCK_SERVER_RUNNING', payload: true });
+        toast.success(`Mock server started on port ${port}.`);
       }
     } catch (err: any) {
-      setError(err?.response?.data?.error ?? err?.message ?? 'Failed');
+      const msg = err?.response?.data?.error ?? err?.message ?? 'Failed';
+      setError(msg);
+      toast.error(`Mock server error: ${msg}`);
     } finally {
       setToggling(false);
     }

@@ -3,6 +3,7 @@ import { useApp } from '../store';
 import type { AppCollection, AppEnvironment } from '../types';
 import { generateHarFromItems } from '../utils/harUtils';
 import { generateHurlFromItems } from '../utils/hurlUtils';
+import { useToast } from './Toast';
 
 type ExportFormat = 'postman' | 'har' | 'hurl';
 
@@ -12,6 +13,7 @@ interface ExportModalProps {
 
 export default function ExportModal({ onClose }: ExportModalProps) {
   const { state } = useApp();
+  const toast = useToast();
 
   const [format, setFormat] = useState<ExportFormat>('postman');
   const [selectedCollections, setSelectedCollections] = useState<Set<string>>(
@@ -172,10 +174,17 @@ export default function ExportModal({ onClose }: ExportModalProps) {
           }
         }
 
-        Promise.all(saves).then(() => onClose());
+        Promise.all(saves).then(() => {
+          toast.success(`Exported ${saves.length} file(s) to disk.`);
+          onClose();
+        }).catch((e: unknown) => {
+          toast.error(`Export failed: ${(e as Error).message}`);
+        });
       });
     } else {
       // Browser: use the existing blob-download approach
+      const colCount = state.collections.filter(c => selectedCollections.has(c._id)).length;
+      const envCount = format === 'postman' ? state.environments.filter(e => selectedEnvironments.has(e._id)).length : 0;
       state.collections
         .filter(c => selectedCollections.has(c._id))
         .forEach(downloadCollection);
@@ -184,6 +193,7 @@ export default function ExportModal({ onClose }: ExportModalProps) {
           .filter(e => selectedEnvironments.has(e._id))
           .forEach(downloadEnvironment);
       }
+      toast.success(`Exported ${colCount + envCount} file(s).`);
       onClose();
     }
   }
