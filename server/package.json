@@ -20,5 +20,8 @@
     "simple-git": "^3.35.2",
     "ws": "^8.18.0",
     "xpath": "^0.0.34"
+  },
+  "optionalDependencies": {
+    "win-ca": "^3.5.1"
   }
 }

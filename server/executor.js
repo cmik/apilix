@@ -6,6 +6,7 @@ const https = require('https');
 const FormData = require('form-data');
 const { runScript } = require('./sandbox');
 const { refreshOAuth2Token } = require('./oauth');
+const { makeHttpsAgent } = require('./tlsUtils');
 
 const httpClient = axios.create({
   httpsAgent: new https.Agent({ rejectUnauthorized: false }),
@@ -357,7 +358,7 @@ function makeTimingAndCertContext(rejectUnauthorized = false) {
     }
   }
 
-  const httpsTimingAgent = new https.Agent({ rejectUnauthorized });
+  const httpsTimingAgent = makeHttpsAgent(rejectUnauthorized);
   const _origHttps = httpsTimingAgent.createConnection.bind(httpsTimingAgent);
   httpsTimingAgent.createConnection = function (opts, cb) {
     const sock = _origHttps(opts, cb);
@@ -534,8 +535,10 @@ async function executeRequest(item, context) {
 
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
       const _isHopHttps = curUrl.toLowerCase().startsWith('https://');
-      // Per-hop HTTPS agent — honours SSL verification setting
-      const hopHttpsAgent = new https.Agent({ rejectUnauthorized });
+      // Per-hop HTTPS agent — only build when used (non-initial HTTPS hops).
+      const hopHttpsAgent = (hop > 0 && _isHopHttps)
+        ? makeHttpsAgent(rejectUnauthorized)
+        : undefined;
       // Only instrument the timing agent on the first hop (timing agent reuses same TLS setting)
       const agentOpts = hop === 0
         ? (_isHopHttps ? { httpsAgent: _tc.httpsTimingAgent } : { httpAgent: _tc.httpTimingAgent })
