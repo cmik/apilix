@@ -10,6 +10,24 @@ interface ImportModalProps {
   onClose: () => void;
 }
 
+const URL_IMPORT_TIMEOUT_MS = 15000;
+
+function isJsonContentType(contentType: string): boolean {
+  return contentType === 'application/json' || /^[^/]+\/[^/]+\+json$/.test(contentType);
+}
+
+function isYamlContentType(contentType: string): boolean {
+  return contentType === 'application/yaml' || contentType === 'text/yaml' || contentType === 'application/x-yaml' || contentType === 'text/x-yaml';
+}
+
+function isHarContentType(contentType: string): boolean {
+  return contentType === 'application/har+json';
+}
+
+function isHurlContentType(contentType: string): boolean {
+  return contentType === 'application/hurl' || contentType === 'text/hurl';
+}
+
 function nameFromUrl(url: string): string {
   try {
     const u = new URL(url);
@@ -218,19 +236,45 @@ export default function ImportModal({ onClose }: ImportModalProps) {
     }
     setUrlImportLoading(true);
     try {
-      const response = await fetch(url);
+      const urlObj = new URL(url);
+      if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
+        throw new Error('Only http:// and https:// URLs are supported.');
+      }
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), URL_IMPORT_TIMEOUT_MS);
+      let response: Response;
+      try {
+        response = await fetch(urlObj.toString(), { signal: controller.signal });
+      } finally {
+        clearTimeout(timeout);
+      }
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       const text = await response.text();
-      const contentType = response.headers.get('content-type') || '';
-      const pathname = new URL(url).pathname;
-      const fromPath = pathname.split('/').filter(Boolean).pop() || '';
-      const filename = fromPath || (contentType.includes('yaml') ? 'import.yaml' : contentType.includes('json') ? 'import.json' : undefined);
-      parseAndImport(text, filename);
+      const contentType = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+      const fromPath = urlObj.pathname.split('/').filter(Boolean).pop() || '';
+      const hasKnownImportExtension = /\.(json|yaml|yml|har|hurl)$/i.test(fromPath);
+      let filename = hasKnownImportExtension ? fromPath : '';
+      if (!filename) {
+        if (isYamlContentType(contentType)) filename = 'import.yaml';
+        else if (isHarContentType(contentType)) filename = 'import.har';
+        else if (isHurlContentType(contentType)) filename = 'import.hurl';
+        else if (isJsonContentType(contentType)) filename = 'import.json';
+      }
+      parseAndImport(text, filename || undefined);
       setUrlImport('');
     } catch (e) {
-      setError(`Failed to import from URL: ${(e as Error).message}`);
+      const err = e as Error;
+      if (err.name === 'AbortError') {
+        setError('Import from URL timed out. Please try again.');
+      } else if (err.message === 'Invalid URL') {
+        setError('Please enter a valid URL.');
+      } else if (err.message.includes('Failed to fetch')) {
+        setError('Unable to reach that URL. Check the URL and network access, then try again.');
+      } else {
+        setError(`Failed to import from URL: ${err.message}`);
+      }
     } finally {
       setUrlImportLoading(false);
     }
