@@ -9,10 +9,10 @@ A lightweight, open-source alternative API testing tool — available as a **des
 - **Send HTTP requests** (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS)
 - **Query params, Headers, Body** (raw JSON/text, form-data, url-encoded)
 - **Authentication** (Bearer, Basic, API Key)
-- **Pre-request & Test scripts** (`pm.*` Postman-compatible API, including `pm.sendRequest()`)
+- **Pre-request & Test scripts** (`apx.*` Postman-compatible API, including `apx.sendRequest()`)
 - **Collection Runner** with CSV data-driven testing and multi-iteration support
 - **Environment variables** with `{{variable}}` substitution
-- **Global variables** — cross-collection variables manageable via the Globals panel and scriptable with `pm.globals.*`
+- **Global variables** — cross-collection variables manageable via the Globals panel and scriptable with `apx.globals.*`
 - **Tabbed request editing** — open multiple requests simultaneously, save changes independently
 - **Mock Server** — define static or dynamic responses for any endpoint; start a local HTTP server without a real backend
 - **Console panel** — view a log of every request and response with resolved variable values; pop out into a live-updating detached window
@@ -28,7 +28,7 @@ Pre-built installers are available for:
 | Platform | File |
 |---|---|
 | macOS | `Apilix-x.x.x.dmg` |
-| Windows | `Apilix Setup x.x.x.exe` |
+| Windows | `Apilix x.x.x.exe` (portable, no installation required) |
 | Linux | `Apilix-x.x.x.AppImage` |
 
 Download the installer for your platform, install, and launch — no Node.js required.
@@ -240,7 +240,7 @@ Apilix resolves `{{variable}}` placeholders in URLs, headers, body, and auth fie
 |:---:|---|---|
 | 1 (lowest) | **Collection definition** | Variables declared in the collection JSON `variable[]` array |
 | 2 | **Global** | Cross-collection variables managed in the 🌐 Globals panel |
-| 3 | **Collection (runtime)** | Per-collection variables set by scripts via `pm.collectionVariables.set()` |
+| 3 | **Collection (runtime)** | Per-collection variables set by scripts via `apx.collectionVariables.set()` |
 | 4 | **Environment** | Active environment — only enabled rows apply |
 | 5 (highest) | **Data row** | CSV column values injected by the Runner for each iteration |
 
@@ -255,10 +255,10 @@ Open the **🌐 Globals** sub-tab inside the Envs panel to manage global variabl
 Globals can be read and written from scripts:
 
 ```javascript
-pm.globals.set("api_version", "v2");
-pm.globals.get("api_version");   // → "v2"
-pm.globals.unset("api_version");
-pm.globals.clear();              // remove all globals
+apx.globals.set("api_version", "v2");
+apx.globals.get("api_version");   // → "v2"
+apx.globals.unset("api_version");
+apx.globals.clear();              // remove all globals
 ```
 
 Changes made in scripts are propagated back to the store after the request completes and carry forward to subsequent requests in the Runner.
@@ -275,7 +275,7 @@ admin,secret,200
 guest,wrong,401
 ```
 
-Upload the CSV in the Runner panel. Each row becomes one iteration and every column header is available as a `{{variable}}` in your requests and scripts (`pm.iterationData.get("username")`). A preview table shows the first five rows before you run.
+Upload the CSV in the Runner panel. Each row becomes one iteration and every column header is available as a `{{variable}}` in your requests and scripts (`apx.iterationData.get("username")`). A preview table shows the first five rows before you run.
 
 Without a CSV you can still set **Iterations** (1–100) to repeat a collection multiple times.
 
@@ -306,57 +306,57 @@ Apilix supports a subset of the Postman `pm` scripting API:
 
 ```javascript
 // Tests
-pm.test("Status is 200", () => {
-  pm.response.to.have.status(200);
+apx.test("Status is 200", () => {
+  apx.response.to.have.status(200);
 });
 
-pm.test("Response has id", () => {
-  const json = pm.response.json();
-  pm.expect(json.id).to.exist;
+apx.test("Response has id", () => {
+  const json = apx.response.json();
+  apx.expect(json.id).to.exist;
 });
 
 // Environment variables (active environment)
-pm.environment.set("token", pm.response.json().token);
-pm.environment.get("baseUrl");
-pm.environment.unset("token");
+apx.environment.set("token", apx.response.json().token);
+apx.environment.get("baseUrl");
+apx.environment.unset("token");
 
 // Global variables (all collections)
-pm.globals.set("api_version", "v2");
-pm.globals.get("api_version");
-pm.globals.unset("api_version");
-pm.globals.clear();
+apx.globals.set("api_version", "v2");
+apx.globals.get("api_version");
+apx.globals.unset("api_version");
+apx.globals.clear();
 
 // Collection variables (current collection scope)
-pm.collectionVariables.set("requestId", Date.now().toString());
-pm.collectionVariables.get("requestId");
-pm.collectionVariables.unset("requestId");
+apx.collectionVariables.set("requestId", Date.now().toString());
+apx.collectionVariables.get("requestId");
+apx.collectionVariables.unset("requestId");
 
 // Response
-pm.response.code         // status code
-pm.response.responseTime // ms
-pm.response.json()       // parsed body
-pm.response.text()       // raw body
-pm.response.headers.get("Content-Type")
+apx.response.code         // status code
+apx.response.responseTime // ms
+apx.response.json()       // parsed body
+apx.response.text()       // raw body
+apx.response.headers.get("Content-Type")
 
 // Request chaining — make additional HTTP calls from scripts
-pm.sendRequest("https://api.example.com/token", (err, res) => {
+apx.sendRequest("https://api.example.com/token", (err, res) => {
   if (!err) {
-    pm.environment.set("access_token", res.json().access_token);
+    apx.environment.set("access_token", res.json().access_token);
   }
 });
 
 // Full options object (Postman-compatible)
-pm.sendRequest({
+apx.sendRequest({
   url: "https://api.example.com/login",
   method: "POST",
   header: [{ key: "Content-Type", value: "application/json" }],
   body: { mode: "raw", raw: JSON.stringify({ user: "admin", pass: "secret" }) }
 }, (err, res) => {
-  pm.environment.set("token", res.json().token);
+  apx.environment.set("token", res.json().token);
 });
 ```
 
-`pm.sendRequest` accepts a URL string or a Postman-format options object and provides the callback response with `.code`, `.status`, `.headers.get(name)`, `.json()`, and `.text()`.
+`apx.sendRequest` accepts a URL string or a Postman-format options object and provides the callback response with `.code`, `.status`, `.headers.get(name)`, `.json()`, and `.text()`.
 Works in both **pre-request** and **test** scripts. All chained requests complete before the next request in the collection starts.
 
 ---
