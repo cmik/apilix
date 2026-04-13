@@ -413,11 +413,14 @@ async function executeRequest(item, context) {
       };
       const result = await runScript(code, null, vars, scriptDeps);
       const preUpdatedVars = result.updatedVariables;
+      const preEnvMutations = result.updatedEnvMutations || {};
       const preUpdatedGlobals = result.updatedGlobalMutations || {};
       // Propagate pre-request mutations back into their respective scopes so the
       // test script context (and any child requests it fires) sees the updated values.
+      // Keys explicitly written via apx.environment.set() are tracked in preEnvMutations
+      // even when they didn't previously exist in the environment.
       Object.entries(preUpdatedVars).forEach(([k, v]) => {
-        if (originalEnvKeys.has(k)) environment = { ...environment, [k]: v };
+        if (originalEnvKeys.has(k) || k in preEnvMutations) environment = { ...environment, [k]: v };
         else collectionVariables = { ...collectionVariables, [k]: v };
       });
       globals = { ...globals, ...preUpdatedGlobals };
@@ -608,6 +611,7 @@ async function executeRequest(item, context) {
         const result = await runScript(code, responseData, vars, scriptDeps);
         testResults = result.tests;
         updatedVars = result.updatedVariables;
+        const testEnvMutations = result.updatedEnvMutations || {};
         const testUpdatedGlobals = result.updatedGlobalMutations || {};
         globals = { ...globals, ...testUpdatedGlobals };
         scriptLogs = [...scriptLogs, ...result.consoleLogs];
@@ -621,12 +625,14 @@ async function executeRequest(item, context) {
     // Split updated vars back into environment and collection variables.
     // Keys already tracked in updatedGlobalMutations are excluded — globals are
     // returned separately via the `globals` variable, not via env/collVars.
+    // Keys explicitly written via apx.environment.set() are tracked in testEnvMutations
+    // even when they didn't previously exist in the environment.
     const updatedEnv = { ...environment };
     const updatedCollVars = { ...collectionVariables };
     const globalKeys = new Set(Object.keys(globals));
     Object.entries(updatedVars).forEach(([k, v]) => {
       if (globalKeys.has(k) && !(k in environment) && !(k in collectionVariables)) return;
-      if (originalEnvKeys.has(k)) updatedEnv[k] = v;
+      if (originalEnvKeys.has(k) || k in testEnvMutations) updatedEnv[k] = v;
       else updatedCollVars[k] = v;
     });
 

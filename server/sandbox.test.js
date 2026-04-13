@@ -141,3 +141,50 @@ test('setNextRequest and setNextRequestById can both be set independently', asyn
   assert.equal(result.nextRequest, 'by-name');
   assert.equal(result.nextRequestById, 'abc-456');
 });
+
+test('apx.environment.set() on a new key is tracked in updatedEnvMutations', async () => {
+  const result = await runScript(
+    `apx.environment.set('brandNewVar', 'hello');`,
+    baseResponse,
+    {},
+    { context: { environment: {} } },
+  );
+
+  assert.equal(result.updatedEnvMutations['brandNewVar'], 'hello');
+  assert.equal(result.updatedVariables['brandNewVar'], 'hello');
+});
+
+test('apx.environment.set() on a new key does not bleed into updatedCollVarMutations', async () => {
+  const result = await runScript(
+    `apx.environment.set('envOnly', '1');`,
+    baseResponse,
+    {},
+    { context: { environment: {}, collectionVariables: {} } },
+  );
+
+  assert.equal(result.updatedEnvMutations['envOnly'], '1');
+  assert.equal(result.updatedCollVarMutations['envOnly'], undefined);
+});
+
+test('apx.environment.set() on a pre-existing key is still tracked in updatedEnvMutations', async () => {
+  const result = await runScript(
+    `apx.environment.set('existingVar', 'updated');`,
+    baseResponse,
+    {},
+    { context: { environment: { existingVar: 'original' } } },
+  );
+
+  assert.equal(result.updatedEnvMutations['existingVar'], 'updated');
+});
+
+test('apx.variables.set() on a new key does NOT appear in updatedEnvMutations', async () => {
+  const result = await runScript(
+    `apx.variables.set('genericVar', '42');`,
+    baseResponse,
+    {},
+    { context: { environment: {} } },
+  );
+
+  assert.equal(result.updatedVariables['genericVar'], '42');
+  assert.equal(result.updatedEnvMutations['genericVar'], undefined);
+});
