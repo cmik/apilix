@@ -441,6 +441,13 @@ if (!apx.environment.get('runThis')) {
         code: `// Jump to a specific request by name in the runner
 apx.execution.setNextRequest('Login');`,
       },
+      {
+        id: 'test-apx-next-request-by-id',
+        name: 'Set next request by ID (runner)',
+        description: 'Jump to a specific request ID in the collection runner',
+        code: `// Jump to a specific request by ID in the runner
+apx.execution.setNextRequestById('request-id-here');`,
+      },
     ],
   },
   {

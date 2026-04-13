@@ -394,7 +394,25 @@ async function executeRequest(item, context) {
   // Keep original key sets for scope routing — used when splitting script mutations
   // back into their respective scopes. Must be captured before any script runs.
   const originalEnvKeys = new Set(Object.keys(environment));
-  const originalCollVarKeys = new Set(Object.keys(collectionVariables));
+
+  function applyScopedMutations(updatedVariables = {}, updatedEnvMutations = {}, updatedCollVarMutations = {}, updatedGlobalMutations = {}) {
+    const nextEnvironment = { ...environment, ...updatedEnvMutations };
+    const nextCollectionVariables = { ...collectionVariables, ...updatedCollVarMutations };
+    const trackedKeys = new Set([
+      ...Object.keys(updatedEnvMutations),
+      ...Object.keys(updatedCollVarMutations),
+      ...Object.keys(updatedGlobalMutations),
+    ]);
+
+    Object.entries(updatedVariables).forEach(([key, value]) => {
+      if (trackedKeys.has(key)) return;
+      if (originalEnvKeys.has(key)) nextEnvironment[key] = value;
+      else nextCollectionVariables[key] = value;
+    });
+
+    environment = nextEnvironment;
+    collectionVariables = nextCollectionVariables;
+  }
 
   // Run pre-request script
   let scriptLogs = [];
@@ -413,13 +431,12 @@ async function executeRequest(item, context) {
       };
       const result = await runScript(code, null, vars, scriptDeps);
       const preUpdatedVars = result.updatedVariables;
+      const preEnvMutations = result.updatedEnvMutations || {};
+      const preCollVarMutations = result.updatedCollVarMutations || {};
       const preUpdatedGlobals = result.updatedGlobalMutations || {};
       // Propagate pre-request mutations back into their respective scopes so the
       // test script context (and any child requests it fires) sees the updated values.
-      Object.entries(preUpdatedVars).forEach(([k, v]) => {
-        if (originalEnvKeys.has(k)) environment = { ...environment, [k]: v };
-        else collectionVariables = { ...collectionVariables, [k]: v };
-      });
+      applyScopedMutations(preUpdatedVars, preEnvMutations, preCollVarMutations, preUpdatedGlobals);
       globals = { ...globals, ...preUpdatedGlobals };
       vars = { ...vars, ...preUpdatedVars, ...preUpdatedGlobals };
       scriptLogs = [...scriptLogs, ...result.consoleLogs];
@@ -447,6 +464,7 @@ async function executeRequest(item, context) {
           updatedCookies: cookies,
           skipped: true,
           nextRequest: undefined,
+          nextRequestById: undefined,
           error: null,
         };
       }
@@ -501,6 +519,7 @@ async function executeRequest(item, context) {
   const startTime = Date.now();
   let testChildRequests = [];
   let nextRequestSignal = undefined; // set by pm.execution.setNextRequest()
+  let nextRequestByIdSignal = undefined; // set by pm.execution.setNextRequestById()
 
   try {
     // ─── Redirect chain handling ───────────────────────────────────────────
@@ -584,6 +603,9 @@ async function executeRequest(item, context) {
     const testScript = (item.event || []).find(e => e.listen === 'test');
     let testResults = [];
     let updatedVars = {};
+    let testEnvMutations = {};
+    let testCollVarMutations = {};
+    let testUpdatedGlobals = {};
 
     if (testScript) {
       const code = Array.isArray(testScript.script.exec)
@@ -606,11 +628,14 @@ async function executeRequest(item, context) {
         const result = await runScript(code, responseData, vars, scriptDeps);
         testResults = result.tests;
         updatedVars = result.updatedVariables;
-        const testUpdatedGlobals = result.updatedGlobalMutations || {};
+        testEnvMutations = result.updatedEnvMutations || {};
+        testCollVarMutations = result.updatedCollVarMutations || {};
+        testUpdatedGlobals = result.updatedGlobalMutations || {};
         globals = { ...globals, ...testUpdatedGlobals };
         scriptLogs = [...scriptLogs, ...result.consoleLogs];
         testChildRequests = result.childRequests || [];
         if (result.nextRequest !== undefined) nextRequestSignal = result.nextRequest;
+        if (result.nextRequestById !== undefined) nextRequestByIdSignal = result.nextRequestById;
         vars = { ...vars, ...updatedVars, ...testUpdatedGlobals };
       }
     }
@@ -618,11 +643,17 @@ async function executeRequest(item, context) {
     // Split updated vars back into environment and collection variables.
     // Keys already tracked in updatedGlobalMutations are excluded — globals are
     // returned separately via the `globals` variable, not via env/collVars.
-    const updatedEnv = { ...environment };
-    const updatedCollVars = { ...collectionVariables };
-    const globalKeys = new Set(Object.keys(globals));
+    // Explicit env/collection writes are replayed from their dedicated buckets,
+    // while generic apx.variables writes still fall back to original scope.
+    const updatedEnv = { ...environment, ...testEnvMutations };
+    const updatedCollVars = { ...collectionVariables, ...testCollVarMutations };
+    const trackedKeys = new Set([
+      ...Object.keys(testEnvMutations),
+      ...Object.keys(testCollVarMutations),
+      ...Object.keys(testUpdatedGlobals),
+    ]);
     Object.entries(updatedVars).forEach(([k, v]) => {
-      if (globalKeys.has(k) && !(k in environment) && !(k in collectionVariables)) return;
+      if (trackedKeys.has(k)) return;
       if (originalEnvKeys.has(k)) updatedEnv[k] = v;
       else updatedCollVars[k] = v;
     });
@@ -673,6 +704,7 @@ async function executeRequest(item, context) {
       tlsCertChain: _tc.certHolder.chain,
       redirectChain,
       nextRequest: nextRequestSignal,
+      nextRequestById: nextRequestByIdSignal,
       error: null,
     };
   } catch (err) {

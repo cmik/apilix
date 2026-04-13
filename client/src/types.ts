@@ -220,7 +220,7 @@ export interface RunnerIteration {
   iteration: number;
   dataRow: Record<string, string>;
   results: RunnerIterationResult[];
-  jumps?: Array<{ afterName: string; to: string }>;
+  jumps?: Array<{ afterName: string; to: string; via: 'name' | 'id'; targetId?: string }>;
 }
 
 export interface ActiveRequest {

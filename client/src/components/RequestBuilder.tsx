@@ -44,6 +44,18 @@ function flattenRequestNames(items: CollectionItem[]): string[] {
   return names;
 }
 
+function flattenRequestItems(items: CollectionItem[]): Array<{ id: string; name: string }> {
+  const result: Array<{ id: string; name: string }> = [];
+  function walk(arr: CollectionItem[]) {
+    for (const it of arr) {
+      if (it.request && it.id && it.name) result.push({ id: it.id, name: it.name });
+      if (it.item) walk(it.item);
+    }
+  }
+  walk(items);
+  return result;
+}
+
 // ─── Local editable state for a request ─────────────────────────────────────
 
 function extractPathParamNames(url: string): string[] {
@@ -163,10 +175,11 @@ interface ScriptTabProps {
   placeholder: string;
   target: 'prerequest' | 'test';
   requestNames?: string[];
+  requestItems?: Array<{ id: string; name: string }>;
   onSyntaxCheck?: (hasError: boolean) => void;
 }
 
-function ScriptTab({ label, value, onChange, placeholder, target, requestNames, onSyntaxCheck }: ScriptTabProps) {
+function ScriptTab({ label, value, onChange, placeholder, target, requestNames, requestItems, onSyntaxCheck }: ScriptTabProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const handleInsert = useCallback((code: string) => {
@@ -204,6 +217,7 @@ function ScriptTab({ label, value, onChange, placeholder, target, requestNames, 
         rows={14}
         placeholder={placeholder}
         requestNames={requestNames}
+        requestItems={requestItems}
       />
     </div>
   );
@@ -1794,6 +1808,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
             placeholder={`// Pre-request script\napx.environment.set('timestamp', Date.now().toString());`}
             target="prerequest"
             requestNames={flattenRequestNames(col?.item ?? [])}
+            requestItems={flattenRequestItems(col?.item ?? [])}
           />
         )}
 
@@ -1806,6 +1821,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
             placeholder={`apx.test("Status is 200", () => {\n  apx.response.to.have.status(200);\n});\n\napx.test("Response has id", () => {\n  const json = apx.response.json();\n  apx.expect(json.id).to.exist;\n});`}
             target="test"
             requestNames={flattenRequestNames(col?.item ?? [])}
+            requestItems={flattenRequestItems(col?.item ?? [])}
           />
         )}
 

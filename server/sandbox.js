@@ -331,17 +331,11 @@ function createExpect(value, negated, onFail) {
 // ─── apx object factory ─────────────────────────────────────────────────────
 // apx is the primary API; pm is an alias for Postman compatibility
 
-function createApx(response, variables, updatedVariables, updatedGlobalMutations, tests, pendingRequests, deps, childRequests, executionSignals) {
+function createApx(response, variables, updatedVariables, updatedGlobalMutations, updatedEnvMutations, updatedCollVarMutations, tests, pendingRequests, deps, childRequests, executionSignals) {
   // deps = { collectionItems, executeRequestFn, context }
   const collectionItems = (deps && deps.collectionItems) || [];
   const executeRequestFn = (deps && deps.executeRequestFn) || null;
   const execContext = (deps && deps.context) || {};
-
-  // Per-namespace write buckets — track which scope each mutation targets so
-  // apx.executeRequest() can forward mutations to the correct child scope instead
-  // of collapsing everything into the child's environment.
-  const updatedEnvMutations = {};
-  const updatedCollVarMutations = {};
 
   const makeVarStore = (namespaceBucket, namespaceSrc) => {
     const isNamespaced = namespaceSrc !== undefined;
@@ -477,6 +471,10 @@ function createApx(response, variables, updatedVariables, updatedGlobalMutations
       },
       setNextRequest(name) {
         if (executionSignals) executionSignals.nextRequest = name === null ? null : String(name);
+      },
+      setNextRequestById(id) {
+        if (!executionSignals || id === undefined) return;
+        executionSignals.nextRequestById = id === null ? null : String(id);
       },
     },
 
@@ -686,12 +684,14 @@ async function runScript(code, response, variables, deps) {
   const tests = [];
   const updatedVariables = {};
   const updatedGlobalMutations = {};
+  const updatedEnvMutations = {};
+  const updatedCollVarMutations = {};
   const consoleLogs = [];
   const pendingRequests = [];
   const childRequests = [];
-  const executionSignals = { skipRequest: false, nextRequest: undefined };
+  const executionSignals = { skipRequest: false, nextRequest: undefined, nextRequestById: undefined };
 
-  const apx = createApx(response, variables || {}, updatedVariables, updatedGlobalMutations, tests, pendingRequests, deps, childRequests, executionSignals);
+  const apx = createApx(response, variables || {}, updatedVariables, updatedGlobalMutations, updatedEnvMutations, updatedCollVarMutations, tests, pendingRequests, deps, childRequests, executionSignals);
   // pm is a full alias to apx for Postman script compatibility
   const pm = apx;
 
@@ -775,7 +775,7 @@ async function runScript(code, response, variables, deps) {
     tests.push({ name: '__ScriptError__', passed: false, error: err.message });
   }
 
-  return { tests, updatedVariables, updatedGlobalMutations, consoleLogs, childRequests, skipRequest: executionSignals.skipRequest, nextRequest: executionSignals.nextRequest };
+  return { tests, updatedVariables, updatedEnvMutations, updatedCollVarMutations, updatedGlobalMutations, consoleLogs, childRequests, skipRequest: executionSignals.skipRequest, nextRequest: executionSignals.nextRequest, nextRequestById: executionSignals.nextRequestById };
 }
 
 module.exports = { runScript };

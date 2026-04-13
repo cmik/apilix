@@ -285,6 +285,9 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
 
     const delayMs = Math.min(parseInt(delay, 10) || 0, 5000);
 
+    // Precompute id -> index map once (requests is constant for the run)
+    const requestIdToIndex = new Map(requests.map((r, i) => [r.id, i]));
+
     let stopped = false;
     outer: for (let i = 0; i < dataRows.length; i++) {
       const dataRow = dataRows[i];
@@ -304,7 +307,7 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
         perRequestCount[reqIdx]++;
         if (perRequestCount[reqIdx] > maxPerRequest) {
           const loopName = requests[reqIdx].name;
-          sendEvent('error', { error: `Iteration ${i + 1} aborted: "${loopName}" was reached ${perRequestCount[reqIdx]} times — circular setNextRequest() detected.` });
+          sendEvent('error', { error: `Iteration ${i + 1} aborted: "${loopName}" was reached ${perRequestCount[reqIdx]} times — circular conditional execution detected (setNextRequest() or setNextRequestById()).` });
           break;
         }
         const item = requests[reqIdx];
@@ -355,9 +358,29 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
 
         sendEvent('result', resultData);
 
-        // When conditional execution is enabled, setNextRequest() takes priority
-        // over sequential order — it drives which request runs next.
-        if (conditionalExecution !== false && result.nextRequest !== undefined) {
+        // When conditional execution is enabled, explicit next-request signals
+        // override sequential order.
+        // ID-based routing (setNextRequestById) takes precedence over name-based routing.
+        if (conditionalExecution !== false && result.nextRequestById !== undefined) {
+          if (result.nextRequestById !== null) {
+            const targetIdx = requestIdToIndex.has(result.nextRequestById) ? requestIdToIndex.get(result.nextRequestById) : -1;
+            if (targetIdx >= 0) {
+              const targetName = requests[targetIdx].name;
+              sendEvent('next-request', { from: item.name, to: targetName, via: 'id', targetId: result.nextRequestById });
+              if (delayMs > 0) {
+                if ((await awaitDelay(runId, delayMs)) === 'stopped') { stopped = true; break outer; }
+              }
+              reqIdx = targetIdx;
+              continue;
+            } else {
+              // Unknown request id — stop iteration (same behaviour as unknown name)
+              break;
+            }
+          } else {
+            // setNextRequestById(null) stops iteration immediately
+            break;
+          }
+        } else if (conditionalExecution !== false && result.nextRequest !== undefined) {
           if (result.nextRequest !== null) {
             // Prefer a forward match to stay within the current chain segment.
             // Fall back to the first occurrence only if nothing is found ahead.
@@ -366,7 +389,7 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
               ? forwardIdx
               : requests.findIndex(r => r.name === result.nextRequest);
             if (targetIdx >= 0) {
-              sendEvent('next-request', { from: item.name, to: result.nextRequest });
+              sendEvent('next-request', { from: item.name, to: result.nextRequest, via: 'name' });
               if (delayMs > 0) {
                 if ((await awaitDelay(runId, delayMs)) === 'stopped') { stopped = true; break outer; }
               }
