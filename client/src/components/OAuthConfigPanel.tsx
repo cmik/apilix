@@ -287,11 +287,12 @@ export default function OAuthConfigPanel({
 
           {/* SSL Verification */}
           <div className="flex items-center justify-between gap-4">
-            <span className="text-sm text-slate-300">SSL certificate verification</span>
+            <span id="ssl-verification-label" className="text-sm text-slate-300">SSL certificate verification</span>
             <button
               type="button"
               role="switch"
               aria-checked={config.sslVerification !== false}
+              aria-labelledby="ssl-verification-label"
               onClick={() => onChange({ ...config, sslVerification: !(config.sslVerification !== false) })}
               className={`relative inline-flex w-9 h-5 items-center rounded-full transition-colors ${
                 config.sslVerification !== false ? 'bg-orange-500' : 'bg-slate-700'
