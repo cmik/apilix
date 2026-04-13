@@ -62,8 +62,9 @@ const REQUEST: Completion[] = [
 ];
 
 const EXECUTION: Completion[] = [
-  { label: 'skipRequest()',          insert: 'skipRequest()',   detail: 'void' },
-  { label: 'setNextRequest(name)',   insert: "setNextRequest('", detail: 'void' },
+  { label: 'skipRequest()',           insert: 'skipRequest()',    detail: 'void' },
+  { label: 'setNextRequest(name)',    insert: "setNextRequest('",  detail: 'void' },
+  { label: 'setNextRequestById(id)',  insert: "setNextRequestById('", detail: 'void' },
 ];
 
 const ITERATION_DATA: Completion[] = [
@@ -325,7 +326,7 @@ const ROOT: Completion[] = [
 
 // ─── Context detection ────────────────────────────────────────────────────────
 
-function getContext(textBefore: string, requestNames: string[]): { completions: Completion[]; prefix: string } | null {
+function getContext(textBefore: string, requestNames: string[], requestItems?: Array<{ id: string; name: string }>): { completions: Completion[]; prefix: string } | null {
   let m: RegExpMatchArray | null;
 
   // Most specific patterns first
@@ -388,7 +389,16 @@ function getContext(textBefore: string, requestNames: string[]): { completions: 
       .map(n => ({ label: n, insert: n, detail: 'request' }));
     if (completions.length > 0) return { completions, prefix };
   }
-
+  // Request ID autocomplete inside pm.execution.setNextRequestById('...
+  m = textBefore.match(/(?:apx|pm)\.execution\.setNextRequestById\(['"]([^'"]*)$/);
+  if (m) {
+    const prefix = m[1];
+    const items = requestItems ?? [];
+    const completions = items
+      .filter(it => it.id.startsWith(prefix) || it.name.toLowerCase().startsWith(prefix.toLowerCase()))
+      .map(it => ({ label: `${it.id} (${it.name})`, insert: it.id, detail: 'id' }));
+    if (completions.length > 0) return { completions, prefix };
+  }
   // Root: trigger on "apx." or "pm." (empty prefix, or partial word prefix)
   m = textBefore.match(/(?:apx|pm)\.(\w*)$/);
   if (m) return { completions: ROOT, prefix: m[1] };
@@ -453,6 +463,8 @@ export interface ScriptEditorProps {
   className?: string;
   /** Request names from the current collection, for apx.executeRequest() autocomplete */
   requestNames?: string[];
+  /** Request id+name pairs for setNextRequestById() autocomplete */
+  requestItems?: Array<{ id: string; name: string }>;
   /** 'mock' uses the req/respond context; default uses the apx/pm context */
   variant?: 'default' | 'mock';
 }
@@ -477,6 +489,7 @@ export default function ScriptEditor({
   textareaRef,
   className,
   requestNames,
+  requestItems,
   variant = 'default',
 }: ScriptEditorProps) {
   const internalRef = useRef<HTMLTextAreaElement>(null);
@@ -503,7 +516,7 @@ export default function ScriptEditor({
     const textBefore = el.value.substring(0, pos);
     const ctx = variant === 'mock'
       ? getMockContext(textBefore)
-      : getContext(textBefore, requestNames ?? []);
+      : getContext(textBefore, requestNames ?? [], requestItems);
     if (!ctx) { setAc(null); return; }
 
     const filtered = ctx.completions
@@ -532,7 +545,7 @@ export default function ScriptEditor({
       top: rawTop,
       left: Math.min(rawLeft, window.innerWidth - 310),
     });
-  }, [requestNames]);
+  }, [requestNames, requestItems]);
 
   function accept(comp: Completion) {
     const el = ref.current;
