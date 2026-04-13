@@ -172,7 +172,7 @@ function SelectionNode({ item, depth, selectedIds, onToggleRequest, onToggleFold
   const usesSetNextRequest = (item.event ?? []).some(ev => {
     const exec = ev.script?.exec;
     const code = Array.isArray(exec) ? exec.join('\n') : (exec ?? '');
-    return code.includes('setNextRequest(');
+    return code.includes('setNextRequest(') || code.includes('setNextRequestById(');
   });
   return (
     <div
@@ -194,7 +194,7 @@ function SelectionNode({ item, depth, selectedIds, onToggleRequest, onToggleFold
           <span title="This request executes child requests via apx.executeRequest()" className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-violet-800/60 text-violet-300 border border-violet-600/50">child</span>
         )}
         {usesSetNextRequest && (
-          <span title="This request controls flow via setNextRequest()" className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-800/60 text-amber-300 border border-amber-600/50">next</span>
+          <span title="This request controls flow via setNextRequest() or setNextRequestById()" className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-800/60 text-amber-300 border border-amber-600/50">next</span>
         )}
       </span>
     </div>
@@ -406,9 +406,12 @@ function IterationBlock({ iter }: { iter: RunnerIteration }) {
                 {jump && (
                   <div className="flex items-center gap-2 px-4 py-1 bg-violet-900/20 border-y border-violet-700/30 text-xs text-violet-400 select-none">
                     <span>↪</span>
-                    <span className="font-mono">setNextRequest</span>
+                    <span className="font-mono">{jump.via === 'id' ? 'setNextRequestById' : 'setNextRequest'}</span>
                     <span className="text-violet-600">→</span>
                     <span className="font-medium text-violet-300">{jump.to}</span>
+                    {jump.via === 'id' && jump.targetId && (
+                      <span className="text-[10px] text-violet-300/70 font-mono">{jump.targetId}</span>
+                    )}
                   </div>
                 )}
               </div>
@@ -931,7 +934,7 @@ export default function RunnerPanel() {
               if (lastResult) {
                 currentIteration.jumps = [
                   ...(currentIteration.jumps ?? []),
-                  { afterName: data.from, to: data.to },
+                  { afterName: data.from, to: data.to, via: data.via, targetId: data.targetId },
                 ];
                 setResults([...streamingResults]);
               }
@@ -1225,16 +1228,16 @@ export default function RunnerPanel() {
               className="accent-orange-500 cursor-pointer"
             />
             <label htmlFor="conditionalExecution" className="text-xs text-slate-400 cursor-pointer select-none">
-              Conditional execution (<code className="text-orange-400">pm.execution.skipRequest()</code> / <code className="text-orange-400">setNextRequest()</code>)
+              Conditional execution (<code className="text-orange-400">pm.execution.skipRequest()</code> / <code className="text-orange-400">setNextRequest()</code> / <code className="text-orange-400">setNextRequestById()</code>)
             </label>
           </div>
 
-          {/* Resolved chains — primary (user order) × secondary (setNextRequest) */}
+          {/* Resolved chains — primary (user order) × secondary (setNextRequest / setNextRequestById) */}
           {conditionalChains && (
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2">
                 <label className="text-xs text-amber-400 font-medium">Resolved execution chains</label>
-                <span className="text-xs text-slate-500">auto-detected from <code className="text-orange-400">setNextRequest()</code></span>
+                <span className="text-xs text-slate-500">auto-detected from <code className="text-orange-400">setNextRequest()</code> and <code className="text-orange-400">setNextRequestById()</code></span>
               </div>
               {conditionalChains.map((chain, chainIdx) => (
                 <div key={chainIdx} className="flex flex-col gap-0.5">
@@ -1253,7 +1256,7 @@ export default function RunnerPanel() {
                           <span className={`text-xs font-bold w-14 shrink-0 ${methodColor}`}>{method}</span>
                           <span className={`text-sm truncate ${autoAdded ? 'text-amber-300' : 'text-slate-300'}`}>{item.name}</span>
                           {autoAdded && (
-                            <span title="Auto-added via setNextRequest()" className="ml-auto shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-800/60 text-amber-300 border border-amber-600/50">auto</span>
+                            <span title="Auto-added via setNextRequest() or setNextRequestById()" className="ml-auto shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-800/60 text-amber-300 border border-amber-600/50">auto</span>
                           )}
                         </div>
                       );

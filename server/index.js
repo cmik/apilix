@@ -358,15 +358,15 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
 
         sendEvent('result', resultData);
 
-        // When conditional execution is enabled, setNextRequest() takes priority
-        // over sequential order — it drives which request runs next.
+        // When conditional execution is enabled, explicit next-request signals
+        // override sequential order.
         // ID-based routing (setNextRequestById) takes precedence over name-based routing.
         if (conditionalExecution !== false && result.nextRequestById !== undefined) {
           if (result.nextRequestById !== null) {
             const targetIdx = requestIdToIndex.has(result.nextRequestById) ? requestIdToIndex.get(result.nextRequestById) : -1;
             if (targetIdx >= 0) {
               const targetName = requests[targetIdx].name;
-              sendEvent('next-request', { from: item.name, to: targetName });
+              sendEvent('next-request', { from: item.name, to: targetName, via: 'id', targetId: result.nextRequestById });
               if (delayMs > 0) {
                 if ((await awaitDelay(runId, delayMs)) === 'stopped') { stopped = true; break outer; }
               }
@@ -389,7 +389,7 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
               ? forwardIdx
               : requests.findIndex(r => r.name === result.nextRequest);
             if (targetIdx >= 0) {
-              sendEvent('next-request', { from: item.name, to: result.nextRequest });
+              sendEvent('next-request', { from: item.name, to: result.nextRequest, via: 'name' });
               if (delayMs > 0) {
                 if ((await awaitDelay(runId, delayMs)) === 'stopped') { stopped = true; break outer; }
               }

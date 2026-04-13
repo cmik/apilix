@@ -86,7 +86,7 @@ export interface RunStreamCallbacks {
   onIterationStart?: (data: { iteration: number; dataRow: Record<string, string> }) => void;
   onResult?: (data: RunnerIterationResult & { iteration: number }) => void;
   onIterationEnd?: (data: { iteration: number }) => void;
-  onNextRequest?: (data: { from: string; to: string }) => void;
+  onNextRequest?: (data: { from: string; to: string; via: 'name' | 'id'; targetId?: string }) => void;
   onError?: (error: string) => void;
   onStopped?: () => void;
   onDone?: () => void;
