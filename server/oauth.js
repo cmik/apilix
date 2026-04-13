@@ -3,12 +3,15 @@
 const axios = require('axios');
 const crypto = require('crypto');
 const https = require('https');
+const { makeHttpsAgent } = require('./tlsUtils');
 
 const allowInsecureTls = process.env.OAUTH_ALLOW_INSECURE_TLS === 'true';
 
 // Pre-created agents for both SSL modes — reused across requests to preserve connection pooling.
-const agentVerify = new https.Agent({ rejectUnauthorized: true });
-const agentInsecure = new https.Agent({ rejectUnauthorized: false });
+// agentVerify includes the system CA store (Windows cert store + Mozilla bundle) so that
+// enterprise / corporate CAs trusted by the OS are also honoured.
+const agentVerify   = makeHttpsAgent(true);
+const agentInsecure = makeHttpsAgent(false);
 
 const httpClient = axios.create({
   httpsAgent: allowInsecureTls ? agentInsecure : agentVerify,
