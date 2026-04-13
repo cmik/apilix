@@ -2,6 +2,8 @@
 
 A lightweight, open-source alternative API testing tool — available as a **desktop app** (macOS, Windows, Linux) or as a local web app.
 
+<img width="1383" height="891" alt="image" src="https://github.com/user-attachments/assets/bb617b66-106f-42fb-bed4-2cb1c60e0d3c" />
+
 ## Features
 
 - **Import** Postman collections (v2.1) and environments
