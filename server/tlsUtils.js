@@ -54,7 +54,7 @@ function getSystemCAs() {
  * @param {object}  [extraOptions]  Any additional https.Agent options.
  */
 function makeHttpsAgent(rejectUnauthorized, extraOptions = {}) {
-  const opts = { rejectUnauthorized, ...extraOptions };
+  const opts = { ...extraOptions, rejectUnauthorized };
   if (rejectUnauthorized) {
     opts.ca = getSystemCAs();
   }
