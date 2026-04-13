@@ -535,8 +535,10 @@ async function executeRequest(item, context) {
 
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
       const _isHopHttps = curUrl.toLowerCase().startsWith('https://');
-      // Per-hop HTTPS agent — honours SSL verification setting + system CA store
-      const hopHttpsAgent = makeHttpsAgent(rejectUnauthorized);
+      // Per-hop HTTPS agent — only build when used (non-initial HTTPS hops).
+      const hopHttpsAgent = (hop > 0 && _isHopHttps)
+        ? makeHttpsAgent(rejectUnauthorized)
+        : undefined;
       // Only instrument the timing agent on the first hop (timing agent reuses same TLS setting)
       const agentOpts = hop === 0
         ? (_isHopHttps ? { httpsAgent: _tc.httpsTimingAgent } : { httpAgent: _tc.httpTimingAgent })
