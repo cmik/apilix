@@ -56,7 +56,12 @@ function getSystemCAs() {
 function makeHttpsAgent(rejectUnauthorized, extraOptions = {}) {
   const opts = { ...extraOptions, rejectUnauthorized };
   if (rejectUnauthorized) {
-    opts.ca = getSystemCAs();
+    const extraCAs = opts.ca;
+    opts.ca = Array.isArray(extraCAs)
+      ? [...getSystemCAs(), ...extraCAs]
+      : extraCAs
+        ? [...getSystemCAs(), extraCAs]
+        : getSystemCAs();
   }
   return new https.Agent(opts);
 }
