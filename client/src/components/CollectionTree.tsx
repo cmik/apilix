@@ -6,6 +6,7 @@ import { buildVarMap, resolveVariables } from '../utils/variableResolver';
 import {
   renameItemById, updateItemById, removeItemById, addItemToFolder, duplicateItem,
   moveItemInTree, extractItemById, insertItemInTree, isDescendantOf, getAllRequestIds,
+  flattenRequestNames, flattenRequestItems,
 } from '../utils/treeHelpers';
 import { generateHurlFromItems } from '../utils/hurlUtils';
 
@@ -564,6 +565,8 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
               auth={item.auth}
               event={item.event}
               description={item.description}
+              requestNames={flattenRequestNames(collection.item)}
+              requestItems={flattenRequestItems(collection.item)}
               onSave={(auth, events, description) => {
                 if (!item.id) return;
                 const updated: CollectionItem = { ...item, auth, event: events.length ? events : undefined, description: description || undefined };
@@ -849,6 +852,8 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
             event={collection.event}
             description={collection.info.description}
             variables={collection.variable ?? []}
+            requestNames={flattenRequestNames(collection.item)}
+            requestItems={flattenRequestItems(collection.item)}
             onSave={(auth, events, description, variables) => {
               dispatch({
                 type: 'UPDATE_COLLECTION',

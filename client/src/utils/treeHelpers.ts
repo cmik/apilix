@@ -1,4 +1,4 @@
-import type { CollectionItem, CollectionAuth } from '../types';
+import type { CollectionItem, CollectionAuth, CollectionEvent } from '../types';
 
 export function findItemInTree(items: CollectionItem[], id: string): CollectionItem | null {
   for (const item of items) {
@@ -175,6 +175,50 @@ export function isDescendantOf(
   return findAncestor(items);
 }
 
+export interface AuthSourceInfo {
+  kind: 'folder' | 'collection';
+  /** The folder's item id, or undefined when the source is the collection root. */
+  id: string | undefined;
+  name: string;
+}
+
+/**
+ * Like resolveInheritedAuth but also returns which folder/collection provides the auth.
+ */
+export function resolveInheritedAuthWithSource(
+  items: CollectionItem[],
+  targetId: string,
+  collectionAuth: CollectionAuth | undefined,
+  collectionName: string,
+): { auth: CollectionAuth | undefined; source: AuthSourceInfo } {
+  const collectionSource: AuthSourceInfo = { kind: 'collection', id: undefined, name: collectionName };
+
+  function walk(
+    nodes: CollectionItem[],
+    inherited: CollectionAuth | undefined,
+    source: AuthSourceInfo,
+  ): { found: true; auth: CollectionAuth | undefined; source: AuthSourceInfo } | { found: false } {
+    for (const node of nodes) {
+      if (node.id === targetId) return { found: true, auth: inherited, source };
+      if (node.item) {
+        let nextInherited = inherited;
+        let nextSource = source;
+        if (node.auth && node.auth.type !== 'inherit') {
+          nextInherited = node.auth;
+          nextSource = { kind: 'folder', id: node.id, name: node.name };
+        }
+        const result = walk(node.item, nextInherited, nextSource);
+        if (result.found) return result;
+      }
+    }
+    return { found: false };
+  }
+
+  const result = walk(items, collectionAuth, collectionSource);
+  if (result.found) return { auth: result.auth, source: result.source };
+  return { auth: collectionAuth, source: collectionSource };
+}
+
 // Walk the collection tree and return the effective (parent) auth for a given request ID.
 // This is the auth the request would inherit if its own auth is set to 'inherit'.
 export function resolveInheritedAuth(
@@ -200,6 +244,63 @@ export function resolveInheritedAuth(
   return result.found ? result.auth : collectionAuth;
 }
 
+/** Extract the trimmed script code for a given listen type from an event array, or null if absent/empty. */
+function extractEventCode(events: CollectionEvent[] | undefined, listen: 'prerequest' | 'test'): string | null {
+  const ev = (events ?? []).find(e => e.listen === listen);
+  if (!ev) return null;
+  const code = Array.isArray(ev.script.exec) ? ev.script.exec.join('\n') : (ev.script.exec ?? '');
+  return code.trim() || null;
+}
+
+export interface AncestorScripts {
+  /** Pre-request code blocks from outermost ancestor to innermost folder (not including the request itself). */
+  prereqs: string[];
+  /** Test code blocks from outermost ancestor to innermost folder (not including the request itself). */
+  tests: string[];
+}
+
+/**
+ * Walk the collection tree and return the accumulated pre-request and test script
+ * code blocks contributed by the collection root and all ancestor folders of targetId.
+ * The request's own scripts are NOT included — call site is responsible for appending them.
+ * Order is outermost-first (collection → folder… → innermost folder).
+ */
+export function collectAncestorScripts(
+  items: CollectionItem[],
+  targetId: string,
+  collectionEvents?: CollectionEvent[],
+): AncestorScripts {
+  const collPrereq = extractEventCode(collectionEvents, 'prerequest');
+  const collTest = extractEventCode(collectionEvents, 'test');
+  const initial: AncestorScripts = {
+    prereqs: collPrereq ? [collPrereq] : [],
+    tests: collTest ? [collTest] : [],
+  };
+
+  function walk(
+    nodes: CollectionItem[],
+    acc: AncestorScripts,
+  ): { found: true; scripts: AncestorScripts } | { found: false } {
+    for (const node of nodes) {
+      if (node.id === targetId) return { found: true, scripts: acc };
+      if (node.item) {
+        const folderPrereq = extractEventCode(node.event, 'prerequest');
+        const folderTest = extractEventCode(node.event, 'test');
+        const next: AncestorScripts = {
+          prereqs: folderPrereq ? [...acc.prereqs, folderPrereq] : acc.prereqs,
+          tests: folderTest ? [...acc.tests, folderTest] : acc.tests,
+        };
+        const result = walk(node.item, next);
+        if (result.found) return result;
+      }
+    }
+    return { found: false };
+  }
+
+  const result = walk(items, initial);
+  return result.found ? result.scripts : initial;
+}
+
 /** Collect all request (leaf) IDs from a subtree. */
 export function getAllRequestIds(items: CollectionItem[]): string[] {
   function walk(nodes: CollectionItem[], acc: string[]): void {
@@ -215,4 +316,30 @@ export function getAllRequestIds(items: CollectionItem[]): string[] {
   const requestIds: string[] = [];
   walk(items, requestIds);
   return requestIds;
+}
+
+/** Collect all request names from a collection subtree (for autocomplete). */
+export function flattenRequestNames(items: CollectionItem[]): string[] {
+  const names: string[] = [];
+  function walk(arr: CollectionItem[]) {
+    for (const it of arr) {
+      if (it.request && it.name) names.push(it.name);
+      if (it.item) walk(it.item);
+    }
+  }
+  walk(items);
+  return names;
+}
+
+/** Collect all request id+name pairs from a collection subtree (for autocomplete). */
+export function flattenRequestItems(items: CollectionItem[]): Array<{ id: string; name: string }> {
+  const result: Array<{ id: string; name: string }> = [];
+  function walk(arr: CollectionItem[]) {
+    for (const it of arr) {
+      if (it.request && it.id && it.name) result.push({ id: it.id, name: it.name });
+      if (it.item) walk(it.item);
+    }
+  }
+  walk(items);
+  return result;
 }

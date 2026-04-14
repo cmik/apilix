@@ -752,4 +752,67 @@ function flattenItems(items) {
   return result;
 }
 
-module.exports = { executeRequest, flattenItems, setExecutorConfig };
+/**
+ * Extract the trimmed script code for a given listen type from an event array.
+ * Returns null when absent or empty.
+ */
+function extractEventScript(events, listen) {
+  const ev = (events || []).find(e => e.listen === listen);
+  if (!ev) return null;
+  const code = Array.isArray(ev.script.exec) ? ev.script.exec.join('\n') : (ev.script.exec || '');
+  return code.trim() || null;
+}
+
+/**
+ * Merge accumulated ancestor scripts into a leaf request item's events.
+ * Ancestor scripts run in outermost-first order (collection → folders → request).
+ */
+function mergeAncestorScripts(item, accPrereqs, accTests) {
+  if (accPrereqs.length === 0 && accTests.length === 0) return item;
+
+  const ownPrereq = extractEventScript(item.event, 'prerequest');
+  const ownTest = extractEventScript(item.event, 'test');
+  const prereqParts = ownPrereq ? [...accPrereqs, ownPrereq] : accPrereqs;
+  const testParts = ownTest ? [...accTests, ownTest] : accTests;
+
+  // Keep any other event types untouched; replace prerequest/test with merged versions
+  const otherEvents = (item.event || []).filter(e => e.listen !== 'prerequest' && e.listen !== 'test');
+  const newEvents = [...otherEvents];
+  if (prereqParts.length > 0) {
+    newEvents.push({ listen: 'prerequest', script: { type: 'text/javascript', exec: prereqParts.join('\n\n').split('\n') } });
+  }
+  if (testParts.length > 0) {
+    newEvents.push({ listen: 'test', script: { type: 'text/javascript', exec: testParts.join('\n\n').split('\n') } });
+  }
+  return { ...item, event: newEvents };
+}
+
+/**
+ * Like flattenItems but bakes collection-level and folder-level pre-request/test
+ * scripts into each leaf item so the executor runs them in order:
+ *   collection → folders (outer→inner) → request
+ */
+function flattenItemsWithScripts(items, collectionEvents) {
+  const colPrereq = extractEventScript(collectionEvents, 'prerequest');
+  const colTest = extractEventScript(collectionEvents, 'test');
+
+  function walk(nodes, accPrereqs, accTests) {
+    const result = [];
+    for (const item of (nodes || [])) {
+      if (item.item) {
+        const folderPrereq = extractEventScript(item.event, 'prerequest');
+        const folderTest = extractEventScript(item.event, 'test');
+        const nextPrereqs = folderPrereq ? [...accPrereqs, folderPrereq] : accPrereqs;
+        const nextTests = folderTest ? [...accTests, folderTest] : accTests;
+        result.push(...walk(item.item, nextPrereqs, nextTests));
+      } else if (item.request) {
+        result.push(mergeAncestorScripts(item, accPrereqs, accTests));
+      }
+    }
+    return result;
+  }
+
+  return walk(items, colPrereq ? [colPrereq] : [], colTest ? [colTest] : []);
+}
+
+module.exports = { executeRequest, flattenItems, flattenItemsWithScripts, setExecutorConfig };

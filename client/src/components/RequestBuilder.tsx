@@ -4,7 +4,7 @@ import type { CollectionItem, CollectionRequest, CollectionHeader, CollectionQue
 import { useApp } from '../store';
 import { executeRequest, API_BASE } from '../api';
 import { getUrlDisplay, buildVarMap, resolveVariables } from '../utils/variableResolver';
-import { updateItemById, renameItemById, resolveInheritedAuth, findItemInTree } from '../utils/treeHelpers';
+import { updateItemById, renameItemById, resolveInheritedAuth, resolveInheritedAuthWithSource, findItemInTree, flattenRequestNames, flattenRequestItems, collectAncestorScripts } from '../utils/treeHelpers';
 import { parseCurlCommand } from '../utils/curlUtils';
 import { parseHurlFile } from '../utils/hurlUtils';
 import { openAuthorizationWindow } from '../utils/oauth';
@@ -15,6 +15,7 @@ import OAuthConfigPanel from './OAuthConfigPanel';
 import type { SaveExistingRequestTabsResult, UnsavedRequestTabSummary } from '../utils/requestTabSyncGuard';
 
 const CodeGenModal = lazy(() => import('./CodeGenModal'));
+const ItemSettingsModal = lazy(() => import('./ItemSettingsModal'));
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'WS'];
 
@@ -31,30 +32,6 @@ const METHOD_COLORS: Record<string, string> = {
 
 const TABS = ['Params', 'Auth', 'Headers', 'Body', 'Pre-request', 'Tests', 'Docs'] as const;
 type Tab = typeof TABS[number];
-
-function flattenRequestNames(items: CollectionItem[]): string[] {
-  const names: string[] = [];
-  function walk(arr: CollectionItem[]) {
-    for (const it of arr) {
-      if (it.request && it.name) names.push(it.name);
-      if (it.item) walk(it.item);
-    }
-  }
-  walk(items);
-  return names;
-}
-
-function flattenRequestItems(items: CollectionItem[]): Array<{ id: string; name: string }> {
-  const result: Array<{ id: string; name: string }> = [];
-  function walk(arr: CollectionItem[]) {
-    for (const it of arr) {
-      if (it.request && it.id && it.name) result.push({ id: it.id, name: it.name });
-      if (it.item) walk(it.item);
-    }
-  }
-  walk(items);
-  return result;
-}
 
 // ─── Local editable state for a request ─────────────────────────────────────
 
@@ -663,6 +640,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
   const [testHasError, setTestHasError] = useState(false);
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [showCodeGen, setShowCodeGen] = useState(false);
+  const [showParentSettings, setShowParentSettings] = useState(false);
   const [showSaveToCollection, setShowSaveToCollection] = useState(false);
   const [saveTargetCollectionId, setSaveTargetCollectionId] = useState<string>('');
   const [importText, setImportText] = useState('');
@@ -975,6 +953,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
 
     // Build the item from current edit state
     const resolvedUrl = applyPathParams(edit.url, edit.pathParams);
+    const ancestorScripts = collectAncestorScripts(col?.item ?? [], activeReq.item.id ?? '', col?.event);
     const item: CollectionItem = {
       ...activeReq.item,
       request: {
@@ -991,7 +970,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
         } : undefined,
         auth: resolvedAuth,
       },
-      event: buildEvents(edit),
+      event: buildMergedEvents(edit, ancestorScripts),
     };
 
     try {
@@ -1164,7 +1143,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
         } : undefined,
         auth: resolvedAuth,
       },
-      event: buildEvents(edit),
+      event: buildMergedEvents(edit, collectAncestorScripts(col?.item ?? [], activeReq.item.id ?? '', col?.event)),
     };
 
     try {
@@ -1750,22 +1729,42 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
               <option value="oauth2">OAuth 2.0</option>
             </select>
 
-            {edit.authType === 'inherit' && (
-              <div className="flex gap-2.5 bg-slate-700/40 border border-slate-600 rounded px-3 py-2.5">
-                <svg className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <div>
-                  <p className="text-xs text-slate-300">This request inherits authorization from its parent folder or collection.</p>
-                  <p className="text-xs mt-1">
-                    <span className="text-slate-400">Effective: </span>
-                    <span className={inheritedAuth && inheritedAuth.type !== 'noauth' ? 'text-orange-400 font-medium' : 'text-slate-500 italic'}>
-                      {inheritedLabel}
-                    </span>
-                  </p>
+            {edit.authType === 'inherit' && (() => {
+              const authColForSource = state.collections.find(c => c._id === activeReq!.collectionId);
+              const { source } = resolveInheritedAuthWithSource(
+                authColForSource?.item ?? [],
+                activeReq!.item.id ?? '',
+                authColForSource?.auth,
+                authColForSource?.info.name ?? 'Collection',
+              );
+              return (
+                <div className="flex gap-2.5 bg-slate-700/40 border border-slate-600 rounded px-3 py-2.5">
+                  <svg className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-slate-300">This request inherits authorization from its parent folder or collection.</p>
+                    <p className="text-xs mt-1">
+                      <span className="text-slate-400">Effective: </span>
+                      <span className={inheritedAuth && inheritedAuth.type !== 'noauth' ? 'text-orange-400 font-medium' : 'text-slate-500 italic'}>
+                        {inheritedLabel}
+                      </span>
+                    </p>
+                    <p className="text-xs mt-1">
+                      <span className="text-slate-400">Defined in: </span>
+                      <span className="text-slate-200 font-medium">{source.name}</span>
+                      <span className="text-slate-500 ml-1">({source.kind})</span>
+                    </p>
+                    <button
+                      onClick={() => setShowParentSettings(true)}
+                      className="mt-2 text-xs text-orange-400 hover:text-orange-300 underline underline-offset-2 transition-colors"
+                    >
+                      Edit {source.kind} auth settings ↗
+                    </button>
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {edit.authType === 'bearer' && (
               <div className="flex flex-col gap-1.5">
@@ -2027,6 +2026,53 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
       )}
 
       {/* Code generation modal */}
+      {showParentSettings && edit && activeReq && (() => {
+        const authColP = state.collections.find(c => c._id === activeReq.collectionId);
+        if (!authColP) return null;
+        const { source } = resolveInheritedAuthWithSource(
+          authColP.item ?? [],
+          activeReq.item.id ?? '',
+          authColP.auth,
+          authColP.info.name,
+        );
+        const parentFolderItem = source.kind === 'folder' && source.id
+          ? findItemInTree(authColP.item, source.id)
+          : null;
+        return (
+          <Suspense fallback={null}>
+            <ItemSettingsModal
+              kind={source.kind}
+              name={source.name}
+              auth={source.kind === 'folder' ? parentFolderItem?.auth : authColP.auth}
+              event={source.kind === 'folder' ? parentFolderItem?.event : authColP.event}
+              description={source.kind === 'folder' ? parentFolderItem?.description : authColP.info.description}
+              variables={source.kind === 'collection' ? (authColP.variable ?? []) : undefined}
+              requestNames={flattenRequestNames(authColP.item)}
+              requestItems={flattenRequestItems(authColP.item)}
+              onSave={(auth, events, description, variables) => {
+                if (source.kind === 'folder' && parentFolderItem && parentFolderItem.id) {
+                  const updated = { ...parentFolderItem, auth, event: events.length ? events : undefined, description: description || undefined };
+                  dispatch({ type: 'UPDATE_COLLECTION', payload: { ...authColP, item: updateItemById(authColP.item, parentFolderItem.id, updated) } });
+                } else {
+                  dispatch({
+                    type: 'UPDATE_COLLECTION',
+                    payload: {
+                      ...authColP,
+                      auth,
+                      event: events.length ? events : undefined,
+                      variable: variables?.length ? variables : undefined,
+                      info: { ...authColP.info, description: description || undefined },
+                    },
+                  });
+                }
+                setShowParentSettings(false);
+              }}
+              onClose={() => setShowParentSettings(false)}
+            />
+          </Suspense>
+        );
+      })()}
+
       {showCodeGen && (
         <Suspense fallback={null}>
           <CodeGenModal
@@ -2142,6 +2188,26 @@ function buildEvents(edit: ReturnType<typeof itemToEditState>): CollectionItem['
   }
   if (edit.testScript.trim()) {
     events.push({ listen: 'test', script: { type: 'text/javascript', exec: edit.testScript.split('\n') } });
+  }
+  return events;
+}
+
+/**
+ * Like buildEvents but prepends ancestor (folder/collection) scripts before the
+ * request's own scripts so the executor runs them in order: collection → folders → request.
+ */
+function buildMergedEvents(
+  edit: ReturnType<typeof itemToEditState>,
+  ancestor: { prereqs: string[]; tests: string[] },
+): CollectionItem['event'] {
+  const events: CollectionItem['event'] = [];
+  const prereqParts = [...ancestor.prereqs, edit.preRequestScript.trim()].filter(Boolean);
+  const testParts = [...ancestor.tests, edit.testScript.trim()].filter(Boolean);
+  if (prereqParts.length > 0) {
+    events.push({ listen: 'prerequest', script: { type: 'text/javascript', exec: prereqParts.join('\n\n').split('\n') } });
+  }
+  if (testParts.length > 0) {
+    events.push({ listen: 'test', script: { type: 'text/javascript', exec: testParts.join('\n\n').split('\n') } });
   }
   return events;
 }
