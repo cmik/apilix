@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 
-const { executeRequest, setExecutorConfig } = require('./executor');
+const { executeRequest, flattenItemsWithScripts, setExecutorConfig } = require('./executor');
 
 async function withServer(handler, runTest) {
   const server = http.createServer(handler);
@@ -95,4 +95,111 @@ test('executeRequest keeps collection and generic variable mutations out of envi
     assert.equal(result.updatedCollectionVariables.collectionOnly, 'c1');
     assert.equal(result.updatedCollectionVariables.genericVar, 'g1');
   });
+});
+
+function getEventExec(item, listen) {
+  const event = (item.event || []).find(e => e.listen === listen);
+  return event ? event.script.exec.join('\n') : null;
+}
+
+test('flattenItemsWithScripts merges prerequest/test scripts in collection→folder→request order', () => {
+  const collectionEvents = [
+    { listen: 'prerequest', script: { exec: ["pm.variables.set('scope', 'collection-prereq');"] } },
+    { listen: 'test', script: { exec: ["pm.variables.set('scope', 'collection-test');"] } },
+  ];
+
+  const items = [
+    {
+      name: 'Folder A',
+      event: [
+        { listen: 'prerequest', script: { exec: ["pm.variables.set('scope', 'folder-a-prereq');"] } },
+        { listen: 'test', script: { exec: ["pm.variables.set('scope', 'folder-a-test');"] } },
+      ],
+      item: [
+        {
+          name: 'Folder B',
+          event: [
+            { listen: 'prerequest', script: { exec: ["pm.variables.set('scope', 'folder-b-prereq');"] } },
+            { listen: 'test', script: { exec: ["pm.variables.set('scope', 'folder-b-test');"] } },
+          ],
+          item: [
+            {
+              name: 'Leaf Request',
+              request: { method: 'GET', url: 'https://example.com' },
+              event: [
+                { listen: 'prerequest', script: { exec: ["pm.variables.set('scope', 'request-prereq');"] } },
+                { listen: 'test', script: { exec: ["pm.variables.set('scope', 'request-test');"] } },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ];
+
+  const [leaf] = flattenItemsWithScripts(items, collectionEvents);
+  assert.equal(
+    getEventExec(leaf, 'prerequest'),
+    [
+      "pm.variables.set('scope', 'collection-prereq');",
+      "pm.variables.set('scope', 'folder-a-prereq');",
+      "pm.variables.set('scope', 'folder-b-prereq');",
+      "pm.variables.set('scope', 'request-prereq');",
+    ].join('\n\n')
+  );
+  assert.equal(
+    getEventExec(leaf, 'test'),
+    [
+      "pm.variables.set('scope', 'collection-test');",
+      "pm.variables.set('scope', 'folder-a-test');",
+      "pm.variables.set('scope', 'folder-b-test');",
+      "pm.variables.set('scope', 'request-test');",
+    ].join('\n\n')
+  );
+});
+
+test('flattenItemsWithScripts applies ancestor scripts to leaves without own prerequest/test scripts', () => {
+  const collectionEvents = [
+    { listen: 'prerequest', script: { exec: ['collection-prerequest();'] } },
+    { listen: 'test', script: { exec: ['collection-test();'] } },
+  ];
+  const items = [
+    {
+      name: 'Folder',
+      event: [
+        { listen: 'prerequest', script: { exec: ['folder-prerequest();'] } },
+        { listen: 'test', script: { exec: ['folder-test();'] } },
+      ],
+      item: [
+        {
+          name: 'Leaf Request Without Own Scripts',
+          request: { method: 'GET', url: 'https://example.com' },
+        },
+      ],
+    },
+  ];
+
+  const [leaf] = flattenItemsWithScripts(items, collectionEvents);
+  assert.equal(getEventExec(leaf, 'prerequest'), 'collection-prerequest();\n\nfolder-prerequest();');
+  assert.equal(getEventExec(leaf, 'test'), 'collection-test();\n\nfolder-test();');
+});
+
+test('flattenItemsWithScripts preserves non-prerequest/test leaf events', () => {
+  const nonScriptEvent = { listen: 'console', script: { exec: ["console.log('keep me');"] } };
+  const items = [
+    {
+      name: 'Leaf Request',
+      request: { method: 'GET', url: 'https://example.com' },
+      event: [
+        nonScriptEvent,
+        { listen: 'prerequest', script: { exec: ['leaf-prerequest();'] } },
+      ],
+    },
+  ];
+  const collectionEvents = [{ listen: 'prerequest', script: { exec: ['collection-prerequest();'] } }];
+
+  const [leaf] = flattenItemsWithScripts(items, collectionEvents);
+  const preserved = (leaf.event || []).find(e => e.listen === 'console');
+  assert.deepEqual(preserved, nonScriptEvent);
+  assert.equal(getEventExec(leaf, 'prerequest'), 'collection-prerequest();\n\nleaf-prerequest();');
 });
