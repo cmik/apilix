@@ -250,7 +250,6 @@ function buildDiffHunks(base: string[], changed: string[]): DiffHunkRaw[] {
 
     // Start of a differing region
     const bStart = bi;
-    const cStart = ci;
     const replacementLines: string[] = [];
 
     // Consume until we hit the next LCS match
