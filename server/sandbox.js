@@ -602,6 +602,36 @@ function createApx(response, variables, updatedVariables, updatedGlobalMutations
             mockBase: execContext.mockBase || null,
           });
 
+          // Propagate mutations made by the child request (env/collVars/globals set
+          // inside its test/pre-request scripts) back into this sandbox's tracking
+          // buckets. Without this, variables set by a child request (e.g. storing a
+          // token after "Get token") are lost and the parent request cannot use them.
+          if (result) {
+            const envDiff = {};
+            const collVarDiff = {};
+            const globalDiff = {};
+
+            Object.entries(result.updatedEnvironment || {}).forEach(([k, v]) => {
+              if (childEnv[k] !== v) envDiff[k] = v;
+            });
+            Object.entries(result.updatedCollectionVariables || {}).forEach(([k, v]) => {
+              if (childCollVars[k] !== v) collVarDiff[k] = v;
+            });
+            Object.entries(result.updatedGlobals || {}).forEach(([k, v]) => {
+              if (childGlobals[k] !== v) globalDiff[k] = v;
+            });
+
+            Object.assign(updatedEnvMutations, envDiff);
+            Object.assign(updatedCollVarMutations, collVarDiff);
+            Object.assign(updatedGlobalMutations, globalDiff);
+            // Mirror what apx.environment.set() / apx.collectionVariables.set() do:
+            // also write into updatedVariables so that executor.js rebuilds `vars`
+            // correctly (vars = { ...vars, ...preUpdatedVars }) and {{token}}-style
+            // placeholders in the parent request's headers/body are resolved.
+            // Env diff has highest priority, so it overwrites collVar conflicts.
+            Object.assign(updatedVariables, collVarDiff, globalDiff, envDiff);
+          }
+
           // Record the child request so it appears in the console
           if (Array.isArray(childRequests)) {
             childRequests.push({

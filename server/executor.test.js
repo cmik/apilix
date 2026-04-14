@@ -435,3 +435,72 @@ test('applyAuth null auth does not modify headers', async () => {
   await applyAuth(null, headers, {});
   assert.deepEqual(headers, {});
 });
+
+// ─── apx.executeRequest child mutation propagation ───────────────────────────
+
+test('environment variable set in child request test script is available in parent request', async () => {
+  setExecutorConfig({ followRedirects: false, requestTimeout: 3000, sslVerification: false });
+
+  await withServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    if (req.url.endsWith('/token')) {
+      res.end(JSON.stringify({ access_token: 'secret-token' }));
+    } else {
+      // /data: echo back the Authorization header so the test can verify it was resolved
+      res.end(JSON.stringify({ received: req.headers['authorization'] || '' }));
+    }
+  }, async (url) => {
+    // withServer gives us http://host:port/test — strip the /test suffix to get the base
+    const baseUrl = url.slice(0, url.lastIndexOf('/'));
+
+    const tokenItem = {
+      name: 'Get token',
+      request: { method: 'GET', url: `${baseUrl}/token` },
+      event: [
+        {
+          listen: 'test',
+          script: {
+            type: 'text/javascript',
+            exec: [
+              'const json = apx.response.json();',
+              "apx.environment.set('token', json.access_token);",
+            ],
+          },
+        },
+      ],
+    };
+
+    const dataItem = {
+      name: 'Get data',
+      request: {
+        method: 'GET',
+        url: `${baseUrl}/data`,
+        header: [{ key: 'Authorization', value: 'Bearer {{token}}' }],
+      },
+      event: [
+        {
+          listen: 'prerequest',
+          script: {
+            type: 'text/javascript',
+            exec: ["apx.executeRequest('Get token');"],
+          },
+        },
+      ],
+    };
+
+    const context = {
+      ...makeContext(),
+      collectionItems: [tokenItem, dataItem],
+    };
+
+    const result = await executeRequest(dataItem, context);
+
+    assert.equal(result.error, null);
+    // The token set by "Get token" test script must be in the environment so
+    // "Get data" can resolve {{token}} in its Authorization header.
+    assert.equal(result.updatedEnvironment.token, 'secret-token');
+    // Verify the resolved header was actually sent with the token value.
+    const body = JSON.parse(result.body);
+    assert.equal(body.received, 'Bearer secret-token');
+  });
+});
