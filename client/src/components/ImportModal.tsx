@@ -84,7 +84,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
     state.collections[0]?._id ?? ''
   );
 
-  async function parseAndImport(text: string, filename?: string) {
+  function parseAndImport(text: string, filename?: string) {
     setError(null);
     // Detect OpenAPI / Swagger files by extension or content
     const isOpenApiFile =
