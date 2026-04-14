@@ -34,14 +34,34 @@ function nextId() {
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const timeoutIdsRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  const clearToastTimeout = useCallback((id: string) => {
+    const timeoutId = timeoutIdsRef.current[id];
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+      delete timeoutIdsRef.current[id];
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      Object.values(timeoutIdsRef.current).forEach(timeoutId => {
+        clearTimeout(timeoutId);
+      });
+      timeoutIdsRef.current = {};
+    };
+  }, []);
 
   const addToast = useCallback((type: ToastType, message: string, duration = 4000) => {
     const id = nextId();
     setToasts(prev => [...prev, { id, type, message, duration }]);
     if (duration > 0) {
-      setTimeout(() => {
+      const timeoutId = setTimeout(() => {
+        delete timeoutIdsRef.current[id];
         setToasts(prev => prev.filter(t => t.id !== id));
       }, duration);
+      timeoutIdsRef.current[id] = timeoutId;
     }
   }, []);
 
@@ -51,8 +71,9 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const info    = useCallback((m: string, d?: number) => addToast('info',    m, d), [addToast]);
 
   const dismiss = useCallback((id: string) => {
+    clearToastTimeout(id);
     setToasts(prev => prev.filter(t => t.id !== id));
-  }, []);
+  }, [clearToastTimeout]);
 
   return (
     <ToastContext.Provider value={{ addToast, success, error, warning, info }}>
