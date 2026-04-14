@@ -335,6 +335,7 @@ export interface MockLogEntry {
   matchedRoutePath: string | null;
   responseStatus: number;
   responseBody: string;
+  responseDropped?: boolean;
   wsEventType?: 'ws_connect' | 'ws_disconnect' | 'ws_message_in' | 'ws_message_out';
   wsClientId?: string;
   wsMessageType?: 'string' | 'json' | 'xml';
@@ -362,6 +363,13 @@ export interface MockRouteRule {
   responseBody: string;
 }
 
+export interface MockRouteChaos {
+  enabled: boolean;
+  errorRate: number;    // 0–100 — % chance to inject a 500 error response
+  dropRate: number;     // 0–100 — % chance to destroy the socket (no response)
+  throttleKbps: number; // 0 = unlimited; >0 = max KB/s for the response body
+}
+
 export interface MockRoute {
   id: string;
   enabled: boolean;
@@ -376,6 +384,7 @@ export interface MockRoute {
   description: string;
   rules?: MockRouteRule[];
   script?: string;
+  chaos?: MockRouteChaos;
   wsOnConnect?: WsOnConnectEvent[];
   wsMessageHandlers?: WsMessageHandler[];
 }

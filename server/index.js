@@ -741,6 +741,111 @@ function runMockScript(script, ctx) {
   return result;
 }
 
+// ─── Chaos Mode (Feature 9) ───────────────────────────────────────────────────
+
+/**
+ * Apply per-route chaos settings to an outgoing HTTP response.
+ *
+ * @param {object|undefined} chaos  - route.chaos config
+ * @param {object} req              - Node.js IncomingMessage
+ * @param {object} res              - Node.js ServerResponse
+ * @param {number} status           - resolved HTTP status code
+ * @param {string} body             - resolved response body string
+ * @param {object} headers          - resolved response headers object
+ * @param {number} delay            - base route delay in ms (applied before send)
+ * @returns {null|{responseDropped:boolean,responseStatus:number,responseBody:string}}
+ *   - null → chaos not active; caller should send normally
+ *   - object → chaos handled response/send path and includes final logged outcome
+ */
+function applyChaos(chaos, req, res, status, body, headers, delay) {
+  if (!chaos || !chaos.enabled) return null;
+
+  const safeDelay = Math.min(parseInt(delay, 10) || 0, 30000);
+
+  // 1. Connection drop — checked first; if it fires we never send a response
+  if (chaos.dropRate > 0 && Math.random() * 100 < chaos.dropRate) {
+    const doDestroy = () => {
+      try { req.socket && req.socket.destroy(); } catch (_) { /* ignore */ }
+    };
+    if (safeDelay > 0) setTimeout(doDestroy, safeDelay);
+    else doDestroy();
+    return {
+      responseDropped: true,
+      responseStatus: 0,
+      responseBody: '[chaos] connection dropped',
+    };
+  }
+
+  // 2. Error injection — override status + body but still send a response
+  let finalStatus = status;
+  let finalBody = typeof body === 'string' ? body : String(body ?? '');
+  let finalHeaders = { ...headers };
+  if (chaos.errorRate > 0 && Math.random() * 100 < chaos.errorRate) {
+    finalStatus = 500;
+    finalBody = JSON.stringify({ error: 'Chaos: injected error' });
+    finalHeaders = { ...finalHeaders, 'Content-Type': 'application/json' };
+  }
+
+  // 3. Send — with optional bandwidth throttling applied after delay
+  const doSend = () => {
+    const kbps = parseFloat(chaos.throttleKbps) || 0;
+    const isResponseClosed = () => res.writableEnded || res.destroyed || !res.writable;
+    if (kbps > 0 && finalBody.length > 0) {
+      // Chunk the body and drip it at ~kbps KB/s (one chunk every 50 ms)
+      const bodyBuf = Buffer.from(finalBody, 'utf-8');
+      const chunkSize = Math.max(1, Math.floor((kbps * 1024) / 1000 * 50));
+      if (isResponseClosed()) return;
+      try {
+        res.writeHead(finalStatus, finalHeaders);
+      } catch (_) {
+        return;
+      }
+      let offset = 0;
+      const scheduleNextChunk = () => {
+        if (isResponseClosed()) return;
+        setTimeout(sendChunk, 50);
+      };
+      const sendChunk = () => {
+        if (isResponseClosed()) return;
+        if (offset >= bodyBuf.length) {
+          try {
+            res.end();
+          } catch (_) { /* ignore */ }
+          return;
+        }
+        const slice = bodyBuf.slice(offset, offset + chunkSize);
+        offset += chunkSize;
+        let canContinue = false;
+        try {
+          canContinue = res.write(slice);
+        } catch (_) {
+          return;
+        }
+        if (canContinue) {
+          scheduleNextChunk();
+        } else {
+          res.once('drain', scheduleNextChunk);
+        }
+      };
+      sendChunk();
+    } else {
+      if (isResponseClosed()) return;
+      try {
+        res.writeHead(finalStatus, finalHeaders);
+        res.end(finalBody);
+      } catch (_) { /* ignore */ }
+    }
+  };
+
+  if (safeDelay > 0) setTimeout(doSend, safeDelay);
+  else doSend();
+  return {
+    responseDropped: false,
+    responseStatus: finalStatus,
+    responseBody: finalBody,
+  };
+}
+
 function buildMockHandler() {
   return function (req, res) {
     const method = req.method.toUpperCase();
@@ -866,6 +971,16 @@ function buildMockHandler() {
         catch { headers['Content-Type'] = 'text/plain'; }
       }
 
+      const send = () => {
+        res.writeHead(finalStatus, headers);
+        res.end(responseBody);
+      };
+
+      const delay = Math.min(parseInt(matched.delay, 10) || 0, 30000);
+      const chaosResult = applyChaos(matched.chaos, req, res, finalStatus, responseBody, headers, delay);
+      const responseDropped = chaosResult ? chaosResult.responseDropped : false;
+      const loggedStatus = chaosResult ? chaosResult.responseStatus : finalStatus;
+      const loggedBody = chaosResult ? chaosResult.responseBody : responseBody;
       addLogEntry({
         id: generateMockId(),
         timestamp: new Date().toISOString(),
@@ -877,18 +992,14 @@ function buildMockHandler() {
         matchedRouteId: matched.id,
         matchedRouteName: matched.description || matched.path,
         matchedRoutePath: matched.path,
-        responseStatus: finalStatus,
-        responseBody,
+        responseStatus: loggedStatus,
+        responseBody: loggedBody,
+        responseDropped,
       });
-
-      const send = () => {
-        res.writeHead(finalStatus, headers);
-        res.end(responseBody);
-      };
-
-      const delay = Math.min(parseInt(matched.delay, 10) || 0, 30000);
-      if (delay > 0) setTimeout(send, delay);
-      else send();
+      if (chaosResult === null) {
+        if (delay > 0) setTimeout(send, delay);
+        else send();
+      }
     });
   };
 }
