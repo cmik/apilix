@@ -123,7 +123,7 @@ function ToastItem({
       {/* Progress bar */}
       {toast.duration && toast.duration > 0 && (
         <div
-          className={`absolute bottom-0 left-0 h-0.5 ${s.bar} transition-all duration-50`}
+          className={`absolute bottom-0 left-0 h-0.5 ${s.bar} transition-all duration-75`}
           style={{ width: `${progress}%` }}
         />
       )}
