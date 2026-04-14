@@ -226,12 +226,12 @@ export default function ImportModal({ onClose }: ImportModalProps) {
       }
       const text = await response.text();
       const filename = new URL(url).pathname.split('/').pop() || '';
+      setUrlLoading(false);
       parseAndImport(text, filename);
     } catch (e) {
+      setUrlLoading(false);
       const msg = `Failed to fetch: ${(e as Error).message}`;
       setUrlError(msg); toast.error(msg);
-    } finally {
-      setUrlLoading(false);
     }
   }
 
