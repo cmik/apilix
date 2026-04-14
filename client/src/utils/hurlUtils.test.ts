@@ -1,7 +1,9 @@
 import { vi, describe, it, expect } from 'vitest';
 
+let mockGenerateIdCounter = 0;
+
 vi.mock('../store', () => ({
-  generateId: () => Math.random().toString(36).slice(2, 10),
+  generateId: () => `mock-id-${++mockGenerateIdCounter}`,
 }));
 
 import { parseHurlFile, generateHurlEntry } from './hurlUtils';
