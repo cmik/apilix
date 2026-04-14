@@ -9,8 +9,24 @@ permissions:
   contents: write  # needed to create releases and upload assets
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm run setup
+
+      - name: Run tests
+        run: npm run test
+        
   build-mac:
     runs-on: macos-latest
+    needs: test   # ← won't run if tests fail
     steps:
       - uses: actions/checkout@v4
 
@@ -35,6 +51,7 @@ jobs:
 
   build-windows:
     runs-on: windows-latest
+    needs: test   # ← won't run if tests fail
     steps:
       - uses: actions/checkout@v4
 
