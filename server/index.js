@@ -807,13 +807,21 @@ function applyChaos(chaos, req, res, status, body, headers, delay) {
           return;
         }
         const slice = bodyBuf.slice(offset, offset + chunkSize);
-        offset += chunkSize;
-        try {
-          res.write(slice);
-        } catch (_) {
-          return;
-        }
+      const scheduleNextChunk = () => {
+        if (!res.writable) return;
         setTimeout(sendChunk, 50);
+      };
+      const sendChunk = () => {
+        if (!res.writable) return;
+        if (offset >= bodyBuf.length) { res.end(); return; }
+        const slice = bodyBuf.slice(offset, offset + chunkSize);
+        offset += chunkSize;
+        const canContinue = res.write(slice);
+        if (canContinue) {
+          scheduleNextChunk();
+        } else {
+          res.once('drain', scheduleNextChunk);
+        }
       };
       sendChunk();
     } else {
