@@ -28,9 +28,11 @@ jobs:
         
       - name: Run server tests
         run: cd server && npm test
+        shell: bash
 
       - name: Run client tests
         run: cd client && npm test
+        shell: bash
         
   build-mac:
     runs-on: macos-latest
