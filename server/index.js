@@ -786,24 +786,42 @@ function applyChaos(chaos, req, res, status, body, headers, delay) {
   // 3. Send — with optional bandwidth throttling applied after delay
   const doSend = () => {
     const kbps = parseFloat(chaos.throttleKbps) || 0;
+    const isResponseClosed = () => res.writableEnded || res.destroyed || !res.writable;
     if (kbps > 0 && finalBody.length > 0) {
       // Chunk the body and drip it at ~kbps KB/s (one chunk every 50 ms)
       const bodyBuf = Buffer.from(finalBody, 'utf-8');
       const chunkSize = Math.max(1, Math.floor((kbps * 1024) / 1000 * 50));
-      res.writeHead(finalStatus, finalHeaders);
+      if (isResponseClosed()) return;
+      try {
+        res.writeHead(finalStatus, finalHeaders);
+      } catch (_) {
+        return;
+      }
       let offset = 0;
       const sendChunk = () => {
-        if (!res.writable) return;
-        if (offset >= bodyBuf.length) { res.end(); return; }
+        if (isResponseClosed()) return;
+        if (offset >= bodyBuf.length) {
+          try {
+            res.end();
+          } catch (_) { /* ignore */ }
+          return;
+        }
         const slice = bodyBuf.slice(offset, offset + chunkSize);
         offset += chunkSize;
-        res.write(slice);
+        try {
+          res.write(slice);
+        } catch (_) {
+          return;
+        }
         setTimeout(sendChunk, 50);
       };
       sendChunk();
     } else {
-      res.writeHead(finalStatus, finalHeaders);
-      res.end(finalBody);
+      if (isResponseClosed()) return;
+      try {
+        res.writeHead(finalStatus, finalHeaders);
+        res.end(finalBody);
+      } catch (_) { /* ignore */ }
     }
   };
 
