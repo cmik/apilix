@@ -753,10 +753,9 @@ function runMockScript(script, ctx) {
  * @param {string} body             - resolved response body string
  * @param {object} headers          - resolved response headers object
  * @param {number} delay            - base route delay in ms (applied before send)
- * @returns {null|'dropped'|'handled'}
- *   - null     → chaos not active; caller should send normally
- *   - 'dropped'→ socket destroyed after delay; caller must not send
- *   - 'handled'→ response sent (or being sent) by this function
+ * @returns {null|{responseDropped:boolean,responseStatus:number,responseBody:string}}
+ *   - null → chaos not active; caller should send normally
+ *   - object → chaos handled response/send path and includes final logged outcome
  */
 function applyChaos(chaos, req, res, status, body, headers, delay) {
   if (!chaos || !chaos.enabled) return null;
@@ -770,12 +769,16 @@ function applyChaos(chaos, req, res, status, body, headers, delay) {
     };
     if (safeDelay > 0) setTimeout(doDestroy, safeDelay);
     else doDestroy();
-    return 'dropped';
+    return {
+      responseDropped: true,
+      responseStatus: 0,
+      responseBody: '[chaos] connection dropped',
+    };
   }
 
   // 2. Error injection — override status + body but still send a response
   let finalStatus = status;
-  let finalBody = body;
+  let finalBody = typeof body === 'string' ? body : String(body ?? '');
   let finalHeaders = { ...headers };
   if (chaos.errorRate > 0 && Math.random() * 100 < chaos.errorRate) {
     finalStatus = 500;
@@ -798,6 +801,10 @@ function applyChaos(chaos, req, res, status, body, headers, delay) {
         return;
       }
       let offset = 0;
+      const scheduleNextChunk = () => {
+        if (isResponseClosed()) return;
+        setTimeout(sendChunk, 50);
+      };
       const sendChunk = () => {
         if (isResponseClosed()) return;
         if (offset >= bodyBuf.length) {
@@ -807,16 +814,13 @@ function applyChaos(chaos, req, res, status, body, headers, delay) {
           return;
         }
         const slice = bodyBuf.slice(offset, offset + chunkSize);
-      const scheduleNextChunk = () => {
-        if (!res.writable) return;
-        setTimeout(sendChunk, 50);
-      };
-      const sendChunk = () => {
-        if (!res.writable) return;
-        if (offset >= bodyBuf.length) { res.end(); return; }
-        const slice = bodyBuf.slice(offset, offset + chunkSize);
         offset += chunkSize;
-        const canContinue = res.write(slice);
+        let canContinue = false;
+        try {
+          canContinue = res.write(slice);
+        } catch (_) {
+          return;
+        }
         if (canContinue) {
           scheduleNextChunk();
         } else {
@@ -835,7 +839,11 @@ function applyChaos(chaos, req, res, status, body, headers, delay) {
 
   if (safeDelay > 0) setTimeout(doSend, safeDelay);
   else doSend();
-  return 'handled';
+  return {
+    responseDropped: false,
+    responseStatus: finalStatus,
+    responseBody: finalBody,
+  };
 }
 
 function buildMockHandler() {
@@ -963,6 +971,16 @@ function buildMockHandler() {
         catch { headers['Content-Type'] = 'text/plain'; }
       }
 
+      const send = () => {
+        res.writeHead(finalStatus, headers);
+        res.end(responseBody);
+      };
+
+      const delay = Math.min(parseInt(matched.delay, 10) || 0, 30000);
+      const chaosResult = applyChaos(matched.chaos, req, res, finalStatus, responseBody, headers, delay);
+      const responseDropped = chaosResult ? chaosResult.responseDropped : false;
+      const loggedStatus = chaosResult ? chaosResult.responseStatus : finalStatus;
+      const loggedBody = chaosResult ? chaosResult.responseBody : responseBody;
       addLogEntry({
         id: generateMockId(),
         timestamp: new Date().toISOString(),
@@ -974,17 +992,10 @@ function buildMockHandler() {
         matchedRouteId: matched.id,
         matchedRouteName: matched.description || matched.path,
         matchedRoutePath: matched.path,
-        responseStatus: finalStatus,
-        responseBody,
+        responseStatus: loggedStatus,
+        responseBody: loggedBody,
+        responseDropped,
       });
-
-      const send = () => {
-        res.writeHead(finalStatus, headers);
-        res.end(responseBody);
-      };
-
-      const delay = Math.min(parseInt(matched.delay, 10) || 0, 30000);
-      const chaosResult = applyChaos(matched.chaos, req, res, finalStatus, responseBody, headers, delay);
       if (chaosResult === null) {
         if (delay > 0) setTimeout(send, delay);
         else send();

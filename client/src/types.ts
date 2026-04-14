@@ -335,6 +335,7 @@ export interface MockLogEntry {
   matchedRoutePath: string | null;
   responseStatus: number;
   responseBody: string;
+  responseDropped?: boolean;
   wsEventType?: 'ws_connect' | 'ws_disconnect' | 'ws_message_in' | 'ws_message_out';
   wsClientId?: string;
   wsMessageType?: 'string' | 'json' | 'xml';
