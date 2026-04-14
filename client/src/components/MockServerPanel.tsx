@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useApp, generateId } from '../store';
-import type { MockRoute, MockCollection, AppCollection, CollectionItem, MockLogEntry, MockRouteRule, WsOnConnectEvent, WsMessageHandler } from '../types';
+import type { MockRoute, MockCollection, AppCollection, CollectionItem, MockLogEntry, MockRouteRule, MockRouteChaos, WsOnConnectEvent, WsMessageHandler } from '../types';
 import { startMockServer, stopMockServer, syncMockRoutes, getMockStatus, getMockLog, clearMockLog, getMockDb, clearMockDb } from '../api';
 import ScriptEditor from './ScriptEditor';
 import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
@@ -302,6 +302,11 @@ function RouteEditorModal({ initial, collections, onSave, onClose }: {
   const [script, setScript] = useState(initial.script ?? '');
   const [showRules, setShowRules] = useState((initial.rules ?? []).length > 0);
   const [showScript, setShowScript] = useState(!!initial.script);
+  const [chaosEnabled, setChaosEnabled] = useState(initial.chaos?.enabled ?? false);
+  const [chaosErrorRate, setChaosErrorRate] = useState(initial.chaos?.errorRate ?? 0);
+  const [chaosDropRate, setChaosDropRate] = useState(initial.chaos?.dropRate ?? 0);
+  const [chaosThrottleKbps, setChaosThrottleKbps] = useState(initial.chaos?.throttleKbps ?? 0);
+  const [showChaos, setShowChaos] = useState(initial.chaos?.enabled ?? false);
   const [scriptError, setScriptError] = useState<string | null>(null);
   const [wsOnConnect, setWsOnConnect] = useState<WsOnConnectEvent[]>(initial.wsOnConnect ?? []);
   const [wsHandlers, setWsHandlers] = useState<WsMessageHandler[]>(initial.wsMessageHandlers ?? []);
@@ -361,7 +366,8 @@ function RouteEditorModal({ initial, collections, onSave, onClose }: {
       setScriptError(null);
     }
     const headers = headerRows.filter(h => h.key.trim());
-    onSave({ ...route, responseHeaders: headers, rules, script, wsOnConnect, wsMessageHandlers: wsHandlers });
+    const chaos: MockRouteChaos = { enabled: chaosEnabled, errorRate: chaosErrorRate, dropRate: chaosDropRate, throttleKbps: chaosThrottleKbps };
+    onSave({ ...route, responseHeaders: headers, rules, script, chaos, wsOnConnect, wsMessageHandlers: wsHandlers });
     onClose();
   }
 
@@ -470,6 +476,66 @@ function RouteEditorModal({ initial, collections, onSave, onClose }: {
                     </span>
                   </label>
                   <textarea value={route.responseBody} onChange={e => updateField('responseBody', e.target.value)} rows={10} spellCheck={false} className="w-full bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none resize-y" />
+                </div>
+
+                {/* ── Chaos Mode ── */}
+                <div className="border border-slate-700 rounded-lg overflow-hidden">
+                  <button
+                    onClick={() => setShowChaos(s => !s)}
+                    className="w-full flex items-center justify-between px-3 py-2 bg-slate-800/60 hover:bg-slate-800 transition-colors text-left"
+                  >
+                    <span className="text-xs font-medium text-slate-300 flex items-center gap-2">
+                      Chaos Mode
+                      {chaosEnabled && <span className="px-1.5 py-0.5 bg-red-500/20 text-red-400 rounded text-xs">active</span>}
+                    </span>
+                    <span className="text-slate-500 text-xs">{showChaos ? '▴' : '▾'}</span>
+                  </button>
+                  {showChaos && (
+                    <div className="px-3 py-3 space-y-3">
+                      <p className="text-xs text-slate-500">Inject real-world failures on this route for resilience testing. Applies after scripting and rules.</p>
+                      <label className="flex items-center gap-2 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={chaosEnabled}
+                          onChange={e => setChaosEnabled(e.target.checked)}
+                          className="accent-red-500"
+                        />
+                        <span className="text-xs text-slate-300">Enable Chaos</span>
+                      </label>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-1">Error Rate (%)</label>
+                          <input
+                            type="number" min={0} max={100} step={1}
+                            value={chaosErrorRate}
+                            onChange={e => setChaosErrorRate(Math.min(100, Math.max(0, parseInt(e.target.value, 10) || 0)))}
+                            className="w-full bg-slate-800 border border-slate-700 focus:border-red-500 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none"
+                          />
+                          <p className="mt-0.5 text-xs text-slate-600">% chance → 500</p>
+                        </div>
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-1">Drop Rate (%)</label>
+                          <input
+                            type="number" min={0} max={100} step={1}
+                            value={chaosDropRate}
+                            onChange={e => setChaosDropRate(Math.min(100, Math.max(0, parseInt(e.target.value, 10) || 0)))}
+                            className="w-full bg-slate-800 border border-slate-700 focus:border-red-500 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none"
+                          />
+                          <p className="mt-0.5 text-xs text-slate-600">% chance → no response</p>
+                        </div>
+                        <div>
+                          <label className="block text-xs text-slate-400 mb-1">Bandwidth (KB/s)</label>
+                          <input
+                            type="number" min={0} step={1}
+                            value={chaosThrottleKbps}
+                            onChange={e => setChaosThrottleKbps(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                            className="w-full bg-slate-800 border border-slate-700 focus:border-red-500 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none"
+                          />
+                          <p className="mt-0.5 text-xs text-slate-600">0 = unlimited</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* ── Rules ── */}

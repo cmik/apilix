@@ -741,6 +741,77 @@ function runMockScript(script, ctx) {
   return result;
 }
 
+// ─── Chaos Mode (Feature 9) ───────────────────────────────────────────────────
+
+/**
+ * Apply per-route chaos settings to an outgoing HTTP response.
+ *
+ * @param {object|undefined} chaos  - route.chaos config
+ * @param {object} req              - Node.js IncomingMessage
+ * @param {object} res              - Node.js ServerResponse
+ * @param {number} status           - resolved HTTP status code
+ * @param {string} body             - resolved response body string
+ * @param {object} headers          - resolved response headers object
+ * @param {number} delay            - base route delay in ms (applied before send)
+ * @returns {null|'dropped'|'handled'}
+ *   - null     → chaos not active; caller should send normally
+ *   - 'dropped'→ socket destroyed after delay; caller must not send
+ *   - 'handled'→ response sent (or being sent) by this function
+ */
+function applyChaos(chaos, req, res, status, body, headers, delay) {
+  if (!chaos || !chaos.enabled) return null;
+
+  const safeDelay = Math.min(parseInt(delay, 10) || 0, 30000);
+
+  // 1. Connection drop — checked first; if it fires we never send a response
+  if (chaos.dropRate > 0 && Math.random() * 100 < chaos.dropRate) {
+    const doDestroy = () => {
+      try { req.socket && req.socket.destroy(); } catch (_) { /* ignore */ }
+    };
+    if (safeDelay > 0) setTimeout(doDestroy, safeDelay);
+    else doDestroy();
+    return 'dropped';
+  }
+
+  // 2. Error injection — override status + body but still send a response
+  let finalStatus = status;
+  let finalBody = body;
+  let finalHeaders = { ...headers };
+  if (chaos.errorRate > 0 && Math.random() * 100 < chaos.errorRate) {
+    finalStatus = 500;
+    finalBody = JSON.stringify({ error: 'Chaos: injected error' });
+    finalHeaders = { ...finalHeaders, 'Content-Type': 'application/json' };
+  }
+
+  // 3. Send — with optional bandwidth throttling applied after delay
+  const doSend = () => {
+    const kbps = parseFloat(chaos.throttleKbps) || 0;
+    if (kbps > 0 && finalBody.length > 0) {
+      // Chunk the body and drip it at ~kbps KB/s (one chunk every 50 ms)
+      const bodyBuf = Buffer.from(finalBody, 'utf-8');
+      const chunkSize = Math.max(1, Math.floor((kbps * 1024) / 1000 * 50));
+      res.writeHead(finalStatus, finalHeaders);
+      let offset = 0;
+      const sendChunk = () => {
+        if (!res.writable) return;
+        if (offset >= bodyBuf.length) { res.end(); return; }
+        const slice = bodyBuf.slice(offset, offset + chunkSize);
+        offset += chunkSize;
+        res.write(slice);
+        setTimeout(sendChunk, 50);
+      };
+      sendChunk();
+    } else {
+      res.writeHead(finalStatus, finalHeaders);
+      res.end(finalBody);
+    }
+  };
+
+  if (safeDelay > 0) setTimeout(doSend, safeDelay);
+  else doSend();
+  return 'handled';
+}
+
 function buildMockHandler() {
   return function (req, res) {
     const method = req.method.toUpperCase();
@@ -887,8 +958,11 @@ function buildMockHandler() {
       };
 
       const delay = Math.min(parseInt(matched.delay, 10) || 0, 30000);
-      if (delay > 0) setTimeout(send, delay);
-      else send();
+      const chaosResult = applyChaos(matched.chaos, req, res, finalStatus, responseBody, headers, delay);
+      if (chaosResult === null) {
+        if (delay > 0) setTimeout(send, delay);
+        else send();
+      }
     });
   };
 }
