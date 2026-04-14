@@ -16,6 +16,8 @@ interface Props {
   event?: CollectionEvent[];
   description?: string;
   variables?: CollectionVariable[];
+  requestNames?: string[];
+  requestItems?: Array<{ id: string; name: string }>;
   onSave: (auth: CollectionAuth | undefined, event: CollectionEvent[], description: string, variables: CollectionVariable[]) => void;
   onClose: () => void;
 }
@@ -37,7 +39,7 @@ function patchEvents(
   return [...others, { listen, script: { type: 'text/javascript', exec: code.split('\n') } }];
 }
 
-export default function ItemSettingsModal({ kind, name, auth, event, description: initialDescription, variables: initialVariables, onSave, onClose }: Props) {
+export default function ItemSettingsModal({ kind, name, auth, event, description: initialDescription, variables: initialVariables, requestNames, requestItems, onSave, onClose }: Props) {
   const initialAuthType: AuthType = SUPPORTED_AUTH.includes(auth?.type ?? 'noauth')
     ? (auth?.type ?? (kind === 'folder' ? 'inherit' : 'noauth'))
     : (kind === 'folder' ? 'inherit' : 'noauth');
@@ -348,8 +350,11 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
               <ScriptEditor
                 value={preScript}
                 onChange={setPreScript}
+                onSave={handleSave}
                 rows={16}
-                placeholder={"// apx.environment.set('token', 'value');"}                
+                placeholder={"// apx.environment.set('token', 'value');"}
+                requestNames={requestNames}
+                requestItems={requestItems}
               />
             </div>
           )}
@@ -361,8 +366,11 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
               <ScriptEditor
                 value={testScript}
                 onChange={setTestScript}
+                onSave={handleSave}
                 rows={16}
                 placeholder={"// apx.test('Status 200', () => apx.expect(apx.response.code).to.equal(200));"}
+                requestNames={requestNames}
+                requestItems={requestItems}
               />
             </div>
           )}

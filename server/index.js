@@ -5,7 +5,7 @@ const cors = require('cors');
 const multer = require('multer');
 const vm = require('vm');
 const { parse: parseCsv } = require('csv-parse/sync');
-const { executeRequest, flattenItems, setExecutorConfig } = require('./executor');
+const { executeRequest, flattenItemsWithScripts, setExecutorConfig } = require('./executor');
 const { refreshOAuth2Token, exchangeAuthorizationCodeForToken } = require('./oauth');
 
 const app = express();
@@ -256,7 +256,7 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
       if (iterCount > 1) dataRows = Array.from({ length: iterCount }, () => ({}));
     }
 
-    const requests = flattenItems(collection.item);
+    const requests = flattenItemsWithScripts(collection.item, collection.event);
     if (requests.length === 0) {
       return res.json({ results: [] });
     }
