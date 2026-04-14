@@ -8,8 +8,8 @@ type View = 'request' | 'runner' | 'environments' | 'mock' | 'capture';
 
 const NAV_ITEMS: { key: View; emoji: string; label: string }[] = [
   { key: 'request',      emoji: '⚡', label: 'Requests' },
-  { key: 'runner',       emoji: '▶',  label: 'Runner'   },
   { key: 'environments', emoji: '🌍', label: 'Envs'     },
+  { key: 'runner',       emoji: '▶',  label: 'Runner'   },
   { key: 'mock',         emoji: '🎭', label: 'Mock'     },
   { key: 'capture',      emoji: '📡', label: 'Capture'  },
 ];
