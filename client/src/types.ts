@@ -254,6 +254,8 @@ export interface AppSettings {
   noProxy?: string;
   // CORS
   corsAllowedOrigins?: string;
+  // Layout
+  requestLayout?: 'stacked' | 'split';
   [key: string]: unknown;
 }
 
