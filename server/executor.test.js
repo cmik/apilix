@@ -366,16 +366,22 @@ test('buildProxyOption includes auth when proxy has credentials', () => {
 
 test('buildProxyOption returns undefined when target is in noProxy list', () => {
   setExecutorConfig({ noProxy: 'internal.corp.com,localhost' });
-  const result = buildProxyOption('http://proxy.corp.com:8080', 'https://internal.corp.com/api');
-  assert.equal(result, undefined);
-  setExecutorConfig({ noProxy: '' });
+  try {
+    const result = buildProxyOption('http://proxy.corp.com:8080', 'https://internal.corp.com/api');
+    assert.equal(result, undefined);
+  } finally {
+    setExecutorConfig({ noProxy: '' });
+  }
 });
 
 test('buildProxyOption proxies target not in noProxy list', () => {
   setExecutorConfig({ noProxy: 'internal.corp.com' });
-  const result = buildProxyOption('http://proxy.corp.com:8080', 'https://external.host.com/api');
-  assert.ok(result !== undefined);
-  setExecutorConfig({ noProxy: '' });
+  try {
+    const result = buildProxyOption('http://proxy.corp.com:8080', 'https://external.host.com/api');
+    assert.ok(result !== undefined);
+  } finally {
+    setExecutorConfig({ noProxy: '' });
+  }
 });
 
 // ─── applyAuth ───────────────────────────────────────────────────────────────
