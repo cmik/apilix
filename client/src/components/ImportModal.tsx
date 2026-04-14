@@ -84,7 +84,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
     state.collections[0]?._id ?? ''
   );
 
-  function parseAndImport(text: string, filename?: string) {
+  async function parseAndImport(text: string, filename?: string) {
     setError(null);
     // Detect OpenAPI / Swagger files by extension or content
     const isOpenApiFile =
@@ -265,7 +265,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
       const text = await response.text();
       const filename = new URL(url).pathname.split('/').pop() || '';
       setUrlLoading(false);
-      parseAndImport(text, filename);
+      await parseAndImport(text, filename);
     } catch (e) {
       setUrlLoading(false);
       const msg = `Failed to fetch: ${(e as Error).message}`;
@@ -277,9 +277,9 @@ export default function ImportModal({ onClose }: ImportModalProps) {
     if (!files || files.length === 0) return;
     Array.from(files).forEach(file => {
       const reader = new FileReader();
-      reader.onload = e => {
+      reader.onload = async e => {
         const text = e.target?.result as string;
-        parseAndImport(text, file.name);
+        await parseAndImport(text, file.name);
       };
       reader.readAsText(file);
     });
@@ -296,7 +296,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
     setError(null);
   }
 
-  function handlePasteImport() {
+  async function handlePasteImport() {
     setPasteError(null);
     setError(null);
 
@@ -306,7 +306,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
     }
 
     if (pasteFormat === 'json') {
-      parseAndImport(pasteText);
+      await parseAndImport(pasteText);
       return;
     }
 
