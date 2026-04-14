@@ -116,6 +116,9 @@ function ToastItem({
       className={`relative overflow-hidden rounded-md border shadow-xl w-80 transition-all duration-300 ${s.label} ${
         visible ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'
       }`}
+      role={toast.type === 'error' ? 'alert' : 'status'}
+      aria-live={toast.type === 'error' ? 'assertive' : 'polite'}
+      aria-atomic="true"
     >
       {/* Progress bar */}
       {toast.duration && toast.duration > 0 && (
