@@ -196,7 +196,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
           setError(msg); toast.error(msg);
         }
       } else {
-        const msg = 'Unrecognised format. Expected a Postman Collection v2.1, Environment JSON, HURL, or OpenAPI/Swagger spec.';
+        const msg = 'Unrecognised format. Expected a Postman Collection v2.0/v2.1, Environment JSON, HURL, or OpenAPI/Swagger spec.';
         setError(msg); toast.error(msg);
       }
     } catch (e) {
