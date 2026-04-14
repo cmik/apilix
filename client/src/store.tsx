@@ -3,23 +3,9 @@ import type { AppState, AppAction, AppSettings, AppCollection, AppEnvironment, C
 import * as StorageDriver from './utils/storageDriver';
 import * as SnapshotEngine from './utils/snapshotEngine';
 import { API_BASE } from './api';
-import type { PostmanVersion } from './utils/postmanValidator';
+import { validatePostmanCollection, type PostmanVersion } from './utils/postmanValidator';
 
 const STORAGE_KEY = 'apilix_persist'; // legacy key — kept for migration only
-
-let postmanValidatorModulePromise: Promise<typeof import('./utils/postmanValidator')> | null = null;
-
-function loadPostmanValidator() {
-  if (!postmanValidatorModulePromise) {
-    postmanValidatorModulePromise = import('./utils/postmanValidator');
-  }
-  return postmanValidatorModulePromise;
-}
-
-async function validatePostmanCollectionLazy(...args: Parameters<typeof import('./utils/postmanValidator')['validatePostmanCollection']>) {
-  const { validatePostmanCollection } = await loadPostmanValidator();
-  return validatePostmanCollection(...args);
-}
 
 function ensureIds(items: CollectionItem[]): CollectionItem[] {
   return items.map(item => ({

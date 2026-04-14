@@ -21,27 +21,65 @@ function nameFromUrl(url: string): string {
   }
 }
 
+type PasteFormat = 'json' | 'curl' | 'hurl' | 'openapi' | 'har';
+
+const PASTE_FORMAT_OPTIONS: Array<{ value: PasteFormat; label: string }> = [
+  { value: 'json', label: 'Postman JSON' },
+  { value: 'curl', label: 'cURL' },
+  { value: 'hurl', label: 'HURL' },
+  { value: 'openapi', label: 'OpenAPI' },
+  { value: 'har', label: 'HAR' },
+];
+
+const PASTE_EXAMPLES: Record<PasteFormat, string> = {
+  json: '{\n  "info": {\n    "name": "My Collection",\n    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"\n  },\n  "item": []\n}',
+  curl: `curl -X POST https://api.example.com/users \\
+  -H 'Content-Type: application/json' \\
+  -d '{"name":"Alice"}'`,
+  hurl: `GET https://api.example.com/users
+Authorization: Bearer {{token}}
+
+HTTP *
+
+
+POST https://api.example.com/users
+Content-Type: application/json
+
+{"name":"Alice"}
+
+HTTP *`,
+  openapi: `openapi: 3.0.0
+info:
+  title: My API
+  version: 1.0.0
+paths:
+  /users:
+    get:
+      summary: List users
+      tags: [Users]`,
+  har: '{\n  "log": {\n    "entries": [\n      { "request": { "method": "GET", "url": "https://api.example.com/users" } }\n    ]\n  }\n}',
+};
+
+const PASTE_LABELS: Record<PasteFormat, string> = {
+  json: 'Paste Postman Collection or Environment JSON',
+  curl: 'Paste cURL command',
+  hurl: 'Paste HURL content',
+  openapi: 'Paste OpenAPI or Swagger spec',
+  har: 'Paste HAR JSON',
+};
+
 export default function ImportModal({ onClose }: ImportModalProps) {
   const { state, dispatch } = useApp();
   const toast = useToast();
-  const [tab, setTab] = useState<'file' | 'url' | 'paste' | 'curl' | 'hurl' | 'openapi' | 'har'>('file');
+  const [tab, setTab] = useState<'file' | 'url' | 'paste'>('file');
+  const [pasteFormat, setPasteFormat] = useState<PasteFormat>('json');
   const [pasteText, setPasteText] = useState('');
+  const [pasteError, setPasteError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const [curlText, setCurlText] = useState('');
-  const [curlError, setCurlError] = useState<string | null>(null);
-  const [hurlText, setHurlText] = useState('');
-  const [hurlError, setHurlError] = useState<string | null>(null);
-  const [openApiText, setOpenApiText] = useState('');
-  const [openApiUrl, setOpenApiUrl] = useState('');
-  const [openApiError, setOpenApiError] = useState<string | null>(null);
-  const [openApiLoading, setOpenApiLoading] = useState(false);
-  const openApiFileRef = useRef<HTMLInputElement>(null);
   const [urlInput, setUrlInput] = useState('');
   const [urlError, setUrlError] = useState<string | null>(null);
   const [urlLoading, setUrlLoading] = useState(false);
-  const [harText, setHarText] = useState('');
-  const [harError, setHarError] = useState<string | null>(null);
   const [targetCollectionId, setTargetCollectionId] = useState<string>(
     state.collections[0]?._id ?? ''
   );
@@ -252,44 +290,134 @@ export default function ImportModal({ onClose }: ImportModalProps) {
     handleFiles(e.dataTransfer.files);
   }
 
-  function handleHurlImport() {
-    setHurlError(null);
-    const items = parseHurlFile(hurlText);
-    if (items.length === 0) {
-      setHurlError('No valid HURL requests found. Make sure each entry starts with a method line like "GET https://…".');
-      return;
-    }
-    const col = state.collections.find(c => c._id === targetCollectionId);
-    if (col) {
-      dispatch({ type: 'UPDATE_COLLECTION', payload: { ...col, item: [...col.item, ...items] } });
-      toast.success(`${items.length} request(s) added to "${col.info.name}".`);
-      onClose();
-    } else {
-      // No collections yet — create one
-      const newColId = generateId();
-      dispatch({
-        type: 'ADD_COLLECTION',
-        payload: {
-          _id: newColId,
-          info: {
-            name: 'HURL Import',
-            schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
-          },
-          item: items,
-        },
-      });
-      toast.success(`Collection "HURL Import" with ${items.length} request(s) created.`);
-      onClose();
-    }
-    setHurlText('');
+  function handlePasteFormatChange(nextFormat: PasteFormat) {
+    setPasteFormat(nextFormat);
+    setPasteError(null);
+    setError(null);
   }
 
-  function handleHarImport() {
-    setHarError(null);
-    try {
-      const items = parseHarFile(harText);
+  function handlePasteImport() {
+    setPasteError(null);
+    setError(null);
+
+    if (!pasteText.trim()) {
+      setPasteError('Paste content to import.');
+      return;
+    }
+
+    if (pasteFormat === 'json') {
+      parseAndImport(pasteText);
+      return;
+    }
+
+    if (pasteFormat === 'curl') {
+      const parsed = parseCurlCommand(pasteText);
+      if (!parsed) {
+        setPasteError('Could not parse cURL command. Make sure it starts with "curl".');
+        return;
+      }
+      const col = state.collections.find(c => c._id === targetCollectionId);
+      if (!col) {
+        setPasteError('Please select a target collection.');
+        return;
+      }
+
+      const auth: CollectionAuth | undefined = parsed.authType === 'basic'
+        ? {
+            type: 'basic',
+            basic: [
+              { key: 'username', value: parsed.authBasicUser },
+              { key: 'password', value: parsed.authBasicPass },
+            ],
+          }
+        : undefined;
+
+      const body: CollectionBody | undefined = parsed.bodyMode !== 'none'
+        ? {
+            mode: parsed.bodyMode,
+            raw: parsed.bodyMode === 'raw' ? parsed.bodyRaw : undefined,
+            urlencoded: parsed.bodyMode === 'urlencoded' ? parsed.bodyUrlEncoded : undefined,
+            formdata: parsed.bodyMode === 'formdata' ? parsed.bodyFormData : undefined,
+            options: parsed.bodyMode === 'raw' ? { raw: { language: parsed.bodyRawLang } } : undefined,
+          }
+        : undefined;
+
+      const newItem: CollectionItem = {
+        id: generateId(),
+        name: nameFromUrl(parsed.url),
+        request: {
+          method: parsed.method,
+          url: { raw: parsed.url },
+          header: parsed.headers.map(h => ({ key: h.key, value: h.value })),
+          body,
+          auth,
+        },
+      };
+
+      dispatch({ type: 'UPDATE_COLLECTION', payload: { ...col, item: [...col.item, newItem] } });
+      toast.success(`Request "${newItem.name}" added to "${col.info.name}".`);
+      onClose();
+      return;
+    }
+
+    if (pasteFormat === 'hurl') {
+      const items = parseHurlFile(pasteText);
       if (items.length === 0) {
-        setHarError('No requests found in the HAR data.');
+        setPasteError('No valid HURL requests found. Make sure each entry starts with a method line like "GET https://…".');
+        return;
+      }
+      const col = state.collections.find(c => c._id === targetCollectionId);
+      if (col) {
+        dispatch({ type: 'UPDATE_COLLECTION', payload: { ...col, item: [...col.item, ...items] } });
+        toast.success(`${items.length} request(s) added to "${col.info.name}".`);
+      } else {
+        const newColId = generateId();
+        dispatch({
+          type: 'ADD_COLLECTION',
+          payload: {
+            _id: newColId,
+            info: {
+              name: 'HURL Import',
+              schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+            },
+            item: items,
+          },
+        });
+        toast.success(`Collection "HURL Import" with ${items.length} request(s) created.`);
+      }
+      onClose();
+      return;
+    }
+
+    if (pasteFormat === 'openapi') {
+      try {
+        const { collectionName, items, collectionAuth } = parseOpenApiSpec(pasteText);
+        const newColId = generateId();
+        dispatch({
+          type: 'ADD_COLLECTION',
+          payload: {
+            _id: newColId,
+            info: {
+              name: collectionName,
+              schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+            },
+            item: items,
+            ...(collectionAuth && { auth: collectionAuth }),
+          },
+        });
+        const total = items.reduce((sum, i) => sum + (i.item ? i.item.length : 1), 0);
+        toast.success(`Collection "${collectionName}" with ${total} request(s) imported!`);
+        onClose();
+      } catch (e) {
+        setPasteError(`Parse error: ${(e as Error).message}`);
+      }
+      return;
+    }
+
+    try {
+      const items = parseHarFile(pasteText);
+      if (items.length === 0) {
+        setPasteError('No requests found in the HAR data.');
         return;
       }
       const newColId = generateId();
@@ -306,118 +434,10 @@ export default function ImportModal({ onClose }: ImportModalProps) {
       });
       const total = items.reduce((sum, i) => sum + (i.item ? i.item.length : 1), 0);
       toast.success(`Collection "HAR Import" with ${total} request(s) created.`);
-      setHarText('');
       onClose();
     } catch (e) {
-      const msg = `${(e as Error).message}`;
-      setHarError(msg); toast.error(msg);
+      setPasteError((e as Error).message);
     }
-  }
-
-  async function handleOpenApiUrlImport() {
-    setOpenApiError(null);
-
-    if (!openApiUrl.trim()) {
-      setOpenApiError('Please enter a URL.');
-      return;
-    }
-
-    let shouldClose = false;
-    setOpenApiLoading(true);
-    try {
-      const response = await fetch(openApiUrl);
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      const contentType = response.headers.get('content-type') || '';
-      let spec: string;
-      
-      if (contentType.includes('application/json')) {
-        const json = await response.json();
-        spec = JSON.stringify(json);
-      } else {
-        spec = await response.text();
-      }
-
-      const { collectionName, items, collectionAuth } = parseOpenApiSpec(spec);
-      const newColId = generateId();
-      dispatch({
-        type: 'ADD_COLLECTION',
-        payload: {
-          _id: newColId,
-          info: {
-            name: collectionName,
-            schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
-          },
-          item: items,
-          ...(collectionAuth && { auth: collectionAuth }),
-        },
-      });
-      const total = items.reduce((sum, i) => sum + (i.item ? i.item.length : 1), 0);
-      toast.success(`Collection "${collectionName}" with ${total} request(s) imported!`);
-      setOpenApiUrl('');
-      shouldClose = true;
-    } catch (e) {
-      const msg = `Failed to import from URL: ${(e as Error).message}`;
-      setOpenApiError(msg); toast.error(msg);
-    } finally {
-      setOpenApiLoading(false);
-    }
-
-    if (shouldClose) {
-      onClose();
-    }
-  }
-
-  function handleCurlImport() {
-    setCurlError(null);
-    const parsed = parseCurlCommand(curlText);
-    if (!parsed) {
-      setCurlError('Could not parse cURL command. Make sure it starts with "curl".');
-      return;
-    }
-    const col = state.collections.find(c => c._id === targetCollectionId);
-    if (!col) {
-      setCurlError('Please select a target collection.');
-      return;
-    }
-
-    const auth: CollectionAuth | undefined = parsed.authType === 'basic'
-      ? {
-          type: 'basic',
-          basic: [
-            { key: 'username', value: parsed.authBasicUser },
-            { key: 'password', value: parsed.authBasicPass },
-          ],
-        }
-      : undefined;
-
-    const body: CollectionBody | undefined = parsed.bodyMode !== 'none'
-      ? {
-          mode: parsed.bodyMode,
-          raw: parsed.bodyMode === 'raw' ? parsed.bodyRaw : undefined,
-          urlencoded: parsed.bodyMode === 'urlencoded' ? parsed.bodyUrlEncoded : undefined,
-          formdata: parsed.bodyMode === 'formdata' ? parsed.bodyFormData : undefined,
-          options: parsed.bodyMode === 'raw' ? { raw: { language: parsed.bodyRawLang } } : undefined,
-        }
-      : undefined;
-
-    const newItem: CollectionItem = {
-      id: generateId(),
-      name: nameFromUrl(parsed.url),
-      request: {
-        method: parsed.method,
-        url: { raw: parsed.url },
-        header: parsed.headers.map(h => ({ key: h.key, value: h.value })),
-        body,
-        auth,
-      },
-    };
-
-    dispatch({ type: 'UPDATE_COLLECTION', payload: { ...col, item: [...col.item, newItem] } });
-    toast.success(`Request "${newItem.name}" added to "${col.info.name}".`);
-    setCurlText('');
-    onClose();
   }
 
   return (
@@ -434,7 +454,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
 
         {/* Tabs */}
         <div className="flex border-b border-slate-600 overflow-x-auto">
-          {(['file', 'url', 'paste', 'curl', 'hurl', 'openapi', 'har'] as const).map(t => (
+          {(['file', 'url', 'paste'] as const).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -444,7 +464,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              {t === 'file' ? 'Upload File' : t === 'url' ? 'URL' : t === 'paste' ? 'JSON' : t === 'curl' ? 'cURL' : t === 'hurl' ? 'HURL' : t === 'openapi' ? 'OpenAPI' : 'HAR'}
+              {t === 'file' ? 'Upload File' : t === 'url' ? 'URL' : 'Paste'}
             </button>
           ))}
         </div>
@@ -501,31 +521,23 @@ export default function ImportModal({ onClose }: ImportModalProps) {
 
           {tab === 'paste' && (
             <div className="flex flex-col gap-3">
-              <label className="text-slate-400 text-sm">Paste Postman Collection or Environment JSON:</label>
-              <textarea
-                value={pasteText}
-                onChange={e => setPasteText(e.target.value)}
-                rows={12}
-                className="w-full bg-slate-900 border border-slate-600 rounded p-3 text-slate-100 text-sm font-mono resize-none focus:outline-none focus:border-orange-500"
-                placeholder={'{\n  "info": { "name": "My Collection", ... },\n  "item": [...]\n}'}
-              />
-              <button
-                onClick={() => parseAndImport(pasteText)}
-                className="self-end px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded text-sm font-medium transition-colors"
-              >
-                Import
-              </button>
-            </div>
-          )}
-
-          {tab === 'curl' && (
-            <div className="flex flex-col gap-3">
-              {state.collections.length === 0 ? (
-                <p className="text-amber-400 text-sm bg-amber-900/20 border border-amber-700 rounded p-3">
-                  No collections found. Create a collection first, then import a cURL command into it.
-                </p>
-              ) : (
-                <>
+              <p className="text-slate-400 text-xs bg-slate-900/50 border border-slate-700 rounded p-2 leading-relaxed">
+                Select the pasted format, then edit or replace the example below. JSON, cURL, HURL, OpenAPI, and HAR imports all run from this tab.
+              </p>
+              <div className="flex flex-col gap-1">
+                <label className="text-slate-400 text-sm">Format</label>
+                <select
+                  value={pasteFormat}
+                  onChange={e => handlePasteFormatChange(e.target.value as PasteFormat)}
+                  className="bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-orange-500"
+                >
+                  {PASTE_FORMAT_OPTIONS.map(option => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+              {(pasteFormat === 'curl' || pasteFormat === 'hurl') && (
+                state.collections.length > 0 ? (
                   <div className="flex flex-col gap-1">
                     <label className="text-slate-400 text-sm">Target collection</label>
                     <select
@@ -538,67 +550,32 @@ export default function ImportModal({ onClose }: ImportModalProps) {
                       ))}
                     </select>
                   </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-slate-400 text-sm">Paste cURL command</label>
-                    <textarea
-                      value={curlText}
-                      onChange={e => { setCurlText(e.target.value); setCurlError(null); }}
-                      rows={11}
-                      spellCheck={false}
-                      className="w-full bg-slate-900 border border-slate-600 rounded p-3 text-slate-100 text-sm font-mono resize-none focus:outline-none focus:border-orange-500"
-                      placeholder={"curl -X POST https://api.example.com/users \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"name\": \"Alice\"}'"}
-                    />
-                  </div>
-                  {curlError && (
-                    <p className="text-red-400 text-sm bg-red-900/20 border border-red-700 rounded p-2">{curlError}</p>
-                  )}
-                  <button
-                    onClick={handleCurlImport}
-                    className="self-end px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded text-sm font-medium transition-colors"
-                  >
-                    Import
-                  </button>
-                </>
+                ) : (
+                  <p className="text-amber-400 text-sm bg-amber-900/20 border border-amber-700 rounded p-3">
+                    {pasteFormat === 'curl'
+                      ? 'No collections found. Create a collection first, then import a cURL command into it.'
+                      : 'No collections found. HURL import will create a new collection automatically.'}
+                  </p>
+                )
               )}
-            </div>
-          )}
-
-          {tab === 'hurl' && (
-            <div className="flex flex-col gap-3">
-              <div className="text-slate-400 text-xs bg-slate-900/50 border border-slate-700 rounded p-2 leading-relaxed">
-                Paste a <span className="text-orange-400 font-mono">HURL</span> file with one or more HTTP requests.
-                Requests will be added to the selected collection (or a new one if none exists).
-              </div>
-              {state.collections.length > 0 && (
-                <div className="flex flex-col gap-1">
-                  <label className="text-slate-400 text-sm">Target collection</label>
-                  <select
-                    value={targetCollectionId}
-                    onChange={e => setTargetCollectionId(e.target.value)}
-                    className="bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-orange-500"
-                  >
-                    {state.collections.map(c => (
-                      <option key={c._id} value={c._id}>{c.info.name}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-              <div className="flex flex-col gap-1">
-                <label className="text-slate-400 text-sm">Paste HURL content</label>
-                <textarea
-                  value={hurlText}
-                  onChange={e => { setHurlText(e.target.value); setHurlError(null); }}
-                  rows={11}
-                  spellCheck={false}
-                  className="w-full bg-slate-900 border border-slate-600 rounded p-3 text-slate-100 text-sm font-mono resize-none focus:outline-none focus:border-orange-500"
-                  placeholder={"GET https://api.example.com/users\nAuthorization: Bearer {{token}}\n\nHTTP *\n\n\nPOST https://api.example.com/users\nContent-Type: application/json\n\n{\"name\": \"Alice\"}\n\nHTTP *"}
-                />
-              </div>
-              {hurlError && (
-                <p className="text-red-400 text-sm bg-red-900/20 border border-red-700 rounded p-2">{hurlError}</p>
+              <label className="text-slate-400 text-sm">{PASTE_LABELS[pasteFormat]}</label>
+              <textarea
+                value={pasteText}
+                onChange={e => {
+                  setPasteText(e.target.value);
+                  setPasteError(null);
+                  setError(null);
+                }}
+                rows={12}
+                spellCheck={false}
+                className="w-full bg-slate-900 border border-slate-600 rounded p-3 text-slate-100 text-sm font-mono resize-none focus:outline-none focus:border-orange-500"
+                placeholder={PASTE_EXAMPLES[pasteFormat]}
+              />
+              {(pasteFormat === 'json' ? error : pasteError) && (
+                <p className="text-red-400 text-sm bg-red-900/20 border border-red-700 rounded p-2">{pasteFormat === 'json' ? error : pasteError}</p>
               )}
               <button
-                onClick={handleHurlImport}
+                onClick={handlePasteImport}
                 className="self-end px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded text-sm font-medium transition-colors"
               >
                 Import
@@ -606,141 +583,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
             </div>
           )}
 
-          {tab === 'openapi' && (
-            <div className="flex flex-col gap-3">
-              <div className="text-slate-400 text-xs bg-slate-900/50 border border-slate-700 rounded p-2 leading-relaxed">
-                Paste an <span className="text-orange-400 font-mono">OpenAPI 3.x</span> or{' '}
-                <span className="text-orange-400 font-mono">Swagger 2.0</span> spec (YAML or JSON).
-                Each tagged group of endpoints becomes a folder in a new collection.
-              </div>
-
-              {/* Import from URL */}
-              <div className="border-t border-slate-700 pt-3">
-                <label className="text-slate-400 text-sm mb-2 block">Import from URL</label>
-                <div className="flex gap-2">
-                  <input
-                    type="url"
-                    value={openApiUrl}
-                    onChange={e => {
-                      setOpenApiUrl(e.target.value);
-                      setOpenApiError(null);
-                    }}
-                    placeholder="https://api.example.com/openapi.json"
-                    className="flex-1 bg-slate-900 border border-slate-600 rounded px-3 py-2 text-slate-100 text-sm focus:outline-none focus:border-orange-500"
-                  />
-                  <button
-                    onClick={handleOpenApiUrlImport}
-                    disabled={openApiLoading}
-                    className="px-4 py-2 bg-orange-600 hover:bg-orange-500 disabled:bg-slate-600 text-white rounded text-sm font-medium transition-colors whitespace-nowrap"
-                  >
-                    {openApiLoading ? 'Fetching...' : 'Import'}
-                  </button>
-                </div>
-              </div>
-
-              {/* File & paste import */}
-              <div className="border-t border-slate-700 pt-3">
-                <div className="flex gap-2 mb-3">
-                  <button
-                    onClick={() => openApiFileRef.current?.click()}
-                    className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded text-sm transition-colors"
-                  >
-                    Browse file
-                  </button>
-                  <input
-                    ref={openApiFileRef}
-                    type="file"
-                    accept=".yaml,.yml,.json"
-                    className="hidden"
-                    onChange={e => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      const reader = new FileReader();
-                      reader.onload = ev => setOpenApiText(ev.target?.result as string);
-                      reader.readAsText(file);
-                    }}
-                  />
-                  <span className="text-slate-500 text-xs self-center">.yaml / .yml / .json</span>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-slate-400 text-sm">Paste spec (YAML or JSON)</label>
-                  <textarea
-                    value={openApiText}
-                    onChange={e => { setOpenApiText(e.target.value); setOpenApiError(null); }}
-                    rows={10}
-                    spellCheck={false}
-                    className="w-full bg-slate-900 border border-slate-600 rounded p-3 text-slate-100 text-sm font-mono resize-none focus:outline-none focus:border-orange-500"
-                    placeholder={"openapi: 3.0.0\ninfo:\n  title: My API\n  version: 1.0.0\npaths:\n  /users:\n    get:\n      summary: List users\n      tags: [Users]"}
-                  />
-                </div>
-                <button
-                  onClick={() => {
-                    setOpenApiError(null);
-                    try {
-                      const { collectionName, items, collectionAuth } = parseOpenApiSpec(openApiText);
-                      const newColId = generateId();
-                      dispatch({
-                        type: 'ADD_COLLECTION',
-                        payload: {
-                          _id: newColId,
-                          info: {
-                            name: collectionName,
-                            schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
-                          },
-                          item: items,
-                          ...(collectionAuth && { auth: collectionAuth }),
-                        },
-                      });
-                      const total = items.reduce((sum, i) => sum + (i.item ? i.item.length : 1), 0);
-                      toast.success(`Collection "${collectionName}" with ${total} request(s) imported!`);
-                      setOpenApiText('');
-                      onClose();
-                    } catch (e) {
-                      setOpenApiError(`Parse error: ${(e as Error).message}`);
-                    }
-                  }}
-                  className="self-end px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded text-sm font-medium transition-colors"
-                >
-                  Import
-                </button>
-              </div>
-
-              {openApiError && (
-                <p className="text-red-400 text-sm bg-red-900/20 border border-red-700 rounded p-2">{openApiError}</p>
-              )}
-            </div>
-          )}
-
-          {tab === 'har' && (
-            <div className="flex flex-col gap-3">
-              <div className="text-slate-400 text-xs bg-slate-900/50 border border-slate-700 rounded p-2 leading-relaxed">
-                Paste or upload a <span className="text-orange-400 font-mono">.har</span> file exported from your browser's DevTools Network panel.
-                Each captured request becomes a request in a new collection.
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-slate-400 text-sm">Paste HAR JSON</label>
-                <textarea
-                  value={harText}
-                  onChange={e => { setHarText(e.target.value); setHarError(null); }}
-                  rows={12}
-                  spellCheck={false}
-                  className="w-full bg-slate-900 border border-slate-600 rounded p-3 text-slate-100 text-sm font-mono resize-none focus:outline-none focus:border-orange-500"
-                  placeholder={'{\n  "log": {\n    "entries": [\n      { "request": { "method": "GET", "url": "https://..." } }\n    ]\n  }\n}'}
-                />
-              </div>
-              {harError && (
-                <p className="text-red-400 text-sm bg-red-900/20 border border-red-700 rounded p-2">{harError}</p>
-              )}
-              <button
-                onClick={handleHarImport}
-                className="self-end px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded text-sm font-medium transition-colors"
-              >
-                Import
-              </button>
-            </div>
-          )}
-
-          {tab !== 'curl' && tab !== 'hurl' && tab !== 'openapi' && tab !== 'har' && tab !== 'url' && error && (
+          {tab === 'file' && error && (
             <p className="mt-3 text-red-400 text-sm bg-red-900/20 border border-red-700 rounded p-2">{error}</p>
           )}
         </div>
