@@ -3,7 +3,7 @@ import type { AppState, AppAction, AppSettings, AppCollection, AppEnvironment, C
 import * as StorageDriver from './utils/storageDriver';
 import * as SnapshotEngine from './utils/snapshotEngine';
 import { API_BASE } from './api';
-import { validatePostmanCollection, type PostmanVersion } from './utils/postmanValidator';
+import type { PostmanVersion } from './utils/postmanValidator';
 
 const STORAGE_KEY = 'apilix_persist'; // legacy key — kept for migration only
 
@@ -94,6 +94,7 @@ const initialState: AppState = {
     httpsProxy: '',
     noProxy: '',
     corsAllowedOrigins: '',
+    requestLayout: 'stacked' as const,
   },
 };
 
@@ -835,11 +836,12 @@ export interface CollectionParseResult {
   validationWarnings: string[];
 }
 
-export function parseCollectionFile(json: unknown): CollectionParseResult {
+export async function parseCollectionFile(json: unknown): Promise<CollectionParseResult> {
   const obj = json as Record<string, unknown>;
   if (!obj || typeof obj !== 'object' || !obj.info || !Array.isArray(obj.item)) {
     throw new Error('Invalid Postman Collection JSON: expected an object with "info" and "item" properties.');
   }
+  const { validatePostmanCollection } = await import('./utils/postmanValidator');
   const { version, valid, errors } = validatePostmanCollection(json);
   if (!valid && errors.length > 0) {
     // Hard-fail only if the top-level structure is wrong; otherwise warn.

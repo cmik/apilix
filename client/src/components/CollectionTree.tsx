@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, createContext, useContext } from 'react';
+import { useState, useRef, useEffect, createContext, useContext, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import type { CollectionItem, AppCollection, MockCollection, MockRoute } from '../types';
 import { useApp, generateId } from '../store';
@@ -8,7 +8,8 @@ import {
   moveItemInTree, extractItemById, insertItemInTree, isDescendantOf, getAllRequestIds,
 } from '../utils/treeHelpers';
 import { generateHurlFromItems } from '../utils/hurlUtils';
-import ItemSettingsModal from './ItemSettingsModal';
+
+const ItemSettingsModal = lazy(() => import('./ItemSettingsModal'));
 
 // ─── Send-to-Mock helpers ────────────────────────────────────────────────────
 
@@ -556,22 +557,24 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
         {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
 
         {showSettings && (
-          <ItemSettingsModal
-            kind="folder"
-            name={item.name}
-            auth={item.auth}
-            event={item.event}
-            description={item.description}
-            onSave={(auth, events, description) => {
-              if (!item.id) return;
-              const updated: CollectionItem = { ...item, auth, event: events.length ? events : undefined, description: description || undefined };
-              dispatch({
-                type: 'UPDATE_COLLECTION',
-                payload: { ...collection, item: updateItemById(collection.item, item.id, updated) },
-              });
-            }}
-            onClose={() => setShowSettings(false)}
-          />
+          <Suspense fallback={null}>
+            <ItemSettingsModal
+              kind="folder"
+              name={item.name}
+              auth={item.auth}
+              event={item.event}
+              description={item.description}
+              onSave={(auth, events, description) => {
+                if (!item.id) return;
+                const updated: CollectionItem = { ...item, auth, event: events.length ? events : undefined, description: description || undefined };
+                dispatch({
+                  type: 'UPDATE_COLLECTION',
+                  payload: { ...collection, item: updateItemById(collection.item, item.id, updated) },
+                });
+              }}
+              onClose={() => setShowSettings(false)}
+            />
+          </Suspense>
         )}
 
         {mockItems && (
@@ -838,27 +841,29 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
 
       {showSettings && (
-        <ItemSettingsModal
-          kind="collection"
-          name={collection.info.name}
-          auth={collection.auth}
-          event={collection.event}
-          description={collection.info.description}
-          variables={collection.variable ?? []}
-          onSave={(auth, events, description, variables) => {
-            dispatch({
-              type: 'UPDATE_COLLECTION',
-              payload: {
-                ...collection,
-                auth,
-                event: events.length ? events : undefined,
-                variable: variables.length ? variables : undefined,
-                info: { ...collection.info, description: description || undefined },
-              },
-            });
-          }}
-          onClose={() => setShowSettings(false)}
-        />
+        <Suspense fallback={null}>
+          <ItemSettingsModal
+            kind="collection"
+            name={collection.info.name}
+            auth={collection.auth}
+            event={collection.event}
+            description={collection.info.description}
+            variables={collection.variable ?? []}
+            onSave={(auth, events, description, variables) => {
+              dispatch({
+                type: 'UPDATE_COLLECTION',
+                payload: {
+                  ...collection,
+                  auth,
+                  event: events.length ? events : undefined,
+                  variable: variables.length ? variables : undefined,
+                  info: { ...collection.info, description: description || undefined },
+                },
+              });
+            }}
+            onClose={() => setShowSettings(false)}
+          />
+        </Suspense>
       )}
     </div>
   );

@@ -143,6 +143,24 @@ function AppearanceTab({ s, u }: { s: AppSettings; u: (p: Partial<AppSettings>) 
         </div>
       </Section>
 
+      <Section title="Request Layout">
+        <div className="flex gap-2">
+          {(['stacked', 'split'] as const).map(layout => (
+            <button
+              key={layout}
+              onClick={() => u({ requestLayout: layout })}
+              className={`flex-1 py-2 rounded text-sm font-medium border transition-colors ${
+                (s.requestLayout ?? 'stacked') === layout
+                  ? 'border-orange-500 text-orange-400 bg-orange-500/10'
+                  : 'border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'
+              }`}
+            >
+              {layout === 'stacked' ? '⬜ Stacked' : '◫ Split'}
+            </button>
+          ))}
+        </div>
+      </Section>
+
     </div>
   );
 }

@@ -11,7 +11,6 @@ import ConsolePanel from './components/ConsolePanel';
 import StatusBar from './components/StatusBar';
 import TabBar from './components/TabBar';
 import GlobalVariablesPanel from './components/GlobalVariablesPanel';
-import VariableScopeInspector from './components/VariableScopeInspector';
 import ConfirmModal from './components/ConfirmModal';
 
 const RunnerPanel = lazy(() => import('./components/RunnerPanel'));
@@ -20,6 +19,7 @@ const BrowserCapturePanel = lazy(() => import('./components/BrowserCapturePanel'
 const CookieManagerModal = lazy(() => import('./components/CookieManagerModal'));
 const ConflictMergeModal = lazy(() => import('./components/ConflictMergeModal'));
 const SettingsModal = lazy(() => import('./components/SettingsModal'));
+const VariableScopeInspector = lazy(() => import('./components/VariableScopeInspector'));
 import * as StorageDriver from './utils/storageDriver';
 import * as SnapshotEngine from './utils/snapshotEngine';
 import {
@@ -250,6 +250,9 @@ const DEFAULT_CONSOLE_HEIGHT = 240;
 const MIN_REQUEST_PANEL_HEIGHT = 220;
 const MIN_RESPONSE_PANEL_HEIGHT = 160;
 const DEFAULT_RESPONSE_PANEL_HEIGHT = 320;
+const MIN_REQUEST_PANE_WIDTH = 300;
+const MIN_RESPONSE_PANE_WIDTH = 300;
+const DEFAULT_REQUEST_SPLIT_WIDTH = 500;
 
 type ServerStatus = 'checking' | 'online' | 'offline';
 
@@ -341,6 +344,10 @@ export default function App() {
     const saved = Number(localStorage.getItem('apilix_response_panel_height'));
     return Number.isFinite(saved) && saved > 0 ? saved : DEFAULT_RESPONSE_PANEL_HEIGHT;
   });
+  const [requestSplitWidth, setRequestSplitWidth] = useState(() => {
+    const saved = Number(localStorage.getItem('apilix_request_split_width'));
+    return Number.isFinite(saved) && saved > 0 ? saved : DEFAULT_REQUEST_SPLIT_WIDTH;
+  });
   const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
   const [serverStatus, setServerStatus] = useState<ServerStatus>('checking');
   const [cookieManagerOpen, setCookieManagerOpen] = useState(false);
@@ -364,6 +371,9 @@ export default function App() {
   const startWidth = useRef(0);
   const requestSplitRef = useRef<HTMLDivElement>(null);
   const responseDragging = useRef(false);
+  const requestHDragging = useRef(false);
+  const requestSplitStartX = useRef(0);
+  const requestSplitStartWidth = useRef(0);
 
   const clampResponsePanelHeight = useCallback((value: number) => {
     const totalHeight = requestSplitRef.current?.clientHeight;
@@ -372,6 +382,16 @@ export default function App() {
     }
     const maxHeight = Math.max(MIN_RESPONSE_PANEL_HEIGHT, totalHeight - MIN_REQUEST_PANEL_HEIGHT);
     return Math.min(maxHeight, Math.max(MIN_RESPONSE_PANEL_HEIGHT, value));
+  }, []);
+
+  const clampRequestSplitWidth = useCallback((value: number) => {
+    const totalWidth = requestSplitRef.current?.clientWidth;
+    if (!totalWidth || totalWidth <= 0) {
+      return Math.max(MIN_REQUEST_PANE_WIDTH, value);
+    }
+    const maxWidth = Math.max(0, totalWidth - MIN_RESPONSE_PANE_WIDTH);
+    const minWidth = Math.min(MIN_REQUEST_PANE_WIDTH, maxWidth);
+    return Math.min(maxWidth, Math.max(minWidth, value));
   }, []);
 
   // ── Theme ──────────────────────────────────────────────────────────────────
@@ -385,6 +405,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('apilix_response_panel_height', String(Math.round(responsePanelHeight)));
   }, [responsePanelHeight]);
+
+  useEffect(() => {
+    localStorage.setItem('apilix_request_split_width', String(Math.round(requestSplitWidth)));
+  }, [requestSplitWidth]);
 
   // ── Global keyboard shortcuts ──────────────────────────────────────────────
   useEffect(() => {
@@ -767,6 +791,15 @@ export default function App() {
     document.body.style.userSelect = 'none';
   }, []);
 
+  const onRequestSplitHandleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    requestHDragging.current = true;
+    requestSplitStartX.current = e.clientX;
+    requestSplitStartWidth.current = requestSplitWidth;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, [requestSplitWidth]);
+
   useEffect(() => {
     function onMouseMove(e: MouseEvent) {
       if (dragging.current) {
@@ -781,10 +814,17 @@ export default function App() {
         const nextHeight = clampResponsePanelHeight(rect.bottom - e.clientY);
         setResponsePanelHeight(nextHeight);
       }
+
+      if (requestHDragging.current) {
+        const delta = e.clientX - requestSplitStartX.current;
+        const nextWidth = clampRequestSplitWidth(requestSplitStartWidth.current + delta);
+        setRequestSplitWidth(nextWidth);
+      }
     }
     function onMouseUp() {
       if (dragging.current) dragging.current = false;
       if (responseDragging.current) responseDragging.current = false;
+      if (requestHDragging.current) requestHDragging.current = false;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
     }
@@ -794,16 +834,17 @@ export default function App() {
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
     };
-  }, [clampResponsePanelHeight]);
+  }, [clampResponsePanelHeight, clampRequestSplitWidth]);
 
   useEffect(() => {
     function onResize() {
       setResponsePanelHeight(h => clampResponsePanelHeight(h));
+      setRequestSplitWidth(w => clampRequestSplitWidth(w));
     }
     window.addEventListener('resize', onResize);
     onResize();
     return () => window.removeEventListener('resize', onResize);
-  }, [clampResponsePanelHeight]);
+  }, [clampResponsePanelHeight, clampRequestSplitWidth]);
 
   const quickSyncTooltip = getQuickSyncTooltip();
 
@@ -906,20 +947,43 @@ export default function App() {
         {/* RequestBuilder is always mounted to preserve unsaved changes; hidden when not active */}
         <div
           ref={requestSplitRef}
-          className={`flex-1 flex flex-col overflow-hidden ${state.view === 'request' ? '' : 'hidden'}`}
+          className={`flex-1 overflow-hidden ${state.view === 'request' ? '' : 'hidden'} ${
+            (state.settings.requestLayout ?? 'stacked') === 'split' ? 'flex flex-row' : 'flex flex-col'
+          }`}
         >
-          <RequestBuilder onDirtyChange={setDirtyIds} />
-          <div
-            onMouseDown={onResponseHandleMouseDown}
-            className="h-1.5 shrink-0 cursor-row-resize bg-slate-700 hover:bg-orange-500 transition-colors"
-            title="Drag to resize result panel"
-          />
-          <div
-            className="shrink-0 min-h-0"
-            style={{ height: clampResponsePanelHeight(responsePanelHeight) }}
-          >
-            <ResponseViewer />
-          </div>
+          {(state.settings.requestLayout ?? 'stacked') === 'split' ? (
+            <>
+              <div
+                className="shrink-0 min-w-0 flex flex-col overflow-hidden"
+                style={{ width: clampRequestSplitWidth(requestSplitWidth) }}
+              >
+                <RequestBuilder onDirtyChange={setDirtyIds} />
+              </div>
+              <div
+                onMouseDown={onRequestSplitHandleMouseDown}
+                className="w-1.5 shrink-0 cursor-col-resize bg-slate-700 hover:bg-orange-500 transition-colors"
+                title="Drag to resize panels"
+              />
+              <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+                <ResponseViewer />
+              </div>
+            </>
+          ) : (
+            <>
+              <RequestBuilder onDirtyChange={setDirtyIds} />
+              <div
+                onMouseDown={onResponseHandleMouseDown}
+                className="h-1.5 shrink-0 cursor-row-resize bg-slate-700 hover:bg-orange-500 transition-colors"
+                title="Drag to resize result panel"
+              />
+              <div
+                className="shrink-0 min-h-0"
+                style={{ height: clampResponsePanelHeight(responsePanelHeight) }}
+              >
+                <ResponseViewer />
+              </div>
+            </>
+          )}
         </div>
         {/* RunnerPanel is always mounted to preserve form state; hidden when not active */}
         <div className={`flex-1 flex flex-col overflow-hidden ${state.view === 'runner' ? '' : 'hidden'}`}>
@@ -939,7 +1003,9 @@ export default function App() {
         )}
         {state.view === 'variables' && (
           <div className="flex-1 flex flex-col overflow-hidden">
-            <VariableScopeInspector />
+            <Suspense fallback={null}>
+              <VariableScopeInspector />
+            </Suspense>
           </div>
         )}
         {state.view === 'mock' && (

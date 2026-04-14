@@ -195,7 +195,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
     try {
       const json = JSON.parse(text);
       if (json.info && json.item) {
-        const { collection: col, version, validationWarnings } = parseCollectionFile(json);
+        const { collection: col, version, validationWarnings } = await parseCollectionFile(json);
         dispatch({ type: 'ADD_COLLECTION', payload: col });
         const versionLabel = `Postman Collection v${version}`;
         if (validationWarnings.length > 0) {
