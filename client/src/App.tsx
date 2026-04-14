@@ -389,8 +389,9 @@ export default function App() {
     if (!totalWidth || totalWidth <= 0) {
       return Math.max(MIN_REQUEST_PANE_WIDTH, value);
     }
-    const maxWidth = Math.max(MIN_REQUEST_PANE_WIDTH, totalWidth - MIN_RESPONSE_PANE_WIDTH);
-    return Math.min(maxWidth, Math.max(MIN_REQUEST_PANE_WIDTH, value));
+    const maxWidth = Math.max(0, totalWidth - MIN_RESPONSE_PANE_WIDTH);
+    const minWidth = Math.min(MIN_REQUEST_PANE_WIDTH, maxWidth);
+    return Math.min(maxWidth, Math.max(minWidth, value));
   }, []);
 
   // ── Theme ──────────────────────────────────────────────────────────────────
