@@ -3,8 +3,23 @@ import type { AppState, AppAction, AppSettings, AppCollection, AppEnvironment, C
 import * as StorageDriver from './utils/storageDriver';
 import * as SnapshotEngine from './utils/snapshotEngine';
 import { API_BASE } from './api';
+import type { PostmanVersion } from './utils/postmanValidator';
 
 const STORAGE_KEY = 'apilix_persist'; // legacy key — kept for migration only
+
+let postmanValidatorModulePromise: Promise<typeof import('./utils/postmanValidator')> | null = null;
+
+function loadPostmanValidator() {
+  if (!postmanValidatorModulePromise) {
+    postmanValidatorModulePromise = import('./utils/postmanValidator');
+  }
+  return postmanValidatorModulePromise;
+}
+
+async function validatePostmanCollectionLazy(...args: Parameters<typeof import('./utils/postmanValidator')['validatePostmanCollection']>) {
+  const { validatePostmanCollection } = await loadPostmanValidator();
+  return validatePostmanCollection(...args);
+}
 
 function ensureIds(items: CollectionItem[]): CollectionItem[] {
   return items.map(item => ({
@@ -828,10 +843,31 @@ export function generateId(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
-export function parseCollectionFile(json: unknown): AppCollection {
+export interface CollectionParseResult {
+  collection: AppCollection;
+  version: PostmanVersion;
+  validationWarnings: string[];
+}
+
+export function parseCollectionFile(json: unknown): CollectionParseResult {
+  const obj = json as Record<string, unknown>;
+  if (!obj || typeof obj !== 'object' || !obj.info || !Array.isArray(obj.item)) {
+    throw new Error('Invalid Postman Collection JSON: expected an object with "info" and "item" properties.');
+  }
+  const { version, valid, errors } = validatePostmanCollection(json);
+  if (!valid && errors.length > 0) {
+    // Hard-fail only if the top-level structure is wrong; otherwise warn.
+    const fatal = errors.some(e => e.startsWith('root:'));
+    if (fatal) {
+      throw new Error(`Postman Collection v${version} validation failed:\n• ${errors.join('\n• ')}`);
+    }
+  }
   const col = json as AppCollection;
-  if (!col.info || !col.item) throw new Error('Invalid Postman Collection v2.1 JSON: expected an object with "info" and "item" properties');
-  return { ...col, _id: generateId() };
+  return {
+    collection: { ...col, _id: generateId() },
+    version,
+    validationWarnings: valid ? [] : errors,
+  };
 }
 
 export function parseEnvironmentFile(json: unknown): AppEnvironment {

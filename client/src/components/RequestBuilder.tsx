@@ -83,29 +83,48 @@ function applyPathParams(url: string, params: Array<{ key: string; value: string
   return resolved;
 }
 
+// Auth sub-fields can be either an array of {key,value} pairs (Postman v2.1)
+// or a plain object with named properties (Postman v2.0).
+function authVal(field: unknown, arrayKey: string): string {
+  if (Array.isArray(field)) {
+    return (field as Array<{ key: string; value: string }>).find(b => b.key === arrayKey)?.value ?? '';
+  }
+  if (field && typeof field === 'object') {
+    return ((field as Record<string, string>)[arrayKey]) ?? '';
+  }
+  return '';
+}
+
 function itemToEditState(item: CollectionItem) {
-  const req = item.request as CollectionRequest;
-  const urlRaw = typeof req.url === 'string' ? req.url : (req.url?.raw ?? '');
-  const urlVars = typeof req.url === 'object' ? (req.url?.variable ?? []) : [];
+  // In Postman v2.0 the request can be a plain URL string
+  const rawReq = item.request as unknown;
+  const isStringRequest = typeof rawReq === 'string';
+  const req = (isStringRequest ? {} : rawReq) as CollectionRequest;
+  const urlRaw = isStringRequest
+    ? (rawReq as string)
+    : (typeof req.url === 'string' ? req.url : (req.url?.raw ?? ''));
+  const urlVars = typeof req.url === 'object' ? (Array.isArray(req.url?.variable) ? req.url!.variable! : []) : [];
   const detectedNames = extractPathParamNames(urlRaw);
   const storedMap = new Map(urlVars.map(v => [v.key ?? '', v.value ?? '']));
+  // Headers can be a raw string in v2.0 — drop them in that case
+  const headerArr = Array.isArray(req.header) ? req.header : [];
   return {
     method: req.method?.toUpperCase() ?? 'GET',
     url: urlRaw,
-    headers: (req.header ?? []).map(h => ({ ...h })),
-    queryParams: extractQueryParams(req.url),
+    headers: headerArr.map(h => ({ ...h })),
+    queryParams: extractQueryParams(urlRaw),
     pathParams: detectedNames.map(k => ({ key: k, value: storedMap.get(k) ?? '' })),
     bodyMode: req.body?.mode ?? 'none',
     bodyRaw: req.body?.raw ?? '',
     bodyRawLang: req.body?.options?.raw?.language ?? 'json',
-    bodyFormData: req.body?.formdata ?? [],
-    bodyUrlEncoded: req.body?.urlencoded ?? [],
+    bodyFormData: Array.isArray(req.body?.formdata) ? req.body!.formdata! : [],
+    bodyUrlEncoded: Array.isArray(req.body?.urlencoded) ? req.body!.urlencoded! : [],
     authType: req.auth?.type ?? 'inherit',
-    authBearer: (req.auth?.bearer ?? []).find(b => b.key === 'token')?.value ?? '',
-    authBasicUser: (req.auth?.basic ?? []).find(b => b.key === 'username')?.value ?? '',
-    authBasicPass: (req.auth?.basic ?? []).find(b => b.key === 'password')?.value ?? '',
-    authApiKeyName: (req.auth?.apikey ?? []).find(b => b.key === 'key')?.value ?? 'X-API-Key',
-    authApiKeyValue: (req.auth?.apikey ?? []).find(b => b.key === 'value')?.value ?? '',
+    authBearer: authVal(req.auth?.bearer, 'token'),
+    authBasicUser: authVal(req.auth?.basic, 'username'),
+    authBasicPass: authVal(req.auth?.basic, 'password'),
+    authApiKeyName: authVal(req.auth?.apikey, 'key') || 'X-API-Key',
+    authApiKeyValue: authVal(req.auth?.apikey, 'value'),
     authOAuth2Config: req.auth?.oauth2 ?? ({
       grantType: 'authorization_code',
       clientId: '',

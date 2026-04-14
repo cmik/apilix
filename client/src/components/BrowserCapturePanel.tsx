@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { API_BASE } from '../api';
 import { useApp, generateId } from '../store';
+import { useToast } from './Toast';
 import type {
   CaptureCookie,
   CaptureEntry,
@@ -470,6 +471,7 @@ function DetailPane({ entry }: { entry: CaptureEntry }) {
 
 export default function BrowserCapturePanel() {
   const { state, dispatch } = useApp();
+  const toast = useToast();
   const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.cdpLaunchChrome;
   const captureView = state.captureViewState;
   const captureGenerationRef = useRef(state.captureGeneration);
@@ -560,7 +562,9 @@ export default function BrowserCapturePanel() {
       await new Promise(r => setTimeout(r, 1500));
       await connectToChrome();
     } catch (e: any) {
-      setConnError(e.message ?? String(e));
+      const msg = e.message ?? String(e);
+      setConnError(msg);
+      toast.error(`Capture: ${msg}`);
     } finally {
       setConnecting(false);
     }
@@ -572,7 +576,9 @@ export default function BrowserCapturePanel() {
     try {
       await connectToChrome();
     } catch (e: any) {
-      setConnError(e.message ?? String(e));
+      const msg = e.message ?? String(e);
+      setConnError(msg);
+      toast.error(`Capture: ${msg}`);
     } finally {
       setConnecting(false);
     }
@@ -587,6 +593,7 @@ export default function BrowserCapturePanel() {
     const json = await res.json();
     if (!json.ok) throw new Error(json.error ?? 'Connection failed');
     dispatch({ type: 'SET_CAPTURE_RUNNING', payload: true });
+    toast.success(`Capture started on port ${port}.`);
     openStream();
   }
 
@@ -596,6 +603,7 @@ export default function BrowserCapturePanel() {
       try { await (window as any).electronAPI.cdpKillChrome(); } catch (_) {}
     }
     dispatch({ type: 'SET_CAPTURE_RUNNING', payload: false });
+    toast.info('Capture stopped.');
   }
 
   // ── Selection ─────────────────────────────────────────────────────────────
