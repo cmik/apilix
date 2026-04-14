@@ -112,7 +112,7 @@ function itemToEditState(item: CollectionItem) {
     method: req.method?.toUpperCase() ?? 'GET',
     url: urlRaw,
     headers: headerArr.map(h => ({ ...h })),
-    queryParams: extractQueryParams(req.url),
+    queryParams: extractQueryParams(urlRaw),
     pathParams: detectedNames.map(k => ({ key: k, value: storedMap.get(k) ?? '' })),
     bodyMode: req.body?.mode ?? 'none',
     bodyRaw: req.body?.raw ?? '',
