@@ -815,4 +815,4 @@ function flattenItemsWithScripts(items, collectionEvents) {
   return walk(items, colPrereq ? [colPrereq] : [], colTest ? [colTest] : []);
 }
 
-module.exports = { executeRequest, flattenItems, flattenItemsWithScripts, setExecutorConfig };
+module.exports = { executeRequest, flattenItems, flattenItemsWithScripts, setExecutorConfig, resolveVariables, buildBody, buildProxyOption, applyAuth };

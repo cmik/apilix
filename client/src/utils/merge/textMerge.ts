@@ -250,14 +250,10 @@ function buildDiffHunks(base: string[], changed: string[]): DiffHunkRaw[] {
 
     // Start of a differing region
     const bStart = bi;
-    const cStart = ci;
     const replacementLines: string[] = [];
 
     // Consume until we hit the next LCS match
-    while (
-      bi < base.length ||
-      ci < changed.length
-    ) {
+    while (bi < base.length || ci < changed.length) {
       if (
         li < lcs.length &&
         bi === lcs[li][0] &&
@@ -265,20 +261,19 @@ function buildDiffHunks(base: string[], changed: string[]): DiffHunkRaw[] {
       ) {
         break;
       }
-      // Removed from base
-      if (li >= lcs.length || bi < (lcs[li]?.[0] ?? Infinity)) {
+      const nextLcsBase = lcs[li]?.[0] ?? Infinity;
+      const nextLcsChanged = lcs[li]?.[1] ?? Infinity;
+      // Advance base cursor if base has a deletion before the next LCS point
+      if (bi < base.length && bi < nextLcsBase) {
         bi++;
-      } else {
+      } else if (ci < changed.length && ci < nextLcsChanged) {
         // Added in changed
         replacementLines.push(changed[ci]);
         ci++;
+      } else {
+        // Both cursors are past their respective LCS positions — no more diffs
+        break;
       }
-    }
-
-    // Collect added lines not yet consumed
-    while (ci < changed.length && (li >= lcs.length || ci < lcs[li][1])) {
-      replacementLines.push(changed[ci]);
-      ci++;
     }
 
     hunks.push({ baseStart: bStart, baseEnd: bi, lines: replacementLines });
