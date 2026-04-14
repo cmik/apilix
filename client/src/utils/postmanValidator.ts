@@ -20,6 +20,10 @@ export interface PostmanValidationResult {
 const V20_MARKERS = ['v2.0', '2.0.0', '#2.0'];
 const V21_MARKERS = ['v2.1', '2.1.0'];
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function detectVersion(json: Record<string, unknown>): PostmanVersion {
   const info = json.info as Record<string, string> | undefined;
   const schemaUrl: string = info?.schema ?? info?.['_postman_schema'] ?? '';
@@ -55,8 +59,15 @@ function humanise(err: Ajv.ErrorObject): string {
 }
 
 export function validatePostmanCollection(json: unknown): PostmanValidationResult {
-  const obj = json as Record<string, unknown>;
-  const version = detectVersion(obj);
+  if (!isObjectRecord(json)) {
+    return {
+      version: '2.1',
+      valid: false,
+      errors: ['Postman collection must be a non-null JSON object.'],
+    };
+  }
+
+  const version = detectVersion(json);
   const validate = getValidator(version);
   const valid = validate(json) as boolean;
 
