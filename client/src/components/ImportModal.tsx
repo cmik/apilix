@@ -322,6 +322,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
       return;
     }
 
+    let shouldClose = false;
     setOpenApiLoading(true);
     try {
       const response = await fetch(openApiUrl);
@@ -355,12 +356,16 @@ export default function ImportModal({ onClose }: ImportModalProps) {
       const total = items.reduce((sum, i) => sum + (i.item ? i.item.length : 1), 0);
       toast.success(`Collection "${collectionName}" with ${total} request(s) imported!`);
       setOpenApiUrl('');
-      onClose();
+      shouldClose = true;
     } catch (e) {
       const msg = `Failed to import from URL: ${(e as Error).message}`;
       setOpenApiError(msg); toast.error(msg);
     } finally {
       setOpenApiLoading(false);
+    }
+
+    if (shouldClose) {
+      onClose();
     }
   }
 
