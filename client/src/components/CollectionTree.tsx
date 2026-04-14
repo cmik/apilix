@@ -774,10 +774,8 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
 
   const menuItems: MenuItem[] = [
     { label: 'View settings', icon: '⚙️', onClick: () => setShowSettings(true) },
-    { label: 'Export', icon: '⬇️', onClick: handleExport },
-    { label: 'Export as HURL', icon: '⬇️', onClick: handleExportHurl },
-    { label: 'Add folder', icon: '📁', onClick: handleAddFolder },
     { label: 'Add request', icon: '➕', onClick: handleAddRequest },
+    { label: 'Add folder', icon: '📁', onClick: handleAddFolder },
     {
       label: 'Execute in Runner',
       icon: '▶',
@@ -788,6 +786,8 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
       },
     },
     { label: 'Add to Mock Server', icon: '🎭', onClick: handleSendCollectionToMock },
+    { label: 'Export', icon: '⬇️', onClick: handleExport },
+    { label: 'Export as HURL', icon: '⬇️', onClick: handleExportHurl },
     {
       label: 'Rename',
       icon: '✏️',
