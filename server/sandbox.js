@@ -668,9 +668,37 @@ function buildResponse(r) {
     text() { return r.body; },
     xml() {
       try {
-        const parser = new DOMParser({ errorHandler: { warning() {}, error() {}, fatalError() {} } });
+        // text/html avoids an @xmldom/xmldom v0.9 + xpath v0.0.34 incompatibility
+        // that causes "Context node not found when determining document root"
+        const parser = new DOMParser({ onError: () => {} });
         return parser.parseFromString(r.body || '', 'text/xml');
       } catch (_) { return null; }
+    },
+    /** One-liner: parse response body as XML and return the text value of the first XPath match. */
+    xmlPath(expr) {
+      try {
+        const parser = new DOMParser({ onError: () => {} });
+        const doc = parser.parseFromString(r.body || '', 'text/xml');
+        const result = xpathLib.select(expr, doc);
+        if (typeof result === 'string' || typeof result === 'number' || typeof result === 'boolean') return result;
+        if (Array.isArray(result) && result.length > 0) {
+          const val = result[0];
+          return val.textContent !== undefined ? val.textContent : (val.nodeValue !== undefined ? val.nodeValue : String(val));
+        }
+        return null;
+      } catch (_) { return null; }
+    },
+    /** One-liner: parse response body as XML and return text values of all XPath matches. */
+    xmlPathAll(expr) {
+      try {
+        const parser = new DOMParser({ onError: () => {} });
+        const doc = parser.parseFromString(r.body || '', 'text/xml');
+        const result = xpathLib.select(expr, doc);
+        if (!Array.isArray(result)) return result != null ? [String(result)] : [];
+        return result.map(val =>
+          val.textContent !== undefined ? val.textContent : (val.nodeValue !== undefined ? val.nodeValue : String(val))
+        );
+      } catch (_) { return []; }
     },
     headers: {
       get(name) {
@@ -784,8 +812,8 @@ async function runScript(code, response, variables, deps) {
     fetch: undefined,
     _xp(html, expr) {
       try {
-        const parser = new DOMParser({ errorHandler: { warning() {}, error() {}, fatalError() {} } });
-        const doc = parser.parseFromString(html, 'text/html');
+        const parser = new DOMParser({ onError: () => {} });
+        const doc = parser.parseFromString(html, 'text/xml');
         const result = xpathLib.select(expr, doc);
         if (typeof result === 'string' || typeof result === 'number' || typeof result === 'boolean') return result;
         if (Array.isArray(result)) {
