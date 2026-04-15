@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { marked } from 'marked';
 import type { CollectionItem, CollectionRequest, CollectionHeader, CollectionQueryParam, OAuth2Config, CollectionBody } from '../types';
-import { useApp } from '../store';
+import { useApp, generateId } from '../store';
 import { executeRequest, API_BASE } from '../api';
 import { getUrlDisplay, buildVarMap, resolveVariables } from '../utils/variableResolver';
 import { updateItemById, renameItemById, resolveInheritedAuth, resolveInheritedAuthWithSource, findItemInTree, flattenRequestNames, flattenRequestItems, collectAncestorScripts } from '../utils/treeHelpers';
@@ -676,6 +676,9 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
   const [showParentSettings, setShowParentSettings] = useState(false);
   const [showSaveToCollection, setShowSaveToCollection] = useState(false);
   const [saveTargetCollectionId, setSaveTargetCollectionId] = useState<string>('');
+  const [showHistorySaveModal, setShowHistorySaveModal] = useState(false);
+  const [historySaveMode, setHistorySaveMode] = useState<'overwrite' | 'new'>('overwrite');
+  const [historySaveCollectionId, setHistorySaveCollectionId] = useState<string>('');
   const [importText, setImportText] = useState('');
   const [importMode, setImportMode] = useState<'curl' | 'raw' | 'hurl'>('curl');
   const [importError, setImportError] = useState('');
@@ -1067,6 +1070,26 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
         },
       });
 
+      // History log (only the main request, not child requests)
+      if (activeReq) {
+        dispatch({
+          type: 'ADD_REQUEST_HISTORY',
+          payload: {
+            id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+            timestamp: logBase,
+            method: edit.method,
+            url: result.resolvedUrl ?? resolveVariables(edit.url, allVars),
+            collectionId: activeReq.collectionId,
+            itemId: activeReq.item.id ?? '',
+            requestSnapshot: buildUpdatedRequestItem(activeTab.item, edit),
+            statusCode: result.status ?? null,
+            statusText: result.statusText ?? '',
+            responseTime: result.responseTime ?? 0,
+            error: result.error,
+          },
+        });
+      }
+
       // 3. Test children (ran after main) — dispatch last so they appear above it
       if (result.testChildRequests && result.testChildRequests.length > 0) {
         result.testChildRequests.forEach((child) => {
@@ -1132,6 +1155,24 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
           response: errPayload,
         },
       });
+      if (activeReq) {
+        dispatch({
+          type: 'ADD_REQUEST_HISTORY',
+          payload: {
+            id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+            timestamp: Date.now(),
+            method: edit.method,
+            url: resolveVariables(edit.url, allVars),
+            collectionId: activeReq.collectionId,
+            itemId: activeReq.item.id ?? '',
+            requestSnapshot: buildUpdatedRequestItem(activeTab.item, edit),
+            statusCode: null,
+            statusText: 'Error',
+            responseTime: 0,
+            error: (err as Error).message,
+          },
+        });
+      }
     }
     dispatch({ type: 'SET_TAB_LOADING', payload: { tabId, loading: false } });
   }
@@ -1210,6 +1251,22 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
           response: result,
         },
       });
+      dispatch({
+        type: 'ADD_REQUEST_HISTORY',
+        payload: {
+          id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+          timestamp: Date.now(),
+          method: edit.method,
+          url: result.resolvedUrl ?? mockBase,
+          collectionId: activeReq.collectionId,
+          itemId: activeReq.item.id ?? '',
+          requestSnapshot: buildUpdatedRequestItem(activeTab.item, edit),
+          statusCode: result.status ?? null,
+          statusText: result.statusText ?? '',
+          responseTime: result.responseTime ?? 0,
+          error: result.error,
+        },
+      });
       if (result.updatedEnvironment) dispatch({ type: 'UPDATE_ACTIVE_ENV_VARS', payload: result.updatedEnvironment });
       if (result.updatedCollectionVariables) dispatch({ type: 'UPDATE_COLLECTION_VARS', payload: { collectionId: activeReq.collectionId, vars: result.updatedCollectionVariables } });
       if (result.updatedGlobals) dispatch({ type: 'UPDATE_GLOBAL_VARS', payload: result.updatedGlobals });
@@ -1227,6 +1284,22 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
           requestHeaders: edit.headers.map(h => ({ ...h, value: resolveVariables(h.value, allVars) })),
           requestBody: edit.bodyMode === 'raw' ? resolveVariables(edit.bodyRaw, allVars) : undefined,
           response: errPayload,
+        },
+      });
+      dispatch({
+        type: 'ADD_REQUEST_HISTORY',
+        payload: {
+          id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+          timestamp: Date.now(),
+          method: edit.method,
+          url: mockBase,
+          collectionId: activeReq.collectionId,
+          itemId: activeReq.item.id ?? '',
+          requestSnapshot: buildUpdatedRequestItem(activeTab.item, edit),
+          statusCode: null,
+          statusText: 'Error',
+          responseTime: 0,
+          error: (err as Error).message,
         },
       });
     }
@@ -1345,6 +1418,13 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
 
   function handleSave() {
     if (!activeTab || !edit) return;
+    // History snapshot tab — ask the user before saving
+    if (activeTab.fromHistory) {
+      setHistorySaveMode('overwrite');
+      setHistorySaveCollectionId(state.collections[0]?._id ?? '');
+      setShowHistorySaveModal(true);
+      return;
+    }
     const col = state.collections.find(c => c._id === activeTab.collectionId);
     // Orphaned tab — collection deleted, or item deleted from within the collection
     const itemStillExists = col && activeTab.item.id ? findItemInTree(col.item, activeTab.item.id) !== null : false;
@@ -2064,6 +2144,109 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
                     cacheRef.current.set(activeTab.id, { edit, dirty: false, activeRequestTab });
                     setDirty(false);
                     setShowSaveToCollection(false);
+                  }}
+                  className="px-4 py-1.5 bg-orange-500 hover:bg-orange-600 text-white text-xs rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* History snapshot save modal */}
+      {showHistorySaveModal && activeTab && edit && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          onClick={e => { if (e.target === e.currentTarget) setShowHistorySaveModal(false); }}
+        >
+          <div className="bg-slate-800 border border-slate-600 rounded-lg shadow-2xl w-full max-w-sm mx-4">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
+              <h3 className="text-sm font-semibold text-slate-200">Save History Snapshot</h3>
+              <button onClick={() => setShowHistorySaveModal(false)} className="text-slate-500 hover:text-slate-300 text-xl leading-none">×</button>
+            </div>
+            <div className="px-4 py-4 flex flex-col gap-3">
+              <p className="text-xs text-slate-400">This request was opened from history. Choose how to save it:</p>
+              <div className="flex flex-col gap-2">
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="historySaveMode"
+                    value="overwrite"
+                    checked={historySaveMode === 'overwrite'}
+                    onChange={() => setHistorySaveMode('overwrite')}
+                    className="mt-0.5 accent-orange-500"
+                  />
+                  <div>
+                    <span className="text-xs text-slate-200 font-medium">Overwrite original request</span>
+                    <p className="text-[11px] text-slate-500 mt-0.5">Replace the request in its original collection with these changes.</p>
+                  </div>
+                </label>
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="historySaveMode"
+                    value="new"
+                    checked={historySaveMode === 'new'}
+                    onChange={() => setHistorySaveMode('new')}
+                    className="mt-0.5 accent-orange-500"
+                  />
+                  <div>
+                    <span className="text-xs text-slate-200 font-medium">Save as new request</span>
+                    <p className="text-[11px] text-slate-500 mt-0.5">Add a copy to a collection without touching the original.</p>
+                  </div>
+                </label>
+              </div>
+              {historySaveMode === 'new' && (
+                state.collections.length === 0 ? (
+                  <p className="text-xs text-orange-400">No collections available. Please create a collection first.</p>
+                ) : (
+                  <select
+                    value={historySaveCollectionId}
+                    onChange={e => setHistorySaveCollectionId(e.target.value)}
+                    className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-orange-500"
+                  >
+                    {state.collections.map(c => (
+                      <option key={c._id} value={c._id}>{c.info.name}</option>
+                    ))}
+                  </select>
+                )
+              )}
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  onClick={() => setShowHistorySaveModal(false)}
+                  className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  disabled={historySaveMode === 'new' && !historySaveCollectionId}
+                  onClick={() => {
+                    if (!activeTab || !edit) return;
+                    if (historySaveMode === 'overwrite') {
+                      const col = state.collections.find(c => c._id === activeTab.collectionId);
+                      if (col && activeTab.item.id) {
+                        const updatedItem = buildUpdatedRequestItem(activeTab.item, edit);
+                        dispatch({ type: 'UPDATE_COLLECTION', payload: { ...col, item: updateItemById(col.item, activeTab.item.id, updatedItem) } });
+                        dispatch({ type: 'UPDATE_TAB_ITEM', payload: { tabId: activeTab.id, item: updatedItem } });
+                        dispatch({ type: 'CLEAR_TAB_HISTORY_FLAG', payload: activeTab.id });
+                        cacheRef.current.set(activeTab.id, { edit, dirty: false, activeRequestTab });
+                        setDirty(false);
+                        emitDirtyChange();
+                      }
+                    } else {
+                      const targetCol = state.collections.find(c => c._id === historySaveCollectionId);
+                      if (!targetCol) return;
+                      const newItem: CollectionItem = { ...buildUpdatedRequestItem(activeTab.item, edit), id: generateId() };
+                      dispatch({ type: 'UPDATE_COLLECTION', payload: { ...targetCol, item: [...targetCol.item, newItem] } });
+                      dispatch({ type: 'UPDATE_TAB', payload: { tabId: activeTab.id, collectionId: historySaveCollectionId, item: newItem } });
+                      dispatch({ type: 'CLEAR_TAB_HISTORY_FLAG', payload: activeTab.id });
+                      cacheRef.current.set(activeTab.id, { edit, dirty: false, activeRequestTab });
+                      setDirty(false);
+                      emitDirtyChange();
+                    }
+                    setShowHistorySaveModal(false);
                   }}
                   className="px-4 py-1.5 bg-orange-500 hover:bg-orange-600 text-white text-xs rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >

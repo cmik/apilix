@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useReducer, useRef, useState, type ReactNode } from 'react';
-import type { AppState, AppAction, AppSettings, AppCollection, AppEnvironment, CollectionItem, RequestTab, CookieJar, Cookie, MockRoute, MockCollection, Workspace, WorkspaceData } from './types';
+import type { AppState, AppAction, AppSettings, AppCollection, AppEnvironment, CollectionItem, RequestTab, CookieJar, Cookie, MockRoute, MockCollection, Workspace, WorkspaceData, HistoryRequest } from './types';
 import * as StorageDriver from './utils/storageDriver';
 import * as SnapshotEngine from './utils/snapshotEngine';
 import { API_BASE } from './api';
@@ -44,7 +44,7 @@ function loadPersisted(): PersistedState | null {
   }
 }
 
-const initialState: AppState = {
+export const initialState: AppState = {
   // ── Workspace ────────────────────────────────────────────────────────────
   workspaces: [],
   activeWorkspaceId: '',
@@ -75,6 +75,7 @@ const initialState: AppState = {
   captureEntries: [],
   captureRunning: false,
   captureGeneration: 0,
+  requestHistory: [],
   captureViewState: {
     search: '',
     filterDomain: '',
@@ -98,7 +99,7 @@ const initialState: AppState = {
   },
 };
 
-function appReducer(state: AppState, action: AppAction): AppState {
+export function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case 'ADD_COLLECTION':
       return { ...state, collections: [...state.collections, { ...action.payload, item: ensureIds(action.payload.item) }] };
@@ -177,6 +178,26 @@ function appReducer(state: AppState, action: AppAction): AppState {
         item,
         response: null,
         isLoading: false,
+      };
+      return {
+        ...state,
+        tabs: [...state.tabs, newTab],
+        activeTabId: newTab.id,
+        activeRequest: { collectionId, item },
+        response: null,
+        isLoading: false,
+      };
+    }
+
+    case 'OPEN_HISTORY_SNAPSHOT': {
+      const { collectionId, item } = action.payload;
+      const newTab: RequestTab = {
+        id: generateId(),
+        collectionId,
+        item,
+        response: null,
+        isLoading: false,
+        fromHistory: true,
       };
       return {
         ...state,
@@ -466,6 +487,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
         isRunning: false,
         view: 'request',
         mockServerRunning: false,
+        requestHistory: [],
       };
 
     case 'SWITCH_WORKSPACE': {
@@ -495,6 +517,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
         isRunning: false,
         view: 'request',
         mockServerRunning: false,
+        requestHistory: [],
       };
     }
 
@@ -548,6 +571,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
         isRunning: false,
         view: 'request',
         mockServerRunning: false,
+        requestHistory: [],
       };
     }
 
@@ -618,6 +642,25 @@ function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'UPDATE_SETTINGS':
       return { ...state, settings: { ...state.settings, ...action.payload } };
+
+    case 'ADD_REQUEST_HISTORY':
+      return {
+        ...state,
+        requestHistory: [action.payload, ...state.requestHistory].slice(0, 200),
+      };
+
+    case 'CLEAR_REQUEST_HISTORY':
+      return { ...state, requestHistory: [] };
+
+    case 'SET_REQUEST_HISTORY':
+      return { ...state, requestHistory: action.payload };
+
+    case 'CLEAR_TAB_HISTORY_FLAG': {
+      const updatedTabs = state.tabs.map(t =>
+        t.id === action.payload ? { ...t, fromHistory: false } : t
+      );
+      return { ...state, tabs: updatedTabs };
+    }
 
     default:
       return state;
@@ -749,7 +792,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.collections, state.environments, state.activeEnvironmentId, state.collectionVariables, state.globalVariables, state.cookieJar, state.mockCollections, state.mockRoutes, state.mockPort, state.workspaces, state.activeWorkspaceId, state.storageReady]);
+  // ── Request history: load on workspace change ─────────────────────────────
+  useEffect(() => {
+    if (!state.storageReady || !state.activeWorkspaceId) return;
+    StorageDriver.readRequestHistory(state.activeWorkspaceId).then(entries => {
+      dispatch({ type: 'SET_REQUEST_HISTORY', payload: entries ?? [] });
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.activeWorkspaceId, state.storageReady]);
 
+  // ── Request history: debounced persistence ──────────────────────────────────
+  const historyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!state.storageReady || !state.activeWorkspaceId) return;
+    if (historyTimerRef.current) clearTimeout(historyTimerRef.current);
+    historyTimerRef.current = setTimeout(() => {
+      StorageDriver.writeRequestHistory(state.activeWorkspaceId, state.requestHistory);
+    }, 500);
+    return () => {
+      if (historyTimerRef.current) clearTimeout(historyTimerRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.requestHistory, state.activeWorkspaceId, state.storageReady]);
   // ── Debounced settings persistence ───────────────────────────────────────
   const settingsSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {

@@ -6,6 +6,7 @@ import WorkspaceSwitcher from './WorkspaceSwitcher';
 const ImportModal = lazy(() => import('./ImportModal'));
 const ExportModal = lazy(() => import('./ExportModal'));
 const WorkspaceManagerModal = lazy(() => import('./WorkspaceManagerModal'));
+const HistoryPanel = lazy(() => import('./HistoryPanel'));
 
 export default function Sidebar() {
   const { state, dispatch } = useApp(); // dispatch used by collection actions
@@ -29,6 +30,13 @@ export default function Sidebar() {
           <WorkspaceManagerModal onClose={() => setManageOpen(false)} />
         </Suspense>
       )}
+
+      {state.view === 'history' ? (
+        <Suspense fallback={null}>
+          <HistoryPanel />
+        </Suspense>
+      ) : (
+        <>
       {/* Collections toolbar */}
       <div className="px-3 py-2 border-b border-slate-700 flex items-center shrink-0">
         <button
@@ -127,6 +135,8 @@ export default function Sidebar() {
         <Suspense fallback={null}>
           <ExportModal onClose={() => setShowExport(false)} />
         </Suspense>
+      )}
+        </>
       )}
     </div>
   );

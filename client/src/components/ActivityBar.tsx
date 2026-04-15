@@ -4,11 +4,12 @@ import apilixLogo from '../assets/apilix.svg';
 
 const WorkspaceManagerModal = lazy(() => import('./WorkspaceManagerModal'));
 
-type View = 'request' | 'runner' | 'environments' | 'mock' | 'capture';
+type View = 'request' | 'runner' | 'environments' | 'mock' | 'capture' | 'history';
 
 const NAV_ITEMS: { key: View; emoji: string; label: string }[] = [
   { key: 'request',      emoji: '⚡', label: 'Requests' },
   { key: 'environments', emoji: '🌍', label: 'Envs'     },
+  { key: 'history',      emoji: '🕐', label: 'History'  },
   { key: 'runner',       emoji: '▶',  label: 'Runner'   },
   { key: 'mock',         emoji: '🎭', label: 'Mock'     },
   { key: 'capture',      emoji: '📡', label: 'Capture'  },
