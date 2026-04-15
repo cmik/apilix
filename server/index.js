@@ -6,7 +6,8 @@ const multer = require('multer');
 const vm = require('vm');
 const { parse: parseCsv } = require('csv-parse/sync');
 const axios = require('axios');
-const { executeRequest, flattenItemsWithScripts, setExecutorConfig } = require('./executor');
+const { executeRequest, flattenItemsWithScripts, setExecutorConfig, buildProxyOption } = require('./executor');
+const { makeHttpsAgent } = require('./tlsUtils');
 const { refreshOAuth2Token, exchangeAuthorizationCodeForToken } = require('./oauth');
 
 const app = express();
@@ -119,7 +120,18 @@ app.get('/api/wsdl', async (req, res) => {
     return res.status(400).json({ error: 'URL must use http or https scheme' });
   }
   try {
-    const response = await axios.get(rawUrl, { responseType: 'text', timeout: 10000 });
+    const rejectUnauthorized = serverConfig.sslVerification === true;
+    const proxyUrl = serverConfig.proxyEnabled
+      ? (parsed.protocol === 'https:' ? (serverConfig.httpsProxy || serverConfig.httpProxy) : serverConfig.httpProxy)
+      : null;
+    const proxy = buildProxyOption(proxyUrl, rawUrl);
+    const response = await axios.get(rawUrl, {
+      responseType: 'text',
+      timeout: serverConfig.requestTimeout || 10000,
+      httpsAgent: makeHttpsAgent(rejectUnauthorized),
+      maxRedirects: serverConfig.followRedirects ? 10 : 0,
+      ...(proxy ? { proxy } : { proxy: false }),
+    });
     res.set('Content-Type', 'application/xml').send(response.data);
   } catch (err) {
     const status = err.response?.status ?? 502;
