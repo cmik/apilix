@@ -338,7 +338,15 @@ apx.response.code         // status code
 apx.response.responseTime // ms
 apx.response.json()       // parsed body
 apx.response.text()       // raw body
+apx.response.xml()        // parsed DOM document (for XML/SOAP responses)
+apx.response.xmlPath("//token")    // first XPath match text, or null
+apx.response.xmlPathAll("//item")  // array of all XPath match texts
 apx.response.headers.get("Content-Type")
+
+// xpath global — full XPath library
+const doc   = apx.response.xml();
+const token = xpath.value("//token", doc);
+apx.environment.set("authToken", token);
 
 // Request chaining — make additional HTTP calls from scripts
 apx.sendRequest("https://api.example.com/token", (err, res) => {

@@ -188,3 +188,105 @@ test('apx.variables.set() on a new key does NOT appear in updatedEnvMutations', 
   assert.equal(result.updatedVariables['genericVar'], '42');
   assert.equal(result.updatedEnvMutations['genericVar'], undefined);
 });
+
+// ─── XML response parsing ─────────────────────────────────────────────────────
+
+const xmlBody = `<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <tokenResponse>
+      <token>abc123</token>
+      <expiry>3600</expiry>
+    </tokenResponse>
+  </soap:Body>
+</soap:Envelope>`;
+
+const xmlResponse = {
+  code: 200,
+  status: 'OK',
+  responseTime: 30,
+  headers: { 'content-type': 'text/xml' },
+  body: xmlBody,
+  jsonData: null,
+};
+
+async function runXml(code) {
+  return runScript(code, xmlResponse, {}, { context: {} });
+}
+
+test('apx.response.xml() returns a DOM document (not null)', async () => {
+  const result = await runXml(`
+    const doc = apx.response.xml();
+    apx.test('xml() returns a document', () => {
+      apx.expect(doc != null).to.be.true;
+    });
+    apx.test('document has nodeType 9', () => {
+      apx.expect(doc.nodeType).to.equal(9);
+    });
+  `);
+
+  assert.equal(result.tests[0].passed, true, result.tests[0].error);
+  assert.equal(result.tests[1].passed, true, result.tests[1].error);
+});
+
+test('apx.response.xml() + xpath.value() extracts text from XML body', async () => {
+  const result = await runXml(`
+    const doc = apx.response.xml();
+    const token = xpath.value('//token', doc);
+    apx.test('token extracted', () => {
+      apx.expect(token).to.equal('abc123');
+    });
+  `);
+
+  assert.equal(result.tests[0].passed, true, result.tests[0].error);
+});
+
+test('apx.response.xmlPath() extracts text with one-liner', async () => {
+  const result = await runXml(`
+    const token = apx.response.xmlPath('//token');
+    apx.test('xmlPath returns token', () => {
+      apx.expect(token).to.equal('abc123');
+    });
+  `);
+
+  assert.equal(result.tests[0].passed, true, result.tests[0].error);
+});
+
+test('apx.response.xmlPath() returns null when expression matches nothing', async () => {
+  const result = await runXml(`
+    const missing = apx.response.xmlPath('//doesNotExist');
+    apx.test('xmlPath returns null for no match', () => {
+      apx.expect(missing).to.be.null;
+    });
+  `);
+
+  assert.equal(result.tests[0].passed, true, result.tests[0].error);
+});
+
+test('apx.response.xmlPathAll() returns array of all matching texts', async () => {
+  const result = await runXml(`
+    const vals = apx.response.xmlPathAll('//*[local-name()="token" or local-name()="expiry"]');
+    apx.test('xmlPathAll finds 2 nodes', () => {
+      apx.expect(vals.length).to.equal(2);
+    });
+    apx.test('first value is token text', () => {
+      apx.expect(vals[0]).to.equal('abc123');
+    });
+  `);
+
+  assert.equal(result.tests[0].passed, true, result.tests[0].error);
+  assert.equal(result.tests[1].passed, true, result.tests[1].error);
+});
+
+test('apx.response.xml() + xpath.value() can store to environment', async () => {
+  const result = await runXml(`
+    const token = apx.response.xmlPath('//token');
+    apx.environment.set('token', token);
+    apx.test('token set in environment', () => {
+      apx.expect(apx.environment.get('token')).to.equal('abc123');
+    });
+  `);
+
+  assert.equal(result.tests[0].passed, true, result.tests[0].error);
+  assert.equal(result.updatedEnvMutations['token'], 'abc123');
+});

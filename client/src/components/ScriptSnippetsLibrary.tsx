@@ -637,6 +637,44 @@ if (isV2) {
       },
     ],
   },
+  {
+    label: 'XML / SOAP Responses',
+    snippets: [
+      {
+        id: 'xml-parse',
+        name: 'Parse XML response',
+        description: 'Parse the response body as an XML DOM document and run an XPath query',
+        code: `apx.test("XML token is present", () => {
+  const doc = apx.response.xml();
+  apx.expect(doc != null).to.be.true;
+  const token = xpath.value('//token', doc);
+  apx.expect(token).to.be.a('string').and.not.empty;
+  apx.environment.set('authToken', token);
+});`,
+      },
+      {
+        id: 'xml-path-oneliner',
+        name: 'Extract XML value (one-liner)',
+        description: 'Shorthand: parse XML and return the first XPath match as a string, or null',
+        code: `// Returns the text content of the first matching node, or null
+const token = apx.response.xmlPath('//token');
+apx.expect(token).to.not.be.null;
+apx.environment.set('authToken', token);`,
+      },
+      {
+        id: 'xml-path-all',
+        name: 'Extract all XML values',
+        description: 'Return the text content of every XPath match as an array of strings',
+        code: `// Returns an array of text values for every matching node
+const items = apx.response.xmlPathAll('//item/id');
+apx.test("At least one item returned", () => {
+  apx.expect(items.length).to.be.above(0);
+});
+// Store the first item id
+apx.environment.set('firstItemId', items[0]);`,
+      },
+    ],
+  },
 ];
 
 const MOCK_CATEGORIES: SnippetCategory[] = [

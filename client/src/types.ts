@@ -50,6 +50,7 @@ export interface CollectionBody {
   urlencoded?: Array<{ key: string; value: string; description?: string; disabled?: boolean }>;
   formdata?: Array<{ key: string; value: string; type?: string; description?: string; disabled?: boolean }>;
   graphql?: { query: string; variables?: string };
+  soap?: { action: string; version: '1.1' | '1.2'; wsdlUrl?: string };
   options?: {
     raw?: { language?: 'json' | 'javascript' | 'html' | 'xml' | 'text' };
   };

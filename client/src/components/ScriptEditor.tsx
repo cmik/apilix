@@ -29,14 +29,17 @@ const REQUEST_HEADERS: Completion[] = [
 ];
 
 const RESPONSE: Completion[] = [
-  { label: 'code',         insert: 'code',         detail: 'number' },
-  { label: 'status',       insert: 'status',       detail: 'string' },
-  { label: 'responseTime', insert: 'responseTime', detail: 'number' },
-  { label: 'json()',       insert: 'json()',        detail: 'any'    },
-  { label: 'text()',       insert: 'text()',        detail: 'string' },
-  { label: 'headers',      insert: 'headers',      detail: 'object' },
-  { label: 'size',         insert: 'size',         detail: 'number' },
-  { label: 'to',           insert: 'to',           detail: 'assertion helper' },
+  { label: 'code',             insert: 'code',          detail: 'number'           },
+  { label: 'status',           insert: 'status',        detail: 'string'           },
+  { label: 'responseTime',     insert: 'responseTime',  detail: 'number'           },
+  { label: 'json()',           insert: 'json()',         detail: 'any'              },
+  { label: 'text()',           insert: 'text()',         detail: 'string'           },
+  { label: 'xml()',            insert: 'xml()',          detail: 'Document'         },
+  { label: 'xmlPath(expr)',    insert: "xmlPath('",      detail: 'string | null'    },
+  { label: 'xmlPathAll(expr)', insert: "xmlPathAll('",   detail: 'string[]'         },
+  { label: 'headers',          insert: 'headers',        detail: 'object'           },
+  { label: 'size',             insert: 'size',           detail: 'number'           },
+  { label: 'to',               insert: 'to',             detail: 'assertion helper' },
 ];
 
 const RESPONSE_TO: Completion[] = [

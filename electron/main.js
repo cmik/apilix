@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, shell, ipcMain, dialog, safeStorage } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, dialog, safeStorage, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
@@ -323,6 +323,57 @@ async function waitAndLoadApp(port) {
   }
 }
 
+function buildAppMenu() {
+  const isMac = process.platform === 'darwin';
+  const template = [
+    // On macOS the first item is always the app menu
+    ...(isMac ? [{
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    }] : []),
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' },
+    {
+      label: 'Help',
+      submenu: [
+        {
+          label: 'Wiki',
+          click: () => shell.openExternal('https://github.com/cmik/apilix/wiki'),
+        },
+        {
+          label: 'Check for Update',
+          click: () => shell.openExternal('https://github.com/cmik/apilix/releases/latest'),
+        },
+        { type: 'separator' },
+        {
+          label: `About Apilix`,
+          click: () => {
+            dialog.showMessageBox(mainWindow, {
+              type: 'info',
+              title: 'About Apilix',
+              message: `Apilix v${app.getVersion()}`,
+              detail: 'Alternative Platform for Instant Live API eXecution\nhttps://github.com/cmik/apilix',
+              buttons: ['OK'],
+            });
+          },
+        },
+      ],
+    },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 app.whenReady().then(async () => {
   // In dev, keep port 3001 so Vite's proxy config stays valid.
   // In production, find a free port dynamically.
@@ -331,6 +382,7 @@ app.whenReady().then(async () => {
   writeLog('Using port ' + port);
   startServer(port);
   createWindow();
+  buildAppMenu();
   waitAndLoadApp(port);
 
   app.on('activate', () => {

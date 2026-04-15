@@ -706,7 +706,7 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme }:
       {/* Drag-to-resize handle */}
       <div
         onMouseDown={onHandleMouseDown}
-        className="h-1 shrink-0 cursor-row-resize bg-slate-700 hover:bg-orange-500 transition-colors"
+        className="h-0.5 shrink-0 cursor-row-resize bg-slate-700 hover:bg-orange-500 transition-colors"
         title="Drag to resize"
       />
 

@@ -314,6 +314,134 @@ function JsonNode({ data, name, depth, isLast, searchQuery }: JsonNodeProps) {
   return null;
 }
 
+// ── XML tree ────────────────────────────────────────────────────────────────
+
+interface XmlNodeProps {
+  node: Element | Text | Node;
+  depth: number;
+}
+
+function XmlNode({ node, depth }: XmlNodeProps) {
+  const [open, setOpen] = useState(true);
+  const paddingLeft = depth * 16;
+
+  if (node.nodeType === Node.TEXT_NODE) {
+    const text = node.textContent?.trim() ?? '';
+    if (!text) return null;
+    return (
+      <div style={{ paddingLeft }} className="leading-5 text-emerald-400 break-all">
+        {text}
+      </div>
+    );
+  }
+
+  if (node.nodeType !== Node.ELEMENT_NODE) return null;
+
+  const el = node as Element;
+  const tag = el.nodeName;
+  const attrs = Array.from(el.attributes);
+  const children = Array.from(el.childNodes).filter(n => {
+    if (n.nodeType === Node.TEXT_NODE) return (n.textContent?.trim() ?? '') !== '';
+    return n.nodeType === Node.ELEMENT_NODE;
+  });
+
+  const attrStr = attrs.map(a => (
+    <span key={a.name}>
+      {' '}
+      <span className="text-sky-300">{a.name}</span>
+      <span className="text-slate-500">="</span>
+      <span className="text-amber-300">{a.value}</span>
+      <span className="text-slate-500">"</span>
+    </span>
+  ));
+
+  if (children.length === 0) {
+    return (
+      <div style={{ paddingLeft }} className="leading-5">
+        <span className="text-slate-500">{'<'}</span>
+        <span className="text-rose-400">{tag}</span>
+        {attrStr}
+        <span className="text-slate-500">{'/>'}</span>
+      </div>
+    );
+  }
+
+  const isSingleText = children.length === 1 && children[0].nodeType === Node.TEXT_NODE;
+  if (isSingleText) {
+    return (
+      <div style={{ paddingLeft }} className="leading-5 break-all">
+        <span className="text-slate-500">{'<'}</span>
+        <span className="text-rose-400">{tag}</span>
+        {attrStr}
+        <span className="text-slate-500">{'>'}</span>
+        <span className="text-emerald-400">{children[0].textContent?.trim()}</span>
+        <span className="text-slate-500">{'</'}</span>
+        <span className="text-rose-400">{tag}</span>
+        <span className="text-slate-500">{'>'}</span>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div style={{ paddingLeft }} className="flex items-center leading-5">
+        <button
+          onClick={() => setOpen(o => !o)}
+          className="text-slate-500 hover:text-orange-400 w-3.5 shrink-0 text-center select-none"
+          style={{ fontSize: 10 }}
+        >
+          {open ? '▾' : '▸'}
+        </button>
+        <span>
+          <span className="text-slate-500">{'<'}</span>
+          <span className="text-rose-400">{tag}</span>
+          {attrStr}
+          <span className="text-slate-500">{'>'}</span>
+          {!open && (
+            <>
+              <span className="mx-1 text-slate-500 text-xs italic cursor-pointer hover:text-slate-300" onClick={() => setOpen(true)}>
+                {children.length} {children.length === 1 ? 'child' : 'children'}
+              </span>
+              <span className="text-slate-500">{'</'}</span>
+              <span className="text-rose-400">{tag}</span>
+              <span className="text-slate-500">{'>'}</span>
+            </>
+          )}
+        </span>
+      </div>
+      {open && (
+        <>
+          {children.map((child, i) => (
+            <XmlNode key={i} node={child} depth={depth + 1} />
+          ))}
+          <div style={{ paddingLeft: paddingLeft + 14 }} className="leading-5">
+            <span className="text-slate-500">{'</'}</span>
+            <span className="text-rose-400">{tag}</span>
+            <span className="text-slate-500">{'>'}</span>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+function XmlTreeView({ body }: { body: string }) {
+  const doc = new DOMParser().parseFromString(body, 'text/xml');
+  const parseErr = doc.querySelector('parsererror');
+  if (parseErr) {
+    return (
+      <pre className="p-3 text-sm font-mono text-slate-200 whitespace-pre-wrap break-all">
+        {body}
+      </pre>
+    );
+  }
+  return (
+    <div className="p-3 text-sm font-mono text-slate-200">
+      <XmlNode node={doc.documentElement} depth={0} />
+    </div>
+  );
+}
+
 function JsonTreeView({ body, searchQuery }: { body: string; searchQuery?: string }) {
   let parsed: unknown;
   try {
@@ -493,6 +621,12 @@ export default function ResponseViewer() {
   const isJson = useMemo(() => {
     if (!response) return false;
     try { JSON.parse(response.body); return true; } catch { return false; }
+  }, [response]);
+
+  const isXml = useMemo(() => {
+    if (!response) return false;
+    const ct = (response.headers?.['content-type'] ?? response.headers?.['Content-Type'] ?? '').toLowerCase();
+    return ct.includes('xml') || ct.includes('soap');
   }, [response]);
 
   const totalMatches = useMemo(() => {
@@ -766,6 +900,8 @@ export default function ResponseViewer() {
             <pre className="p-3 text-sm font-mono text-slate-200 whitespace-pre-wrap break-all">
               {searchQuery.trim() ? highlightText(response.body, searchQuery) : response.body}
             </pre>
+          ) : isXml ? (
+            <XmlTreeView body={response.body} />
           ) : (
             <JsonTreeView body={response.body} searchQuery={searchQuery.trim() ? searchQuery : undefined} />
           );
