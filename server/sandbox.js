@@ -666,6 +666,12 @@ function buildResponse(r) {
       return r.jsonData;
     },
     text() { return r.body; },
+    xml() {
+      try {
+        const parser = new DOMParser({ errorHandler: { warning() {}, error() {}, fatalError() {} } });
+        return parser.parseFromString(r.body || '', 'text/xml');
+      } catch (_) { return null; }
+    },
     headers: {
       get(name) {
         const key = Object.keys(r.headers || {}).find(k => k.toLowerCase() === name.toLowerCase());
@@ -789,6 +795,19 @@ async function runScript(code, response, variables, deps) {
         }
         return result;
       } catch (_) { return null; }
+    },
+    xpath: {
+      select(expr, doc) { return xpathLib.select(expr, doc); },
+      select1(expr, doc) { return xpathLib.select1(expr, doc); },
+      value(expr, doc) {
+        const result = xpathLib.select(expr, doc);
+        if (typeof result === 'string' || typeof result === 'number' || typeof result === 'boolean') return result;
+        if (Array.isArray(result) && result.length > 0) {
+          const val = result[0];
+          return val.textContent !== undefined ? val.textContent : (val.nodeValue !== undefined ? val.nodeValue : String(val));
+        }
+        return null;
+      },
     },
   };
 

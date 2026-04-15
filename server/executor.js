@@ -196,7 +196,17 @@ function buildBody(body, headers, vars) {
   switch (body.mode) {
     case 'raw': {
       const data = resolveVariables(body.raw || '', vars);
-      if (!headers['Content-Type'] && !headers['content-type']) {
+      if (body.soap) {
+        // SOAP request — set protocol-correct headers regardless of user-supplied CT
+        const { action, version } = body.soap;
+        if (version === '1.2') {
+          headers['Content-Type'] = `application/soap+xml; charset=utf-8${action ? `; action="${action}"` : ''}`;
+        } else {
+          // SOAP 1.1
+          headers['Content-Type'] = 'text/xml; charset=utf-8';
+          if (action) headers['SOAPAction'] = `"${action}"`;
+        }
+      } else if (!headers['Content-Type'] && !headers['content-type']) {
         const lang = body.options?.raw?.language;
         if (lang === 'json') headers['Content-Type'] = 'application/json';
         else if (lang === 'xml') headers['Content-Type'] = 'application/xml';

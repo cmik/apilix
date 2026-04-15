@@ -1,0 +1,83 @@
+/* One Dark–inspired Prism token colors for the CodeEditor overlay */
+
+.code-highlight .token.comment,
+.code-highlight .token.prolog,
+.code-highlight .token.doctype,
+.code-highlight .token.cdata {
+  color: #5c6370;
+  font-style: italic;
+}
+
+.code-highlight .token.punctuation {
+  color: #abb2bf;
+}
+
+/* JSON keys / XML tag names / GraphQL type names */
+.code-highlight .token.property,
+.code-highlight .token.tag,
+.code-highlight .token.constant,
+.code-highlight .token.symbol,
+.code-highlight .token.deleted {
+  color: #e06c75;
+}
+
+/* Numbers, booleans */
+.code-highlight .token.boolean,
+.code-highlight .token.number {
+  color: #d19a66;
+}
+
+/* null (alias: keyword in prism-json) */
+.code-highlight .token.null {
+  color: #56b6c2;
+}
+
+/* JSON string values / XML attr values / GraphQL strings */
+.code-highlight .token.selector,
+.code-highlight .token.attr-name,
+.code-highlight .token.string,
+.code-highlight .token.char,
+.code-highlight .token.builtin,
+.code-highlight .token.inserted {
+  color: #98c379;
+}
+
+/* XML attribute values are quoted strings, style attr-value separately */
+.code-highlight .token.attr-value {
+  color: #98c379;
+}
+
+.code-highlight .token.operator,
+.code-highlight .token.entity,
+.code-highlight .token.url {
+  color: #56b6c2;
+}
+
+/* GraphQL / JS keywords */
+.code-highlight .token.atrule,
+.code-highlight .token.keyword {
+  color: #c678dd;
+}
+
+/* Function / class names */
+.code-highlight .token.function,
+.code-highlight .token.class-name {
+  color: #61afef;
+}
+
+/* Regex, template literals, variables */
+.code-highlight .token.regex,
+.code-highlight .token.important,
+.code-highlight .token.variable {
+  color: #e5c07b;
+}
+
+/* XML/HTML namespace prefixes */
+.code-highlight .token.namespace {
+  opacity: 0.75;
+}
+
+/* Placeholder color — textarea text is transparent so we style it explicitly */
+.code-editor textarea::placeholder {
+  color: #475569;
+}

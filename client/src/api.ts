@@ -257,3 +257,11 @@ export async function graphqlIntrospect(
     cookies: {},
   });
 }
+
+export async function fetchWsdl(url: string): Promise<string> {
+  const response = await api.get<string>('/wsdl', {
+    params: { url },
+    responseType: 'text',
+  });
+  return response.data;
+}

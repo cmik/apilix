@@ -4,6 +4,8 @@ import { parseCurlCommand } from '../utils/curlUtils';
 import { parseHurlFile, HURL_METHOD_REGEX } from '../utils/hurlUtils';
 import { parseOpenApiSpec } from '../utils/openApiUtils';
 import { parseHarFile } from '../utils/harUtils';
+import { parseWsdlToCollection, isWsdlContent } from '../utils/wsdlUtils';
+import { fetchWsdl } from '../api';
 import { useToast } from './Toast';
 import type { CollectionItem, CollectionAuth, CollectionBody } from '../types';
 
@@ -21,7 +23,7 @@ function nameFromUrl(url: string): string {
   }
 }
 
-type PasteFormat = 'json' | 'curl' | 'hurl' | 'openapi' | 'har';
+type PasteFormat = 'json' | 'curl' | 'hurl' | 'openapi' | 'har' | 'wsdl';
 
 const PASTE_FORMAT_OPTIONS: Array<{ value: PasteFormat; label: string }> = [
   { value: 'json', label: 'Postman JSON' },
@@ -29,6 +31,7 @@ const PASTE_FORMAT_OPTIONS: Array<{ value: PasteFormat; label: string }> = [
   { value: 'hurl', label: 'HURL' },
   { value: 'openapi', label: 'OpenAPI' },
   { value: 'har', label: 'HAR' },
+  { value: 'wsdl', label: 'WSDL' },
 ];
 
 const PASTE_EXAMPLES: Record<PasteFormat, string> = {
@@ -58,6 +61,12 @@ paths:
       summary: List users
       tags: [Users]`,
   har: '{\n  "log": {\n    "entries": [\n      { "request": { "method": "GET", "url": "https://api.example.com/users" } }\n    ]\n  }\n}',
+  wsdl: `<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+             xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+             targetNamespace="http://example.com/service">
+  <!-- Paste WSDL here -->
+</definitions>`,
 };
 
 const PASTE_LABELS: Record<PasteFormat, string> = {
@@ -66,6 +75,7 @@ const PASTE_LABELS: Record<PasteFormat, string> = {
   hurl: 'Paste HURL content',
   openapi: 'Paste OpenAPI or Swagger spec',
   har: 'Paste HAR JSON',
+  wsdl: 'Paste WSDL XML',
 };
 
 export default function ImportModal({ onClose }: ImportModalProps) {
@@ -84,8 +94,35 @@ export default function ImportModal({ onClose }: ImportModalProps) {
     state.collections[0]?._id ?? ''
   );
 
-  async function parseAndImport(text: string, filename?: string) {
+  async function parseAndImport(text: string, filename?: string, sourceUrl?: string) {
     setError(null);
+
+    // Detect WSDL by filename or content (must come before JSON parsing)
+    if (isWsdlContent(text, filename)) {
+      try {
+        const { collectionName, items } = parseWsdlToCollection(text, sourceUrl);
+        const newColId = generateId();
+        dispatch({
+          type: 'ADD_COLLECTION',
+          payload: {
+            _id: newColId,
+            info: {
+              name: collectionName,
+              schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+            },
+            item: items,
+          },
+        });
+        const total = items.length;
+        toast.success(`Collection "${collectionName}" with ${total} operation(s) imported from WSDL!`);
+        onClose();
+      } catch (e) {
+        const msg = `WSDL parse error: ${(e as Error).message}`;
+        setError(msg); toast.error(msg);
+      }
+      return;
+    }
+
     // Detect OpenAPI / Swagger files by extension or content
     const isOpenApiFile =
       filename?.toLowerCase().endsWith('.yaml') ||
@@ -243,6 +280,11 @@ export default function ImportModal({ onClose }: ImportModalProps) {
     }
   }
 
+  function looksLikeWsdlUrl(url: string): boolean {
+    const lower = url.toLowerCase();
+    return lower.includes('?wsdl') || lower.includes('&wsdl') || lower.endsWith('.wsdl');
+  }
+
   async function handleUrlImport() {
     setUrlError(null);
     if (!urlInput.trim()) {
@@ -258,14 +300,20 @@ export default function ImportModal({ onClose }: ImportModalProps) {
     }
     setUrlLoading(true);
     try {
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      const text = await response.text();
+      let text: string;
       const filename = new URL(url).pathname.split('/').pop() || '';
+      if (looksLikeWsdlUrl(url)) {
+        // Route WSDL fetches through the server proxy to avoid CORS
+        text = await fetchWsdl(url);
+      } else {
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        text = await response.text();
+      }
       setUrlLoading(false);
-      await parseAndImport(text, filename);
+      await parseAndImport(text, filename, url);
     } catch (e) {
       setUrlLoading(false);
       const msg = `Failed to fetch: ${(e as Error).message}`;
@@ -414,6 +462,30 @@ export default function ImportModal({ onClose }: ImportModalProps) {
       return;
     }
 
+    if (pasteFormat === 'wsdl') {
+      try {
+        const { collectionName, items } = parseWsdlToCollection(pasteText);
+        const newColId = generateId();
+        dispatch({
+          type: 'ADD_COLLECTION',
+          payload: {
+            _id: newColId,
+            info: {
+              name: collectionName,
+              schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+            },
+            item: items,
+          },
+        });
+        const total = items.length;
+        toast.success(`Collection "${collectionName}" with ${total} operation(s) imported from WSDL!`);
+        onClose();
+      } catch (e) {
+        setPasteError(`WSDL parse error: ${(e as Error).message}`);
+      }
+      return;
+    }
+
     try {
       const items = parseHarFile(pasteText);
       if (items.length === 0) {
@@ -479,11 +551,11 @@ export default function ImportModal({ onClose }: ImportModalProps) {
             >
               <div className="text-4xl mb-3">📂</div>
               <p className="text-slate-300 font-medium">Click to browse or drag & drop</p>
-              <p className="text-slate-500 text-sm mt-1">Postman Collection v2.1 JSON, Environment JSON, OpenAPI/Swagger (.yaml/.yml/.json), HURL (.hurl), or HAR (.har)</p>
+              <p className="text-slate-500 text-sm mt-1">Postman Collection v2.1 JSON, Environment JSON, OpenAPI/Swagger (.yaml/.yml/.json), HURL (.hurl), HAR (.har), or WSDL (.wsdl)</p>
               <input
                 ref={fileRef}
                 type="file"
-                accept=".json,.hurl,.yaml,.yml,.har"
+                accept=".json,.hurl,.yaml,.yml,.har,.wsdl,.xml"
                 multiple
                 className="hidden"
                 onChange={e => handleFiles(e.target.files)}
@@ -494,7 +566,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
           {tab === 'url' && (
             <div className="flex flex-col gap-3">
               <p className="text-slate-400 text-xs bg-slate-900/50 border border-slate-700 rounded p-2 leading-relaxed">
-                Enter a public URL pointing to a Postman Collection, Environment JSON, OpenAPI/Swagger spec, HURL file, or HAR file.
+                Enter a public URL pointing to a Postman Collection, Environment JSON, OpenAPI/Swagger spec, HURL file, HAR file, or WSDL. WSDL URLs (ending in <code className="text-orange-400">?WSDL</code>) are fetched via the local proxy to avoid CORS.
               </p>
               <div className="flex gap-2">
                 <input

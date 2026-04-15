@@ -869,7 +869,7 @@ export default function App() {
       {/* Resize handle */}
       <div
         onMouseDown={onHandleMouseDown}
-        className="w-1 shrink-0 cursor-col-resize bg-slate-700 hover:bg-orange-500 transition-colors"
+        className="w-0.5 shrink-0 cursor-col-resize bg-slate-700 hover:bg-orange-500 transition-colors"
         title="Drag to resize sidebar"
       />
 
@@ -961,7 +961,7 @@ export default function App() {
               </div>
               <div
                 onMouseDown={onRequestSplitHandleMouseDown}
-                className="w-1.5 shrink-0 cursor-col-resize bg-slate-700 hover:bg-orange-500 transition-colors"
+                className="w-0.5 shrink-0 cursor-col-resize bg-slate-700 hover:bg-orange-500 transition-colors"
                 title="Drag to resize panels"
               />
               <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
@@ -973,7 +973,7 @@ export default function App() {
               <RequestBuilder onDirtyChange={setDirtyIds} />
               <div
                 onMouseDown={onResponseHandleMouseDown}
-                className="h-1.5 shrink-0 cursor-row-resize bg-slate-700 hover:bg-orange-500 transition-colors"
+                className="h-0.5 shrink-0 cursor-row-resize bg-slate-700 hover:bg-orange-500 transition-colors"
                 title="Drag to resize result panel"
               />
               <div

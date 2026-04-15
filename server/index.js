@@ -5,6 +5,7 @@ const cors = require('cors');
 const multer = require('multer');
 const vm = require('vm');
 const { parse: parseCsv } = require('csv-parse/sync');
+const axios = require('axios');
 const { executeRequest, flattenItemsWithScripts, setExecutorConfig } = require('./executor');
 const { refreshOAuth2Token, exchangeAuthorizationCodeForToken } = require('./oauth');
 
@@ -101,6 +102,29 @@ function validateTokenUrl(url) {
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', version: '1.0.0' });
+});
+
+// ─── WSDL proxy ────────────────────────────────────────────────────────────────
+
+app.get('/api/wsdl', async (req, res) => {
+  const rawUrl = req.query.url;
+  if (!rawUrl || typeof rawUrl !== 'string') {
+    return res.status(400).json({ error: 'Missing url query parameter' });
+  }
+  let parsed;
+  try { parsed = new URL(rawUrl); } catch {
+    return res.status(400).json({ error: 'Invalid URL' });
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return res.status(400).json({ error: 'URL must use http or https scheme' });
+  }
+  try {
+    const response = await axios.get(rawUrl, { responseType: 'text', timeout: 10000 });
+    res.set('Content-Type', 'application/xml').send(response.data);
+  } catch (err) {
+    const status = err.response?.status ?? 502;
+    res.status(status).json({ error: err.message ?? 'Failed to fetch WSDL' });
+  }
 });
 
 // ─── App settings ──────────────────────────────────────────────────────────────

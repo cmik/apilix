@@ -9,6 +9,9 @@ import { parseCurlCommand } from '../utils/curlUtils';
 import { parseHurlFile } from '../utils/hurlUtils';
 import { openAuthorizationWindow } from '../utils/oauth';
 import GraphQLPanel from './GraphQLPanel';
+import SoapPanel from './SoapPanel';
+import CodeEditor from './CodeEditor';
+import type { CodeLanguage } from './CodeEditor';
 import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
 import ScriptEditor from './ScriptEditor';
 import OAuthConfigPanel from './OAuthConfigPanel';
@@ -91,7 +94,7 @@ function itemToEditState(item: CollectionItem) {
     headers: headerArr.map(h => ({ ...h })),
     queryParams: extractQueryParams(urlRaw),
     pathParams: detectedNames.map(k => ({ key: k, value: storedMap.get(k) ?? '' })),
-    bodyMode: req.body?.mode ?? 'none',
+    bodyMode: req.body?.soap ? 'soap' : (req.body?.mode ?? 'none'),
     bodyRaw: req.body?.raw ?? '',
     bodyRawLang: req.body?.options?.raw?.language ?? 'json',
     bodyFormData: Array.isArray(req.body?.formdata) ? req.body!.formdata! : [],
@@ -112,6 +115,9 @@ function itemToEditState(item: CollectionItem) {
     testScript: getScript(item, 'test'),
     bodyGraphqlQuery: req.body?.graphql?.query ?? '',
     bodyGraphqlVariables: req.body?.graphql?.variables ?? '',
+    bodySoapAction: req.body?.soap?.action ?? '',
+    bodySoapVersion: (req.body?.soap?.version ?? '1.1') as '1.1' | '1.2',
+    bodySoapWsdlUrl: req.body?.soap?.wsdlUrl ?? '',
     bodyFile: null as File | null,
     description: item.description ?? req.description ?? '',
   };
@@ -155,7 +161,31 @@ function getScript(item: CollectionItem, type: 'prerequest' | 'test'): string {
   return Array.isArray(ev.script.exec) ? ev.script.exec.join('\n') : (ev.script.exec ?? '');
 }
 
+function buildSoapBody(edit: EditState): NonNullable<NonNullable<CollectionItem['request']>['body']> {
+  return {
+    mode: 'raw',
+    raw: edit.bodyRaw,
+    options: { raw: { language: 'xml' } },
+    soap: { action: edit.bodySoapAction, version: edit.bodySoapVersion, wsdlUrl: edit.bodySoapWsdlUrl || undefined },
+  };
+}
+
+function injectSoapHeaders(headers: CollectionHeader[], action: string, version: '1.1' | '1.2'): CollectionHeader[] {
+  const out = headers.filter(h => {
+    const k = h.key.toLowerCase();
+    return k !== 'content-type' && k !== 'soapaction';
+  });
+  if (version === '1.2') {
+    out.push({ key: 'Content-Type', value: `application/soap+xml; charset=utf-8${action ? `; action="${action}"` : ''}` });
+  } else {
+    out.push({ key: 'Content-Type', value: 'text/xml; charset=utf-8' });
+    if (action) out.push({ key: 'SOAPAction', value: `"${action}"` });
+  }
+  return out;
+}
+
 function buildUpdatedRequestItem(item: CollectionItem, edit: EditState): CollectionItem {
+  const isSoap = edit.bodyMode === 'soap';
   return {
     ...item,
     description: edit.description || undefined,
@@ -163,15 +193,17 @@ function buildUpdatedRequestItem(item: CollectionItem, edit: EditState): Collect
       ...(item.request ?? {}),
       method: edit.method,
       url: { raw: edit.url, variable: edit.pathParams.filter(p => p.key).map(p => ({ key: p.key, value: p.value })) },
-      header: edit.headers,
-      body: edit.bodyMode !== 'none' ? {
-        mode: edit.bodyMode as NonNullable<NonNullable<CollectionItem['request']>['body']>['mode'],
-        raw: edit.bodyMode === 'raw' ? edit.bodyRaw : undefined,
-        urlencoded: edit.bodyMode === 'urlencoded' ? edit.bodyUrlEncoded : undefined,
-        formdata: edit.bodyMode === 'formdata' ? edit.bodyFormData : undefined,
-        graphql: edit.bodyMode === 'graphql' ? { query: edit.bodyGraphqlQuery, variables: edit.bodyGraphqlVariables || undefined } : undefined,
-        options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as 'json' | 'text' } } : undefined,
-      } : undefined,
+      header: isSoap ? injectSoapHeaders(edit.headers, edit.bodySoapAction, edit.bodySoapVersion) : edit.headers,
+      body: edit.bodyMode !== 'none' ? (
+        isSoap ? buildSoapBody(edit) : {
+          mode: edit.bodyMode as NonNullable<NonNullable<CollectionItem['request']>['body']>['mode'],
+          raw: edit.bodyMode === 'raw' ? edit.bodyRaw : undefined,
+          urlencoded: edit.bodyMode === 'urlencoded' ? edit.bodyUrlEncoded : undefined,
+          formdata: edit.bodyMode === 'formdata' ? edit.bodyFormData : undefined,
+          graphql: edit.bodyMode === 'graphql' ? { query: edit.bodyGraphqlQuery, variables: edit.bodyGraphqlVariables || undefined } : undefined,
+          options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as 'json' | 'text' } } : undefined,
+        }
+      ) : undefined,
       auth: buildAuth(edit),
     },
     event: buildEvents(edit),
@@ -960,14 +992,16 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
         method: edit.method,
         url: { raw: resolvedUrl, variable: edit.pathParams.filter(p => p.key).map(p => ({ key: p.key, value: p.value })) },
         header: edit.headers.filter(h => !h.disabled),
-        body: edit.bodyMode !== 'none' ? {
-          mode: edit.bodyMode as NonNullable<NonNullable<CollectionItem['request']>['body']>['mode'],
-          raw: edit.bodyMode === 'raw' ? edit.bodyRaw : edit.bodyMode === 'file' ? (binaryBase64 ?? '') : undefined,
-          urlencoded: edit.bodyMode === 'urlencoded' ? edit.bodyUrlEncoded : undefined,
-          formdata: edit.bodyMode === 'formdata' ? edit.bodyFormData : undefined,
-          graphql: edit.bodyMode === 'graphql' ? { query: edit.bodyGraphqlQuery, variables: edit.bodyGraphqlVariables || undefined } : undefined,
-          options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as 'json' | 'text' } } : undefined,
-        } : undefined,
+        body: edit.bodyMode !== 'none' ? (
+          edit.bodyMode === 'soap' ? buildSoapBody(edit) : {
+            mode: edit.bodyMode as NonNullable<NonNullable<CollectionItem['request']>['body']>['mode'],
+            raw: edit.bodyMode === 'raw' ? edit.bodyRaw : edit.bodyMode === 'file' ? (binaryBase64 ?? '') : undefined,
+            urlencoded: edit.bodyMode === 'urlencoded' ? edit.bodyUrlEncoded : undefined,
+            formdata: edit.bodyMode === 'formdata' ? edit.bodyFormData : undefined,
+            graphql: edit.bodyMode === 'graphql' ? { query: edit.bodyGraphqlQuery, variables: edit.bodyGraphqlVariables || undefined } : undefined,
+            options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as 'json' | 'text' } } : undefined,
+          }
+        ) : undefined,
         auth: resolvedAuth,
       },
       event: buildMergedEvents(edit, ancestorScripts),
@@ -1133,14 +1167,16 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
         method: edit.method,
         url: { raw: applyPathParams(edit.url, edit.pathParams) },
         header: edit.headers.filter(h => !h.disabled),
-        body: edit.bodyMode !== 'none' ? {
-          mode: edit.bodyMode as NonNullable<NonNullable<CollectionItem['request']>['body']>['mode'],
-          raw: edit.bodyMode === 'raw' ? edit.bodyRaw : edit.bodyMode === 'file' ? (binaryBase64 ?? '') : undefined,
-          urlencoded: edit.bodyMode === 'urlencoded' ? edit.bodyUrlEncoded : undefined,
-          formdata: edit.bodyMode === 'formdata' ? edit.bodyFormData : undefined,
-          graphql: edit.bodyMode === 'graphql' ? { query: edit.bodyGraphqlQuery, variables: edit.bodyGraphqlVariables || undefined } : undefined,
-          options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as 'json' | 'text' } } : undefined,
-        } : undefined,
+        body: edit.bodyMode !== 'none' ? (
+          edit.bodyMode === 'soap' ? buildSoapBody(edit) : {
+            mode: edit.bodyMode as NonNullable<NonNullable<CollectionItem['request']>['body']>['mode'],
+            raw: edit.bodyMode === 'raw' ? edit.bodyRaw : edit.bodyMode === 'file' ? (binaryBase64 ?? '') : undefined,
+            urlencoded: edit.bodyMode === 'urlencoded' ? edit.bodyUrlEncoded : undefined,
+            formdata: edit.bodyMode === 'formdata' ? edit.bodyFormData : undefined,
+            graphql: edit.bodyMode === 'graphql' ? { query: edit.bodyGraphqlQuery, variables: edit.bodyGraphqlVariables || undefined } : undefined,
+            options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as 'json' | 'text' } } : undefined,
+          }
+        ) : undefined,
         auth: resolvedAuth,
       },
       event: buildMergedEvents(edit, collectAncestorScripts(col?.item ?? [], activeReq.item.id ?? '', col?.event)),
@@ -1593,7 +1629,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
         {activeRequestTab === 'Body' && (
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-3 flex-wrap">
-              {(['none', 'raw', 'urlencoded', 'formdata', 'graphql', 'file'] as const).map(m => (
+              {(['none', 'raw', 'urlencoded', 'formdata', 'graphql', 'soap', 'file'] as const).map(m => (
                 <label key={m} className="flex items-center gap-1.5 cursor-pointer">
                   <input
                     type="radio"
@@ -1652,13 +1688,12 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
               )}
             </div>
             {edit.bodyMode === 'raw' && (
-              <textarea
+              <CodeEditor
                 value={edit.bodyRaw}
                 onChange={e => setEdit(x => x ? { ...x, bodyRaw: e.target.value } : x)}
-                  rows={10}
-                  className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-y"
-                  placeholder={edit.bodyRawLang === 'json' ? '{\n  "key": "value"\n}' : 'Request body...'}
-                  spellCheck={false}
+                language={edit.bodyRawLang as CodeLanguage}
+                rows={10}
+                placeholder={edit.bodyRawLang === 'json' ? '{\n  "key": "value"\n}' : 'Request body...'}
               />
             )}
             {edit.bodyMode === 'urlencoded' && (
@@ -1681,6 +1716,18 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
                 headers={edit.headers.filter(h => !h.disabled)}
                 onQueryChange={q => setEdit(x => x ? { ...x, bodyGraphqlQuery: q } : x)}
                 onVariablesChange={v => setEdit(x => x ? { ...x, bodyGraphqlVariables: v } : x)}
+              />
+            )}
+            {edit.bodyMode === 'soap' && (
+              <SoapPanel
+                envelope={edit.bodyRaw}
+                action={edit.bodySoapAction}
+                version={edit.bodySoapVersion}
+                wsdlUrl={edit.bodySoapWsdlUrl}
+                onEnvelopeChange={v => setEdit(x => x ? { ...x, bodyRaw: v } : x)}
+                onActionChange={v => setEdit(x => x ? { ...x, bodySoapAction: v } : x)}
+                onVersionChange={v => setEdit(x => x ? { ...x, bodySoapVersion: v } : x)}
+                onWsdlUrlChange={v => setEdit(x => x ? { ...x, bodySoapWsdlUrl: v } : x)}
               />
             )}
             {edit.bodyMode === 'file' && (
@@ -1998,14 +2045,16 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
                         method: edit.method,
                         url: { raw: edit.url, variable: edit.pathParams.filter(p => p.key).map(p => ({ key: p.key, value: p.value })) },
                         header: edit.headers,
-                        body: edit.bodyMode !== 'none' ? {
-                          mode: edit.bodyMode as NonNullable<NonNullable<CollectionItem['request']>['body']>['mode'],
-                          raw: edit.bodyMode === 'raw' ? edit.bodyRaw : undefined,
-                          urlencoded: edit.bodyMode === 'urlencoded' ? edit.bodyUrlEncoded : undefined,
-                          formdata: edit.bodyMode === 'formdata' ? edit.bodyFormData : undefined,
-                          graphql: edit.bodyMode === 'graphql' ? { query: edit.bodyGraphqlQuery, variables: edit.bodyGraphqlVariables || undefined } : undefined,
-                          options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as 'json' | 'text' } } : undefined,
-                        } : undefined,
+                        body: edit.bodyMode !== 'none' ? (
+                          edit.bodyMode === 'soap' ? buildSoapBody(edit) : {
+                            mode: edit.bodyMode as NonNullable<NonNullable<CollectionItem['request']>['body']>['mode'],
+                            raw: edit.bodyMode === 'raw' ? edit.bodyRaw : undefined,
+                            urlencoded: edit.bodyMode === 'urlencoded' ? edit.bodyUrlEncoded : undefined,
+                            formdata: edit.bodyMode === 'formdata' ? edit.bodyFormData : undefined,
+                            graphql: edit.bodyMode === 'graphql' ? { query: edit.bodyGraphqlQuery, variables: edit.bodyGraphqlVariables || undefined } : undefined,
+                            options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as 'json' | 'text' } } : undefined,
+                          }
+                        ) : undefined,
                         auth: buildAuth(edit),
                       },
                     };

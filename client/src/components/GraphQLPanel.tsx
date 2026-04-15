@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { graphqlIntrospect } from '../api';
+import CodeEditor from './CodeEditor';
 
 // ─── Schema types ─────────────────────────────────────────────────────────────
 
@@ -559,7 +560,7 @@ export default function GraphQLPanel({
       <div className="flex flex-col gap-1">
         <label className="text-xs text-slate-400 font-medium">Query</label>
         <div className="relative">
-          <textarea
+          <CodeEditor
             ref={textareaRef}
             value={query}
             onChange={handleQueryChange}
@@ -571,9 +572,8 @@ export default function GraphQLPanel({
             }}
             onScroll={() => setAcSuggestions([])}
             rows={8}
-            className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-y"
+            language="graphql"
             placeholder={'query {\n  ...\n}'}
-            spellCheck={false}
           />
 
           {/* Autocomplete dropdown */}
@@ -615,13 +615,12 @@ export default function GraphQLPanel({
       {/* Variables editor */}
       <div className="flex flex-col gap-1">
         <label className="text-xs text-slate-400 font-medium">Variables</label>
-        <textarea
+        <CodeEditor
           value={variables}
           onChange={e => onVariablesChange(e.target.value)}
           rows={4}
-          className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-y"
+          language="json"
           placeholder={'{ "variable": "value" }'}
-          spellCheck={false}
         />
       </div>
 
