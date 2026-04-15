@@ -37,12 +37,18 @@ function parseComplexTypes(
   doc: Document,
 ): Record<string, Array<{ name: string; type: string }>> {
   const types: Record<string, Array<{ name: string; type: string }>> = {};
-  doc.querySelectorAll('complexType').forEach(ct => {
+  const allDescendants = (root: Document | Element): Element[] =>
+    Array.from(root.getElementsByTagName('*'));
+  const byLocalName = (root: Document | Element, localName: string): Element[] =>
+    allDescendants(root).filter(el => el.localName === localName);
+
+  byLocalName(doc, 'complexType').forEach(ct => {
     const typeName = ct.getAttribute('name');
     if (!typeName) return;
     const container =
-      ct.querySelector('sequence, all, choice') ??
-      ct.querySelector('complexContent > extension > sequence');
+      byLocalName(ct, 'sequence')[0] ??
+      byLocalName(ct, 'all')[0] ??
+      byLocalName(ct, 'choice')[0];
     if (!container) return;
     const fields = Array.from(container.children)
       .filter(c => c.localName === 'element')
@@ -65,15 +71,25 @@ function parseSchemaElements(
   complexTypes: Record<string, Array<{ name: string; type: string }>>,
 ): Record<string, Array<{ name: string; type: string }>> {
   const elements: Record<string, Array<{ name: string; type: string }>> = {};
-  doc.querySelectorAll('types schema').forEach(schema => {
+  const allDescendants = (root: Document | Element): Element[] =>
+    Array.from(root.getElementsByTagName('*'));
+  const byLocalName = (root: Document | Element, localName: string): Element[] =>
+    allDescendants(root).filter(el => el.localName === localName);
+
+  byLocalName(doc, 'schema').forEach(schema => {
     Array.from(schema.children).forEach(el => {
       if (el.localName !== 'element') return;
       const name = el.getAttribute('name');
       if (!name) return;
       // Inline complexType
-      const container =
-        el.querySelector('complexType > sequence, complexType > all, complexType > choice') ??
-        el.querySelector('complexType > complexContent > extension > sequence');
+      const complexTypeEl = Array.from(el.children).find(c => c.localName === 'complexType');
+      const container = complexTypeEl
+        ? (
+          byLocalName(complexTypeEl, 'sequence')[0] ??
+          byLocalName(complexTypeEl, 'all')[0] ??
+          byLocalName(complexTypeEl, 'choice')[0]
+        )
+        : null;
       if (container) {
         const fields = Array.from(container.children)
           .filter(c => c.localName === 'element')
@@ -104,12 +120,15 @@ export function parseWsdl(xml: string): WsdlOperation[] {
 
   if (doc.querySelector('parsererror')) return [];
 
+  const allDescendants = (root: Document | Element): Element[] =>
+    Array.from(root.getElementsByTagName('*'));
+  const byLocalName = (root: Document | Element, localName: string): Element[] =>
+    allDescendants(root).filter(el => el.localName === localName);
+
   const ops: WsdlOperation[] = [];
 
   // Walk binding > operation elements (covers both prefixed and non-prefixed)
-  const bindingOps = Array.from(
-    doc.querySelectorAll('binding > operation, binding operation')
-  );
+  const bindingOps = byLocalName(doc, 'operation').filter(op => op.parentElement?.localName === 'binding');
 
   // Resolve XSD schema structure for field expansion
   const complexTypes = parseComplexTypes(doc);
@@ -118,9 +137,9 @@ export function parseWsdl(xml: string): WsdlOperation[] {
   // Build message-name → parts map (tracking element= vs type= references)
   interface RawPart { name: string; type: string; elementRef: string | null; }
   const messageRawParts: Record<string, RawPart[]> = {};
-  doc.querySelectorAll('message').forEach(msg => {
+  byLocalName(doc, 'message').forEach(msg => {
     const msgName = msg.getAttribute('name') ?? '';
-    const parts = Array.from(msg.querySelectorAll('part')).map(p => ({
+    const parts = byLocalName(msg, 'part').map(p => ({
       name: p.getAttribute('name') ?? '',
       type: p.getAttribute('type') ?? '',
       elementRef: p.getAttribute('element') ?? null,
@@ -138,16 +157,18 @@ export function parseWsdl(xml: string): WsdlOperation[] {
     if (!opName) continue;
 
     const soapOpEl =
-      op.querySelector('operation[soapAction]') ??
-      op.querySelector('[soapAction]');
+      byLocalName(op, 'operation').find(el => el.hasAttribute('soapAction')) ??
+      allDescendants(op).find(el => el.hasAttribute('soapAction'));
     const soapAction = soapOpEl?.getAttribute('soapAction') ?? '';
 
-    const ptOp = doc.querySelector(`portType > operation[name="${opName}"]`);
+    const ptOp = byLocalName(doc, 'portType')
+      .flatMap(pt => Array.from(pt.children).filter(child => child.localName === 'operation'))
+      .find(candidate => candidate.getAttribute('name') === opName);
     let inputParts: Array<{ name: string; type: string }> = [];
     let bodyElement: string | undefined;
 
     if (ptOp) {
-      const inputEl = ptOp.querySelector('input');
+      const inputEl = Array.from(ptOp.children).find(child => child.localName === 'input');
       const msgAttr = inputEl?.getAttribute('message') ?? '';
       const msgName = msgAttr.includes(':') ? msgAttr.split(':').pop()! : msgAttr;
       const rawParts = messageRawParts[msgName] ?? [];

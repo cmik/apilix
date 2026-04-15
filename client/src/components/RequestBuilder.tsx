@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { marked } from 'marked';
-import type { CollectionItem, CollectionRequest, CollectionHeader, CollectionQueryParam, OAuth2Config } from '../types';
+import type { CollectionItem, CollectionRequest, CollectionHeader, CollectionQueryParam, OAuth2Config, CollectionBody } from '../types';
 import { useApp } from '../store';
 import { executeRequest, API_BASE } from '../api';
 import { getUrlDisplay, buildVarMap, resolveVariables } from '../utils/variableResolver';
@@ -35,6 +35,7 @@ const METHOD_COLORS: Record<string, string> = {
 
 const TABS = ['Params', 'Auth', 'Headers', 'Body', 'Pre-request', 'Tests', 'Docs'] as const;
 type Tab = typeof TABS[number];
+type RawLanguage = NonNullable<NonNullable<NonNullable<CollectionBody['options']>['raw']>['language']>;
 
 // ─── Local editable state for a request ─────────────────────────────────────
 
@@ -201,7 +202,7 @@ function buildUpdatedRequestItem(item: CollectionItem, edit: EditState): Collect
           urlencoded: edit.bodyMode === 'urlencoded' ? edit.bodyUrlEncoded : undefined,
           formdata: edit.bodyMode === 'formdata' ? edit.bodyFormData : undefined,
           graphql: edit.bodyMode === 'graphql' ? { query: edit.bodyGraphqlQuery, variables: edit.bodyGraphqlVariables || undefined } : undefined,
-          options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as 'json' | 'text' } } : undefined,
+          options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as RawLanguage } } : undefined,
         }
       ) : undefined,
       auth: buildAuth(edit),
@@ -999,7 +1000,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
             urlencoded: edit.bodyMode === 'urlencoded' ? edit.bodyUrlEncoded : undefined,
             formdata: edit.bodyMode === 'formdata' ? edit.bodyFormData : undefined,
             graphql: edit.bodyMode === 'graphql' ? { query: edit.bodyGraphqlQuery, variables: edit.bodyGraphqlVariables || undefined } : undefined,
-            options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as 'json' | 'text' } } : undefined,
+            options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as RawLanguage } } : undefined,
           }
         ) : undefined,
         auth: resolvedAuth,
@@ -1174,7 +1175,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
             urlencoded: edit.bodyMode === 'urlencoded' ? edit.bodyUrlEncoded : undefined,
             formdata: edit.bodyMode === 'formdata' ? edit.bodyFormData : undefined,
             graphql: edit.bodyMode === 'graphql' ? { query: edit.bodyGraphqlQuery, variables: edit.bodyGraphqlVariables || undefined } : undefined,
-            options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as 'json' | 'text' } } : undefined,
+            options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as RawLanguage } } : undefined,
           }
         ) : undefined,
         auth: resolvedAuth,
@@ -2052,7 +2053,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
                             urlencoded: edit.bodyMode === 'urlencoded' ? edit.bodyUrlEncoded : undefined,
                             formdata: edit.bodyMode === 'formdata' ? edit.bodyFormData : undefined,
                             graphql: edit.bodyMode === 'graphql' ? { query: edit.bodyGraphqlQuery, variables: edit.bodyGraphqlVariables || undefined } : undefined,
-                            options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as 'json' | 'text' } } : undefined,
+                            options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as RawLanguage } } : undefined,
                           }
                         ) : undefined,
                         auth: buildAuth(edit),
