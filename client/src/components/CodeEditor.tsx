@@ -70,7 +70,7 @@ const EDITOR_STYLE: React.CSSProperties = {
  * Press Cmd+F / Ctrl+F to open the find bar; Cmd+H / Ctrl+H for find+replace.
  */
 const CodeEditor = forwardRef<HTMLTextAreaElement, CodeEditorProps>(
-  function CodeEditor({ value, language = 'text', className, onScroll, style, ...rest }, ref) {
+  function CodeEditor({ value, language = 'text', className, onScroll, onKeyDown, style, ...rest }, ref) {
     const preRef = useRef<HTMLDivElement>(null);
     // Internal ref so search/replace can call setSelectionRange
     const taRef = useRef<HTMLTextAreaElement>(null);
@@ -160,7 +160,7 @@ const CodeEditor = forwardRef<HTMLTextAreaElement, CodeEditorProps>(
         e.preventDefault();
         if (srOpen && srMode === 'replace') { setSrOpen(false); } else { setSrMode('replace'); setSrOpen(true); }
       }
-      (rest as any).onKeyDown?.(e);
+      onKeyDown?.(e);
     }
 
     // Append '\n' so the pre never collapses a trailing newline in the value
