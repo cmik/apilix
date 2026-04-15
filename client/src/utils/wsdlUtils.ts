@@ -13,6 +13,28 @@ export interface WsdlOperation {
   complexTypes?: Record<string, Array<{ name: string; type: string }>>;
 }
 
+function allDescendants(root: Document | Element): Element[] {
+  return Array.from(root.getElementsByTagName('*'));
+}
+
+function byLocalName(root: Document | Element, localName: string): Element[] {
+  return allDescendants(root).filter(el => el.localName === localName);
+}
+
+function findComplexTypeContainer(complexTypeEl: Element): Element | null {
+  const directContainer = Array.from(complexTypeEl.children).find(
+    c => c.localName === 'sequence' || c.localName === 'all' || c.localName === 'choice',
+  );
+  if (directContainer) return directContainer;
+
+  const extensionEl = byLocalName(complexTypeEl, 'extension')[0];
+  if (!extensionEl) return null;
+
+  return Array.from(extensionEl.children).find(
+    c => c.localName === 'sequence' || c.localName === 'all' || c.localName === 'choice',
+  ) ?? null;
+}
+
 // ─── Detection ────────────────────────────────────────────────────────────────
 
 /** Returns true when the text is likely WSDL XML (by filename or content). */
@@ -37,18 +59,10 @@ function parseComplexTypes(
   doc: Document,
 ): Record<string, Array<{ name: string; type: string }>> {
   const types: Record<string, Array<{ name: string; type: string }>> = {};
-  const allDescendants = (root: Document | Element): Element[] =>
-    Array.from(root.getElementsByTagName('*'));
-  const byLocalName = (root: Document | Element, localName: string): Element[] =>
-    allDescendants(root).filter(el => el.localName === localName);
-
   byLocalName(doc, 'complexType').forEach(ct => {
     const typeName = ct.getAttribute('name');
     if (!typeName) return;
-    const container =
-      byLocalName(ct, 'sequence')[0] ??
-      byLocalName(ct, 'all')[0] ??
-      byLocalName(ct, 'choice')[0];
+    const container = findComplexTypeContainer(ct);
     if (!container) return;
     const fields = Array.from(container.children)
       .filter(c => c.localName === 'element')
@@ -71,11 +85,6 @@ function parseSchemaElements(
   complexTypes: Record<string, Array<{ name: string; type: string }>>,
 ): Record<string, Array<{ name: string; type: string }>> {
   const elements: Record<string, Array<{ name: string; type: string }>> = {};
-  const allDescendants = (root: Document | Element): Element[] =>
-    Array.from(root.getElementsByTagName('*'));
-  const byLocalName = (root: Document | Element, localName: string): Element[] =>
-    allDescendants(root).filter(el => el.localName === localName);
-
   byLocalName(doc, 'schema').forEach(schema => {
     Array.from(schema.children).forEach(el => {
       if (el.localName !== 'element') return;
@@ -83,13 +92,7 @@ function parseSchemaElements(
       if (!name) return;
       // Inline complexType
       const complexTypeEl = Array.from(el.children).find(c => c.localName === 'complexType');
-      const container = complexTypeEl
-        ? (
-          byLocalName(complexTypeEl, 'sequence')[0] ??
-          byLocalName(complexTypeEl, 'all')[0] ??
-          byLocalName(complexTypeEl, 'choice')[0]
-        )
-        : null;
+      const container = complexTypeEl ? findComplexTypeContainer(complexTypeEl) : null;
       if (container) {
         const fields = Array.from(container.children)
           .filter(c => c.localName === 'element')
@@ -119,11 +122,6 @@ export function parseWsdl(xml: string): WsdlOperation[] {
   const doc = parser.parseFromString(xml, 'text/xml');
 
   if (doc.querySelector('parsererror')) return [];
-
-  const allDescendants = (root: Document | Element): Element[] =>
-    Array.from(root.getElementsByTagName('*'));
-  const byLocalName = (root: Document | Element, localName: string): Element[] =>
-    allDescendants(root).filter(el => el.localName === localName);
 
   const ops: WsdlOperation[] = [];
 
