@@ -668,8 +668,9 @@ function buildResponse(r) {
     text() { return r.body; },
     xml() {
       try {
-        // text/html avoids an @xmldom/xmldom v0.9 + xpath v0.0.34 incompatibility
-        // that causes "Context node not found when determining document root"
+        // Parse the response body as XML.
+        // Note: this method uses 'text/xml'; any older text/html workaround
+        // for @xmldom/xmldom + xpath incompatibilities is not applied here.
         const parser = new DOMParser({ onError: () => {} });
         return parser.parseFromString(r.body || '', 'text/xml');
       } catch (_) { return null; }
