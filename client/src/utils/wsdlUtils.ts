@@ -283,14 +283,44 @@ export function parseWsdlToCollection(
     throw new Error('Invalid XML — could not parse WSDL');
   }
 
+  const SOAP_ADDRESS_NAMESPACES = new Set([
+    'http://schemas.xmlsoap.org/wsdl/soap/',
+    'http://schemas.xmlsoap.org/wsdl/soap12/',
+  ]);
+
+  const findSoapAddressLocation = (root: Document): string | null => {
+    const allElements = Array.from(root.getElementsByTagName('*'));
+    const isSoapAddress = (el: Element): boolean =>
+      el.localName === 'address' &&
+      el.hasAttribute('location') &&
+      SOAP_ADDRESS_NAMESPACES.has(el.namespaceURI ?? '');
+
+    // Prefer SOAP addresses declared under wsdl:service/wsdl:port.
+    for (const service of allElements.filter(el => el.localName === 'service')) {
+      const descendants = Array.from(service.getElementsByTagName('*'));
+      for (const port of descendants.filter(el => el.localName === 'port')) {
+        const portDescendants = Array.from(port.getElementsByTagName('*'));
+        const addressEl = portDescendants.find(isSoapAddress);
+        if (addressEl) {
+          return addressEl.getAttribute('location');
+        }
+      }
+    }
+
+    // Fallback: any SOAP address element in the WSDL.
+    const addressEl = allElements.find(isSoapAddress);
+    return addressEl?.getAttribute('location') ?? null;
+  };
+
   // Service name from <service name="...">
-  const serviceEl = doc.querySelector('service');
+  const serviceEl = Array.from(doc.getElementsByTagName('*')).find(
+    el => el.localName === 'service',
+  );
   const collectionName = serviceEl?.getAttribute('name') ?? 'SOAP Service';
 
-  // Endpoint URL from the first <soap:address location="..."> or <soap12:address location="...">
-  const addressEl = doc.querySelector('[location]');
+  // Endpoint URL from a SOAP address under wsdl:service/wsdl:port, with safe fallback.
   const endpointUrl =
-    addressEl?.getAttribute('location') ??
+    findSoapAddressLocation(doc) ??
     (wsdlUrl ? wsdlUrl.replace(/[?#].*$/, '') : '');
 
   // SOAP version: detect by whether a soap12:binding element is actually declared.
