@@ -799,8 +799,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     StorageDriver.readRequestHistory(workspaceId).then(entries => {
       if (cancelled || workspaceId !== state.activeWorkspaceId) return;
-      dispatch({ type: 'SET_REQUEST_HISTORY', payload: entries ?? [] });
-    });
+  const historyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const historyLoadedWorkspaceRef = useRef<string | null>(null);
+  const skipNextHistoryPersistRef = useRef(false);
+  useEffect(() => {
+    if (!state.storageReady || !state.activeWorkspaceId) return;
+
+    const workspaceId = state.activeWorkspaceId;
+    let cancelled = false;
+    historyLoadedWorkspaceRef.current = null;
+    skipNextHistoryPersistRef.current = true;
+
+    StorageDriver.readRequestHistory(workspaceId)
+      .then(entries => {
+        if (cancelled || state.activeWorkspaceId !== workspaceId) return;
+        dispatch({ type: 'SET_REQUEST_HISTORY', payload: entries ?? [] });
+        historyLoadedWorkspaceRef.current = workspaceId;
+      })
+      .catch(() => {
+        if (cancelled || state.activeWorkspaceId !== workspaceId) return;
+        dispatch({ type: 'SET_REQUEST_HISTORY', payload: [] });
+        historyLoadedWorkspaceRef.current = workspaceId;
+      });
+
     return () => {
       cancelled = true;
     };
@@ -808,12 +829,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.activeWorkspaceId, state.storageReady]);
 
   // ── Request history: debounced persistence ──────────────────────────────────
-  const historyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (!state.storageReady || !state.activeWorkspaceId) return;
+    if (historyLoadedWorkspaceRef.current !== state.activeWorkspaceId) return;
+    if (skipNextHistoryPersistRef.current) {
+      skipNextHistoryPersistRef.current = false;
+      return;
+    }
     if (historyTimerRef.current) clearTimeout(historyTimerRef.current);
     historyTimerRef.current = setTimeout(() => {
-      StorageDriver.writeRequestHistory(state.activeWorkspaceId, state.requestHistory);
+      void StorageDriver.writeRequestHistory(state.activeWorkspaceId, state.requestHistory).catch(() => {});
     }, 500);
     return () => {
       if (historyTimerRef.current) clearTimeout(historyTimerRef.current);
