@@ -2221,20 +2221,27 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
                   Cancel
                 </button>
                 <button
-                  disabled={historySaveMode === 'new' && !historySaveCollectionId}
+                  disabled={
+                    (historySaveMode === 'new' && !historySaveCollectionId) ||
+                    (historySaveMode === 'overwrite' && (!activeTab?.item?.id || !state.collections.some(c => c._id === activeTab.collectionId && !!findItemInTree(c.item, activeTab.item.id))))
+                  }
                   onClick={() => {
                     if (!activeTab || !edit) return;
                     if (historySaveMode === 'overwrite') {
                       const col = state.collections.find(c => c._id === activeTab.collectionId);
-                      if (col && activeTab.item.id) {
-                        const updatedItem = buildUpdatedRequestItem(activeTab.item, edit);
-                        dispatch({ type: 'UPDATE_COLLECTION', payload: { ...col, item: updateItemById(col.item, activeTab.item.id, updatedItem) } });
-                        dispatch({ type: 'UPDATE_TAB_ITEM', payload: { tabId: activeTab.id, item: updatedItem } });
-                        dispatch({ type: 'CLEAR_TAB_HISTORY_FLAG', payload: activeTab.id });
-                        cacheRef.current.set(activeTab.id, { edit, dirty: false, activeRequestTab });
-                        setDirty(false);
-                        emitDirtyChange();
+                      const targetItemId = activeTab.item.id;
+                      const canOverwrite = !!(col && targetItemId && findItemInTree(col.item, targetItemId));
+                      if (!canOverwrite) {
+                        window.alert('The original request can no longer be found. Please save it as a new request instead.');
+                        return;
                       }
+                      const updatedItem = buildUpdatedRequestItem(activeTab.item, edit);
+                      dispatch({ type: 'UPDATE_COLLECTION', payload: { ...col, item: updateItemById(col.item, targetItemId, updatedItem) } });
+                      dispatch({ type: 'UPDATE_TAB_ITEM', payload: { tabId: activeTab.id, item: updatedItem } });
+                      dispatch({ type: 'CLEAR_TAB_HISTORY_FLAG', payload: activeTab.id });
+                      cacheRef.current.set(activeTab.id, { edit, dirty: false, activeRequestTab });
+                      setDirty(false);
+                      emitDirtyChange();
                     } else {
                       const targetCol = state.collections.find(c => c._id === historySaveCollectionId);
                       if (!targetCol) return;
