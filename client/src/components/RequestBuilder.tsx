@@ -2223,7 +2223,7 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
                 <button
                   disabled={
                     (historySaveMode === 'new' && !historySaveCollectionId) ||
-                    (historySaveMode === 'overwrite' && (!activeTab?.item?.id || !state.collections.some(c => c._id === activeTab.collectionId && !!findItemInTree(c.item, activeTab.item.id))))
+                    (historySaveMode === 'overwrite' && (!activeTab?.item?.id || !state.collections.some(c => c._id === activeTab.collectionId && !!findItemInTree(c.item, activeTab.item.id!))))
                   }
                   onClick={() => {
                     if (!activeTab || !edit) return;
