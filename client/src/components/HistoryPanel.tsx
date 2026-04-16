@@ -150,8 +150,8 @@ export default function HistoryPanel() {
             </span>
           </div>
         ) : (
-          grouped.map(group => (
-            <React.Fragment key={group.label}>
+          grouped.map((group, groupIndex) => (
+            <React.Fragment key={`${group.label}-${groupIndex}`}>
               {/* Day group header */}
               <div className="sticky top-0 px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-slate-500 bg-slate-800/90 border-b border-slate-700/60 select-none z-10">
                 {group.label}
