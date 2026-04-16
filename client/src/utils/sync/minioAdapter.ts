@@ -70,13 +70,13 @@ async function getPresignedUrl(
   }
   const endpoint = config.endpoint?.trim();
   if (!endpoint) {
-    throw new Error('MinIO sync requires a valid endpoint URL (http:// or https://)');
+    throw new Error('MinIO sync requires an endpoint URL');
   }
   let parsedEndpoint: URL;
   try {
     parsedEndpoint = new URL(endpoint);
   } catch {
-    throw new Error('MinIO sync requires a valid endpoint URL (http:// or https://)');
+    throw new Error('MinIO endpoint must be a valid URL');
   }
   if (parsedEndpoint.protocol !== 'http:' && parsedEndpoint.protocol !== 'https:') {
     throw new Error('MinIO sync endpoint must use http:// or https://');
