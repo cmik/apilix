@@ -9,7 +9,7 @@
  * is used, and the module remains crash-free.
  */
 
-import type { WorkspaceData, Workspace, SyncMetadata, SyncActivityEntry, AppSettings } from '../types';
+import type { WorkspaceData, Workspace, SyncMetadata, SyncActivityEntry, AppSettings, HistoryRequest } from '../types';
 
 // ─── Electron API shim ────────────────────────────────────────────────────────
 
@@ -123,6 +123,7 @@ export async function writeWorkspace(id: string, data: WorkspaceData): Promise<v
 export async function deleteWorkspace(id: string): Promise<void> {
   // ── localStorage ──────────────────────────────────────────────────────────
   lsDelete(LS_WORKSPACE(id));
+  lsDelete(LS_REQUEST_HISTORY(id));
 
   // Remove entry from sync-config store
   const lsSyncConfig = lsRead<SyncConfigStore>(LS_SYNC_CONFIG);
@@ -380,4 +381,29 @@ export async function getDataDir(): Promise<string | null> {
   const api = eAPI();
   if (!api) return null;
   return api.getDataDir();
+}
+
+// ─── Request history ─────────────────────────────────────────────────────────
+
+const LS_REQUEST_HISTORY = (id: string) => `apilix_request_history_${id}`;
+
+export async function readRequestHistory(workspaceId: string): Promise<HistoryRequest[] | null> {
+  const api = eAPI();
+  if (api) {
+    try {
+      const dir = await api.getDataDir();
+      const data = await api.readJsonFile(`${dir}/workspaces/${workspaceId}/request-history.json`);
+      if (Array.isArray(data)) return data as HistoryRequest[];
+    } catch { /* fall through */ }
+  }
+  return lsRead<HistoryRequest[]>(LS_REQUEST_HISTORY(workspaceId));
+}
+
+export async function writeRequestHistory(workspaceId: string, entries: HistoryRequest[]): Promise<void> {
+  lsWrite(LS_REQUEST_HISTORY(workspaceId), entries);
+  const api = eAPI();
+  if (api) {
+    const dir = await api.getDataDir();
+    await api.writeJsonFile(`${dir}/workspaces/${workspaceId}/request-history.json`, entries);
+  }
 }

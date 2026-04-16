@@ -940,14 +940,14 @@ export default function App() {
           </div>
         </div>
 
-        {/* Tab bar — shown only in request view */}
-        {state.view === 'request' && <TabBar dirtyIds={dirtyIds} />}
+        {/* Tab bar — shown in request and history views */}
+        {(state.view === 'request' || state.view === 'history') && <TabBar dirtyIds={dirtyIds} />}
 
         {/* Content area */}
         {/* RequestBuilder is always mounted to preserve unsaved changes; hidden when not active */}
         <div
           ref={requestSplitRef}
-          className={`flex-1 overflow-hidden ${state.view === 'request' ? '' : 'hidden'} ${
+          className={`flex-1 overflow-hidden ${(state.view === 'request' || state.view === 'history') ? '' : 'hidden'} ${
             (state.settings.requestLayout ?? 'stacked') === 'split' ? 'flex flex-row' : 'flex flex-col'
           }`}
         >

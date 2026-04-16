@@ -237,7 +237,21 @@ export interface ActiveRequest {
   item: CollectionItem;
 }
 
-export type AppView = 'request' | 'runner' | 'environments' | 'globals' | 'variables' | 'mock' | 'capture';
+export interface HistoryRequest {
+  id: string;
+  timestamp: number;
+  method: string;
+  url: string;
+  collectionId: string;
+  itemId: string;
+  requestSnapshot: CollectionItem;
+  statusCode: number | null;
+  statusText: string;
+  responseTime: number;
+  error: string | null;
+}
+
+export type AppView = 'request' | 'runner' | 'environments' | 'globals' | 'variables' | 'mock' | 'capture' | 'history';
 
 // ─── Application Settings ─────────────────────────────────────────────────────────────
 
@@ -574,6 +588,7 @@ export interface AppState {
   captureViewState: CaptureViewState;
   captureGeneration: number;
   settings: AppSettings;
+  requestHistory: HistoryRequest[];
 }
 
 export interface RequestTab {
@@ -582,6 +597,8 @@ export interface RequestTab {
   item: CollectionItem;
   response: RequestResponse | null;
   isLoading: boolean;
+  /** True when the tab was opened via OPEN_HISTORY_SNAPSHOT; cleared after a save. */
+  fromHistory?: boolean;
 }
 
 export interface ConsoleEntry {
@@ -616,6 +633,7 @@ export type AppAction =
   | { type: 'ADD_CONSOLE_LOG'; payload: ConsoleEntry }
   | { type: 'CLEAR_CONSOLE_LOGS' }
   | { type: 'OPEN_TAB'; payload: { collectionId: string; item: CollectionItem } }
+  | { type: 'OPEN_HISTORY_SNAPSHOT'; payload: { collectionId: string; item: CollectionItem } }
   | { type: 'CLOSE_TAB'; payload: string }
   | { type: 'SET_ACTIVE_TAB'; payload: string }
   | { type: 'SET_TAB_RESPONSE'; payload: { tabId: string; response: RequestResponse | null } }
@@ -660,4 +678,9 @@ export type AppAction =
   | { type: 'SET_CAPTURE_VIEW_STATE'; payload: Partial<CaptureViewState> }
   // ── Settings actions ──────────────────────────────────────────────────────────────────
   | { type: 'SET_SETTINGS'; payload: AppSettings }
-  | { type: 'UPDATE_SETTINGS'; payload: Partial<AppSettings> };
+  | { type: 'UPDATE_SETTINGS'; payload: Partial<AppSettings> }
+  // ── Request history actions ───────────────────────────────────────────────────────────
+  | { type: 'ADD_REQUEST_HISTORY'; payload: HistoryRequest }
+  | { type: 'CLEAR_REQUEST_HISTORY' }
+  | { type: 'SET_REQUEST_HISTORY'; payload: HistoryRequest[] }
+  | { type: 'CLEAR_TAB_HISTORY_FLAG'; payload: string };
