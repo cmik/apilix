@@ -258,7 +258,7 @@ ipcMain.handle('get-presigned-url', async (_event, payload) => {
   } = payload ?? {};
 
   if (!operation || !bucket || !keyId || !secret || !objectKey) {
-    throw new Error('Missing required fields for S3 presigned URL generation');
+    throw new Error('Missing required fields for presigned URL generation');
   }
   if (!endpoint && !region) {
     throw new Error('Either region (for AWS S3) or endpoint (for MinIO) is required');

@@ -46,7 +46,7 @@ Data (collections, environments) is stored locally in the app profile:
 
 ### Prerequisites
 
-- **Node.js** v18+
+- **Node.js** v20.19+
 - **npm** v9+
 
 ### Install dependencies
