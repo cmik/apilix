@@ -653,7 +653,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, requestHistory: [] };
 
     case 'SET_REQUEST_HISTORY':
-      return { ...state, requestHistory: action.payload };
+      return { ...state, requestHistory: action.payload.slice(0, 200) };
 
     case 'CLEAR_TAB_HISTORY_FLAG': {
       const updatedTabs = state.tabs.map(t =>
