@@ -654,7 +654,17 @@ export default function ResponseViewer() {
         e.preventDefault();
         setTab('Body');
         setSearchOpen(true);
-        setTimeout(() => searchInputRef.current?.focus(), 50);
+        const selected = window.getSelection()?.toString().trim();
+        if (selected) {
+          setSearchQuery(selected);
+          setMatchIndex(0);
+        }
+        setTimeout(() => {
+          if (searchInputRef.current) {
+            searchInputRef.current.focus();
+            searchInputRef.current.select();
+          }
+        }, 50);
       }
     };
     window.addEventListener('keydown', handler);

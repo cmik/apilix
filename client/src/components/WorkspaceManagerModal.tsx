@@ -47,6 +47,11 @@ const PROVIDER_CAPABILITIES: Record<SyncProvider, Array<{ label: string; tone: '
     { label: 'Three-way merge recovery', tone: 'success' },
     { label: 'Conditional writes depend on backend support', tone: 'warning' },
   ],
+  minio: [
+    { label: 'Remote state metadata', tone: 'success' },
+    { label: 'Three-way merge recovery', tone: 'success' },
+    { label: 'Conditional writes depend on backend support', tone: 'warning' },
+  ],
 };
 
 interface Props {
@@ -343,6 +348,7 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
 
 const PROVIDER_LABELS: Record<SyncProvider, string> = {
   s3: 'Amazon S3',
+  minio: 'MinIO',
   git: 'Git Repository',
   http: 'HTTP Endpoint',
   team: 'Team Server',
@@ -355,6 +361,14 @@ const PROVIDER_FIELDS: Record<SyncProvider, { key: string; label: string; placeh
     { key: 'prefix', label: 'Prefix (optional)', placeholder: 'workspaces/' },
     { key: 'accessKeyId', label: 'Access Key ID', placeholder: 'AKIA...', secret: true },
     { key: 'secretAccessKey', label: 'Secret Access Key', placeholder: '••••••••', secret: true },
+  ],
+  minio: [
+    { key: 'endpoint', label: 'Endpoint URL', placeholder: 'http://localhost:9000' },
+    { key: 'bucket', label: 'Bucket', placeholder: 'apilix' },
+    { key: 'region', label: 'Region (optional)', placeholder: 'us-east-1' },
+    { key: 'prefix', label: 'Prefix (optional)', placeholder: 'workspaces/' },
+    { key: 'accessKeyId', label: 'Access Key', placeholder: 'minioadmin', secret: true },
+    { key: 'secretAccessKey', label: 'Secret Key', placeholder: '••••••••', secret: true },
   ],
   git: [
     { key: 'remote', label: 'Remote URL', placeholder: 'https://github.com/user/repo.git' },
@@ -382,7 +396,7 @@ function SyncTab() {
   const [provider, setProvider] = useState<SyncProvider>('s3');
   const [fields, setFields] = useState<Record<string, string>>({});
   const [providerDrafts, setProviderDrafts] = useState<Record<SyncProvider, Record<string, string>>>(
-    () => ({ s3: {}, git: {}, http: {}, team: {} })
+    () => ({ s3: {}, minio: {}, git: {}, http: {}, team: {} })
   );
   const [syncMetadata, setSyncMetadata] = useState<SyncMetadata | undefined>(undefined);
   const [loaded, setLoaded] = useState(false);

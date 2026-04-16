@@ -289,6 +289,7 @@ export { StaleVersionError };
 function getAdapter(provider: string): SyncAdapter {
   switch (provider) {
     case 's3': return s3Adapter;
+    case 'minio': return minioAdapter;
     case 'git': return gitAdapter;
     case 'http': return httpAdapter;
     case 'team': return teamAdapter;
@@ -299,6 +300,7 @@ function getAdapter(provider: string): SyncAdapter {
 // ─── Lazy adapter imports (tree-shaken when unused) ───────────────────────────
 
 import { s3Adapter } from './sync/s3Adapter';
+import { minioAdapter } from './sync/minioAdapter';
 import { gitAdapter } from './sync/gitAdapter';
 import { httpAdapter } from './sync/httpAdapter';
 import { teamAdapter } from './sync/teamAdapter';

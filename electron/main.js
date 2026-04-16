@@ -254,10 +254,14 @@ ipcMain.handle('get-presigned-url', async (_event, payload) => {
     keyId,
     secret,
     objectKey,
+    endpoint,
   } = payload ?? {};
 
-  if (!operation || !bucket || !region || !keyId || !secret || !objectKey) {
+  if (!operation || !bucket || !keyId || !secret || !objectKey) {
     throw new Error('Missing required fields for S3 presigned URL generation');
+  }
+  if (!endpoint && !region) {
+    throw new Error('Either region (for AWS S3) or endpoint (for MinIO) is required');
   }
 
   if (!['GET', 'PUT', 'HEAD'].includes(operation)) {
@@ -267,13 +271,16 @@ ipcMain.handle('get-presigned-url', async (_event, payload) => {
   const { S3Client, GetObjectCommand, PutObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
   const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
-  const client = new S3Client({
-    region,
+  const clientConfig = {
+    region: region || 'us-east-1',
     credentials: {
       accessKeyId: keyId,
       secretAccessKey: secret,
     },
-  });
+    ...(endpoint ? { endpoint, forcePathStyle: true } : {}),
+  };
+
+  const client = new S3Client(clientConfig);
 
   const commandByOperation = {
     GET: new GetObjectCommand({ Bucket: bucket, Key: objectKey }),

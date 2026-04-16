@@ -433,7 +433,7 @@ export interface WorkspaceData {
   mockPort: number;
 }
 
-export type SyncProvider = 's3' | 'git' | 'http' | 'team';
+export type SyncProvider = 's3' | 'git' | 'http' | 'team' | 'minio';
 
 export interface SyncMetadata {
   lastSyncedAt?: string;
