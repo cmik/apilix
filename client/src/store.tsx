@@ -792,16 +792,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.collections, state.environments, state.activeEnvironmentId, state.collectionVariables, state.globalVariables, state.cookieJar, state.mockCollections, state.mockRoutes, state.mockPort, state.workspaces, state.activeWorkspaceId, state.storageReady]);
-  // ── Request history: load on workspace change ─────────────────────────────
-  useEffect(() => {
-    if (!state.storageReady || !state.activeWorkspaceId) return;
-    const workspaceId = state.activeWorkspaceId;
-    let cancelled = false;
-    StorageDriver.readRequestHistory(workspaceId).then(entries => {
-      if (cancelled || workspaceId !== state.activeWorkspaceId) return;
   const historyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const historyLoadedWorkspaceRef = useRef<string | null>(null);
   const skipNextHistoryPersistRef = useRef(false);
+  // ── Request history: load on workspace change ─────────────────────────────
   useEffect(() => {
     if (!state.storageReady || !state.activeWorkspaceId) return;
 
