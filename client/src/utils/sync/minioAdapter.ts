@@ -76,9 +76,8 @@ async function getPresignedUrl(
   try {
     parsedEndpoint = new URL(endpoint);
   } catch (err) {
-    const safeEndpoint = endpoint.replace(/\/\/[^/@]*@/, '//***@');
-    throw new Error(`MinIO endpoint '${safeEndpoint}' is not a valid URL`, {
-      cause: err instanceof Error ? err : undefined,
+    throw new Error('MinIO endpoint must be a valid URL (for example, http://localhost:9000)', {
+      cause: err,
     });
   }
   if (parsedEndpoint.protocol !== 'http:' && parsedEndpoint.protocol !== 'https:') {
