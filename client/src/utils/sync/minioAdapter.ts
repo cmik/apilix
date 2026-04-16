@@ -68,9 +68,22 @@ async function getPresignedUrl(
   if (!api?.getPresignedUrl) {
     throw new Error('MinIO presigned URL generation requires Electron (not available in browser mode)');
   }
+  const endpoint = config.endpoint?.trim();
+  if (!endpoint) {
+    throw new Error('MinIO sync requires a valid endpoint URL (http:// or https://)');
+  }
+  let parsedEndpoint: URL;
+  try {
+    parsedEndpoint = new URL(endpoint);
+  } catch {
+    throw new Error('MinIO sync requires a valid endpoint URL (http:// or https://)');
+  }
+  if (parsedEndpoint.protocol !== 'http:' && parsedEndpoint.protocol !== 'https:') {
+    throw new Error('MinIO sync endpoint must use http:// or https://');
+  }
   return api.getPresignedUrl({
     operation,
-    endpoint: config.endpoint,
+    endpoint,
     bucket: config.bucket,
     region: config.region || 'us-east-1',
     keyId: config.accessKeyId,
