@@ -36,7 +36,8 @@ async function minioFetch(url: string, init?: RequestInit): Promise<Response> {
       let hint = '';
       try {
         const parsed = new URL(url);
-        hint = ` (host: ${parsed.hostname}:${parsed.port || parsed.protocol === 'https:' ? 443 : 80})`;
+        const port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
+        hint = ` (host: ${parsed.hostname}:${port})`;
       } catch { /* ignore */ }
       throw new Error(
         `MinIO network error — could not reach the server${hint}. ` +
