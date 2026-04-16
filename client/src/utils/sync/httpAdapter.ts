@@ -133,4 +133,28 @@ export const httpAdapter: SyncAdapter = {
       return { timestamp: null, version: null };
     }
   },
+
+  async testConnection(_workspaceId, config) {
+    if (!config.endpoint) {
+      return { ok: false, message: 'Endpoint URL is required' };
+    }
+    try {
+      const res = await fetch(config.endpoint, {
+        method: 'HEAD',
+        headers: {
+          ...(config.token ? { Authorization: `Bearer ${config.token}` } : {}),
+        },
+      });
+      if (res.ok || res.status === 404) {
+        const detail = res.status === 404 ? 'endpoint reachable (no data yet)' : 'endpoint reachable';
+        return { ok: true, message: `Connected — ${detail}` };
+      }
+      if (res.status === 401 || res.status === 403) {
+        return { ok: false, message: `Access denied (${res.status}) — check Bearer Token` };
+      }
+      return { ok: false, message: `Server responded ${res.status} ${res.statusText}` };
+    } catch (err: unknown) {
+      return { ok: false, message: (err as Error).message };
+    }
+  },
 };

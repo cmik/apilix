@@ -547,11 +547,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (isBrowserMode) {
-      setSyncConfigured(false);
-      setSyncReadOnly(false);
-      return;
-    }
     let active = true;
     StorageDriver.readSyncConfig(state.activeWorkspaceId)
       .then(cfg => {
@@ -879,7 +874,7 @@ export default function App() {
         {/* Top bar */}
         <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-700 bg-slate-900 shrink-0">
           <div className="flex items-center gap-2 min-w-0">
-            {!isBrowserMode && syncConfigured && !syncReadOnly && (
+            {syncConfigured && !syncReadOnly && (
               <div className="flex items-center gap-1.5" title={quickSyncTooltip}>
                 <button
                   onClick={handleQuickSync}

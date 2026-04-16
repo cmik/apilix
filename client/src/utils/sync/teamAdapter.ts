@@ -123,4 +123,30 @@ export const teamAdapter: SyncAdapter = {
       return { timestamp: null, version: null };
     }
   },
+
+  async testConnection(_workspaceId, config) {
+    if (!config.serverUrl || !config.workspaceServerId) {
+      return { ok: false, message: 'Server URL and Server Workspace ID are required' };
+    }
+    const url = `${config.serverUrl}/workspaces/${config.workspaceServerId}/data`;
+    try {
+      const res = await fetch(url, {
+        method: 'HEAD',
+        headers: { Authorization: `Bearer ${config.token}` },
+      });
+      if (res.ok || res.status === 404) {
+        const detail = res.status === 404 ? 'workspace not yet created on server' : 'workspace accessible';
+        return { ok: true, message: `Connected — ${detail}` };
+      }
+      if (res.status === 401) {
+        return { ok: false, message: 'Unauthorized — check JWT Token' };
+      }
+      if (res.status === 403) {
+        return { ok: false, message: 'Forbidden — token valid but access denied' };
+      }
+      return { ok: false, message: `Server responded ${res.status} ${res.statusText}` };
+    } catch (err: unknown) {
+      return { ok: false, message: (err as Error).message };
+    }
+  },
 };

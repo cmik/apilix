@@ -1625,6 +1625,57 @@ app.post('/api/sync/git/timestamp', async (req, res) => {
   }
 });
 
+// POST /api/sync/git/test-connection
+app.post('/api/sync/git/test-connection', async (req, res) => {
+  if (!assertGitAvailable(res)) return;
+  const { config } = req.body;
+  if (!config?.remote || typeof config.remote !== 'string') {
+    return res.status(400).json({ error: 'config.remote is required' });
+  }
+
+  // Reject non-network schemes (file://, local paths) to prevent SSRF against the
+  // server's own filesystem or private network resources.
+  if (!/^(https?:\/\/|ssh:\/\/|git@)/i.test(config.remote)) {
+    return res.json({ ok: false, message: 'Remote URL must use https, http, ssh, or git@' });
+  }
+
+  // Keep the original (credential-free) URL for safe error messages.
+  const safeRemote = config.remote;
+  let remote = config.remote;
+
+  if (config.token && config.username) {
+    try {
+      const remoteUrl = new URL(remote);
+      remoteUrl.username = encodeURIComponent(config.username);
+      remoteUrl.password = encodeURIComponent(config.token);
+      remote = remoteUrl.toString();
+    } catch {
+      return res.json({ ok: false, message: 'Remote URL is not a valid URL' });
+    }
+  }
+  try {
+    // git ls-remote authenticates and lists refs without cloning or writing anything.
+    const git = simpleGit();
+    await git.listRemote(['--heads', remote]);
+    return res.json({ ok: true, message: 'Connected — remote is reachable and credentials are valid' });
+  } catch (err) {
+    // Scrub any credential-embedded URL that simple-git may include in its error
+    // message before returning it to the client.
+    const raw = String(err?.message || err);
+    const msg = remote !== safeRemote ? raw.replaceAll(remote, safeRemote) : raw;
+    if (/authentication failed|could not read username|invalid credentials|bad credentials/i.test(msg)) {
+      return res.json({ ok: false, message: 'Authentication failed — check Username and Token' });
+    }
+    if (/repository.*not found|does not exist|not found/i.test(msg)) {
+      return res.json({ ok: false, message: 'Repository not found — check Remote URL' });
+    }
+    if (/could not resolve host|unable to connect|network|connection refused/i.test(msg)) {
+      return res.json({ ok: false, message: 'Network error — could not reach remote host' });
+    }
+    return res.json({ ok: false, message: msg });
+  }
+});
+
 // ─── Error handler ─────────────────────────────────────────────────────────────
 // Catches errors forwarded by next(err), including CORS rejections.
 // Returns a plain JSON error without leaking internal stack traces.

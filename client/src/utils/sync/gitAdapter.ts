@@ -127,4 +127,21 @@ export const gitAdapter: SyncAdapter = {
       return { timestamp: null, version: null };
     }
   },
+
+  async testConnection(_workspaceId, config) {
+    try {
+      const res = await fetch(`${serverUrl()}/api/sync/git/test-connection`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+        return { ok: false, message: String(body.error ?? `Server error ${res.status}`) };
+      }
+      return res.json() as Promise<{ ok: boolean; message: string }>;
+    } catch (err: unknown) {
+      return { ok: false, message: (err as Error).message };
+    }
+  },
 };

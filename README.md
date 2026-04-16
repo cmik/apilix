@@ -19,6 +19,7 @@ A lightweight, open-source alternative API testing tool — available as a **des
 - **Mock Server** — define static or dynamic responses for any endpoint; start a local HTTP server without a real backend
 - **Console panel** — view a log of every request and response with resolved variable values; pop out into a live-updating detached window
 - **Status bar** — quick access to the console toggle with an unread count badge and last response summary
+- **Workspace sync** — back up and share workspaces via Git, S3 / S3-compatible (MinIO, Backblaze B2, Cloudflare R2, etc.), HTTP Endpoint, or a self-hosted Team Server
 - **Advanced workspace sync conflicts** — three-way merge UI at request/code level, stale-version recovery, and recent sync activity telemetry
 
 ---
@@ -379,7 +380,7 @@ Open **Manage Workspaces** (gear icon next to the workspace name) to:
 
 - Create, rename, duplicate, or delete workspaces
 - Assign a colour to each workspace for quick identification
-- Sync a workspace to a remote provider (Git, S3, HTTP, or a Team server)
+- Sync a workspace to a remote provider (Git, S3 / S3-compatible, HTTP, or a Team server)
 - Browse and restore automatic snapshots (History tab)
 
 ### Git Sync
@@ -422,13 +423,13 @@ The **Sync** tab lets you back up and share a workspace via a Git repository.
 
 > **Tip:** If the remote already has commits (not empty), click **Import once ↓** before pushing to avoid a divergent-branches error.
 
-### Amazon S3 Sync
+### Amazon S3 / S3-Compatible Sync
 
-Stores the workspace as a JSON object in an S3 bucket using presigned URLs generated inside the Electron main process — AWS credentials never reach the renderer.
+Stores the workspace as a JSON object in an S3-compatible bucket using presigned URLs generated inside the Electron main process — AWS credentials never reach the renderer. Both Amazon S3 and self-hosted S3-compatible services (MinIO, Backblaze B2, Cloudflare R2, DigitalOcean Spaces) are supported.
 
 > **Electron only** — S3 sync is not available in browser/web mode.
 
-#### Setting up
+#### Setting up (AWS S3)
 
 1. Create an S3 bucket (or reuse an existing one).
 2. Create an IAM user or role with the following permissions on the bucket:
@@ -438,17 +439,26 @@ Stores the workspace as a JSON object in an S3 bucket using presigned URLs gener
    s3:HeadObject
    ```
 3. Generate an **Access Key ID** and **Secret Access Key** for that user.
-4. Open **Manage Workspaces → Sync**, select **Amazon S3**, and fill in the fields:
+4. Open **Manage Workspaces → Sync**, select **S3 Storage**, and fill in the fields:
 
 | Field | Required | Notes |
 |---|:---:|---|
+| Endpoint URL | — | Leave blank for AWS S3. Set to server URL for S3-compatible services, e.g. `http://localhost:9000` |
 | Bucket | ✅ | S3 bucket name (e.g. `my-apilix-bucket`) |
-| Region | ✅ | AWS region (e.g. `us-east-1`) |
+| Region | — | AWS region (e.g. `us-east-1`). Optional for S3-compatible services |
 | Prefix | — | Key prefix for the object, defaults to `apilix/` |
 | Access Key ID | ✅ | AWS credential — stored encrypted on disk |
 | Secret Access Key | ✅ | AWS credential — stored encrypted on disk |
 
-5. Click **Push ↑** to upload. The workspace is stored at `{prefix}{workspaceId}.json` in the bucket.
+5. Click **Test connection** to verify credentials, then **Push ↑** to upload. The workspace is stored at `{prefix}{workspaceId}.json` in the bucket.
+
+#### Setting up (MinIO / S3-compatible)
+
+1. Start MinIO or your S3-compatible service.
+2. Create a bucket and generate an access key + secret.
+3. Open **Manage Workspaces → Sync**, select **S3 Storage**.
+4. Set **Endpoint URL** to your server URL (e.g. `http://localhost:9000`), fill in Bucket, Access Key ID, and Secret Access Key.
+5. Click **Test connection** to verify, then **Save config** and **Push ↑**.
 
 ---
 
@@ -494,7 +504,7 @@ Syncs with a self-hosted **Apilix team server** that provides role-based access 
 | Server Workspace ID | ✅ | The workspace ID as registered on the server (for example, a server-generated hex ID) |
 | JWT Token | ✅ | Session token — RBAC is enforced server-side |
 
-4. Use the **Team** tab to test the connection before pushing.
+4. Use **Test connection** to verify before pushing.
 5. Click **Push ↑** to upload or **Pull ↓** to sync the latest version from the server.
 
 ---
@@ -608,4 +618,4 @@ curl -X PUT http://localhost:3003/workspaces/a1b2c3d4/members \
    - **Server URL** — base URL of the team server
    - **Server Workspace ID** — the `id` returned when the workspace was created (`a1b2c3d4` in the example above)
    - **JWT Token** — the member's personal token
-4. Click **Test connection** in the **Team** tab to verify, then **Push ↑** / **Pull ↓** to sync.
+4. Click **Test connection** to verify, then **Push ↑** / **Pull ↓** to sync.

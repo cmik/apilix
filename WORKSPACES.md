@@ -12,7 +12,7 @@ This document covers everything about workspaces: what they are, how they are st
 4. [Automatic history (snapshots)](#4-automatic-history-snapshots)
 5. [Sync overview](#5-sync-overview)
 6. [Sync provider: Git Repository](#6-sync-provider-git-repository)
-7. [Sync provider: Amazon S3](#7-sync-provider-amazon-s3)
+7. [Sync provider: Amazon S3 / S3-Compatible](#7-sync-provider-amazon-s3--s3-compatible)
 8. [Sync provider: HTTP Endpoint](#8-sync-provider-http-endpoint)
 9. [Sync provider: Team Server](#9-sync-provider-team-server)
 10. [Team server setup & management](#10-team-server-setup--management)
@@ -288,21 +288,21 @@ For SSH remotes (`git@github.com:user/repo.git`), leave Username and Token blank
 
 ---
 
-## 7. Sync provider: Amazon S3
+## 7. Sync provider: Amazon S3 / S3-Compatible
 
-Stores the workspace as a JSON object in an S3-compatible bucket. Presigned URLs are generated inside the Electron main process so that AWS credentials never reach the renderer.
+Stores the workspace as a JSON object in an S3-compatible bucket. Presigned URLs are generated inside the Electron main process so that AWS credentials never reach the renderer. Both Amazon S3 and self-hosted S3-compatible services (MinIO, Backblaze B2, Cloudflare R2, DigitalOcean Spaces, …) are supported.
 
 > **Electron only** — this provider is not available in browser/web mode.
 
 ### How it works
 
 1. The Electron main process generates a presigned URL (valid 60 s) for PUT, GET, or HEAD.
-2. The renderer fetches the presigned URL and performs the HTTP operation directly with S3.
+2. The renderer fetches the presigned URL and performs the HTTP operation directly with the bucket.
 3. The object key is `{prefix}{workspaceId}.json` (default prefix: `apilix/`).
 
 > S3 note: default presigned URL writes are not inherently conditional. If strict optimistic locking is required, prefer Git/HTTP/Team providers or an HTTP backend that enforces version checks.
 
-### IAM permissions required
+### IAM permissions required (AWS S3)
 
 ```json
 {
@@ -316,29 +316,35 @@ Stores the workspace as a JSON object in an S3-compatible bucket. Presigned URLs
 
 | Field | Required | Notes |
 |---|:---:|---|
+| Endpoint URL | — | Leave blank for AWS S3. Set to the server URL for S3-compatible services, e.g. `http://localhost:9000` |
 | Bucket | ✅ | Bucket name, e.g. `my-apilix-bucket` |
-| Region | ✅ | AWS region, e.g. `us-east-1` |
+| Region | — | AWS region, e.g. `us-east-1`. Optional for S3-compatible services |
 | Prefix | — | Key prefix, defaults to `apilix/` |
-| Access Key ID | ✅ | AWS IAM credential, stored encrypted |
-| Secret Access Key | ✅ | AWS IAM credential, stored encrypted |
+| Access Key ID | ✅ | AWS IAM credential or S3-compatible access key, stored encrypted |
+| Secret Access Key | ✅ | AWS IAM credential or S3-compatible secret key, stored encrypted |
 
-### Step-by-step setup
+### Step-by-step setup (AWS S3)
 
 1. Create an S3 bucket in the AWS console.
 2. Create an IAM user (or role) with the minimal policy above.
 3. Generate an Access Key ID and Secret Access Key for that user.
-4. Open **Manage Workspaces → Sync → Amazon S3**.
-5. Fill in all five fields and click **Save config**.
-6. Click **Push ↑** to upload the workspace. Verify the object appears in the S3 console at `{prefix}{workspaceId}.json`.
+4. Open **Manage Workspaces → Sync → S3 Storage**.
+5. Leave **Endpoint URL** blank. Fill in Bucket, Region, Access Key ID, and Secret Access Key.
+6. Click **Save config**, then **Push ↑** to upload the workspace. Verify the object appears in the S3 console at `{prefix}{workspaceId}.json`.
 7. On another machine, fill in the same credentials and click **Pull ↓**.
+
+### Step-by-step setup (MinIO / S3-compatible)
+
+1. Start MinIO (e.g. `docker run -p 9000:9000 minio/minio server /data`).
+2. Create a bucket and generate an Access Key + Secret Key in the MinIO console.
+3. Open **Manage Workspaces → Sync → S3 Storage**.
+4. Set **Endpoint URL** to your MinIO server URL (e.g. `http://localhost:9000`).
+5. Fill in Bucket, Access Key ID, and Secret Access Key. Region is optional.
+6. Click **Test connection** to verify, then **Save config** and **Push ↑**.
 
 ### Sharing with teammates
 
-All teammates must fill in the same bucket, region, prefix, and credentials. To restrict write access, create separate IAM policies — editors get `s3:PutObject`, viewers get only `s3:GetObject` and `s3:HeadObject`.
-
-### Using S3-compatible storage
-
-Any S3-compatible service (MinIO, Backblaze B2, DigitalOcean Spaces, Cloudflare R2) works. For non-AWS services, the standard AWS SDK endpoint override is not exposed in the UI — use the HTTP Endpoint provider instead or set `AWS_ENDPOINT_URL` in the environment before starting the Electron app.
+All teammates must fill in the same bucket, endpoint, and credentials. To restrict write access, create separate IAM policies — editors get `s3:PutObject`, viewers get only `s3:GetObject` and `s3:HeadObject`.
 
 ---
 
@@ -740,6 +746,6 @@ If the remote changes during merge apply:
 | Stale-apply rebase recovery | ✅ | ⚠ | ✅ | ✅ |
 
 \* IAM policies can provide coarse access control at the infrastructure level.  
-† S3-compatible self-hosted (MinIO) works but requires manual endpoint configuration.  
+† MinIO and other S3-compatible services are supported via the optional Endpoint URL field.  
 ‡ Git requires a remote host (GitHub, GitLab, Gitea, etc.).
 ⚠ Supported only when the backing implementation enforces/returns version constraints.
