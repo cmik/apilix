@@ -795,9 +795,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // ── Request history: load on workspace change ─────────────────────────────
   useEffect(() => {
     if (!state.storageReady || !state.activeWorkspaceId) return;
-    StorageDriver.readRequestHistory(state.activeWorkspaceId).then(entries => {
+    const workspaceId = state.activeWorkspaceId;
+    let cancelled = false;
+    StorageDriver.readRequestHistory(workspaceId).then(entries => {
+      if (cancelled || workspaceId !== state.activeWorkspaceId) return;
       dispatch({ type: 'SET_REQUEST_HISTORY', payload: entries ?? [] });
     });
+    return () => {
+      cancelled = true;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.activeWorkspaceId, state.storageReady]);
 
