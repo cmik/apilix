@@ -678,6 +678,7 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
   onDragEnd?: () => void;
 }) {
   const { state, dispatch, getEnvironmentVars, getCollectionVars } = useApp();
+  const dragCtx = useDragCtx();
   const collapseSignal = useContext(CollapseCtx);
   const expandSignal = useContext(ExpandCtx);
   const [open, setOpen] = useState(true);
@@ -693,6 +694,22 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
   const [renameVal, setRenameVal] = useState(startRenaming ? '' : collection.info.name);
   const [showSettings, setShowSettings] = useState(false);
   const [newItemId, setNewItemId] = useState<string | null>(null);
+
+  function handleHeaderDragOver(e: React.DragEvent) {
+    if (!dragCtx.draggingId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragCtx.dropColId !== collection._id || dragCtx.dropId !== null || dragCtx.dropPos !== 'inside') {
+      dragCtx.updateDrop(null, collection._id, 'inside');
+    }
+  }
+
+  function handleHeaderDrop(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCtx.executeDrop();
+  }
 
   function openMenu(e: React.MouseEvent) {
     e.preventDefault();
@@ -807,10 +824,12 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
   return (
     <div className={`mb-1 transition-opacity ${isDragging ? 'opacity-40' : ''}`}>
       <div
-        className="flex items-center group"
+        className={`flex items-center group rounded transition-colors ${dragCtx.draggingId && dragCtx.dropColId === collection._id && dragCtx.dropId === null ? 'ring-1 ring-orange-500' : ''}`}
         draggable={!!onDragStart}
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
+        onDragOver={handleHeaderDragOver}
+        onDrop={handleHeaderDrop}
       >
         <button
           onClick={() => !renaming && setOpen(o => !o)}
@@ -1003,10 +1022,33 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
 
   function executeDrop() {
     const { draggingId: srcId, draggingColId: srcCol, dropId: tgtId, dropColId: tgtCol, dropPos: pos } = latestDragRef.current;
-    if (!srcId || !srcCol || !tgtId || !tgtCol || !pos) { endDrag(); return; }
+    if (!srcId || !srcCol || !tgtCol || !pos) { endDrag(); return; }
     if (srcId === tgtId) { endDrag(); return; }
 
     const collections = collectionsRef.current;
+
+    // Collection-root drop: dragged onto the collection header (no specific item target)
+    if (!tgtId) {
+      if (pos !== 'inside') { endDrag(); return; }
+      if (srcCol === tgtCol) {
+        // Move to root of same collection — extract and append to end
+        const col = collections.find(c => c._id === srcCol);
+        if (!col) { endDrag(); return; }
+        const { items: withoutSource, extracted } = extractItemById(col.item, srcId);
+        if (!extracted) { endDrag(); return; }
+        dispatch({ type: 'UPDATE_COLLECTION', payload: { ...col, item: [...withoutSource, extracted] } });
+      } else {
+        const srcCollection = collections.find(c => c._id === srcCol);
+        const tgtCollection = collections.find(c => c._id === tgtCol);
+        if (!srcCollection || !tgtCollection) { endDrag(); return; }
+        const { items: newSrcItems, extracted } = extractItemById(srcCollection.item, srcId);
+        if (!extracted) { endDrag(); return; }
+        dispatch({ type: 'UPDATE_COLLECTION', payload: { ...srcCollection, item: newSrcItems } });
+        dispatch({ type: 'UPDATE_COLLECTION', payload: { ...tgtCollection, item: [...tgtCollection.item, extracted] } });
+      }
+      endDrag();
+      return;
+    }
 
     if (srcCol === tgtCol) {
       const col = collections.find(c => c._id === srcCol);

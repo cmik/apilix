@@ -202,10 +202,16 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
       name: `${w.name} (Copy)`,
       createdAt: new Date().toISOString(),
     };
-    // Deep-clone ids to avoid shared references
+    // Deep-clone data to avoid shared references
     const clonedData: WorkspaceData = JSON.parse(JSON.stringify(srcData));
     await StorageDriver.writeWorkspace(newId, clonedData);
+
+    const copiedSyncConfig = await cloneWorkspaceSyncConfig(w.id, newId);
+
     dispatch({ type: 'DUPLICATE_WORKSPACE', payload: { workspace: newWorkspace, data: clonedData } });
+    if (copiedSyncConfig) {
+      dispatch({ type: 'BUMP_SYNC_CONFIG_VERSION' });
+    }
     await StorageDriver.writeManifest({
       workspaces: [...state.workspaces, newWorkspace],
       activeWorkspaceId: newId,
@@ -372,6 +378,23 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
       </div>
     </div>
   );
+}
+
+export async function cloneWorkspaceSyncConfig(sourceWorkspaceId: string, targetWorkspaceId: string): Promise<boolean> {
+  // Carry over provider, credentials, and readOnly — but omit metadata:
+  // lastMergeBaseSnapshotId references snapshots owned by the source workspace,
+  // and lastSyncedAt/lastSyncedVersion would be misleading on a brand-new copy.
+  const srcSync = await StorageDriver.readSyncConfig(sourceWorkspaceId);
+  if (!srcSync) return false;
+
+  await StorageDriver.writeSyncConfig(
+    targetWorkspaceId,
+    srcSync.provider,
+    srcSync.config,
+    undefined,
+    srcSync.readOnly,
+  );
+  return true;
 }
 
 // ─── Sync Tab ─────────────────────────────────────────────────────────────────
