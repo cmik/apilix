@@ -5,18 +5,20 @@ import apilixLogo from '../assets/apilix1.svg';
 
 declare const __APP_VERSION__: string;
 
-type Tab = 'appearance' | 'requests' | 'proxy' | 'cors' | 'about';
+export type SettingsTab = 'appearance' | 'requests' | 'proxy' | 'cors' | 'shortcuts' | 'about';
 
-const TABS: { key: Tab; label: string }[] = [
+const TABS: { key: SettingsTab; label: string }[] = [
   { key: 'appearance', label: 'Appearance' },
   { key: 'requests',   label: 'Requests'   },
   { key: 'proxy',      label: 'Proxy'      },
   { key: 'cors',       label: 'CORS'       },
+  { key: 'shortcuts',  label: 'Shortcuts'  },
   { key: 'about',      label: 'About'      },
 ];
 
 interface Props {
   onClose: () => void;
+  initialTab?: SettingsTab;
 }
 
 // ─── Shared form helpers ──────────────────────────────────────────────────────
@@ -356,11 +358,68 @@ function AboutTab() {
   );
 }
 
+// ─── Shortcuts Tab ───────────────────────────────────────────────────────────
+
+const SHORTCUTS_LIST: { keys: string[]; description: string; condition?: string }[] = [
+  { keys: ['Ctrl', 'Enter'],      description: 'Send request',              condition: 'Request view' },
+  { keys: ['Ctrl', 'S'],          description: 'Save request',              condition: 'Request view' },
+  { keys: ['Ctrl', 'Shift', 'S'], description: 'Quick sync',                condition: 'Sync configured' },
+  { keys: ['Ctrl', 'L'],          description: 'Focus URL field',           condition: 'Request view' },
+  { keys: ['Ctrl', 'N'],          description: 'New request',               condition: '' },
+  { keys: ['Ctrl', 'W'],          description: 'Close active tab',          condition: '' },
+  { keys: ['Ctrl', 'E'],          description: 'Open environments panel',   condition: '' },
+  { keys: ['Ctrl', 'Shift', 'M'], description: 'Open workspace manager',    condition: '' },
+  { keys: ['Ctrl', 'Shift', 'K'], description: 'Open keyboard shortcuts',   condition: '' },
+];
+
+function ShortcutsTab() {
+  const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().startsWith('MAC');
+  function labelKey(k: string): string {
+    if (!isMac) return k;
+    if (k === 'Ctrl')  return '⌘';
+    if (k === 'Shift') return '⇧';
+    return k;
+  }
+  return (
+    <div className="space-y-1">
+      <p className="text-xs text-slate-500 mb-4">All keyboard shortcuts available in Apilix.</p>
+      <div className="divide-y divide-slate-800">
+        {SHORTCUTS_LIST.map((shortcut, i) => (
+          <div key={i} className="flex items-center justify-between py-2.5 gap-4">
+            <div className="flex items-center gap-1.5">
+              {shortcut.keys.map((k, j) => (
+                <kbd
+                  key={j}
+                  className="inline-flex items-center justify-center min-w-[28px] h-6 px-1.5 bg-slate-800 border border-slate-600 rounded text-[11px] font-mono text-slate-200 leading-none"
+                >
+                  {labelKey(k)}
+                </kbd>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-sm text-slate-300 truncate">{shortcut.description}</span>
+              {shortcut.condition && (
+                <span className="shrink-0 text-[10px] text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded">
+                  {shortcut.condition}
+                </span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Modal ────────────────────────────────────────────────────────────────────
 
-export default function SettingsModal({ onClose }: Props) {
+export default function SettingsModal({ onClose, initialTab }: Props) {
   const { state, dispatch } = useApp();
-  const [activeTab, setActiveTab] = useState<Tab>('appearance');
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab ?? 'appearance');
+
+  useEffect(() => {
+    if (initialTab) setActiveTab(initialTab);
+  }, [initialTab]);
 
   const settings = state.settings;
   function update(patch: Partial<AppSettings>) {
@@ -407,6 +466,7 @@ export default function SettingsModal({ onClose }: Props) {
           {activeTab === 'requests'   && <RequestsTab   s={settings} u={update} />}
           {activeTab === 'proxy'      && <ProxyTab      s={settings} u={update} />}
           {activeTab === 'cors'       && <CorsTab       s={settings} u={update} />}
+          {activeTab === 'shortcuts'  && <ShortcutsTab />}
           {activeTab === 'about'      && <AboutTab />}
         </div>
       </div>

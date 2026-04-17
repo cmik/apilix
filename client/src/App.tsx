@@ -20,6 +20,7 @@ const CookieManagerModal = lazy(() => import('./components/CookieManagerModal'))
 const ConflictMergeModal = lazy(() => import('./components/ConflictMergeModal'));
 const SettingsModal = lazy(() => import('./components/SettingsModal'));
 const VariableScopeInspector = lazy(() => import('./components/VariableScopeInspector'));
+import type { SettingsTab } from './components/SettingsModal';
 import * as StorageDriver from './utils/storageDriver';
 import * as SnapshotEngine from './utils/snapshotEngine';
 import {
@@ -336,6 +337,7 @@ export default function App() {
     settingsTheme === 'system' ? (systemDark ? 'dark' : 'light') :
     'dark';
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('appearance');
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR);
   const [envQuickOpen, setEnvQuickOpen] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
@@ -411,6 +413,11 @@ export default function App() {
     localStorage.setItem('apilix_request_split_width', String(Math.round(requestSplitWidth)));
   }, [requestSplitWidth]);
 
+  const openSettings = useCallback((tab: SettingsTab = 'appearance') => {
+    setSettingsInitialTab(tab);
+    setSettingsOpen(true);
+  }, []);
+
   // ── Global keyboard shortcuts ──────────────────────────────────────────────
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -479,6 +486,19 @@ export default function App() {
             dispatch({ type: 'SET_VIEW', payload: 'request' });
           }
           break;
+        case 'e':
+          if (inInput) return;
+          e.preventDefault();
+          dispatch({ type: 'SET_VIEW', payload: 'environments' });
+          break;
+        case 'm':
+          if (e.shiftKey) {
+            if (inInput) return;
+            e.preventDefault();
+            document.dispatchEvent(new CustomEvent('apilix:openWorkspaceManager'));
+            break;
+          }
+          break;
         case 'w':
           if (inInput) return;
           e.preventDefault();
@@ -486,11 +506,17 @@ export default function App() {
             dispatch({ type: 'CLOSE_TAB', payload: state.activeTabId });
           }
           break;
+        case 'k':
+          if (!e.shiftKey) break;
+          if (inInput) return;
+          e.preventDefault();
+          openSettings('shortcuts');
+          break;
       }
     }
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [state.view, state.activeTabId, state.collections, dispatch, syncConfigured, syncBusy]);
+  }, [state.view, state.activeTabId, state.collections, dispatch, syncConfigured, syncBusy, openSettings]);
 
   useEffect(() => {
     function onGuardRequest(e: Event) {
@@ -854,7 +880,7 @@ export default function App() {
           const next = settingsTheme === 'light' ? 'dark' : settingsTheme === 'dark' ? 'system' : 'light';
           dispatch({ type: 'UPDATE_SETTINGS', payload: { theme: next } });
         }}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={() => openSettings()}
       />
 
       {/* Left sidebar – width controlled by drag */}
@@ -1145,7 +1171,7 @@ export default function App() {
 
       {settingsOpen && (
         <Suspense fallback={null}>
-          <SettingsModal onClose={() => setSettingsOpen(false)} />
+          <SettingsModal onClose={() => setSettingsOpen(false)} initialTab={settingsInitialTab} />
         </Suspense>
       )}
     </div>
