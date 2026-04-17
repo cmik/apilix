@@ -152,6 +152,7 @@ export default function EnvironmentPanel() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [filter, setFilter] = useState('');
+  const [sortAZ, setSortAZ] = useState(false);
 
   const editingEnv = editingId ? state.environments.find(e => e._id === editingId) : null;
 
@@ -197,12 +198,26 @@ export default function EnvironmentPanel() {
       <EnvGlobalsTabBar />
       <div className="flex items-center justify-between">
         <h2 className="text-white font-semibold text-base">Environments</h2>
-        <button
-          onClick={() => setCreating(true)}
-          className="px-3 py-1.5 bg-orange-600 hover:bg-orange-500 text-white text-sm rounded font-medium transition-colors"
-        >
-          + New
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setSortAZ(s => !s)}
+            disabled={state.environments.length <= 1}
+            title={sortAZ ? 'Sorted A–Z (click to restore)' : 'Sort A–Z'}
+            className={`px-2 py-1.5 text-xs rounded font-medium transition-colors border disabled:opacity-30 disabled:cursor-not-allowed ${
+              sortAZ
+                ? 'bg-orange-600/20 border-orange-500 text-orange-400'
+                : 'bg-slate-700 border-slate-600 text-slate-400 hover:text-slate-200 hover:bg-slate-600'
+            }`}
+          >
+            A–Z
+          </button>
+          <button
+            onClick={() => setCreating(true)}
+            className="px-3 py-1.5 bg-orange-600 hover:bg-orange-500 text-white text-sm rounded font-medium transition-colors"
+          >
+            + New
+          </button>
+        </div>
       </div>
 
       {state.environments.length > 0 && (
@@ -240,7 +255,10 @@ export default function EnvironmentPanel() {
               <p className="text-slate-600 text-xs mt-1">"{filter}"</p>
             </div>
           ) : (
-          state.environments.filter(e => e.name.toLowerCase().includes(filter.toLowerCase())).map(env => {
+          (sortAZ
+            ? [...state.environments].sort((a, b) => a.name.localeCompare(b.name))
+            : state.environments
+          ).filter(e => e.name.toLowerCase().includes(filter.toLowerCase())).map(env => {
             const isActive = state.activeEnvironmentId === env._id;
             return (
               <div

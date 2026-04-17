@@ -160,6 +160,8 @@ function EnvironmentSelector() {
   const { state, dispatch } = useApp();
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
 
   const sorted = [...state.environments].sort((a, b) => a.name.localeCompare(b.name));
@@ -174,6 +176,8 @@ function EnvironmentSelector() {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setOpen(false);
         setQuery('');
+        setCreating(false);
+        setNewName('');
       }
     }
     document.addEventListener('mousedown', handleOutside);
@@ -184,12 +188,24 @@ function EnvironmentSelector() {
     dispatch({ type: 'SET_ACTIVE_ENV', payload: id });
     setOpen(false);
     setQuery('');
+    setCreating(false);
+    setNewName('');
+  }
+
+  function createEnv() {
+    const id = generateId();
+    dispatch({ type: 'ADD_ENVIRONMENT', payload: { _id: id, name: newName.trim() || 'New Environment', values: [] } });
+    dispatch({ type: 'SET_ACTIVE_ENV', payload: id });
+    setCreating(false);
+    setNewName('');
+    setOpen(false);
+    setQuery('');
   }
 
   return (
     <div ref={containerRef} className="relative">
       <button
-        onClick={() => { setOpen(o => !o); setQuery(''); }}
+        onClick={() => { setOpen(o => !o); setQuery(''); setCreating(false); setNewName(''); }}
         className="flex items-center gap-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs text-slate-300 hover:border-orange-500 focus:outline-none focus:border-orange-500 min-w-[140px] max-w-[220px]"
       >
         <span className="flex-1 text-left truncate">{activeEnv?.name ?? 'No environment'}</span>
@@ -238,6 +254,38 @@ function EnvironmentSelector() {
               <li className="px-3 py-2 text-xs text-slate-500 italic">No match</li>
             )}
           </ul>
+          {/* Footer: create new environment */}
+          <div className="border-t border-slate-700 p-1">
+            {creating ? (
+              <div className="flex items-center gap-1 p-1">
+                <input
+                  autoFocus
+                  type="text"
+                  value={newName}
+                  onChange={e => setNewName(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') createEnv();
+                    if (e.key === 'Escape') { setCreating(false); setNewName(''); }
+                  }}
+                  placeholder="Environment name… (Enter to create)"
+                  className="flex-1 bg-slate-700 border border-slate-500 rounded px-2 py-1 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-orange-500"
+                />
+                <button
+                  onClick={() => { setCreating(false); setNewName(''); }}
+                  className="px-2 py-1 bg-slate-600 hover:bg-slate-500 text-slate-300 text-xs rounded transition-colors"
+                >
+                  ✕
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setCreating(true)}
+                className="w-full text-left px-3 py-1.5 text-xs text-orange-400 hover:bg-slate-700 rounded transition-colors"
+              >
+                + New environment
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -414,8 +462,8 @@ export default function App() {
   }, [requestSplitWidth]);
 
   const openSettings = useCallback((tab: SettingsTab = 'appearance') => {
-    setSettingsInitialTab(tab);
-    setSettingsOpen(true);
+    setSettingsInitialTab(tab);
+    setSettingsOpen(true);
   }, []);
 
   // ── Global keyboard shortcuts ──────────────────────────────────────────────
