@@ -824,8 +824,14 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
   // Listen for global keyboard shortcut events from App
   useEffect(() => {
     const onSend = () => _sendRef.current();
-    const onSave = () => _saveRef.current();
-    const onSaveClose = () => { closeAfterSaveRef.current = true; _saveRef.current(); };
+    const onSave = () => {
+      closeAfterSaveRef.current = false;
+      _saveRef.current();
+    };
+    const onSaveClose = () => {
+      closeAfterSaveRef.current = true;
+      _saveRef.current();
+    };
     const onSyncSummary = (event: Event) => {
       const detail = (event as CustomEvent<{ resolve?: (summary: UnsavedRequestTabSummary) => void }>).detail;
       detail?.resolve?.(getUnsavedSummary());

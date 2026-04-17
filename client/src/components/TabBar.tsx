@@ -397,9 +397,9 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
       return;
     }
     if (dirtyIds.has(tabId)) {
-      // Save only works reliably for the active tab (RequestBuilder listens to apilix:save)
+      // Save only works reliably for the active tab (RequestBuilder listens to apilix:save-close)
       if (tabId === activeTabId) {
-        document.dispatchEvent(new CustomEvent('apilix:save'));
+        document.dispatchEvent(new CustomEvent('apilix:save-close'));
         // Use rAF to wait for one render cycle after the save updates dirty state
         requestAnimationFrame(() => dispatch({ type: 'CLOSE_TAB', payload: tabId }));
       }
