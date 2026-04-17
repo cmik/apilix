@@ -229,7 +229,7 @@ function JsonNode({ data, name, depth, isLast, searchQuery, path, onSaveToVar }:
   const leafCtx = onSaveToVar
     ? {
         onContextMenu: (e: React.MouseEvent) => { e.preventDefault(); onSaveToVar(path ?? [], data, e.clientX, e.clientY); },
-        title: 'Right-click to save as variable',
+        title: 'Right-click for value actions',
       }
     : {};
   const leafCls = onSaveToVar ? ' cursor-context-menu hover:bg-slate-700/50 rounded' : '';

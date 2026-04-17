@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { buildSaveToVarSnippet } from '../utils/testSnippetUtils';
+import { buildJsonPathDisplayExpression, buildSaveToVarSnippet } from '../utils/testSnippetUtils';
 
 export interface SaveToVarModalProps {
   path: (string | number)[];
@@ -7,15 +7,6 @@ export interface SaveToVarModalProps {
   collectionId: string | null;
   onConfirm: (varName: string, scope: 'environment' | 'globals' | 'collection') => void;
   onClose: () => void;
-}
-
-function pathToExpression(path: (string | number)[]): string {
-  if (path.length === 0) return '$';
-  return path.reduce((acc: string, seg: string | number): string => {
-    if (typeof seg === 'number') return `${acc}[${seg}]`;
-    if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(seg)) return `${acc}.${seg}`;
-    return `${acc}[${JSON.stringify(seg)}]`;
-  }, '$');
 }
 
 function defaultVarName(path: (string | number)[]): string {
@@ -76,7 +67,7 @@ export default function SaveToVarModal({ path, value, collectionId, onConfirm, o
           <div className="flex flex-col gap-1.5">
             <p className="text-xs text-slate-500 uppercase tracking-wider">Selected value</p>
             <div className="bg-slate-800 border border-slate-700 rounded px-3 py-2 flex flex-col gap-1">
-              <span className="text-xs font-mono text-orange-400">{pathToExpression(path)}</span>
+              <span className="text-xs font-mono text-orange-400">{buildJsonPathDisplayExpression(path)}</span>
               <span className="text-xs font-mono text-emerald-400 truncate">{previewValue(value)}</span>
             </div>
           </div>

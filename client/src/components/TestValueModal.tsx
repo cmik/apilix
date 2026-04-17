@@ -1,19 +1,10 @@
 import { useEffect, useRef } from 'react';
-import { buildTestValueSnippets } from '../utils/testSnippetUtils';
+import { buildJsonPathDisplayExpression, buildTestValueSnippets } from '../utils/testSnippetUtils';
 
 export interface TestValueModalProps {
   path: (string | number)[];
   value: unknown;
   onClose: () => void;
-}
-
-function pathToExpression(path: (string | number)[]): string {
-  if (path.length === 0) return '$';
-  return path.reduce((acc: string, seg: string | number): string => {
-    if (typeof seg === 'number') return `${acc}[${seg}]`;
-    if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(seg)) return `${acc}.${seg}`;
-    return `${acc}[${JSON.stringify(seg)}]`;
-  }, '$');
 }
 
 function previewValue(value: unknown): string {
@@ -50,7 +41,7 @@ export default function TestValueModal({ path, value, onClose }: TestValueModalP
           <div>
             <h2 className="text-sm font-semibold text-slate-100">Test this value</h2>
             <p className="text-xs text-slate-500 mt-0.5 font-mono">
-              {pathToExpression(path)} = <span className="text-slate-400">{previewValue(value)}</span>
+              {buildJsonPathDisplayExpression(path)} = <span className="text-slate-400">{previewValue(value)}</span>
             </p>
           </div>
           <button

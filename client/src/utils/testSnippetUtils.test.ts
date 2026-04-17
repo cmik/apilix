@@ -1,16 +1,21 @@
 import { describe, it, expect } from 'vitest';
-import { buildTestValueSnippets } from './testSnippetUtils';
+import { buildJsonPathDisplayExpression, buildTestValueSnippets } from './testSnippetUtils';
+
+describe('buildJsonPathDisplayExpression', () => {
+  it('formats identifier, numeric, and quoted segments consistently', () => {
+    expect(buildJsonPathDisplayExpression(['data', 0, 'token'])).toBe('$.data[0].token');
+    expect(buildJsonPathDisplayExpression(['my-key'])).toBe('$["my-key"]');
+    expect(buildJsonPathDisplayExpression(['bad"key'])).toBe('$["bad\\"key"]');
+    expect(buildJsonPathDisplayExpression([])).toBe('$');
+  });
+});
 
 describe('buildTestValueSnippets', () => {
-  it('builds null assertions plus exists', () => {
+  it('builds only null-specific assertions for null values', () => {
     expect(buildTestValueSnippets(['token'], null)).toEqual([
       {
         label: 'Is null',
         snippet: 'apx.test("token is null", () => {\n  apx.expect(apx.response.json()?.token).to.be.null;\n});',
-      },
-      {
-        label: 'Exists (not null/undefined)',
-        snippet: 'apx.test("token exists", () => {\n  apx.expect(apx.response.json()?.token).to.exist;\n});',
       },
     ]);
   });
@@ -50,6 +55,14 @@ describe('buildTestValueSnippets', () => {
       'Exists (not null/undefined)',
     ]);
     expect(snippets[0]?.snippet).toContain('apx.expect(apx.response.json()?.profile?.name).to.eql("abcdefghijklmnopqrstuvwxyz1234567890");');
+  });
+
+  it('does not suggest non-empty assertions for empty strings', () => {
+    expect(buildTestValueSnippets(['profile', 'name'], '').map(s => s.label)).toEqual([
+      'Equals ""',
+      'Is a string',
+      'Exists (not null/undefined)',
+    ]);
   });
 
   it('escapes unusual field names safely in test titles', () => {

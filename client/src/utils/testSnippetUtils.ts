@@ -3,6 +3,10 @@
  * path. Used by both ResponseViewer (injection) and SaveToVarModal (preview).
  */
 
+function isIdentifierSegment(seg: string): boolean {
+  return /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(seg);
+}
+
 /**
  * Converts a path array like `['data', 0, 'token']` into an optional-chained
  * JavaScript accessor expression rooted at `apx.response.json()`.
@@ -16,9 +20,28 @@
 export function buildJsonAccessExpression(path: (string | number)[]): string {
   return path.reduce((acc: string, seg: string | number): string => {
     if (typeof seg === 'number') return `${acc}?.[${seg}]`;
-    if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(seg)) return `${acc}?.${seg}`;
+    if (isIdentifierSegment(seg)) return `${acc}?.${seg}`;
     return `${acc}?.[${JSON.stringify(seg)}]`;
   }, 'apx.response.json()');
+}
+
+/**
+ * Converts a path array like `['data', 0, 'token']` into a JSONPath-style
+ * display expression rooted at `$`.
+ *
+ * Examples:
+ *   []              -> "$"
+ *   ['token']       -> "$.token"
+ *   ['data', 0]     -> "$.data[0]"
+ *   ['my-key']      -> '$["my-key"]'
+ */
+export function buildJsonPathDisplayExpression(path: (string | number)[]): string {
+  if (path.length === 0) return '$';
+  return path.reduce((acc: string, seg: string | number): string => {
+    if (typeof seg === 'number') return `${acc}[${seg}]`;
+    if (isIdentifierSegment(seg)) return `${acc}.${seg}`;
+    return `${acc}[${JSON.stringify(seg)}]`;
+  }, '$');
 }
 
 /**
@@ -49,6 +72,7 @@ export function buildTestValueSnippets(
   const rawField = path.length > 0 ? String(path[path.length - 1]) : 'value';
   const nameExpr = (suffix: string): string => JSON.stringify(`${rawField} ${suffix}`);
   const snippets: TestValueSnippet[] = [];
+  const shouldIncludeExists = value !== null;
 
   if (value === null) {
     snippets.push({
@@ -92,10 +116,12 @@ export function buildTestValueSnippets(
       label: `Equals "${displayValue}"`,
       snippet: `apx.test(${nameExpr(`equals ${value}`)}, () => {\n  apx.expect(${access}).to.eql(${quoted});\n});`,
     });
-    snippets.push({
-      label: 'Is not empty',
-      snippet: `apx.test(${nameExpr('is not empty')}, () => {\n  apx.expect(${access}).to.not.be.empty;\n});`,
-    });
+    if (value.length > 0) {
+      snippets.push({
+        label: 'Is not empty',
+        snippet: `apx.test(${nameExpr('is not empty')}, () => {\n  apx.expect(${access}).to.not.be.empty;\n});`,
+      });
+    }
     if (value.length > 0 && value.length <= 30) {
       snippets.push({
         label: `Contains "${displayValue}"`,
@@ -108,10 +134,12 @@ export function buildTestValueSnippets(
     });
   }
 
-  snippets.push({
-    label: 'Exists (not null/undefined)',
-    snippet: `apx.test(${nameExpr('exists')}, () => {\n  apx.expect(${access}).to.exist;\n});`,
-  });
+  if (shouldIncludeExists) {
+    snippets.push({
+      label: 'Exists (not null/undefined)',
+      snippet: `apx.test(${nameExpr('exists')}, () => {\n  apx.expect(${access}).to.exist;\n});`,
+    });
+  }
 
   return snippets;
 }
