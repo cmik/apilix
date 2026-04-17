@@ -1,6 +1,8 @@
+import type { CollectionVariable } from '../types';
+
 /**
  * Resolve {{variable}} placeholders in a string using the given variable map.
- * Priority order (highest to lowest): dataRow > environment > collectionVars > globals
+ * Priority order (highest to lowest): dataRow > environment > collectionVars > globals > collection definition vars
  */
 export function resolveVariables(
   str: string,
@@ -13,13 +15,25 @@ export function resolveVariables(
   });
 }
 
+export function buildCollectionDefinitionVarMap(
+  collectionVariables: CollectionVariable[] = [],
+): Record<string, string> {
+  return collectionVariables.reduce<Record<string, string>>((map, variable) => {
+    if (variable.key && !variable.disabled) {
+      map[variable.key] = variable.value ?? '';
+    }
+    return map;
+  }, {});
+}
+
 export function buildVarMap(
   environment: Record<string, string>,
   collectionVars: Record<string, string>,
   globals: Record<string, string>,
-  dataRow: Record<string, string> = {}
+  dataRow: Record<string, string> = {},
+  collectionDefinitionVars: Record<string, string> = {},
 ): Record<string, string> {
-  return { ...globals, ...collectionVars, ...environment, ...dataRow };
+  return { ...collectionDefinitionVars, ...globals, ...collectionVars, ...environment, ...dataRow };
 }
 
 export function getUrlDisplay(

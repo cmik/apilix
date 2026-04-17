@@ -4,7 +4,7 @@ import { marked } from 'marked';
 import type { CollectionItem, CollectionRequest, CollectionHeader, CollectionQueryParam, OAuth2Config, CollectionBody } from '../types';
 import { useApp, generateId } from '../store';
 import { executeRequest, API_BASE } from '../api';
-import { getUrlDisplay, buildVarMap, resolveVariables } from '../utils/variableResolver';
+import { getUrlDisplay, buildCollectionDefinitionVarMap, buildVarMap, resolveVariables } from '../utils/variableResolver';
 import { updateItemById, renameItemById, resolveInheritedAuth, resolveInheritedAuthWithSource, findItemInTree, flattenRequestNames, flattenRequestItems, collectAncestorScripts } from '../utils/treeHelpers';
 import { parseCurlCommand } from '../utils/curlUtils';
 import { parseHurlFile } from '../utils/hurlUtils';
@@ -17,6 +17,11 @@ import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
 import ScriptEditor from './ScriptEditor';
 import OAuthConfigPanel from './OAuthConfigPanel';
 import type { SaveExistingRequestTabsResult, UnsavedRequestTabSummary } from '../utils/requestTabSyncGuard';
+import { buildVariableSuggestions, type VariableSuggestion } from '../utils/variableAutocomplete';
+import VarInput from './VarInput';
+import { buildBodyPreview, highlightUnresolved } from '../utils/bodyPreview';
+import { INJECT_TEST_SNIPPET } from '../utils/appEvents';
+import type { InjectTestSnippetDetail } from '../utils/appEvents';
 
 const CodeGenModal = lazy(() => import('./CodeGenModal'));
 const ItemSettingsModal = lazy(() => import('./ItemSettingsModal'));
@@ -305,11 +310,13 @@ function KvTable({
   onChange,
   keyPlaceholder = 'Key',
   valuePlaceholder = 'Value',
+  variableSuggestions,
 }: {
   rows: Array<{ key: string; value: string; disabled?: boolean }>;
   onChange: (rows: Array<{ key: string; value: string; disabled?: boolean }>) => void;
   keyPlaceholder?: string;
   valuePlaceholder?: string;
+  variableSuggestions?: VariableSuggestion[];
 }) {
   const [bulkMode, setBulkMode] = useState(false);
   const [bulkText, setBulkText] = useState('');
@@ -374,19 +381,21 @@ function KvTable({
             title={row.disabled ? 'Enable' : 'Disable'}
             className="shrink-0 accent-orange-500 cursor-pointer"
           />
-          <input
+          <VarInput
             value={row.key}
-            onChange={e => update(i, 'key', e.target.value)}
+            onChange={v => update(i, 'key', v)}
             placeholder={keyPlaceholder}
             disabled={row.disabled}
-            className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-slate-100 focus:outline-none focus:border-orange-500 disabled:cursor-not-allowed"
+            variableSuggestions={variableSuggestions}
+            className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-slate-100 focus:outline-none focus:border-orange-500 disabled:cursor-not-allowed"
           />
-          <input
+          <VarInput
             value={row.value}
-            onChange={e => update(i, 'value', e.target.value)}
+            onChange={v => update(i, 'value', v)}
             placeholder={valuePlaceholder}
             disabled={row.disabled}
-            className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-slate-100 focus:outline-none focus:border-orange-500 disabled:cursor-not-allowed"
+            variableSuggestions={variableSuggestions}
+            className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-slate-100 focus:outline-none focus:border-orange-500 disabled:cursor-not-allowed"
           />
           <button onClick={() => remove(i)} className="px-2 text-slate-500 hover:text-red-400 text-lg leading-none">×</button>
         </div>
@@ -686,6 +695,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
   const [importMode, setImportMode] = useState<'curl' | 'raw' | 'hurl'>('curl');
   const [importError, setImportError] = useState('');
   const [docsMode, setDocsMode] = useState<'edit' | 'preview'>('edit');
+  const [bodyPreviewMode, setBodyPreviewMode] = useState<'edit' | 'preview'>('edit');
   const [urlAcSuggestions, setUrlAcSuggestions] = useState<string[]>([]);
   const [urlAcIndex, setUrlAcIndex] = useState(0);
   const [urlAcLeft, setUrlAcLeft] = useState(0);
@@ -720,6 +730,11 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     cacheRef.current.forEach((v, k) => { if (v.dirty) ids.add(k); });
     onDirtyChange(ids);
   }, [dirty, onDirtyChange]);
+
+  // Reset body preview to edit mode when switching tabs or changing body type
+  useEffect(() => {
+    setBodyPreviewMode('edit');
+  }, [activeTabId, edit?.bodyMode]);
 
   function emitDirtyChange() {
     if (!onDirtyChange) return;
@@ -819,29 +834,50 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     };
     const onFocusUrl = () => { urlInputRef.current?.focus(); urlInputRef.current?.select(); };
     const onInjectSnippet = (event: Event) => {
-      const detail = (event as CustomEvent<{ snippet?: string }>).detail;
+      const detail = (event as CustomEvent<InjectTestSnippetDetail>).detail;
       const snippet = detail?.snippet;
       if (typeof snippet !== 'string') return;
-      if (!activeTab) return;
-      setEdit(prev => ({
-        ...prev,
-        testScript: prev.testScript.trim() ? prev.testScript + '\n\n' + snippet : snippet,
-      }));
-      setActiveRequestTabCached('Tests');
+
+      const targetTabId = detail?.tabId;
+
+      // Target is the currently active tab (most common case)
+      if (!targetTabId || targetTabId === activeTab?.id) {
+        if (!activeTab) return;
+        setEdit(prev => ({
+          ...prev,
+          testScript: prev.testScript.trim() ? prev.testScript + '\n\n' + snippet : snippet,
+        }));
+        setActiveRequestTabCached('Tests');
+        return;
+      }
+
+      // User switched tabs before confirming — update the originating tab's cache
+      const cached = cacheRef.current.get(targetTabId);
+      if (!cached) return;
+      const currentScript = cached.edit.testScript ?? '';
+      cacheRef.current.set(targetTabId, {
+        ...cached,
+        dirty: true,
+        activeRequestTab: 'Tests',
+        edit: {
+          ...cached.edit,
+          testScript: currentScript.trim() ? currentScript + '\n\n' + snippet : snippet,
+        },
+      });
     };
     document.addEventListener('apilix:send', onSend);
     document.addEventListener('apilix:save', onSave);
     document.addEventListener('apilix:request-tab-sync-summary', onSyncSummary as EventListener);
     document.addEventListener('apilix:request-tab-sync-save-existing', onSyncSaveExisting as EventListener);
     document.addEventListener('apilix:focusUrl', onFocusUrl);
-    document.addEventListener('apilix:inject-test-snippet', onInjectSnippet as EventListener);
+    document.addEventListener(INJECT_TEST_SNIPPET, onInjectSnippet as EventListener);
     return () => {
       document.removeEventListener('apilix:send', onSend);
       document.removeEventListener('apilix:save', onSave);
       document.removeEventListener('apilix:request-tab-sync-summary', onSyncSummary as EventListener);
       document.removeEventListener('apilix:request-tab-sync-save-existing', onSyncSaveExisting as EventListener);
       document.removeEventListener('apilix:focusUrl', onFocusUrl);
-      document.removeEventListener('apilix:inject-test-snippet', onInjectSnippet as EventListener);
+      document.removeEventListener(INJECT_TEST_SNIPPET, onInjectSnippet as EventListener);
     };
   }, [activeTab, onDirtyChange, state.collections, state.tabs]);
 
@@ -887,8 +923,10 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
 
   const envVars = getEnvironmentVars();
   const collVars = getCollectionVars(activeReq.collectionId);
-  const allVars = buildVarMap(envVars, collVars, state.globalVariables);
   const col = state.collections.find(c => c._id === activeReq.collectionId);
+  const collectionDefinitionVars = buildCollectionDefinitionVarMap(col?.variable ?? []);
+  const allVars = buildVarMap(envVars, collVars, state.globalVariables, {}, collectionDefinitionVars);
+  const variableSuggestions = buildVariableSuggestions(allVars);
 
   // Sync query params into URL
   function syncParamsToUrl(params: CollectionQueryParam[]) {
@@ -1690,6 +1728,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
               rows={edit.queryParams}
               onChange={params => syncParamsToUrl(params)}
               keyPlaceholder="Parameter"
+              variableSuggestions={variableSuggestions}
             />
             {edit.pathParams.length > 0 && (
               <div>
@@ -1700,16 +1739,17 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
                       <span className="w-36 shrink-0 px-2 py-1 bg-slate-700/50 border border-slate-600 rounded text-sm font-mono text-slate-400 truncate">
                         :{param.key}
                       </span>
-                      <input
+                      <VarInput
                         value={param.value}
-                        onChange={e => {
+                        onChange={v => {
                           const updated = edit.pathParams.map((p, j) =>
-                            j === i ? { ...p, value: e.target.value } : p
+                            j === i ? { ...p, value: v } : p
                           );
                           setEdit(x => x ? { ...x, pathParams: updated } : x);
                         }}
                         placeholder="value"
-                        className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
+                        variableSuggestions={variableSuggestions}
+                        className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
                       />
                     </div>
                   ))}
@@ -1724,6 +1764,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             rows={edit.headers}
             onChange={headers => setEdit(x => x ? { ...x, headers } : x)}
             keyPlaceholder="Header name"
+            variableSuggestions={variableSuggestions}
           />
         )}
 
@@ -1754,83 +1795,218 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
                   ))}
                 </select>
               )}
-              {edit.bodyMode === 'raw' && (
-                <button
-                  onClick={() => {
-                    try {
-                      let formatted = edit.bodyRaw;
-                      if (edit.bodyRawLang === 'json') {
-                        formatted = JSON.stringify(JSON.parse(edit.bodyRaw), null, 2);
-                      } else if (edit.bodyRawLang === 'xml' || edit.bodyRawLang === 'html') {
-                        let indent = 0;
-                        formatted = edit.bodyRaw
-                          .replace(/>\s*</g, '>\n<')
-                          .split('\n')
-                          .map(line => {
-                            line = line.trim();
-                            if (!line) return '';
-                            if (line.startsWith('</')) indent = Math.max(indent - 1, 0);
-                            const pad = '  '.repeat(indent);
-                            if (line.startsWith('<') && !line.startsWith('</') && !line.startsWith('<?') && !line.endsWith('/>') && !/<\/[^>]+>$/.test(line)) indent++;
-                            return pad + line;
-                          })
-                          .filter(Boolean)
-                          .join('\n');
-                      }
-                      if (formatted !== edit.bodyRaw) {
-                        setEdit(x => x ? { ...x, bodyRaw: formatted } : x);
-                      }
-                    } catch { /* ignore parse errors */ }
-                  }}
-                  className="ml-auto text-xs text-slate-500 hover:text-orange-400 transition-colors"
-                >
-                  Beautify
-                </button>
+              {edit.bodyMode !== 'none' && (
+                <div className="ml-auto flex items-center gap-2">
+                  {edit.bodyMode === 'raw' && (
+                    <button
+                      onClick={() => {
+                        try {
+                          let formatted = edit.bodyRaw;
+                          if (edit.bodyRawLang === 'json') {
+                            formatted = JSON.stringify(JSON.parse(edit.bodyRaw), null, 2);
+                          } else if (edit.bodyRawLang === 'xml' || edit.bodyRawLang === 'html') {
+                            let indent = 0;
+                            formatted = edit.bodyRaw
+                              .replace(/>\s*</g, '>\n<')
+                              .split('\n')
+                              .map(line => {
+                                line = line.trim();
+                                if (!line) return '';
+                                if (line.startsWith('</')) indent = Math.max(indent - 1, 0);
+                                const pad = '  '.repeat(indent);
+                                if (line.startsWith('<') && !line.startsWith('</') && !line.startsWith('<?') && !line.endsWith('/>') && !/<\/[^>]+>$/.test(line)) indent++;
+                                return pad + line;
+                              })
+                              .filter(Boolean)
+                              .join('\n');
+                          }
+                          if (formatted !== edit.bodyRaw) {
+                            setEdit(x => x ? { ...x, bodyRaw: formatted } : x);
+                          }
+                        } catch { /* ignore parse errors */ }
+                      }}
+                      className="text-xs text-slate-500 hover:text-orange-400 transition-colors"
+                    >
+                      Beautify
+                    </button>
+                  )}
+                  {edit.bodyMode !== 'file' && (
+                    <div className="flex rounded overflow-hidden border border-slate-600 text-xs">
+                      <button
+                        onClick={() => setBodyPreviewMode('edit')}
+                        className={`px-3 py-1 transition-colors ${bodyPreviewMode === 'edit' ? 'bg-slate-600 text-slate-100' : 'bg-slate-800 text-slate-400 hover:text-slate-200'}`}
+                      >Edit</button>
+                      <button
+                        onClick={() => setBodyPreviewMode('preview')}
+                        className={`px-3 py-1 transition-colors ${bodyPreviewMode === 'preview' ? 'bg-slate-600 text-slate-100' : 'bg-slate-800 text-slate-400 hover:text-slate-200'}`}
+                      >Preview</button>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
-            {edit.bodyMode === 'raw' && (
+            {bodyPreviewMode === 'edit' && edit.bodyMode === 'raw' && (
               <CodeEditor
                 value={edit.bodyRaw}
                 onChange={e => setEdit(x => x ? { ...x, bodyRaw: e.target.value } : x)}
                 language={edit.bodyRawLang as CodeLanguage}
                 rows={10}
+                variableSuggestions={variableSuggestions}
                 placeholder={edit.bodyRawLang === 'json' ? '{\n  "key": "value"\n}' : 'Request body...'}
               />
             )}
-            {edit.bodyMode === 'urlencoded' && (
+            {bodyPreviewMode === 'edit' && edit.bodyMode === 'urlencoded' && (
               <KvTable
                 rows={edit.bodyUrlEncoded}
                 onChange={v => setEdit(x => x ? { ...x, bodyUrlEncoded: v } : x)}
+                variableSuggestions={variableSuggestions}
               />
             )}
-            {edit.bodyMode === 'formdata' && (
+            {bodyPreviewMode === 'edit' && edit.bodyMode === 'formdata' && (
               <KvTable
                 rows={edit.bodyFormData}
                 onChange={v => setEdit(x => x ? { ...x, bodyFormData: v } : x)}
+                variableSuggestions={variableSuggestions}
               />
             )}
-            {edit.bodyMode === 'graphql' && (
+            {bodyPreviewMode === 'edit' && edit.bodyMode === 'graphql' && (
               <GraphQLPanel
                 query={edit.bodyGraphqlQuery}
                 variables={edit.bodyGraphqlVariables}
                 url={resolveVariables(edit.url, allVars)}
                 headers={edit.headers.filter(h => !h.disabled)}
+                variableSuggestions={variableSuggestions}
                 onQueryChange={q => setEdit(x => x ? { ...x, bodyGraphqlQuery: q } : x)}
                 onVariablesChange={v => setEdit(x => x ? { ...x, bodyGraphqlVariables: v } : x)}
               />
             )}
-            {edit.bodyMode === 'soap' && (
+            {bodyPreviewMode === 'edit' && edit.bodyMode === 'soap' && (
               <SoapPanel
                 envelope={edit.bodyRaw}
                 action={edit.bodySoapAction}
                 version={edit.bodySoapVersion}
                 wsdlUrl={edit.bodySoapWsdlUrl}
+                variableSuggestions={variableSuggestions}
                 onEnvelopeChange={v => setEdit(x => x ? { ...x, bodyRaw: v } : x)}
                 onActionChange={v => setEdit(x => x ? { ...x, bodySoapAction: v } : x)}
                 onVersionChange={v => setEdit(x => x ? { ...x, bodySoapVersion: v } : x)}
                 onWsdlUrlChange={v => setEdit(x => x ? { ...x, bodySoapWsdlUrl: v } : x)}
               />
             )}
+            {bodyPreviewMode === 'preview' && edit.bodyMode !== 'none' && edit.bodyMode !== 'file' && (() => {
+              const preview = buildBodyPreview({
+                bodyMode: edit.bodyMode,
+                bodyRaw: edit.bodyRaw,
+                bodyRawLang: edit.bodyRawLang,
+                bodyUrlEncoded: edit.bodyUrlEncoded,
+                bodyFormData: edit.bodyFormData,
+                bodyGraphqlVariables: edit.bodyGraphqlVariables,
+              }, allVars);
+
+              if (preview.kind === 'text') {
+                const segs = highlightUnresolved(preview.text);
+                return (
+                  <div className="relative">
+                    {edit.bodyMode === 'graphql' && (
+                      <p className="text-xs text-slate-500 mb-1">GraphQL variables (resolved)</p>
+                    )}
+                    <pre className="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs font-mono text-slate-200 overflow-auto whitespace-pre-wrap min-h-[80px]">
+                      {segs.map((s, i) =>
+                        s.unresolved
+                          ? <mark key={i} className="bg-amber-500/20 text-amber-300 rounded px-0.5 not-italic">{s.text}</mark>
+                          : <span key={i}>{s.text}</span>
+                      )}
+                      {!preview.text && <span className="text-slate-600 italic">Empty body.</span>}
+                    </pre>
+                  </div>
+                );
+              }
+
+              if (preview.kind === 'kv') {
+                return (
+                  <div className="flex flex-col gap-2">
+                    <table className="w-full text-xs border-collapse">
+                      <thead>
+                        <tr className="text-slate-500 border-b border-slate-700">
+                          <th className="text-left py-1 pr-3 font-medium w-1/3">Key</th>
+                          <th className="text-left py-1 font-medium">Value</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {preview.rows.length === 0 && (
+                          <tr><td colSpan={2} className="py-2 text-slate-600 italic">No entries.</td></tr>
+                        )}
+                        {preview.rows.map((row, i) => (
+                          <tr key={i} className={`border-b border-slate-800 ${row.disabled ? 'opacity-40' : ''}`}>
+                            <td className="py-1 pr-3 font-mono text-slate-300">
+                              {highlightUnresolved(row.key).map((s, j) =>
+                                s.unresolved ? <mark key={j} className="bg-amber-500/20 text-amber-300 rounded px-0.5 not-italic">{s.text}</mark> : <span key={j}>{s.text}</span>
+                              )}
+                            </td>
+                            <td className="py-1 font-mono text-slate-300">
+                              {highlightUnresolved(row.value).map((s, j) =>
+                                s.unresolved ? <mark key={j} className="bg-amber-500/20 text-amber-300 rounded px-0.5 not-italic">{s.text}</mark> : <span key={j}>{s.text}</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {preview.serialized && (
+                      <p className="text-[10px] text-slate-500 font-mono break-all border border-slate-700 rounded px-2 py-1 bg-slate-900">
+                        <span className="text-slate-600 mr-1">Serialized:</span>
+                        {highlightUnresolved(preview.serialized).map((s, i) =>
+                          s.unresolved ? <mark key={i} className="bg-amber-500/20 text-amber-300 rounded px-0.5 not-italic">{s.text}</mark> : <span key={i}>{s.text}</span>
+                        )}
+                      </p>
+                    )}
+                  </div>
+                );
+              }
+
+              if (preview.kind === 'form') {
+                return (
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr className="text-slate-500 border-b border-slate-700">
+                        <th className="text-left py-1 pr-3 font-medium w-1/3">Key</th>
+                        <th className="text-left py-1 pr-3 font-medium w-1/6">Type</th>
+                        <th className="text-left py-1 font-medium">Value</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.rows.length === 0 && (
+                        <tr><td colSpan={3} className="py-2 text-slate-600 italic">No entries.</td></tr>
+                      )}
+                      {preview.rows.map((row, i) => (
+                        <tr key={i} className={`border-b border-slate-800 ${row.disabled ? 'opacity-40' : ''}`}>
+                          <td className="py-1 pr-3 font-mono text-slate-300">
+                            {highlightUnresolved(row.key).map((s, j) =>
+                              s.unresolved ? <mark key={j} className="bg-amber-500/20 text-amber-300 rounded px-0.5 not-italic">{s.text}</mark> : <span key={j}>{s.text}</span>
+                            )}
+                          </td>
+                          <td className="py-1 pr-3">
+                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${row.type === 'file' ? 'text-sky-400 bg-sky-400/15' : 'text-slate-400 bg-slate-400/15'}`}>
+                              {row.type}
+                            </span>
+                          </td>
+                          <td className="py-1 font-mono text-slate-300">
+                            {row.type === 'file'
+                              ? <span className="text-sky-400 italic">{row.value}</span>
+                              : highlightUnresolved(row.value).map((s, j) =>
+                                  s.unresolved ? <mark key={j} className="bg-amber-500/20 text-amber-300 rounded px-0.5 not-italic">{s.text}</mark> : <span key={j}>{s.text}</span>
+                                )
+                            }
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                );
+              }
+
+              return null;
+            })()}
             {edit.bodyMode === 'file' && (
               <div className="flex flex-col gap-2">
                 <label className="text-xs text-slate-400">Select a file to send as the request body</label>
@@ -1917,11 +2093,12 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             {edit.authType === 'bearer' && (
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs text-slate-400">Token</label>
-                <input
+                <VarInput
                   value={edit.authBearer}
-                  onChange={e => setEdit(x => x ? { ...x, authBearer: e.target.value } : x)}
+                  onChange={v => setEdit(x => x ? { ...x, authBearer: v } : x)}
                   placeholder="{{token}}"
-                  className="bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
+                  variableSuggestions={variableSuggestions}
+                  className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
                 />
               </div>
             )}
@@ -1930,9 +2107,10 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
               <div className="flex flex-col gap-2">
                 <div>
                   <label className="text-xs text-slate-400">Username</label>
-                  <input
+                  <VarInput
                     value={edit.authBasicUser}
-                    onChange={e => setEdit(x => x ? { ...x, authBasicUser: e.target.value } : x)}
+                    onChange={v => setEdit(x => x ? { ...x, authBasicUser: v } : x)}
+                    variableSuggestions={variableSuggestions}
                     className="mt-1 w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-orange-500"
                   />
                 </div>
@@ -1952,17 +2130,19 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
               <div className="flex flex-col gap-2">
                 <div>
                   <label className="text-xs text-slate-400">Key Name</label>
-                  <input
+                  <VarInput
                     value={edit.authApiKeyName}
-                    onChange={e => setEdit(x => x ? { ...x, authApiKeyName: e.target.value } : x)}
+                    onChange={v => setEdit(x => x ? { ...x, authApiKeyName: v } : x)}
+                    variableSuggestions={variableSuggestions}
                     className="mt-1 w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-orange-500"
                   />
                 </div>
                 <div>
                   <label className="text-xs text-slate-400">Value</label>
-                  <input
+                  <VarInput
                     value={edit.authApiKeyValue}
-                    onChange={e => setEdit(x => x ? { ...x, authApiKeyValue: e.target.value } : x)}
+                    onChange={v => setEdit(x => x ? { ...x, authApiKeyValue: v } : x)}
+                    variableSuggestions={variableSuggestions}
                     className="mt-1 w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
                   />
                 </div>
@@ -1975,6 +2155,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
                 onChange={config => setEdit(x => x ? { ...x, authOAuth2Config: { ...x.authOAuth2Config, ...config } } : x)}
                 onGetAuthorizationCode={handleGetAuthorizationCode}
                 onRefreshToken={handleRefreshOAuthToken}
+                variableSuggestions={variableSuggestions}
               />
             )}
           </div>
@@ -2328,6 +2509,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
                 setShowParentSettings(false);
               }}
               onClose={() => setShowParentSettings(false)}
+              variableSuggestions={variableSuggestions}
             />
           </Suspense>
         );

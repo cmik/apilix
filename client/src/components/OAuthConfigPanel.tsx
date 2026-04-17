@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import type { OAuth2Config, OAuth2GrantType } from '../types/oauth';
 import { OAUTH2_PRESET_PROVIDERS, PRESET_PROVIDER_LIST, GRANT_TYPE_LIST } from '../constants/oauthProviders';
+import VarInput from './VarInput';
+import type { VariableSuggestion } from '../utils/variableAutocomplete';
 
 interface OAuthConfigPanelProps {
   config: Partial<OAuth2Config>;
@@ -9,6 +11,7 @@ interface OAuthConfigPanelProps {
   onGetAuthorizationCode?: () => Promise<void>;
   isRefreshing?: boolean;
   isGettingAuthCode?: boolean;
+  variableSuggestions?: VariableSuggestion[];
 }
 
 export default function OAuthConfigPanel({
@@ -18,6 +21,7 @@ export default function OAuthConfigPanel({
   onGetAuthorizationCode,
   isRefreshing = false,
   isGettingAuthCode = false,
+  variableSuggestions,
 }: OAuthConfigPanelProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -134,11 +138,11 @@ export default function OAuthConfigPanel({
         <label className="text-xs text-slate-400">
           Client ID <span className="text-red-500">*</span>
         </label>
-        <input
-          type="text"
+        <VarInput
           value={config.clientId ?? ''}
-          onChange={e => handleClientIdChange(e.target.value)}
+          onChange={handleClientIdChange}
           placeholder="{{clientId}}"
+          variableSuggestions={variableSuggestions}
           className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
         />
       </div>
@@ -163,11 +167,11 @@ export default function OAuthConfigPanel({
           <label className="text-xs text-slate-400">
             Authorization URL <span className="text-red-500">*</span>
           </label>
-          <input
-            type="text"
+          <VarInput
             value={config.authorizationUrl ?? ''}
-            onChange={e => handleAuthorizationUrlChange(e.target.value)}
+            onChange={handleAuthorizationUrlChange}
             placeholder="https://provider.com/oauth/authorize"
+            variableSuggestions={variableSuggestions}
             className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
           />
         </div>
@@ -178,11 +182,11 @@ export default function OAuthConfigPanel({
         <label className="text-xs text-slate-400">
           Token URL <span className="text-red-500">*</span>
         </label>
-        <input
-          type="text"
+        <VarInput
           value={config.tokenUrl ?? ''}
-          onChange={e => handleTokenUrlChange(e.target.value)}
+          onChange={handleTokenUrlChange}
           placeholder="https://provider.com/oauth/token"
+          variableSuggestions={variableSuggestions}
           className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
         />
       </div>

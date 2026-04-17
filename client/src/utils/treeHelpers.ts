@@ -343,3 +343,32 @@ export function flattenRequestItems(items: CollectionItem[]): Array<{ id: string
   walk(items);
   return result;
 }
+
+/** Sort a flat array of CollectionItems by name (locale-aware, stable). */
+export function sortItemsByName(items: CollectionItem[]): CollectionItem[] {
+  return items
+    .map((item, i) => ({ item, i }))
+    .sort((a, b) => a.item.name.localeCompare(b.item.name, undefined, { sensitivity: 'base' }) || a.i - b.i)
+    .map(({ item }) => item);
+}
+
+/**
+ * Sort the direct children of a collection root or a specific folder.
+ * When `folderId` is undefined, sorts the top-level `items` array.
+ * When `folderId` is provided, sorts only that folder's direct children.
+ * Returns a new array (does not mutate).
+ */
+export function sortChildrenByName(items: CollectionItem[], folderId?: string): CollectionItem[] {
+  if (folderId === undefined) {
+    return sortItemsByName(items);
+  }
+  return items.map(node => {
+    if (node.id === folderId) {
+      return { ...node, item: sortItemsByName(node.item || []) };
+    }
+    if (node.item) {
+      return { ...node, item: sortChildrenByName(node.item, folderId) };
+    }
+    return node;
+  });
+}

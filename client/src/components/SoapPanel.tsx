@@ -3,6 +3,7 @@ import { fetchWsdl } from '../api';
 import { parseWsdl, buildEnvelope, defaultEnvelope } from '../utils/wsdlUtils';
 import type { WsdlOperation } from '../utils/wsdlUtils';
 import CodeEditor from './CodeEditor';
+import type { VariableSuggestion } from '../utils/variableAutocomplete';
 
 // ─── Local helpers ────────────────────────────────────────────────────────────
 
@@ -36,6 +37,7 @@ export interface SoapPanelProps {
   action: string;
   version: '1.1' | '1.2';
   wsdlUrl: string;
+  variableSuggestions?: VariableSuggestion[];
   onEnvelopeChange: (v: string) => void;
   onActionChange: (v: string) => void;
   onVersionChange: (v: '1.1' | '1.2') => void;
@@ -47,6 +49,7 @@ export default function SoapPanel({
   action,
   version,
   wsdlUrl,
+  variableSuggestions,
   onEnvelopeChange,
   onActionChange,
   onVersionChange,
@@ -213,6 +216,7 @@ export default function SoapPanel({
           onChange={e => onEnvelopeChange(e.target.value)}
           rows={12}
           language="xml"
+          variableSuggestions={variableSuggestions}
           placeholder={'<?xml version="1.0" encoding="utf-8"?>\n<soap:Envelope ...>'}
         />
       </div>

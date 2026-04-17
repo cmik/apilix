@@ -2,11 +2,12 @@ import { useState, useRef, useEffect, createContext, useContext, lazy, Suspense 
 import { createPortal } from 'react-dom';
 import type { CollectionItem, AppCollection, MockCollection, MockRoute } from '../types';
 import { useApp, generateId } from '../store';
-import { buildVarMap, resolveVariables } from '../utils/variableResolver';
+import { buildVarMap, buildCollectionDefinitionVarMap, resolveVariables } from '../utils/variableResolver';
+import { buildVariableSuggestions } from '../utils/variableAutocomplete';
 import {
   renameItemById, updateItemById, removeItemById, addItemToFolder, duplicateItem,
   moveItemInTree, extractItemById, insertItemInTree, isDescendantOf, getAllRequestIds,
-  flattenRequestNames, flattenRequestItems,
+  flattenRequestNames, flattenRequestItems, sortChildrenByName,
 } from '../utils/treeHelpers';
 import { generateHurlFromItems } from '../utils/hurlUtils';
 
@@ -313,8 +314,14 @@ interface ItemNodeProps {
 
 function ItemNode({ item, collectionId, collection, depth, startRenaming }: ItemNodeProps) {
   const { state, dispatch, getEnvironmentVars, getCollectionVars } = useApp();
-  const staticCollVars = Object.fromEntries((collection.variable ?? []).filter(v => !v.disabled && v.key).map(v => [v.key, v.value]));
-  const varMap = buildVarMap(getEnvironmentVars(), { ...staticCollVars, ...getCollectionVars(collectionId) }, state.globalVariables);
+  const collectionDefinitionVars = buildCollectionDefinitionVarMap(collection.variable);
+  const varMap = buildVarMap(
+    getEnvironmentVars(),
+    getCollectionVars(collectionId),
+    state.globalVariables,
+    collectionDefinitionVars,
+  );
+  const variableSuggestions = buildVariableSuggestions(varMap);
   const dragCtx = useDragCtx();
   const collapseSignal = useContext(CollapseCtx);
   const expandSignal = useContext(ExpandCtx);
@@ -467,8 +474,15 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
           },
         },
     ...(isFolder ? [
-      { label: 'Add folder', icon: '📁', onClick: handleAddFolder },
       { label: 'Add request', icon: '➕', onClick: handleAddRequest },
+      { label: 'Add folder', icon: '📁', onClick: handleAddFolder },
+      ...((item.item?.length ?? 0) >= 2 && !!item.id ? [{
+        label: 'Order items A→Z',
+        icon: '⇅',
+        onClick: () => {
+          dispatch({ type: 'UPDATE_COLLECTION', payload: { ...collection, item: sortChildrenByName(collection.item, item.id) } });
+        },
+      }] : []),
     ] : []),
     {
       label: 'Execute in Runner',
@@ -576,6 +590,7 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
                 });
               }}
               onClose={() => setShowSettings(false)}
+              variableSuggestions={variableSuggestions}
             />
           </Suspense>
         )}
@@ -679,6 +694,14 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
 }) {
   const { state, dispatch, getEnvironmentVars, getCollectionVars } = useApp();
   const dragCtx = useDragCtx();
+  const collectionDefinitionVars = buildCollectionDefinitionVarMap(collection.variable ?? []);
+  const varMap = buildVarMap(
+    getEnvironmentVars(),
+    getCollectionVars(collection._id),
+    state.globalVariables,
+    collectionDefinitionVars,
+  );
+  const variableSuggestions = buildVariableSuggestions(varMap);
   const collapseSignal = useContext(CollapseCtx);
   const expandSignal = useContext(ExpandCtx);
   const [open, setOpen] = useState(true);
@@ -806,6 +829,13 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
     { label: 'Add to Mock Server', icon: '🎭', onClick: handleSendCollectionToMock },
     { label: 'Export', icon: '⬇️', onClick: handleExport },
     { label: 'Export as HURL', icon: '⬇️', onClick: handleExportHurl },
+    ...(collection.item.length >= 2 ? [{
+      label: 'Order items A→Z',
+      icon: '⇅',
+      onClick: () => {
+        dispatch({ type: 'UPDATE_COLLECTION', payload: { ...collection, item: sortChildrenByName(collection.item) } });
+      },
+    }] : []),
     {
       label: 'Rename',
       icon: '✏️',
@@ -822,10 +852,40 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
     },
   ];
 
+  const isCollectionDropTarget =
+    dragCtx.draggingId !== null &&
+    dragCtx.dropId === null &&
+    dragCtx.dropColId === collection._id &&
+    dragCtx.dropPos === 'inside';
+
+  function handleCollectionDragOver(e: React.DragEvent) {
+    if (!dragCtx.draggingId) return;
+    // When open and non-empty, ItemNodes handle drag events via stopPropagation.
+    // Only act as a drop target when the collection is closed or empty.
+    if (open && collection.item.length > 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    if (!isCollectionDropTarget) {
+      dragCtx.updateDrop(null, collection._id, 'inside');
+    }
+  }
+
+  function handleCollectionDrop(e: React.DragEvent) {
+    if (!dragCtx.draggingId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragCtx.executeDrop();
+  }
+
   return (
-    <div className={`mb-1 transition-opacity ${isDragging ? 'opacity-40' : ''}`}>
+    <div
+      className={`mb-1 transition-opacity ${isDragging ? 'opacity-40' : ''}`}
+      onDragOver={handleCollectionDragOver}
+      onDrop={handleCollectionDrop}
+    >
       <div
-        className={`flex items-center group rounded transition-colors ${dragCtx.draggingId && dragCtx.dropColId === collection._id && dragCtx.dropId === null ? 'ring-1 ring-orange-500' : ''}`}
+        className={`flex items-center group rounded transition-colors ${isCollectionDropTarget ? 'ring-1 ring-inset ring-orange-500/60 bg-orange-500/10' : ''}`}
         draggable={!!onDragStart}
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
@@ -887,6 +947,7 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
               });
             }}
             onClose={() => setShowSettings(false)}
+            variableSuggestions={variableSuggestions}
           />
         </Suspense>
       )}
@@ -1111,7 +1172,7 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
     }
 
     return (
-      <div className="flex-1 overflow-y-auto py-1">
+      <div className="flex-1 overflow-y-auto scrollbar-thin py-1">
         {matched.map((r, i) => {
           const method = r.item.request?.method?.toUpperCase() || 'GET';
           const isActive =
@@ -1155,7 +1216,7 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
       <CollapseCtx.Provider value={collapseSignal}>
       <ExpandCtx.Provider value={expandSignal}>
       <div
-        className="flex-1 overflow-y-auto py-1"
+        className="flex-1 overflow-y-auto scrollbar-thin py-1"
         onDragLeave={(e) => {
           if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) {
             updateDrop(null, null, null);
