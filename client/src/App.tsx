@@ -43,6 +43,7 @@ import {
   type WorkspaceSwitchDecision,
   type UnsavedRequestTabSummary,
 } from './utils/requestTabSyncGuard';
+import { isVersionGreater } from './utils/versionUtils';
 
 declare const __APP_VERSION__: string;
 
@@ -585,10 +586,11 @@ export default function App() {
       signal: AbortSignal.timeout(5000),
     })
       .then(r => r.ok ? r.json() : Promise.reject())
-      .then((data: { tag_name: string }) => {
+      .then((data: { tag_name?: unknown }) => {
         if (cancelled) return;
+        if (typeof data.tag_name !== 'string') return;
         const latest = data.tag_name.replace(/^v/, '');
-        if (latest !== version) {
+        if (isVersionGreater(latest, version)) {
           setLatestVersion(latest);
           setUpdateAvailable(true);
         }
