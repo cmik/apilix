@@ -225,6 +225,86 @@ describe('buildBodyPreview', () => {
     const result = buildBodyPreview({ ...base(), bodyMode: 'graphql' }, vars);
     expect(result).toEqual({ kind: 'text', text: '', language: 'json' });
   });
+
+  // ── empty vars map ──
+
+  it('raw: leaves all placeholders unresolved when vars map is empty', () => {
+    const result = buildBodyPreview(
+      { ...base(), bodyMode: 'raw', bodyRaw: '{"a":"{{x}}","b":"{{y}}"}', bodyRawLang: 'json' },
+      {},
+    );
+    expect(result.kind === 'text' && result.text).toBe('{"a":"{{x}}","b":"{{y}}"}');
+  });
+
+  // ── raw with empty body ──
+
+  it('raw: returns empty text for empty bodyRaw', () => {
+    const result = buildBodyPreview({ ...base(), bodyMode: 'raw', bodyRaw: '', bodyRawLang: 'json' }, vars);
+    expect(result).toEqual({ kind: 'text', text: '', language: 'json' });
+  });
+
+  it('soap: returns empty text for empty bodyRaw', () => {
+    const result = buildBodyPreview({ ...base(), bodyMode: 'soap', bodyRaw: '' }, vars);
+    expect(result).toEqual({ kind: 'text', text: '', language: 'xml' });
+  });
+
+  // ── urlencoded special chars ──
+
+  it('urlencoded: percent-encodes special characters in serialized output', () => {
+    const result = buildBodyPreview(
+      {
+        ...base(),
+        bodyMode: 'urlencoded',
+        bodyUrlEncoded: [{ key: 'greeting', value: 'hello world' }],
+      },
+      {},
+    );
+    // URLSearchParams encodes spaces as +
+    expect(result.kind === 'kv' && result.serialized).toBe('greeting=hello+world');
+  });
+
+  it('urlencoded: row with empty key is excluded from serialized but present in rows', () => {
+    const result = buildBodyPreview(
+      {
+        ...base(),
+        bodyMode: 'urlencoded',
+        bodyUrlEncoded: [
+          { key: '', value: 'orphan' },
+          { key: 'present', value: 'yes' },
+        ],
+      },
+      {},
+    );
+    expect(result.kind).toBe('kv');
+    if (result.kind === 'kv') {
+      expect(result.rows).toHaveLength(2);          // both rows preserved
+      expect(result.serialized).toBe('present=yes'); // empty-key row excluded
+    }
+  });
+
+  // ── formdata mixed rows ──
+
+  it('formdata: handles mixed text and file rows in same array', () => {
+    const result = buildBodyPreview(
+      {
+        ...base(),
+        bodyMode: 'formdata',
+        bodyFormData: [
+          { key: 'caption', value: '{{name}}', type: 'text' },
+          { key: 'avatar', value: 'photo.png', type: 'file' },
+          { key: 'hidden', value: 'x', disabled: true },
+        ],
+      },
+      vars,
+    );
+    expect(result.kind).toBe('form');
+    if (result.kind === 'form') {
+      expect(result.rows).toHaveLength(3);
+      expect(result.rows[0]).toEqual({ key: 'caption', value: 'Alice', type: 'text', disabled: false });
+      expect(result.rows[1]).toEqual({ key: 'avatar', value: '[photo.png]', type: 'file', disabled: false });
+      expect(result.rows[2].disabled).toBe(true);
+    }
+  });
 });
 
 // ─── highlightUnresolved ──────────────────────────────────────────────────────
@@ -270,5 +350,31 @@ describe('highlightUnresolved', () => {
     // After resolution, text no longer has {{ }} → no unresolved segments
     const segs = highlightUnresolved('Bearer abc123');
     expect(segs.every(s => !s.unresolved)).toBe(true);
+  });
+
+  it('single placeholder with no surrounding text is marked unresolved', () => {
+    expect(highlightUnresolved('{{token}}')).toEqual([
+      { text: '{{token}}', unresolved: true },
+    ]);
+  });
+
+  it('malformed placeholder missing closing braces is treated as plain text', () => {
+    const segs = highlightUnresolved('Bearer {{unclosed');
+    expect(segs).toEqual([{ text: 'Bearer {{unclosed', unresolved: false }]);
+  });
+
+  it('empty braces {{}} are treated as plain text (regex requires at least one char)', () => {
+    const segs = highlightUnresolved('value={{}}');
+    expect(segs).toEqual([{ text: 'value={{}}', unresolved: false }]);
+  });
+
+  it('extra braces around a placeholder: regex greedily matches from first {{ pair', () => {
+    // {{{var}}} — regex sees {{ at position 0, [^}]+ matches {var, }} closes at positions 6-7
+    // So the captured segment is '{{{var}}' (unresolved) and the trailing '}' is plain text
+    const segs = highlightUnresolved('{{{var}}}');
+    expect(segs).toEqual([
+      { text: '{{{var}}', unresolved: true },
+      { text: '}', unresolved: false },
+    ]);
   });
 });
