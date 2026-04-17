@@ -181,7 +181,8 @@ const CodeEditor = forwardRef<HTMLTextAreaElement, CodeEditorProps>(
         return;
       }
 
-      const token = findVariableToken(nextValue, el.selectionStart);
+      const cursorPosition = el.selectionStart ?? nextValue.length;
+      const token = findVariableToken(nextValue, cursorPosition);
       if (!token) {
         setVariableAc(null);
         return;
