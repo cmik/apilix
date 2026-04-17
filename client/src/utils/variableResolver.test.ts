@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveVariables, buildVarMap, getUrlDisplay } from './variableResolver';
+import { buildCollectionDefinitionVarMap, resolveVariables, buildVarMap, getUrlDisplay } from './variableResolver';
 
 describe('resolveVariables', () => {
   it('substitutes a known variable', () => {
@@ -34,36 +34,53 @@ describe('resolveVariables', () => {
 });
 
 describe('buildVarMap', () => {
+  const collectionDefinitionVars = { s: 'static', shared: 'from-static' };
   const globals = { g: 'global', shared: 'from-global' };
   const collVars = { c: 'collvar', shared: 'from-collvar' };
   const env = { e: 'env', shared: 'from-env' };
   const dataRow = { d: 'data', shared: 'from-data' };
 
-  it('merges all four scopes', () => {
-    const map = buildVarMap(env, collVars, globals, dataRow);
+  it('merges all five scopes', () => {
+    const map = buildVarMap(env, collVars, globals, dataRow, collectionDefinitionVars);
+    expect(map.s).toBe('static');
     expect(map.g).toBe('global');
     expect(map.c).toBe('collvar');
     expect(map.e).toBe('env');
     expect(map.d).toBe('data');
   });
 
-  it('priority: dataRow > env > collectionVars > globals', () => {
-    const map = buildVarMap(env, collVars, globals, dataRow);
+  it('priority: dataRow > env > collectionVars > globals > collection definition vars', () => {
+    const map = buildVarMap(env, collVars, globals, dataRow, collectionDefinitionVars);
     expect(map.shared).toBe('from-data');
   });
 
-  it('priority: env > collectionVars > globals (no dataRow)', () => {
-    const map = buildVarMap(env, collVars, globals);
+  it('priority: env > collectionVars > globals > collection definition vars (no dataRow)', () => {
+    const map = buildVarMap(env, collVars, globals, {}, collectionDefinitionVars);
     expect(map.shared).toBe('from-env');
   });
 
-  it('priority: collectionVars > globals (no env or dataRow)', () => {
-    const map = buildVarMap({}, collVars, globals);
+  it('priority: collectionVars > globals > collection definition vars (no env or dataRow)', () => {
+    const map = buildVarMap({}, collVars, globals, {}, collectionDefinitionVars);
     expect(map.shared).toBe('from-collvar');
+  });
+
+  it('priority: globals > collection definition vars when higher scopes are absent', () => {
+    const map = buildVarMap({}, {}, globals, {}, collectionDefinitionVars);
+    expect(map.shared).toBe('from-global');
   });
 
   it('returns empty object when all inputs are empty', () => {
     expect(buildVarMap({}, {}, {})).toEqual({});
+  });
+});
+
+describe('buildCollectionDefinitionVarMap', () => {
+  it('collects enabled collection definition variables only', () => {
+    expect(buildCollectionDefinitionVarMap([
+      { key: 'baseUrl', value: 'https://api.example.com' },
+      { key: 'disabledVar', value: 'x', disabled: true },
+      { key: '', value: 'ignored' },
+    ])).toEqual({ baseUrl: 'https://api.example.com' });
   });
 });
 

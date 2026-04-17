@@ -5,6 +5,12 @@ import 'prismjs/components/prism-markup';   // XML + HTML
 import 'prismjs/components/prism-graphql';
 import 'prismjs/components/prism-javascript';
 import './CodeEditor.css';
+import {
+  applyVariableSuggestion,
+  filterVariableSuggestions,
+  findVariableToken,
+} from '../utils/variableAutocomplete';
+import type { VariableSuggestion } from '../utils/variableAutocomplete';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -15,6 +21,7 @@ export interface CodeEditorProps
   extends Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, 'value'> {
   value: string;
   language?: CodeLanguage;
+  variableSuggestions?: VariableSuggestion[];
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -47,6 +54,52 @@ function tokenize(value: string, language: CodeLanguage): string {
   return Prism.highlight(value, grammar, language);
 }
 
+const CARET_MIRROR_PROPS = [
+  'direction', 'boxSizing', 'width', 'overflowX', 'overflowY',
+  'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+  'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+  'fontStyle', 'fontVariant', 'fontWeight', 'fontSize', 'lineHeight', 'fontFamily',
+  'textAlign', 'textTransform', 'textIndent', 'letterSpacing', 'wordSpacing',
+] as const;
+
+function getCaretCoordinates(el: HTMLTextAreaElement, pos: number): { top: number; left: number } {
+  const mirror = document.createElement('div');
+  const computed = window.getComputedStyle(el);
+  Object.assign(mirror.style, {
+    position: 'absolute',
+    visibility: 'hidden',
+    overflow: 'hidden',
+    whiteSpace: 'pre-wrap',
+    wordWrap: 'break-word',
+    top: '0',
+    left: '-9999px',
+    width: `${el.offsetWidth}px`,
+  });
+  CARET_MIRROR_PROPS.forEach(prop => {
+    (mirror.style as unknown as Record<string, string>)[prop] = computed[prop];
+  });
+  mirror.textContent = el.value.substring(0, pos);
+  const caret = document.createElement('span');
+  caret.textContent = '|';
+  mirror.appendChild(caret);
+  document.body.appendChild(mirror);
+  const coords = { top: caret.offsetTop, left: caret.offsetLeft };
+  document.body.removeChild(mirror);
+  return coords;
+}
+
+function previewVariableValue(value?: string): string {
+  if (value === undefined || value === '') return '';
+  return value.length > 36 ? `${value.slice(0, 33)}...` : value;
+}
+
+interface VariableAutocompleteState {
+  suggestions: VariableSuggestion[];
+  selectedIndex: number;
+  top: number;
+  left: number;
+}
+
 // Shared text-layout styles applied to both the pre overlay and textarea so
 // their rendered content is pixel-aligned. Any change here must be consistent.
 const EDITOR_STYLE: React.CSSProperties = {
@@ -70,11 +123,12 @@ const EDITOR_STYLE: React.CSSProperties = {
  * Press Cmd+F / Ctrl+F to open the find bar; Cmd+H / Ctrl+H for find+replace.
  */
 const CodeEditor = forwardRef<HTMLTextAreaElement, CodeEditorProps>(
-  function CodeEditor({ value, language = 'text', className, onScroll, onKeyDown, style, ...rest }, ref) {
+  function CodeEditor({ value, language = 'text', className, onChange, onScroll, onKeyDown, onMouseUp, variableSuggestions, style, ...rest }, ref) {
     const preRef = useRef<HTMLDivElement>(null);
     // Internal ref so search/replace can call setSelectionRange
     const taRef = useRef<HTMLTextAreaElement>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
+    const dropdownRef = useRef<HTMLDivElement>(null);
 
     // Combine external forwarded ref with internal ref
     const setRef = useCallback(
@@ -92,6 +146,7 @@ const CodeEditor = forwardRef<HTMLTextAreaElement, CodeEditorProps>(
     const [srSearch, setSrSearch] = useState('');
     const [srReplace, setSrReplace] = useState('');
     const [matchIdx, setMatchIdx] = useState(0);
+    const [variableAc, setVariableAc] = useState<VariableAutocompleteState | null>(null);
 
     // Focus search input when panel opens
     useEffect(() => {
@@ -120,8 +175,49 @@ const CodeEditor = forwardRef<HTMLTextAreaElement, CodeEditorProps>(
     }, [matches]);
 
     function callOnChange(newValue: string) {
-      const handler = rest.onChange;
+      const handler = onChange;
       if (handler) handler({ target: { value: newValue } } as React.ChangeEvent<HTMLTextAreaElement>);
+    }
+
+    const updateVariableAutocomplete = useCallback((el: HTMLTextAreaElement, nextValue = el.value) => {
+      if (!variableSuggestions || variableSuggestions.length === 0) {
+        setVariableAc(null);
+        return;
+      }
+
+      const token = findVariableToken(nextValue, el.selectionStart);
+      if (!token) {
+        setVariableAc(null);
+        return;
+      }
+
+      const suggestions = filterVariableSuggestions(variableSuggestions, token.query);
+      if (suggestions.length === 0) {
+        setVariableAc(null);
+        return;
+      }
+
+      const coords = getCaretCoordinates(el, token.openIndex);
+      const lineHeight = parseInt(window.getComputedStyle(el).lineHeight, 10) || 24;
+      setVariableAc({
+        suggestions,
+        selectedIndex: 0,
+        top: coords.top + lineHeight - el.scrollTop + 2,
+        left: Math.min(coords.left, Math.max(12, el.clientWidth - 320)),
+      });
+    }, [variableSuggestions]);
+
+    function acceptVariableSuggestion(name: string) {
+      const ta = taRef.current;
+      if (!ta) return;
+      const applied = applyVariableSuggestion(ta.value, ta.selectionStart, name);
+      if (!applied) return;
+      callOnChange(applied.value);
+      setVariableAc(null);
+      requestAnimationFrame(() => {
+        ta.focus();
+        ta.setSelectionRange(applied.cursor, applied.cursor);
+      });
     }
 
     function gotoMatch(idx: number) {
@@ -159,6 +255,33 @@ const CodeEditor = forwardRef<HTMLTextAreaElement, CodeEditorProps>(
       } else if ((e.metaKey || e.ctrlKey) && e.key === 'h') {
         e.preventDefault();
         if (srOpen && srMode === 'replace') { setSrOpen(false); } else { setSrMode('replace'); setSrOpen(true); }
+      } else if (variableAc) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          setVariableAc(state => state ? {
+            ...state,
+            selectedIndex: Math.min(state.selectedIndex + 1, state.suggestions.length - 1),
+          } : state);
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          setVariableAc(state => state ? {
+            ...state,
+            selectedIndex: Math.max(state.selectedIndex - 1, 0),
+          } : state);
+          return;
+        }
+        if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault();
+          acceptVariableSuggestion(variableAc.suggestions[variableAc.selectedIndex].name);
+          return;
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          setVariableAc(null);
+          return;
+        }
       }
       onKeyDown?.(e);
     }
@@ -171,8 +294,35 @@ const CodeEditor = forwardRef<HTMLTextAreaElement, CodeEditorProps>(
         preRef.current.scrollTop  = e.currentTarget.scrollTop;
         preRef.current.scrollLeft = e.currentTarget.scrollLeft;
       }
+      setVariableAc(null);
       onScroll?.(e);
     }
+
+    useEffect(() => {
+      if (!variableAc || !dropdownRef.current) return;
+      const item = dropdownRef.current.querySelectorAll('[data-variable-suggestion]')[variableAc.selectedIndex] as HTMLElement | undefined;
+      item?.scrollIntoView({ block: 'nearest' });
+    }, [variableAc]);
+
+    useEffect(() => {
+      if (!variableAc) return;
+      function close() {
+        setVariableAc(null);
+      }
+      function onPointerDown(event: PointerEvent) {
+        if (
+          dropdownRef.current?.contains(event.target as Node) ||
+          taRef.current?.contains(event.target as Node)
+        ) return;
+        close();
+      }
+      document.addEventListener('pointerdown', onPointerDown);
+      window.addEventListener('scroll', close, true);
+      return () => {
+        document.removeEventListener('pointerdown', onPointerDown);
+        window.removeEventListener('scroll', close, true);
+      };
+    }, [variableAc]);
 
     const hasSearch = srOpen && srSearch.length > 0;
     const matchLabel = hasSearch
@@ -294,8 +444,16 @@ const CodeEditor = forwardRef<HTMLTextAreaElement, CodeEditorProps>(
           <textarea
             ref={setRef}
             value={value}
+            onChange={e => {
+              onChange?.(e);
+              updateVariableAutocomplete(e.currentTarget, e.currentTarget.value);
+            }}
             onScroll={handleScroll}
             onKeyDown={handleKeyDown}
+            onMouseUp={e => {
+              updateVariableAutocomplete(e.currentTarget);
+              onMouseUp?.(e);
+            }}
             spellCheck={false}
             {...rest}
             style={{
@@ -307,6 +465,40 @@ const CodeEditor = forwardRef<HTMLTextAreaElement, CodeEditorProps>(
             }}
             className="relative z-10 w-full resize-y focus:outline-none bg-transparent selection:bg-sky-500/30"
           />
+
+          {variableAc && (
+            <div
+              ref={dropdownRef}
+              className="absolute z-20 bg-slate-800 border border-slate-600 rounded shadow-2xl min-w-56 max-w-80 max-h-56 overflow-y-auto"
+              style={{ top: variableAc.top, left: variableAc.left }}
+            >
+              {variableAc.suggestions.map((suggestion, index) => (
+                <button
+                  key={suggestion.name}
+                  type="button"
+                  data-variable-suggestion
+                  onMouseDown={event => {
+                    event.preventDefault();
+                    acceptVariableSuggestion(suggestion.name);
+                  }}
+                  className={`w-full text-left px-3 py-1.5 text-xs font-mono flex items-center gap-2 ${
+                    index === variableAc.selectedIndex
+                      ? 'bg-orange-600/20 text-orange-300'
+                      : 'text-slate-300 hover:bg-slate-700'
+                  }`}
+                >
+                  <span className="text-slate-500">{'{{'}</span>
+                  <span className="truncate">{suggestion.name}</span>
+                  <span className="text-slate-500">{'}}'}</span>
+                  {suggestion.value !== undefined && suggestion.value !== '' && (
+                    <span className="ml-auto text-slate-500 truncate max-w-28">
+                      {previewVariableValue(suggestion.value)}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     );

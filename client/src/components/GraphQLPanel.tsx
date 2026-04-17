@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { graphqlIntrospect } from '../api';
 import CodeEditor from './CodeEditor';
+import type { VariableSuggestion } from '../utils/variableAutocomplete';
 
 // ─── Schema types ─────────────────────────────────────────────────────────────
 
@@ -152,6 +153,7 @@ interface GraphQLPanelProps {
   variables: string;
   url: string;
   headers: Array<{ key: string; value: string; disabled?: boolean }>;
+  variableSuggestions?: VariableSuggestion[];
   onQueryChange: (q: string) => void;
   onVariablesChange: (v: string) => void;
 }
@@ -161,6 +163,7 @@ export default function GraphQLPanel({
   variables,
   url,
   headers,
+  variableSuggestions,
   onQueryChange,
   onVariablesChange,
 }: GraphQLPanelProps) {
@@ -620,6 +623,7 @@ export default function GraphQLPanel({
           onChange={e => onVariablesChange(e.target.value)}
           rows={4}
           language="json"
+          variableSuggestions={variableSuggestions}
           placeholder={'{ "variable": "value" }'}
         />
       </div>
