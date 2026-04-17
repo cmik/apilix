@@ -818,17 +818,30 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
       detail?.resolve?.(saveExistingDirtyTabs(detail?.tabIds));
     };
     const onFocusUrl = () => { urlInputRef.current?.focus(); urlInputRef.current?.select(); };
+    const onInjectSnippet = (event: Event) => {
+      const detail = (event as CustomEvent<{ snippet?: string }>).detail;
+      const snippet = detail?.snippet;
+      if (typeof snippet !== 'string') return;
+      if (!activeTab) return;
+      setEdit(prev => ({
+        ...prev,
+        testScript: prev.testScript.trim() ? prev.testScript + '\n\n' + snippet : snippet,
+      }));
+      setActiveRequestTabCached('Tests');
+    };
     document.addEventListener('apilix:send', onSend);
     document.addEventListener('apilix:save', onSave);
     document.addEventListener('apilix:request-tab-sync-summary', onSyncSummary as EventListener);
     document.addEventListener('apilix:request-tab-sync-save-existing', onSyncSaveExisting as EventListener);
     document.addEventListener('apilix:focusUrl', onFocusUrl);
+    document.addEventListener('apilix:inject-test-snippet', onInjectSnippet as EventListener);
     return () => {
       document.removeEventListener('apilix:send', onSend);
       document.removeEventListener('apilix:save', onSave);
       document.removeEventListener('apilix:request-tab-sync-summary', onSyncSummary as EventListener);
       document.removeEventListener('apilix:request-tab-sync-save-existing', onSyncSaveExisting as EventListener);
       document.removeEventListener('apilix:focusUrl', onFocusUrl);
+      document.removeEventListener('apilix:inject-test-snippet', onInjectSnippet as EventListener);
     };
   }, [activeTab, onDirtyChange, state.collections, state.tabs]);
 
