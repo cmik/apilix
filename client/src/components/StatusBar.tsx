@@ -10,6 +10,8 @@ interface StatusBarProps {
   logCount: number;
   lastEntry: ConsoleEntry | null;
   serverStatus: ServerStatus;
+  updateAvailable?: boolean;
+  latestVersion?: string | null;
 }
 
 function statusColor(status: number): string {
@@ -26,6 +28,8 @@ export default function StatusBar({
   logCount,
   lastEntry,
   serverStatus,
+  updateAvailable,
+  latestVersion,
 }: StatusBarProps) {
   const serverDot =
     serverStatus === 'online'
@@ -75,6 +79,25 @@ export default function StatusBar({
       <span className="font-mono text-slate-500 px-1.5" title="App version">
         v{__APP_VERSION__}
       </span>
+
+      {/* Update available badge */}
+      {updateAvailable && latestVersion && (
+        <>
+          <span className="w-px h-3.5 bg-slate-700 mx-1" />
+          <a
+            href="https://github.com/cmik/apilix/releases/latest"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-mono text-orange-400 hover:text-orange-300 px-1.5 flex items-center gap-1 transition-colors"
+            title={`v${latestVersion} is available — click to download`}
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 13.5 12 21m0 0-7.5-7.5M12 21V3" />
+            </svg>
+            v{latestVersion} available
+          </a>
+        </>
+      )}
 
       <div className="flex-1" />
 
