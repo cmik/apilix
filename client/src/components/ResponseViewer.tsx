@@ -596,9 +596,20 @@ function clampMenuPosition(
   menuWidth = 180,
   menuHeight = 80,
 ): { left: number; top: number } {
-  const left = Math.min(x, window.innerWidth - menuWidth - 4);
-  const top = Math.min(y, window.innerHeight - menuHeight - 4);
-  return { left: Math.max(4, left), top: Math.max(4, top) };
+  const margin = 4;
+  const viewportWidth = Math.max(0, window.innerWidth);
+  const viewportHeight = Math.max(0, window.innerHeight);
+  const maxMenuWidth = Math.max(0, viewportWidth - margin * 2);
+  const maxMenuHeight = Math.max(0, viewportHeight - margin * 2);
+  const effectiveMenuWidth = Math.min(menuWidth, maxMenuWidth);
+  const effectiveMenuHeight = Math.min(menuHeight, maxMenuHeight);
+  const minLeft = Math.min(margin, Math.max(0, viewportWidth - effectiveMenuWidth));
+  const minTop = Math.min(margin, Math.max(0, viewportHeight - effectiveMenuHeight));
+  const maxLeft = Math.max(minLeft, viewportWidth - effectiveMenuWidth - margin);
+  const maxTop = Math.max(minTop, viewportHeight - effectiveMenuHeight - margin);
+  const left = Math.min(Math.max(x, minLeft), maxLeft);
+  const top = Math.min(Math.max(y, minTop), maxTop);
+  return { left, top };
 }
 // ────────────────────────────────────────────────────────────────────────────
 
