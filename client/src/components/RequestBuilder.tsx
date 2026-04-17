@@ -2320,9 +2320,9 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
                 <button
                   disabled={!saveTargetCollectionId}
                   onClick={() => {
-                    if (!activeTab || !edit || !saveTargetCollectionId) return;
+                    if (!activeTab || !edit || !saveTargetCollectionId) { closeAfterSaveRef.current = false; return; }
                     const targetCol = state.collections.find(c => c._id === saveTargetCollectionId);
-                    if (!targetCol) return;
+                    if (!targetCol) { closeAfterSaveRef.current = false; return; }
                     const updatedItem: CollectionItem = {
                       ...activeTab.item,
                       description: edit.description || undefined,

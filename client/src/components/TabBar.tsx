@@ -84,7 +84,9 @@ function TabContextMenu({
 }: TabContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const menuWidth = 224;
+  const menuHeight = 172; // approximate: 2 items + divider + 3 items at ~32px each
   const adjustedX = Math.min(pos.x, window.innerWidth - menuWidth - 8);
+  const adjustedY = Math.min(pos.y, window.innerHeight - menuHeight - 8);
 
   useEffect(() => {
     function onDown(e: MouseEvent) {
@@ -108,7 +110,7 @@ function TabContextMenu({
   return createPortal(
     <div
       ref={menuRef}
-      style={{ position: 'fixed', top: pos.y, left: adjustedX, zIndex: 9999 }}
+      style={{ position: 'fixed', top: adjustedY, left: adjustedX, zIndex: 9999 }}
       className="animate-menu-enter w-56 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl overflow-hidden py-1"
     >
       <MenuItem
@@ -194,7 +196,7 @@ function Tab({
   onRename: (newName: string) => void;
   onStartRename: () => void;
   onCancelRename: () => void;
-  onOpenMenu: (e: React.MouseEvent) => void;
+  onOpenMenu: (e: React.MouseEvent, usePointer?: boolean) => void;
   onDragStart: (e: React.DragEvent) => void;
   onDragOver: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent) => void;
@@ -225,7 +227,7 @@ function Tab({
       onDrop={onDrop}
       onDragEnd={onDragEnd}
       onClick={isRenaming ? undefined : (isActive ? onOpenMenu : onActivate)}
-      onContextMenu={e => { e.preventDefault(); onOpenMenu(e); }}
+      onContextMenu={e => { e.preventDefault(); onOpenMenu(e, true); }}
       onMouseDown={e => { if (e.button === 1) { e.preventDefault(); onClose(e as unknown as React.MouseEvent); } }}
       className={`group relative flex items-center gap-1.5 px-3 py-0 h-full cursor-grab select-none shrink-0 border-r border-slate-800 transition-colors ${
         isRenaming ? 'max-w-[260px]' : 'max-w-[200px]'
@@ -357,10 +359,15 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
 
   // ── Context menu helpers ──────────────────────────────────────────────────
 
-  function openMenu(tabId: string, e: React.MouseEvent) {
+  function openMenu(tabId: string, e: React.MouseEvent, usePointer = false) {
     e.stopPropagation();
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    setMenuState({ tabId, pos: { x: rect.left, y: rect.bottom + 2 } });
+    setMenuState({
+      tabId,
+      pos: usePointer
+        ? { x: e.clientX, y: e.clientY + 4 }
+        : { x: rect.left, y: rect.bottom + 2 },
+    });
   }
 
   function handleMenuRename(tabId: string) {
@@ -377,8 +384,8 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
     setMenuState(null);
     const tab = tabs.find(t => t.id === tabId);
     const isOrphaned = !tab?.collectionId;
-    if (isOrphaned && tabId === activeTabId) {
-      // Orphaned tab: prompt the user to save to a collection first, then close
+    if (isOrphaned && dirtyIds.has(tabId) && tabId === activeTabId) {
+      // Dirty orphaned tab: prompt the user to save to a collection first, then close
       document.dispatchEvent(new CustomEvent('apilix:save-close'));
       return;
     }
@@ -386,7 +393,8 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
       // Save only works reliably for the active tab (RequestBuilder listens to apilix:save)
       if (tabId === activeTabId) {
         document.dispatchEvent(new CustomEvent('apilix:save'));
-        setTimeout(() => dispatch({ type: 'CLOSE_TAB', payload: tabId }), 50);
+        // Use rAF to wait for one render cycle after the save updates dirty state
+        requestAnimationFrame(() => dispatch({ type: 'CLOSE_TAB', payload: tabId }));
       }
       return;
     }
@@ -521,7 +529,7 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
               onRename={newName => commitRenameForTab(tab.id, newName)}
               onStartRename={() => { setMenuState(null); setRenamingTabId(tab.id); }}
               onCancelRename={() => setRenamingTabId(null)}
-              onOpenMenu={e => openMenu(tab.id, e)}
+              onOpenMenu={(e, usePointer) => openMenu(tab.id, e, usePointer)}
               onDragStart={e => handleDragStart(e, tab.id)}
               onDragOver={e => handleDragOver(e, i)}
               onDrop={handleDrop}

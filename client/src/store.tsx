@@ -312,11 +312,10 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       if (!sourceTab) return state;
       const sourceIdx = state.tabs.findIndex(t => t.id === action.payload);
       const dupItem = JSON.parse(JSON.stringify(sourceTab.item)) as RequestTab['item'];
-      dupItem.id = generateId();
       const newTab: RequestTab = {
         id: generateId(),
         collectionId: '',
-        item: { ...dupItem, name: `${dupItem.name} (copy)` },
+        item: { ...dupItem, id: generateId(), name: `${dupItem.name} (copy)` },
         response: null,
         isLoading: false,
       };
