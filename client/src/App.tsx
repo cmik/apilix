@@ -498,6 +498,8 @@ export default function App() {
             document.dispatchEvent(new CustomEvent('apilix:openWorkspaceManager'));
             break;
           }
+          break;
+        case 'w':
           if (inInput) return;
           e.preventDefault();
           if (state.activeTabId) {
