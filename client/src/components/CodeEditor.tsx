@@ -207,7 +207,8 @@ const CodeEditor = forwardRef<HTMLTextAreaElement, CodeEditorProps>(
     function acceptVariableSuggestion(name: string) {
       const ta = taRef.current;
       if (!ta) return;
-      const applied = applyVariableSuggestion(ta.value, ta.selectionStart, name);
+      const cursorPosition = ta.selectionStart ?? ta.value.length;
+      const applied = applyVariableSuggestion(ta.value, cursorPosition, name);
       if (!applied) return;
       callOnChange(applied.value);
       setVariableAc(null);
