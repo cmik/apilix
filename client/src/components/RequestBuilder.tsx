@@ -819,7 +819,9 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     };
     const onFocusUrl = () => { urlInputRef.current?.focus(); urlInputRef.current?.select(); };
     const onInjectSnippet = (event: Event) => {
-      const { snippet } = (event as CustomEvent<{ snippet: string }>).detail;
+      const detail = (event as CustomEvent<{ snippet?: string }>).detail;
+      const snippet = detail?.snippet;
+      if (typeof snippet !== 'string') return;
       if (!activeTab) return;
       setEdit(prev => ({
         ...prev,
