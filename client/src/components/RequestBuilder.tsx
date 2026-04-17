@@ -17,8 +17,11 @@ import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
 import ScriptEditor from './ScriptEditor';
 import OAuthConfigPanel from './OAuthConfigPanel';
 import type { SaveExistingRequestTabsResult, UnsavedRequestTabSummary } from '../utils/requestTabSyncGuard';
-import { buildVariableSuggestions } from '../utils/variableAutocomplete';
+import { buildVariableSuggestions, type VariableSuggestion } from '../utils/variableAutocomplete';
+import VarInput from './VarInput';
 import { buildBodyPreview, highlightUnresolved } from '../utils/bodyPreview';
+import { INJECT_TEST_SNIPPET } from '../utils/appEvents';
+import type { InjectTestSnippetDetail } from '../utils/appEvents';
 
 const CodeGenModal = lazy(() => import('./CodeGenModal'));
 const ItemSettingsModal = lazy(() => import('./ItemSettingsModal'));
@@ -307,11 +310,13 @@ function KvTable({
   onChange,
   keyPlaceholder = 'Key',
   valuePlaceholder = 'Value',
+  variableSuggestions,
 }: {
   rows: Array<{ key: string; value: string; disabled?: boolean }>;
   onChange: (rows: Array<{ key: string; value: string; disabled?: boolean }>) => void;
   keyPlaceholder?: string;
   valuePlaceholder?: string;
+  variableSuggestions?: VariableSuggestion[];
 }) {
   const [bulkMode, setBulkMode] = useState(false);
   const [bulkText, setBulkText] = useState('');
@@ -376,19 +381,21 @@ function KvTable({
             title={row.disabled ? 'Enable' : 'Disable'}
             className="shrink-0 accent-orange-500 cursor-pointer"
           />
-          <input
+          <VarInput
             value={row.key}
-            onChange={e => update(i, 'key', e.target.value)}
+            onChange={v => update(i, 'key', v)}
             placeholder={keyPlaceholder}
             disabled={row.disabled}
-            className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-slate-100 focus:outline-none focus:border-orange-500 disabled:cursor-not-allowed"
+            variableSuggestions={variableSuggestions}
+            className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-slate-100 focus:outline-none focus:border-orange-500 disabled:cursor-not-allowed"
           />
-          <input
+          <VarInput
             value={row.value}
-            onChange={e => update(i, 'value', e.target.value)}
+            onChange={v => update(i, 'value', v)}
             placeholder={valuePlaceholder}
             disabled={row.disabled}
-            className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-slate-100 focus:outline-none focus:border-orange-500 disabled:cursor-not-allowed"
+            variableSuggestions={variableSuggestions}
+            className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-slate-100 focus:outline-none focus:border-orange-500 disabled:cursor-not-allowed"
           />
           <button onClick={() => remove(i)} className="px-2 text-slate-500 hover:text-red-400 text-lg leading-none">×</button>
         </div>
@@ -827,29 +834,50 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     };
     const onFocusUrl = () => { urlInputRef.current?.focus(); urlInputRef.current?.select(); };
     const onInjectSnippet = (event: Event) => {
-      const detail = (event as CustomEvent<{ snippet?: string }>).detail;
+      const detail = (event as CustomEvent<InjectTestSnippetDetail>).detail;
       const snippet = detail?.snippet;
       if (typeof snippet !== 'string') return;
-      if (!activeTab) return;
-      setEdit(prev => ({
-        ...prev,
-        testScript: prev.testScript.trim() ? prev.testScript + '\n\n' + snippet : snippet,
-      }));
-      setActiveRequestTabCached('Tests');
+
+      const targetTabId = detail?.tabId;
+
+      // Target is the currently active tab (most common case)
+      if (!targetTabId || targetTabId === activeTab?.id) {
+        if (!activeTab) return;
+        setEdit(prev => ({
+          ...prev,
+          testScript: prev.testScript.trim() ? prev.testScript + '\n\n' + snippet : snippet,
+        }));
+        setActiveRequestTabCached('Tests');
+        return;
+      }
+
+      // User switched tabs before confirming — update the originating tab's cache
+      const cached = cacheRef.current.get(targetTabId);
+      if (!cached) return;
+      const currentScript = cached.edit.testScript ?? '';
+      cacheRef.current.set(targetTabId, {
+        ...cached,
+        dirty: true,
+        activeRequestTab: 'Tests',
+        edit: {
+          ...cached.edit,
+          testScript: currentScript.trim() ? currentScript + '\n\n' + snippet : snippet,
+        },
+      });
     };
     document.addEventListener('apilix:send', onSend);
     document.addEventListener('apilix:save', onSave);
     document.addEventListener('apilix:request-tab-sync-summary', onSyncSummary as EventListener);
     document.addEventListener('apilix:request-tab-sync-save-existing', onSyncSaveExisting as EventListener);
     document.addEventListener('apilix:focusUrl', onFocusUrl);
-    document.addEventListener('apilix:inject-test-snippet', onInjectSnippet as EventListener);
+    document.addEventListener(INJECT_TEST_SNIPPET, onInjectSnippet as EventListener);
     return () => {
       document.removeEventListener('apilix:send', onSend);
       document.removeEventListener('apilix:save', onSave);
       document.removeEventListener('apilix:request-tab-sync-summary', onSyncSummary as EventListener);
       document.removeEventListener('apilix:request-tab-sync-save-existing', onSyncSaveExisting as EventListener);
       document.removeEventListener('apilix:focusUrl', onFocusUrl);
-      document.removeEventListener('apilix:inject-test-snippet', onInjectSnippet as EventListener);
+      document.removeEventListener(INJECT_TEST_SNIPPET, onInjectSnippet as EventListener);
     };
   }, [activeTab, onDirtyChange, state.collections, state.tabs]);
 
@@ -1700,6 +1728,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
               rows={edit.queryParams}
               onChange={params => syncParamsToUrl(params)}
               keyPlaceholder="Parameter"
+              variableSuggestions={variableSuggestions}
             />
             {edit.pathParams.length > 0 && (
               <div>
@@ -1710,16 +1739,17 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
                       <span className="w-36 shrink-0 px-2 py-1 bg-slate-700/50 border border-slate-600 rounded text-sm font-mono text-slate-400 truncate">
                         :{param.key}
                       </span>
-                      <input
+                      <VarInput
                         value={param.value}
-                        onChange={e => {
+                        onChange={v => {
                           const updated = edit.pathParams.map((p, j) =>
-                            j === i ? { ...p, value: e.target.value } : p
+                            j === i ? { ...p, value: v } : p
                           );
                           setEdit(x => x ? { ...x, pathParams: updated } : x);
                         }}
                         placeholder="value"
-                        className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
+                        variableSuggestions={variableSuggestions}
+                        className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
                       />
                     </div>
                   ))}
@@ -1734,6 +1764,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             rows={edit.headers}
             onChange={headers => setEdit(x => x ? { ...x, headers } : x)}
             keyPlaceholder="Header name"
+            variableSuggestions={variableSuggestions}
           />
         )}
 
@@ -1828,12 +1859,14 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
               <KvTable
                 rows={edit.bodyUrlEncoded}
                 onChange={v => setEdit(x => x ? { ...x, bodyUrlEncoded: v } : x)}
+                variableSuggestions={variableSuggestions}
               />
             )}
             {bodyPreviewMode === 'edit' && edit.bodyMode === 'formdata' && (
               <KvTable
                 rows={edit.bodyFormData}
                 onChange={v => setEdit(x => x ? { ...x, bodyFormData: v } : x)}
+                variableSuggestions={variableSuggestions}
               />
             )}
             {bodyPreviewMode === 'edit' && edit.bodyMode === 'graphql' && (
@@ -2060,11 +2093,12 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             {edit.authType === 'bearer' && (
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs text-slate-400">Token</label>
-                <input
+                <VarInput
                   value={edit.authBearer}
-                  onChange={e => setEdit(x => x ? { ...x, authBearer: e.target.value } : x)}
+                  onChange={v => setEdit(x => x ? { ...x, authBearer: v } : x)}
                   placeholder="{{token}}"
-                  className="bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
+                  variableSuggestions={variableSuggestions}
+                  className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
                 />
               </div>
             )}
@@ -2073,9 +2107,10 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
               <div className="flex flex-col gap-2">
                 <div>
                   <label className="text-xs text-slate-400">Username</label>
-                  <input
+                  <VarInput
                     value={edit.authBasicUser}
-                    onChange={e => setEdit(x => x ? { ...x, authBasicUser: e.target.value } : x)}
+                    onChange={v => setEdit(x => x ? { ...x, authBasicUser: v } : x)}
+                    variableSuggestions={variableSuggestions}
                     className="mt-1 w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-orange-500"
                   />
                 </div>
@@ -2095,17 +2130,19 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
               <div className="flex flex-col gap-2">
                 <div>
                   <label className="text-xs text-slate-400">Key Name</label>
-                  <input
+                  <VarInput
                     value={edit.authApiKeyName}
-                    onChange={e => setEdit(x => x ? { ...x, authApiKeyName: e.target.value } : x)}
+                    onChange={v => setEdit(x => x ? { ...x, authApiKeyName: v } : x)}
+                    variableSuggestions={variableSuggestions}
                     className="mt-1 w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-orange-500"
                   />
                 </div>
                 <div>
                   <label className="text-xs text-slate-400">Value</label>
-                  <input
+                  <VarInput
                     value={edit.authApiKeyValue}
-                    onChange={e => setEdit(x => x ? { ...x, authApiKeyValue: e.target.value } : x)}
+                    onChange={v => setEdit(x => x ? { ...x, authApiKeyValue: v } : x)}
+                    variableSuggestions={variableSuggestions}
                     className="mt-1 w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
                   />
                 </div>
@@ -2118,6 +2155,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
                 onChange={config => setEdit(x => x ? { ...x, authOAuth2Config: { ...x.authOAuth2Config, ...config } } : x)}
                 onGetAuthorizationCode={handleGetAuthorizationCode}
                 onRefreshToken={handleRefreshOAuthToken}
+                variableSuggestions={variableSuggestions}
               />
             )}
           </div>
@@ -2471,6 +2509,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
                 setShowParentSettings(false);
               }}
               onClose={() => setShowParentSettings(false)}
+              variableSuggestions={variableSuggestions}
             />
           </Suspense>
         );

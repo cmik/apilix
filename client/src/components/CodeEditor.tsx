@@ -9,6 +9,7 @@ import {
   applyVariableSuggestion,
   filterVariableSuggestions,
   findVariableToken,
+  previewVariableValue,
 } from '../utils/variableAutocomplete';
 import type { VariableSuggestion } from '../utils/variableAutocomplete';
 
@@ -86,11 +87,6 @@ function getCaretCoordinates(el: HTMLTextAreaElement, pos: number): { top: numbe
   const coords = { top: caret.offsetTop, left: caret.offsetLeft };
   document.body.removeChild(mirror);
   return coords;
-}
-
-function previewVariableValue(value?: string): string {
-  if (value === undefined || value === '') return '';
-  return value.length > 36 ? `${value.slice(0, 33)}...` : value;
 }
 
 interface VariableAutocompleteState {

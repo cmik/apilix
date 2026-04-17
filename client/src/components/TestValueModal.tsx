@@ -1,9 +1,12 @@
 import { useEffect, useRef } from 'react';
 import { buildJsonPathDisplayExpression, buildTestValueSnippets } from '../utils/testSnippetUtils';
+import { INJECT_TEST_SNIPPET } from '../utils/appEvents';
+import type { InjectTestSnippetDetail } from '../utils/appEvents';
 
 export interface TestValueModalProps {
   path: (string | number)[];
   value: unknown;
+  tabId?: string | null;
   onClose: () => void;
 }
 
@@ -16,7 +19,7 @@ function previewValue(value: unknown): string {
   return str.length > 50 ? str.slice(0, 47) + '...' : str;
 }
 
-export default function TestValueModal({ path, value, onClose }: TestValueModalProps) {
+export default function TestValueModal({ path, value, tabId, onClose }: TestValueModalProps) {
   const snippets = buildTestValueSnippets(path, value);
   const firstRef = useRef<HTMLButtonElement>(null);
 
@@ -26,7 +29,7 @@ export default function TestValueModal({ path, value, onClose }: TestValueModalP
 
   function inject(snippet: string) {
     document.dispatchEvent(
-      new CustomEvent('apilix:inject-test-snippet', { detail: { snippet } })
+      new CustomEvent<InjectTestSnippetDetail>(INJECT_TEST_SNIPPET, { detail: { snippet, tabId } })
     );
     onClose();
   }

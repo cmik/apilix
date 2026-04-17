@@ -5,6 +5,8 @@ import ScriptEditor from './ScriptEditor';
 import OAuthConfigPanel from './OAuthConfigPanel';
 import { API_BASE } from '../api';
 import { openAuthorizationWindow } from '../utils/oauth';
+import VarInput from './VarInput';
+import type { VariableSuggestion } from '../utils/variableAutocomplete';
 
 type AuthType = CollectionAuth['type'];
 const SUPPORTED_AUTH: AuthType[] = ['inherit', 'noauth', 'bearer', 'basic', 'apikey', 'oauth2'];
@@ -20,6 +22,7 @@ interface Props {
   requestItems?: Array<{ id: string; name: string }>;
   onSave: (auth: CollectionAuth | undefined, event: CollectionEvent[], description: string, variables: CollectionVariable[]) => void;
   onClose: () => void;
+  variableSuggestions?: VariableSuggestion[];
 }
 
 function getScript(events: CollectionEvent[] | undefined, listen: 'prerequest' | 'test'): string {
@@ -39,7 +42,7 @@ function patchEvents(
   return [...others, { listen, script: { type: 'text/javascript', exec: code.split('\n') } }];
 }
 
-export default function ItemSettingsModal({ kind, name, auth, event, description: initialDescription, variables: initialVariables, requestNames, requestItems, onSave, onClose }: Props) {
+export default function ItemSettingsModal({ kind, name, auth, event, description: initialDescription, variables: initialVariables, requestNames, requestItems, onSave, onClose, variableSuggestions }: Props) {
   const initialAuthType: AuthType = SUPPORTED_AUTH.includes(auth?.type ?? 'noauth')
     ? (auth?.type ?? (kind === 'folder' ? 'inherit' : 'noauth'))
     : (kind === 'folder' ? 'inherit' : 'noauth');
@@ -248,10 +251,11 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
               {authType === 'bearer' && (
                 <div>
                   <label className="text-xs text-slate-400 block mb-1">Token</label>
-                  <input
+                  <VarInput
                     value={authBearer}
-                    onChange={e => setAuthBearer(e.target.value)}
+                    onChange={v => setAuthBearer(v)}
                     placeholder="{{token}}"
+                    variableSuggestions={variableSuggestions}
                     className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
                   />
                 </div>
@@ -260,7 +264,8 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
                 <div className="flex flex-col gap-2">
                   <div>
                     <label className="text-xs text-slate-400 block mb-1">Username</label>
-                    <input value={authBasicUser} onChange={e => setAuthBasicUser(e.target.value)}
+                    <VarInput value={authBasicUser} onChange={v => setAuthBasicUser(v)}
+                      variableSuggestions={variableSuggestions}
                       className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500" />
                   </div>
                   <div>
@@ -274,12 +279,14 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
                 <div className="flex flex-col gap-2">
                   <div>
                     <label className="text-xs text-slate-400 block mb-1">Key name</label>
-                    <input value={authApiKeyName} onChange={e => setAuthApiKeyName(e.target.value)}
+                    <VarInput value={authApiKeyName} onChange={v => setAuthApiKeyName(v)}
+                      variableSuggestions={variableSuggestions}
                       className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500" />
                   </div>
                   <div>
                     <label className="text-xs text-slate-400 block mb-1">Value</label>
-                    <input value={authApiKeyValue} onChange={e => setAuthApiKeyValue(e.target.value)}
+                    <VarInput value={authApiKeyValue} onChange={v => setAuthApiKeyValue(v)}
+                      variableSuggestions={variableSuggestions}
                       className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500" />
                   </div>
                 </div>
@@ -292,6 +299,7 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
                   onGetAuthorizationCode={handleGetAuthorizationCode}
                   isRefreshing={isRefreshingToken}
                   isGettingAuthCode={isGettingAuthCode}
+                  variableSuggestions={variableSuggestions}
                 />
               )}
             </div>
@@ -320,11 +328,12 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
                       placeholder="Variable name"
                       className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
                     />
-                    <input
+                    <VarInput
                       value={v.value}
-                      onChange={e => setVars(prev => prev.map((x, j) => j === i ? { ...x, value: e.target.value } : x))}
+                      onChange={val => setVars(prev => prev.map((x, j) => j === i ? { ...x, value: val } : x))}
                       placeholder="value"
-                      className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
+                      variableSuggestions={variableSuggestions}
+                      className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
                     />
                     <button
                       onClick={() => setVars(prev => prev.filter((_, j) => j !== i))}

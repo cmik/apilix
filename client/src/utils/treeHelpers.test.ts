@@ -14,6 +14,8 @@ import {
   applyInheritedAuth,
   resolveInheritedAuth,
   collectAncestorScripts,
+  sortItemsByName,
+  sortChildrenByName,
 } from './treeHelpers';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -407,5 +409,100 @@ describe('collectAncestorScripts', () => {
     const result = collectAncestorScripts(tree, 'nonexistent');
     expect(result.prereqs).toEqual([]);
     expect(result.tests).toEqual([]);
+  });
+});
+
+// ─── sortItemsByName ─────────────────────────────────────────────────────────
+
+describe('sortItemsByName', () => {
+  it('sorts items alphabetically', () => {
+    const items = [req('r1', 'Zebra'), req('r2', 'Apple'), req('r3', 'Mango')];
+    const result = sortItemsByName(items);
+    expect(result.map(i => i.name)).toEqual(['Apple', 'Mango', 'Zebra']);
+  });
+
+  it('preserves ids and payloads after sort', () => {
+    const items = [req('r1', 'Beta'), req('r2', 'Alpha')];
+    const result = sortItemsByName(items);
+    expect(result[0].id).toBe('r2');
+    expect(result[1].id).toBe('r1');
+  });
+
+  it('is stable for items with the same name', () => {
+    const items = [req('r1', 'Same'), req('r2', 'Same'), req('r3', 'Same')];
+    const result = sortItemsByName(items);
+    expect(result.map(i => i.id)).toEqual(['r1', 'r2', 'r3']);
+  });
+
+  it('does not mutate the original array', () => {
+    const items = [req('r1', 'Z'), req('r2', 'A')];
+    const original = [...items];
+    const result = sortItemsByName(items);
+    expect(items[0].id).toBe(original[0].id);
+    expect(result).not.toBe(items);
+  });
+
+  it('handles empty array', () => {
+    expect(sortItemsByName([])).toEqual([]);
+  });
+
+  it('handles single item', () => {
+    const items = [req('r1', 'Solo')];
+    expect(sortItemsByName(items)).toEqual(items);
+  });
+});
+
+// ─── sortChildrenByName ──────────────────────────────────────────────────────
+
+describe('sortChildrenByName', () => {
+  it('sorts top-level items when no folderId given', () => {
+    const items = [req('r1', 'Zebra'), req('r2', 'Apple')];
+    const result = sortChildrenByName(items);
+    expect(result.map(i => i.name)).toEqual(['Apple', 'Zebra']);
+  });
+
+  it('sorts only direct children of the target folder', () => {
+    const items = [
+      folder('f1', 'Folder', [req('r2', 'Zebra'), req('r1', 'Apple')]),
+      req('r3', 'Outer'),
+    ];
+    const result = sortChildrenByName(items, 'f1');
+    const f = result.find(i => i.id === 'f1')!;
+    expect(f.item!.map(i => i.name)).toEqual(['Apple', 'Zebra']);
+    // outer items unchanged
+    expect(result.find(i => i.id === 'r3')).toBeDefined();
+  });
+
+  it('does not sort grandchildren when targeting a folder', () => {
+    const grandchildren = [req('g2', 'Z'), req('g1', 'A')];
+    const items = [
+      folder('f1', 'Folder', [
+        folder('f2', 'Subfolder', grandchildren),
+        req('r1', 'Request'),
+      ]),
+    ];
+    const result = sortChildrenByName(items, 'f1');
+    const f1 = result.find(i => i.id === 'f1')!;
+    const f2 = f1.item!.find(i => i.id === 'f2')!;
+    // grandchildren order unchanged
+    expect(f2.item!.map(i => i.id)).toEqual(['g2', 'g1']);
+  });
+
+  it('is a no-op for unknown folder id', () => {
+    const items = [req('r1', 'Z'), req('r2', 'A')];
+    const result = sortChildrenByName(items, 'nonexistent');
+    expect(result.map(i => i.id)).toEqual(['r1', 'r2']);
+  });
+
+  it('sorts nested folder children recursively found', () => {
+    const items = [
+      folder('f1', 'Outer', [
+        folder('f2', 'Inner', [req('r2', 'Z'), req('r1', 'A')]),
+      ]),
+    ];
+    const result = sortChildrenByName(items, 'f2');
+    const f1 = result.find(i => i.id === 'f1')!;
+    const f2 = f1.item!.find(i => i.id === 'f2')!;
+    expect(f2.item!.map(i => i.id)).toEqual(['r1', 'r2']);
   });
 });

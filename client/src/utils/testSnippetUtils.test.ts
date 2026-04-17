@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildJsonPathDisplayExpression, buildTestValueSnippets } from './testSnippetUtils';
+import { buildJsonPathDisplayExpression, buildTestValueSnippets, buildSaveToVarSnippet } from './testSnippetUtils';
 
 describe('buildJsonPathDisplayExpression', () => {
   it('formats identifier, numeric, and quoted segments consistently', () => {
@@ -70,5 +70,37 @@ describe('buildTestValueSnippets', () => {
 
     expect(snippets[0]?.snippet).toContain('apx.test("bad\\"key is true", () => {');
     expect(snippets[0]?.snippet).toContain('apx.expect(apx.response.json()?.["bad\\"key"]).to.be.true;');
+  });
+});
+
+describe('buildSaveToVarSnippet', () => {
+  it('generates environment.set snippet for simple path', () => {
+    expect(buildSaveToVarSnippet('token', 'environment', ['data', 'token'])).toBe(
+      "apx.environment.set('token', apx.response.json()?.data?.token);"
+    );
+  });
+
+  it('generates globals.set snippet', () => {
+    expect(buildSaveToVarSnippet('myVar', 'globals', ['result'])).toBe(
+      "apx.globals.set('myVar', apx.response.json()?.result);"
+    );
+  });
+
+  it('generates collection.set snippet', () => {
+    expect(buildSaveToVarSnippet('userId', 'collection', ['users', 0, 'id'])).toBe(
+      "apx.collection.set('userId', apx.response.json()?.users?.[0]?.id);"
+    );
+  });
+
+  it('uses bracket notation for non-identifier path segments', () => {
+    expect(buildSaveToVarSnippet('val', 'environment', ['my-key'])).toBe(
+      'apx.environment.set(\'val\', apx.response.json()?.["my-key"]);'
+    );
+  });
+
+  it('generates snippet for root-level (empty path)', () => {
+    expect(buildSaveToVarSnippet('body', 'environment', [])).toBe(
+      "apx.environment.set('body', apx.response.json());"
+    );
   });
 });

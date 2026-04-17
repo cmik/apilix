@@ -4,6 +4,8 @@ import type { TestResult, TlsCertInfo, NetworkTimings, RedirectHop } from '../ty
 import SaveToVarModal from './SaveToVarModal';
 import TestValueModal from './TestValueModal';
 import { buildSaveToVarSnippet } from '../utils/testSnippetUtils';
+import { INJECT_TEST_SNIPPET } from '../utils/appEvents';
+import type { InjectTestSnippetDetail } from '../utils/appEvents';
 
 type RespTab = 'Body' | 'Headers' | 'Test Results' | 'TLS' | 'Timeline' | 'Redirects';
 
@@ -624,13 +626,16 @@ export default function ResponseViewer() {
   const [jsonPathExpr, setJsonPathExpr] = useState('');
   const [jsonPathOpen, setJsonPathOpen] = useState(false);
   const jsonPathInputRef = useRef<HTMLInputElement>(null);
-  const [ctxMenu, setCtxMenu] = useState<{ left: number; top: number; path: (string | number)[]; value: unknown } | null>(null);
-  const [saveToVarTarget, setSaveToVarTarget] = useState<{ path: (string | number)[]; value: unknown } | null>(null);
-  const [testValueTarget, setTestValueTarget] = useState<{ path: (string | number)[]; value: unknown } | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<{ left: number; top: number; path: (string | number)[]; value: unknown; tabId: string | null; collectionId: string | null } | null>(null);
+  const [saveToVarTarget, setSaveToVarTarget] = useState<{ path: (string | number)[]; value: unknown; tabId: string | null; collectionId: string | null } | null>(null);
+  const [testValueTarget, setTestValueTarget] = useState<{ path: (string | number)[]; value: unknown; tabId: string | null } | null>(null);
+
+  const activeTabId = state.activeTabId;
+  const activeCollectionId = state.activeRequest?.collectionId ?? null;
 
   const handleSaveToVar = useCallback((path: (string | number)[], value: unknown, x: number, y: number) => {
-    setCtxMenu({ ...clampMenuPosition(x, y), path, value });
-  }, []);
+    setCtxMenu({ ...clampMenuPosition(x, y), path, value, tabId: activeTabId, collectionId: activeCollectionId });
+  }, [activeTabId, activeCollectionId]);
 
   const copyBody = () => {
     if (!response) return;
@@ -1019,7 +1024,7 @@ export default function ResponseViewer() {
             <button
               className="block w-full text-left px-4 py-2 text-slate-200 hover:bg-slate-700 transition-colors whitespace-nowrap"
               onClick={() => {
-                setSaveToVarTarget({ path: ctxMenu.path, value: ctxMenu.value });
+                setSaveToVarTarget({ path: ctxMenu.path, value: ctxMenu.value, tabId: ctxMenu.tabId, collectionId: ctxMenu.collectionId });
                 setCtxMenu(null);
               }}
             >
@@ -1028,7 +1033,7 @@ export default function ResponseViewer() {
             <button
               className="block w-full text-left px-4 py-2 text-slate-200 hover:bg-slate-700 transition-colors whitespace-nowrap"
               onClick={() => {
-                setTestValueTarget({ path: ctxMenu.path, value: ctxMenu.value });
+                setTestValueTarget({ path: ctxMenu.path, value: ctxMenu.value, tabId: ctxMenu.tabId });
                 setCtxMenu(null);
               }}
             >
@@ -1043,11 +1048,11 @@ export default function ResponseViewer() {
         <SaveToVarModal
           path={saveToVarTarget.path}
           value={saveToVarTarget.value}
-          collectionId={state.activeRequest?.collectionId || null}
+          collectionId={saveToVarTarget.collectionId}
           onConfirm={(varName, scope) => {
             const snippet = buildSaveToVarSnippet(varName, scope, saveToVarTarget.path);
             document.dispatchEvent(
-              new CustomEvent('apilix:inject-test-snippet', { detail: { snippet } })
+              new CustomEvent<InjectTestSnippetDetail>(INJECT_TEST_SNIPPET, { detail: { snippet, tabId: saveToVarTarget.tabId } })
             );
             setSaveToVarTarget(null);
           }}
@@ -1059,6 +1064,7 @@ export default function ResponseViewer() {
         <TestValueModal
           path={testValueTarget.path}
           value={testValueTarget.value}
+          tabId={testValueTarget.tabId}
           onClose={() => setTestValueTarget(null)}
         />
       )}

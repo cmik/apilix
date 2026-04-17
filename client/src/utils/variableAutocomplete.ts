@@ -52,3 +52,8 @@ export function applyVariableSuggestion(
     cursor: token.openIndex + suggestionName.length + 4,
   };
 }
+
+export function previewVariableValue(value?: string): string {
+  if (value === undefined || value === '') return '';
+  return value.length > 36 ? `${value.slice(0, 33)}...` : value;
+}

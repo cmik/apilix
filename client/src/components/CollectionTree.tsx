@@ -2,11 +2,12 @@ import { useState, useRef, useEffect, createContext, useContext, lazy, Suspense 
 import { createPortal } from 'react-dom';
 import type { CollectionItem, AppCollection, MockCollection, MockRoute } from '../types';
 import { useApp, generateId } from '../store';
-import { buildVarMap, resolveVariables } from '../utils/variableResolver';
+import { buildVarMap, buildCollectionDefinitionVarMap, resolveVariables } from '../utils/variableResolver';
+import { buildVariableSuggestions } from '../utils/variableAutocomplete';
 import {
   renameItemById, updateItemById, removeItemById, addItemToFolder, duplicateItem,
   moveItemInTree, extractItemById, insertItemInTree, isDescendantOf, getAllRequestIds,
-  flattenRequestNames, flattenRequestItems,
+  flattenRequestNames, flattenRequestItems, sortChildrenByName,
 } from '../utils/treeHelpers';
 import { generateHurlFromItems } from '../utils/hurlUtils';
 
@@ -315,6 +316,7 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
   const { state, dispatch, getEnvironmentVars, getCollectionVars } = useApp();
   const staticCollVars = Object.fromEntries((collection.variable ?? []).filter(v => !v.disabled && v.key).map(v => [v.key, v.value]));
   const varMap = buildVarMap(getEnvironmentVars(), { ...staticCollVars, ...getCollectionVars(collectionId) }, state.globalVariables);
+  const variableSuggestions = buildVariableSuggestions(varMap);
   const dragCtx = useDragCtx();
   const collapseSignal = useContext(CollapseCtx);
   const expandSignal = useContext(ExpandCtx);
@@ -467,8 +469,15 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
           },
         },
     ...(isFolder ? [
-      { label: 'Add folder', icon: '📁', onClick: handleAddFolder },
       { label: 'Add request', icon: '➕', onClick: handleAddRequest },
+      { label: 'Add folder', icon: '📁', onClick: handleAddFolder },
+      ...((item.item?.length ?? 0) >= 2 && !!item.id ? [{
+        label: 'Order items A→Z',
+        icon: '⇅',
+        onClick: () => {
+          dispatch({ type: 'UPDATE_COLLECTION', payload: { ...collection, item: sortChildrenByName(collection.item, item.id) } });
+        },
+      }] : []),
     ] : []),
     {
       label: 'Execute in Runner',
@@ -576,6 +585,7 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
                 });
               }}
               onClose={() => setShowSettings(false)}
+              variableSuggestions={variableSuggestions}
             />
           </Suspense>
         )}
@@ -678,6 +688,10 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
   onDragEnd?: () => void;
 }) {
   const { state, dispatch, getEnvironmentVars, getCollectionVars } = useApp();
+  const dragCtx = useDragCtx();
+  const staticCollVars = Object.fromEntries((collection.variable ?? []).filter(v => !v.disabled && v.key).map(v => [v.key, v.value]));
+  const varMap = buildVarMap(getEnvironmentVars(), { ...staticCollVars, ...getCollectionVars(collection._id) }, state.globalVariables);
+  const variableSuggestions = buildVariableSuggestions(varMap);
   const collapseSignal = useContext(CollapseCtx);
   const expandSignal = useContext(ExpandCtx);
   const [open, setOpen] = useState(true);
@@ -788,6 +802,13 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
     { label: 'Add to Mock Server', icon: '🎭', onClick: handleSendCollectionToMock },
     { label: 'Export', icon: '⬇️', onClick: handleExport },
     { label: 'Export as HURL', icon: '⬇️', onClick: handleExportHurl },
+    ...(collection.item.length >= 2 ? [{
+      label: 'Order items A→Z',
+      icon: '⇅',
+      onClick: () => {
+        dispatch({ type: 'UPDATE_COLLECTION', payload: { ...collection, item: sortChildrenByName(collection.item) } });
+      },
+    }] : []),
     {
       label: 'Rename',
       icon: '✏️',
@@ -804,10 +825,40 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
     },
   ];
 
+  const isCollectionDropTarget =
+    dragCtx.draggingId !== null &&
+    dragCtx.dropId === null &&
+    dragCtx.dropColId === collection._id &&
+    dragCtx.dropPos === 'inside';
+
+  function handleCollectionDragOver(e: React.DragEvent) {
+    if (!dragCtx.draggingId) return;
+    // When open and non-empty, ItemNodes handle drag events via stopPropagation.
+    // Only act as a drop target when the collection is closed or empty.
+    if (open && collection.item.length > 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    if (!isCollectionDropTarget) {
+      dragCtx.updateDrop(null, collection._id, 'inside');
+    }
+  }
+
+  function handleCollectionDrop(e: React.DragEvent) {
+    if (!dragCtx.draggingId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragCtx.executeDrop();
+  }
+
   return (
-    <div className={`mb-1 transition-opacity ${isDragging ? 'opacity-40' : ''}`}>
+    <div
+      className={`mb-1 transition-opacity ${isDragging ? 'opacity-40' : ''}`}
+      onDragOver={handleCollectionDragOver}
+      onDrop={handleCollectionDrop}
+    >
       <div
-        className="flex items-center group"
+        className={`flex items-center group ${isCollectionDropTarget ? 'ring-1 ring-inset ring-orange-500/60 rounded bg-orange-500/10' : ''}`}
         draggable={!!onDragStart}
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
@@ -867,6 +918,7 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
               });
             }}
             onClose={() => setShowSettings(false)}
+            variableSuggestions={variableSuggestions}
           />
         </Suspense>
       )}
@@ -1003,10 +1055,30 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
 
   function executeDrop() {
     const { draggingId: srcId, draggingColId: srcCol, dropId: tgtId, dropColId: tgtCol, dropPos: pos } = latestDragRef.current;
-    if (!srcId || !srcCol || !tgtId || !tgtCol || !pos) { endDrag(); return; }
+    if (!srcId || !srcCol || !tgtCol || !pos) { endDrag(); return; }
     if (srcId === tgtId) { endDrag(); return; }
 
     const collections = collectionsRef.current;
+
+    // Drop directly onto a collection header (empty or closed) — append to root
+    if (!tgtId) {
+      const tgtCollection = collections.find(c => c._id === tgtCol);
+      if (!tgtCollection) { endDrag(); return; }
+      if (srcCol === tgtCol) {
+        const { items: newItems, extracted } = extractItemById(tgtCollection.item, srcId);
+        if (!extracted) { endDrag(); return; }
+        dispatch({ type: 'UPDATE_COLLECTION', payload: { ...tgtCollection, item: [...newItems, extracted] } });
+      } else {
+        const srcCollection = collections.find(c => c._id === srcCol);
+        if (!srcCollection) { endDrag(); return; }
+        const { items: newSrcItems, extracted } = extractItemById(srcCollection.item, srcId);
+        if (!extracted) { endDrag(); return; }
+        dispatch({ type: 'UPDATE_COLLECTION', payload: { ...srcCollection, item: newSrcItems } });
+        dispatch({ type: 'UPDATE_COLLECTION', payload: { ...tgtCollection, item: [...tgtCollection.item, extracted] } });
+      }
+      endDrag();
+      return;
+    }
 
     if (srcCol === tgtCol) {
       const col = collections.find(c => c._id === srcCol);
@@ -1068,7 +1140,7 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
     }
 
     return (
-      <div className="flex-1 overflow-y-auto py-1">
+      <div className="flex-1 overflow-y-auto scrollbar-thin py-1">
         {matched.map((r, i) => {
           const method = r.item.request?.method?.toUpperCase() || 'GET';
           const isActive =
@@ -1112,7 +1184,7 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
       <CollapseCtx.Provider value={collapseSignal}>
       <ExpandCtx.Provider value={expandSignal}>
       <div
-        className="flex-1 overflow-y-auto py-1"
+        className="flex-1 overflow-y-auto scrollbar-thin py-1"
         onDragLeave={(e) => {
           if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) {
             updateDrop(null, null, null);
