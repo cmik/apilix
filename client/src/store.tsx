@@ -307,6 +307,30 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+    case 'DUPLICATE_TAB': {
+      const sourceTab = state.tabs.find(t => t.id === action.payload);
+      if (!sourceTab) return state;
+      const sourceIdx = state.tabs.findIndex(t => t.id === action.payload);
+      const dupItem = JSON.parse(JSON.stringify(sourceTab.item)) as RequestTab['item'];
+      const newTab: RequestTab = {
+        id: generateId(),
+        collectionId: '',
+        item: { ...dupItem, id: generateId(), name: `${dupItem.name} (copy)` },
+        response: null,
+        isLoading: false,
+      };
+      const newTabs = [...state.tabs];
+      newTabs.splice(sourceIdx + 1, 0, newTab);
+      return {
+        ...state,
+        tabs: newTabs,
+        activeTabId: newTab.id,
+        activeRequest: { collectionId: '', item: newTab.item },
+        response: null,
+        isLoading: false,
+      };
+    }
+
     case 'REORDER_TABS': {
       const ordered = action.payload
         .map(id => state.tabs.find(t => t.id === id))

@@ -433,3 +433,136 @@ describe('CLEAR_WORKSPACE_COLLECTIONS', () => {
     expect(next.activeEnvironmentId).toBe('env-42');
   });
 });
+
+// ─── DUPLICATE_TAB ────────────────────────────────────────────────────────────
+
+describe('DUPLICATE_TAB', () => {
+  /** Build a minimal state with one or more open tabs. */
+  function stateWithTabs(...items: CollectionItem[]): AppState {
+    const tabs = items.map((item, i) => ({
+      id: `tab${i + 1}`,
+      collectionId: i === 0 ? 'col1' : '',
+      item,
+      response: null,
+      isLoading: false,
+    }));
+    return {
+      ...initialState,
+      tabs,
+      activeTabId: tabs[0].id,
+      activeRequest: { collectionId: tabs[0].collectionId, item: tabs[0].item },
+    };
+  }
+
+  it('inserts a new tab immediately after the source tab', () => {
+    const item = makeItem('req1');
+    const s = stateWithTabs(item, makeItem('req2'));
+    const next = appReducer(s, { type: 'DUPLICATE_TAB', payload: 'tab1' });
+
+    expect(next.tabs).toHaveLength(3);
+    expect(next.tabs[0].id).toBe('tab1');      // source unchanged at index 0
+    expect(next.tabs[2].id).toBe('tab2');      // original second tab pushed to index 2
+    // duplicate is at index 1
+    expect(next.tabs[1].id).not.toBe('tab1');
+    expect(next.tabs[1].id).not.toBe('tab2');
+  });
+
+  it('activates the new duplicate tab', () => {
+    const s = stateWithTabs(makeItem('req1'));
+    const next = appReducer(s, { type: 'DUPLICATE_TAB', payload: 'tab1' });
+    expect(next.activeTabId).toBe(next.tabs[1].id);
+  });
+
+  it('sets activeRequest to the duplicate item', () => {
+    const s = stateWithTabs(makeItem('req1'));
+    const next = appReducer(s, { type: 'DUPLICATE_TAB', payload: 'tab1' });
+    const dupTab = next.tabs[1];
+    expect(next.activeRequest).toEqual({ collectionId: '', item: dupTab.item });
+  });
+
+  it('duplicate tab is always orphaned (collectionId = "")', () => {
+    const item = makeItem('req1');
+    const s = stateWithTabs(item); // source has collectionId: 'col1'
+    const next = appReducer(s, { type: 'DUPLICATE_TAB', payload: 'tab1' });
+    expect(next.tabs[1].collectionId).toBe('');
+  });
+
+  it('duplicate item gets a new unique id — different from the source item id', () => {
+    const item = makeItem('req1');
+    const s = stateWithTabs(item);
+    const next = appReducer(s, { type: 'DUPLICATE_TAB', payload: 'tab1' });
+    expect(next.tabs[1].item.id).toBeDefined();
+    expect(next.tabs[1].item.id).not.toBe(item.id);
+  });
+
+  it('duplicate tab gets a new unique tab id — different from the source tab id', () => {
+    const s = stateWithTabs(makeItem('req1'));
+    const next = appReducer(s, { type: 'DUPLICATE_TAB', payload: 'tab1' });
+    expect(next.tabs[1].id).not.toBe('tab1');
+  });
+
+  it('appends " (copy)" to the duplicate item name', () => {
+    const item: CollectionItem = { id: 'req1', name: 'My Request', request: { method: 'GET', url: 'https://example.com' } };
+    const s = stateWithTabs(item);
+    const next = appReducer(s, { type: 'DUPLICATE_TAB', payload: 'tab1' });
+    expect(next.tabs[1].item.name).toBe('My Request (copy)');
+  });
+
+  it('duplicate is a deep copy — mutating source item does not affect duplicate', () => {
+    const item: CollectionItem = {
+      id: 'req1',
+      name: 'Original',
+      request: { method: 'GET', url: 'https://example.com', header: [{ key: 'X-Foo', value: 'bar' }] },
+    };
+    const s = stateWithTabs(item);
+    const next = appReducer(s, { type: 'DUPLICATE_TAB', payload: 'tab1' });
+
+    // Mutate the source — this must not affect the duplicate
+    (next.tabs[0].item.request!.header as Array<{ key: string; value: string }>)[0].value = 'mutated';
+    expect(
+      (next.tabs[1].item.request!.header as Array<{ key: string; value: string }>)[0].value
+    ).toBe('bar');
+  });
+
+  it('initialises the duplicate tab with null response and isLoading false', () => {
+    const s = stateWithTabs(makeItem('req1'));
+    const next = appReducer(s, { type: 'DUPLICATE_TAB', payload: 'tab1' });
+    expect(next.tabs[1].response).toBeNull();
+    expect(next.tabs[1].isLoading).toBe(false);
+  });
+
+  it('resets top-level response and isLoading on the state', () => {
+    const s = {
+      ...stateWithTabs(makeItem('req1')),
+      response: { status: 200, statusText: 'OK', headers: {}, body: '', responseTime: 10, size: 0, testResults: [], error: null } as AppState['response'],
+      isLoading: true,
+    };
+    const next = appReducer(s, { type: 'DUPLICATE_TAB', payload: 'tab1' });
+    expect(next.response).toBeNull();
+    expect(next.isLoading).toBe(false);
+  });
+
+  it('is a no-op when the tabId does not exist', () => {
+    const s = stateWithTabs(makeItem('req1'));
+    const next = appReducer(s, { type: 'DUPLICATE_TAB', payload: 'nonexistent' });
+    expect(next).toBe(s); // same reference — state unchanged
+  });
+
+  it('does not mutate the original state', () => {
+    const s = stateWithTabs(makeItem('req1'));
+    const originalTabCount = s.tabs.length;
+    appReducer(s, { type: 'DUPLICATE_TAB', payload: 'tab1' });
+    expect(s.tabs).toHaveLength(originalTabCount);
+  });
+
+  it('duplicating the last tab appends at the end', () => {
+    const s = stateWithTabs(makeItem('req1'), makeItem('req2'));
+    const next = appReducer(s, { type: 'DUPLICATE_TAB', payload: 'tab2' });
+
+    expect(next.tabs).toHaveLength(3);
+    expect(next.tabs[0].id).toBe('tab1');
+    expect(next.tabs[1].id).toBe('tab2');
+    // duplicate is at index 2
+    expect(next.tabs[2].item.name).toBe('Test (copy)');
+  });
+});

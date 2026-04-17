@@ -688,6 +688,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
   const [showParentSettings, setShowParentSettings] = useState(false);
   const [showSaveToCollection, setShowSaveToCollection] = useState(false);
   const [saveTargetCollectionId, setSaveTargetCollectionId] = useState<string>('');
+  const closeAfterSaveRef = useRef(false);
   const [showHistorySaveModal, setShowHistorySaveModal] = useState(false);
   const [historySaveMode, setHistorySaveMode] = useState<'overwrite' | 'new'>('overwrite');
   const [historySaveCollectionId, setHistorySaveCollectionId] = useState<string>('');
@@ -823,7 +824,14 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
   // Listen for global keyboard shortcut events from App
   useEffect(() => {
     const onSend = () => _sendRef.current();
-    const onSave = () => _saveRef.current();
+    const onSave = () => {
+      closeAfterSaveRef.current = false;
+      _saveRef.current();
+    };
+    const onSaveClose = () => {
+      closeAfterSaveRef.current = true;
+      _saveRef.current();
+    };
     const onSyncSummary = (event: Event) => {
       const detail = (event as CustomEvent<{ resolve?: (summary: UnsavedRequestTabSummary) => void }>).detail;
       detail?.resolve?.(getUnsavedSummary());
@@ -867,6 +875,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     };
     document.addEventListener('apilix:send', onSend);
     document.addEventListener('apilix:save', onSave);
+    document.addEventListener('apilix:save-close', onSaveClose);
     document.addEventListener('apilix:request-tab-sync-summary', onSyncSummary as EventListener);
     document.addEventListener('apilix:request-tab-sync-save-existing', onSyncSaveExisting as EventListener);
     document.addEventListener('apilix:focusUrl', onFocusUrl);
@@ -874,6 +883,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     return () => {
       document.removeEventListener('apilix:send', onSend);
       document.removeEventListener('apilix:save', onSave);
+      document.removeEventListener('apilix:save-close', onSaveClose);
       document.removeEventListener('apilix:request-tab-sync-summary', onSyncSummary as EventListener);
       document.removeEventListener('apilix:request-tab-sync-save-existing', onSyncSaveExisting as EventListener);
       document.removeEventListener('apilix:focusUrl', onFocusUrl);
@@ -2284,12 +2294,12 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
       {showSaveToCollection && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-          onClick={e => { if (e.target === e.currentTarget) setShowSaveToCollection(false); }}
+          onClick={e => { if (e.target === e.currentTarget) { closeAfterSaveRef.current = false; setShowSaveToCollection(false); } }}
         >
           <div className="bg-slate-800 border border-slate-600 rounded-lg shadow-2xl w-full max-w-sm mx-4">
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
               <h3 className="text-sm font-semibold text-slate-200">Save to Collection</h3>
-              <button onClick={() => setShowSaveToCollection(false)} className="text-slate-500 hover:text-slate-300 text-xl leading-none">×</button>
+              <button onClick={() => { closeAfterSaveRef.current = false; setShowSaveToCollection(false); }} className="text-slate-500 hover:text-slate-300 text-xl leading-none">×</button>
             </div>
             <div className="px-4 py-4 flex flex-col gap-3">
               <p className="text-xs text-slate-400">This request is no longer linked to a collection. Choose where to save it:</p>
@@ -2308,7 +2318,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
               )}
               <div className="flex justify-end gap-2 pt-1">
                 <button
-                  onClick={() => setShowSaveToCollection(false)}
+                  onClick={() => { closeAfterSaveRef.current = false; setShowSaveToCollection(false); }}
                   className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
                 >
                   Cancel
@@ -2316,9 +2326,9 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
                 <button
                   disabled={!saveTargetCollectionId}
                   onClick={() => {
-                    if (!activeTab || !edit || !saveTargetCollectionId) return;
+                    if (!activeTab || !edit || !saveTargetCollectionId) { closeAfterSaveRef.current = false; return; }
                     const targetCol = state.collections.find(c => c._id === saveTargetCollectionId);
-                    if (!targetCol) return;
+                    if (!targetCol) { closeAfterSaveRef.current = false; return; }
                     const updatedItem: CollectionItem = {
                       ...activeTab.item,
                       description: edit.description || undefined,
@@ -2345,6 +2355,10 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
                     cacheRef.current.set(activeTab.id, { edit, dirty: false, activeRequestTab });
                     setDirty(false);
                     setShowSaveToCollection(false);
+                    if (closeAfterSaveRef.current) {
+                      closeAfterSaveRef.current = false;
+                      dispatch({ type: 'CLOSE_TAB', payload: activeTab.id });
+                    }
                   }}
                   className="px-4 py-1.5 bg-orange-500 hover:bg-orange-600 text-white text-xs rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
