@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "APILIX backend server",
   "main": "index.js",
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "scripts": {
     "start": "node index.js",
     "test": "node --test"

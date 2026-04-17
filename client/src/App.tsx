@@ -348,6 +348,7 @@ export default function App() {
     const saved = Number(localStorage.getItem('apilix_request_split_width'));
     return Number.isFinite(saved) && saved > 0 ? saved : DEFAULT_REQUEST_SPLIT_WIDTH;
   });
+  const [urlBarPortalEl, setUrlBarPortalEl] = useState<HTMLElement | null>(null);
   const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
   const [serverStatus, setServerStatus] = useState<ServerStatus>('checking');
   const [cookieManagerOpen, setCookieManagerOpen] = useState(false);
@@ -546,11 +547,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (isBrowserMode) {
-      setSyncConfigured(false);
-      setSyncReadOnly(false);
-      return;
-    }
     let active = true;
     StorageDriver.readSyncConfig(state.activeWorkspaceId)
       .then(cfg => {
@@ -878,7 +874,7 @@ export default function App() {
         {/* Top bar */}
         <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-700 bg-slate-900 shrink-0">
           <div className="flex items-center gap-2 min-w-0">
-            {!isBrowserMode && syncConfigured && !syncReadOnly && (
+            {syncConfigured && !syncReadOnly && (
               <div className="flex items-center gap-1.5" title={quickSyncTooltip}>
                 <button
                   onClick={handleQuickSync}
@@ -947,25 +943,26 @@ export default function App() {
         {/* RequestBuilder is always mounted to preserve unsaved changes; hidden when not active */}
         <div
           ref={requestSplitRef}
-          className={`flex-1 overflow-hidden ${(state.view === 'request' || state.view === 'history') ? '' : 'hidden'} ${
-            (state.settings.requestLayout ?? 'stacked') === 'split' ? 'flex flex-row' : 'flex flex-col'
-          }`}
+          className={`flex-1 overflow-hidden flex flex-col ${(state.view === 'request' || state.view === 'history') ? '' : 'hidden'}`}
         >
           {(state.settings.requestLayout ?? 'stacked') === 'split' ? (
             <>
-              <div
-                className="shrink-0 min-w-0 flex flex-col overflow-hidden"
-                style={{ width: clampRequestSplitWidth(requestSplitWidth) }}
-              >
-                <RequestBuilder onDirtyChange={setDirtyIds} />
-              </div>
-              <div
-                onMouseDown={onRequestSplitHandleMouseDown}
-                className="w-0.5 shrink-0 cursor-col-resize bg-slate-700 hover:bg-orange-500 transition-colors"
-                title="Drag to resize panels"
-              />
-              <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-                <ResponseViewer />
+              <div ref={setUrlBarPortalEl} className="shrink-0" />
+              <div className="flex flex-row flex-1 min-h-0 overflow-hidden">
+                <div
+                  className="shrink-0 min-w-0 flex flex-col overflow-hidden"
+                  style={{ width: clampRequestSplitWidth(requestSplitWidth) }}
+                >
+                  <RequestBuilder onDirtyChange={setDirtyIds} urlBarPortalTarget={urlBarPortalEl} />
+                </div>
+                <div
+                  onMouseDown={onRequestSplitHandleMouseDown}
+                  className="w-0.5 shrink-0 cursor-col-resize bg-slate-700 hover:bg-orange-500 transition-colors"
+                  title="Drag to resize panels"
+                />
+                <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+                  <ResponseViewer />
+                </div>
               </div>
             </>
           ) : (

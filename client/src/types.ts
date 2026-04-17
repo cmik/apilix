@@ -416,8 +416,6 @@ export interface Workspace {
   color?: string;
   createdAt: string;
   type: WorkspaceType;
-  teamServerId?: string;
-  teamServerUrl?: string;
   role?: WorkspaceRole;
 }
 
@@ -433,7 +431,7 @@ export interface WorkspaceData {
   mockPort: number;
 }
 
-export type SyncProvider = 's3' | 'git' | 'http' | 'team';
+export type SyncProvider = 's3' | 'git' | 'http' | 'team' | 'minio';
 
 export interface SyncMetadata {
   lastSyncedAt?: string;
@@ -546,14 +544,6 @@ export interface WorkspaceSnapshot {
   data: WorkspaceData;
 }
 
-export interface TeamServer {
-  id: string;
-  url: string;
-  /** Encrypted JWT token — never store plaintext */
-  token: string;
-  name: string;
-}
-
 export interface AppState {
   // ── Workspace ──────────────────────────────────────────────────────────────
   workspaces: Workspace[];
@@ -615,6 +605,7 @@ export interface ConsoleEntry {
 export type AppAction =
   | { type: 'ADD_COLLECTION'; payload: AppCollection }
   | { type: 'REMOVE_COLLECTION'; payload: string }
+  | { type: 'CLEAR_WORKSPACE_COLLECTIONS' }
   | { type: 'ADD_ENVIRONMENT'; payload: AppEnvironment }
   | { type: 'REMOVE_ENVIRONMENT'; payload: string }
   | { type: 'UPDATE_ENVIRONMENT'; payload: AppEnvironment }

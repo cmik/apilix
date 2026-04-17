@@ -272,3 +272,164 @@ describe('workspace transitions reset requestHistory', () => {
     expect(next.requestHistory).toEqual([]);
   });
 });
+
+// ─── CLEAR_WORKSPACE_COLLECTIONS ─────────────────────────────────────────────
+//
+// Feature: "Empty workspace" button in Manage Workspaces → Workspaces tab.
+//
+// The `CLEAR_WORKSPACE_COLLECTIONS` action is dispatched by the
+// `handleClearCollections` handler inside `WorkspacesTab` when the user
+// confirms the "Empty workspace" dialog.  It is only dispatched for the
+// *active* workspace — inactive workspaces are cleared at the storage layer
+// (StorageDriver.writeWorkspace) without touching UI state.
+//
+// Responsibility of this action (reducer scope):
+//   • Zero out `collections` and `collectionVariables`.
+//   • Close all open tabs: `tabs`, `activeTabId`.
+//   • Nullify derived UI state that would become stale: `activeRequest`,
+//     `response`, `runnerResults`.
+//
+// Intentionally NOT cleared by this action (design boundaries):
+//   • `mockCollections` / `mockRoutes` — the Mock Server panel manages its own
+//     data set independently of API collections.
+//   • `environments` / `globalVariables` / `cookieJar` — not collection data.
+//   • `workspaces` / `activeWorkspaceId` — structural, not content.
+//   • `isRunning` / `activeEnvironmentId` / any other flag-style state.
+//
+// Suite structure:
+//   stateWithCollections() — local fixture builder: one collection, one
+//   collectionVariable entry, one open tab, an activeRequest, a response,
+//   and a non-null runnerResults array.
+
+describe('CLEAR_WORKSPACE_COLLECTIONS', () => {
+  function stateWithCollections(): AppState {
+    const collection = {
+      _id: 'col1',
+      info: { name: 'My Collection', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
+      item: [makeItem('req1')],
+    };
+    const tab = {
+      id: 'tab1',
+      collectionId: 'col1',
+      item: makeItem('req1'),
+      isDirty: false,
+      response: null,
+      isLoading: false,
+    };
+    return {
+      ...initialState,
+      collections: [collection],
+      collectionVariables: { col1: { baseUrl: 'http://localhost' } },
+      tabs: [tab],
+      activeTabId: 'tab1',
+      activeRequest: { collectionId: 'col1', item: makeItem('req1') },
+      response: { status: 200, statusText: 'OK', headers: {}, body: '', responseTime: 10, size: 0, testResults: [], error: null } as AppState['response'],
+      runnerResults: [],
+    };
+  }
+
+  it('sets collections to []', () => {
+    const next = appReducer(stateWithCollections(), { type: 'CLEAR_WORKSPACE_COLLECTIONS' });
+    expect(next.collections).toEqual([]);
+  });
+
+  it('sets collectionVariables to {}', () => {
+    const next = appReducer(stateWithCollections(), { type: 'CLEAR_WORKSPACE_COLLECTIONS' });
+    expect(next.collectionVariables).toEqual({});
+  });
+
+  it('sets tabs to [] and activeTabId to null', () => {
+    const next = appReducer(stateWithCollections(), { type: 'CLEAR_WORKSPACE_COLLECTIONS' });
+    expect(next.tabs).toEqual([]);
+    expect(next.activeTabId).toBeNull();
+  });
+
+  it('sets activeRequest and response to null', () => {
+    const next = appReducer(stateWithCollections(), { type: 'CLEAR_WORKSPACE_COLLECTIONS' });
+    expect(next.activeRequest).toBeNull();
+    expect(next.response).toBeNull();
+  });
+
+  it('sets runnerResults to null', () => {
+    const next = appReducer(stateWithCollections(), { type: 'CLEAR_WORKSPACE_COLLECTIONS' });
+    expect(next.runnerResults).toBeNull();
+  });
+
+  it('does not mutate workspaces or environments', () => {
+    const s = stateWithCollections();
+    const ws: AppState['workspaces'] = [workspace];
+    const env = { _id: 'env1', name: 'Dev', values: [] };
+    const withExtras = { ...s, workspaces: ws, environments: [env], globalVariables: { HOST: 'http://api' } };
+    const next = appReducer(withExtras, { type: 'CLEAR_WORKSPACE_COLLECTIONS' });
+    expect(next.workspaces).toBe(ws);
+    expect(next.environments).toEqual([env]);
+    expect(next.globalVariables).toEqual({ HOST: 'http://api' });
+  });
+
+  it('is idempotent — dispatching on an already-empty state produces no error', () => {
+    const next = appReducer(initialState, { type: 'CLEAR_WORKSPACE_COLLECTIONS' });
+    expect(next.collections).toEqual([]);
+    expect(next.collectionVariables).toEqual({});
+    expect(next.tabs).toEqual([]);
+    expect(next.activeTabId).toBeNull();
+    expect(next.activeRequest).toBeNull();
+    expect(next.response).toBeNull();
+    expect(next.runnerResults).toBeNull();
+  });
+
+  it('clears all tabs regardless of which collections they belong to', () => {
+    const col1 = {
+      _id: 'col1',
+      info: { name: 'A', schema: '' },
+      item: [makeItem('r1')],
+    };
+    const col2 = {
+      _id: 'col2',
+      info: { name: 'B', schema: '' },
+      item: [makeItem('r2')],
+    };
+    const tabs = [
+      { id: 'tab1', collectionId: 'col1', item: makeItem('r1'), isDirty: false, response: null, isLoading: false },
+      { id: 'tab2', collectionId: 'col2', item: makeItem('r2'), isDirty: true,  response: null, isLoading: false },
+    ];
+    const s: AppState = {
+      ...initialState,
+      collections: [col1, col2],
+      collectionVariables: { col1: { k: 'v' }, col2: { k2: 'v2' } },
+      tabs,
+      activeTabId: 'tab1',
+    };
+    const next = appReducer(s, { type: 'CLEAR_WORKSPACE_COLLECTIONS' });
+    expect(next.collections).toEqual([]);
+    expect(next.collectionVariables).toEqual({});
+    expect(next.tabs).toEqual([]);
+    expect(next.activeTabId).toBeNull();
+  });
+
+  it('preserves mockCollections and mockRoutes — they are out of scope for this action', () => {
+    const mockCol = { id: 'mc1', name: 'Mock API', enabled: true, description: '' };
+    const mockRoute = {
+      id: 'mr1', enabled: true, method: 'GET', path: '/ping',
+      statusCode: 200, responseHeaders: [], responseBody: '{}', delay: 0, description: '',
+    };
+    const s: AppState = {
+      ...stateWithCollections(),
+      mockCollections: [mockCol],
+      mockRoutes: [mockRoute],
+    };
+    const next = appReducer(s, { type: 'CLEAR_WORKSPACE_COLLECTIONS' });
+    expect(next.mockCollections).toEqual([mockCol]);
+    expect(next.mockRoutes).toEqual([mockRoute]);
+  });
+
+  it('preserves isRunning and activeEnvironmentId', () => {
+    const s: AppState = {
+      ...stateWithCollections(),
+      isRunning: true,
+      activeEnvironmentId: 'env-42',
+    };
+    const next = appReducer(s, { type: 'CLEAR_WORKSPACE_COLLECTIONS' });
+    expect(next.isRunning).toBe(true);
+    expect(next.activeEnvironmentId).toBe('env-42');
+  });
+});

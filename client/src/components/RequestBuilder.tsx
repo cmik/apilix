@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
+import { createPortal } from 'react-dom';
 import { marked } from 'marked';
 import type { CollectionItem, CollectionRequest, CollectionHeader, CollectionQueryParam, OAuth2Config, CollectionBody } from '../types';
 import { useApp, generateId } from '../store';
@@ -650,9 +651,11 @@ function RenamableTitle({ name, onRename }: { name: string; onRename: (n: string
 interface RequestBuilderProps {
   /** Called whenever the dirty set changes so the parent can pass it to TabBar */
   onDirtyChange?: (ids: Set<string>) => void;
+  /** When provided (split view), the URL bar is portaled into this element instead of rendered inline */
+  urlBarPortalTarget?: HTMLElement | null;
 }
 
-export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
+export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: RequestBuilderProps) {
   const { state, dispatch, getEnvironmentVars, getCollectionVars } = useApp();
 
   const activeTab = state.tabs.find(t => t.id === state.activeTabId) ?? null;
@@ -1496,10 +1499,9 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
     setImportError('');
   }
 
-  return (
-    <div className="flex flex-col flex-1 overflow-hidden">
+  const urlBarSection = (
+    <div className="px-4 pt-3 pb-1 border-b border-slate-700 bg-slate-900">
       {/* Request name */}
-      <div className="px-4 pt-3 pb-1 border-b border-slate-700">
         <RenamableTitle
           name={activeReq.item.name}
           onRename={newName => {
@@ -1624,7 +1626,12 @@ export default function RequestBuilder({ onDirtyChange }: RequestBuilderProps) {
             </div>
           )}
         </div>
-      </div>
+    </div>
+  );
+
+  return (
+    <div className="flex flex-col flex-1 overflow-hidden">
+      {urlBarPortalTarget ? createPortal(urlBarSection, urlBarPortalTarget) : urlBarSection}
 
       {/* Tabs (HTTP only) */}
       {edit.method !== 'WS' && (

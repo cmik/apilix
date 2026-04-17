@@ -3,6 +3,10 @@
   "version": "1.0.0-beta.17",
   "description": "APILIX - Alternative Platform for Instant Live API eXecution",
   "main": "electron/main.js",
+  "engines": {
+    "node": ">=20.19.0",
+    "npm": ">=9"
+  },
   "scripts": {
     "start": "concurrently -k -p \"[{name}]\" -n \"SERVER,CLIENT\" -c \"bgYellow.bold,bgCyan.bold\" \"npm run server\" \"npm run client\"",
     "server": "node server/index.js",

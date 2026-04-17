@@ -17,12 +17,13 @@ import {
   rebaseAfterStale,
   ConflictError,
   StaleVersionError,
+  testConnection as syncTestConnection,
 } from '../utils/syncEngine';
 import * as SnapshotEngine from '../utils/snapshotEngine';
 import ConflictMergeModal from './ConflictMergeModal';
 import ConfirmModal from './ConfirmModal';
 
-type Tab = 'workspaces' | 'sync' | 'team' | 'history';
+type Tab = 'workspaces' | 'sync' | 'history';
 
 const PRESET_COLORS = ['#f97316', '#3b82f6', '#22c55e', '#a855f7', '#ef4444', '#eab308'];
 
@@ -47,6 +48,11 @@ const PROVIDER_CAPABILITIES: Record<SyncProvider, Array<{ label: string; tone: '
     { label: 'Three-way merge recovery', tone: 'success' },
     { label: 'Conditional writes depend on backend support', tone: 'warning' },
   ],
+  minio: [
+    { label: 'Remote state metadata', tone: 'success' },
+    { label: 'Three-way merge recovery', tone: 'success' },
+    { label: 'Conditional writes depend on backend support', tone: 'warning' },
+  ],
 };
 
 interface Props {
@@ -55,10 +61,7 @@ interface Props {
 
 export default function WorkspaceManagerModal({ onClose }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>('workspaces');
-  const isBrowserMode = !(window as { electronAPI?: unknown }).electronAPI;
-  const visibleTabs: Tab[] = isBrowserMode
-    ? ['workspaces', 'history']
-    : ['workspaces', 'sync', 'team', 'history'];
+  const visibleTabs: Tab[] = ['workspaces', 'sync', 'history'];
 
   useEffect(() => {
     if (!visibleTabs.includes(activeTab)) {
@@ -95,8 +98,7 @@ export default function WorkspaceManagerModal({ onClose }: Props) {
         {/* Tab content */}
         <div className="flex-1 overflow-y-auto p-4">
           {activeTab === 'workspaces' && <WorkspacesTab onClose={onClose} />}
-          {!isBrowserMode && activeTab === 'sync' && <SyncTab />}
-          {!isBrowserMode && activeTab === 'team' && <TeamTab />}
+          {activeTab === 'sync' && <SyncTab />}
           {activeTab === 'history' && <HistoryTab />}
         </div>
       </div>
@@ -111,6 +113,7 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [confirmClear, setConfirmClear] = useState<string | null>(null);
   const [syncedIds, setSyncedIds] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
@@ -174,6 +177,20 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
     }
     await StorageDriver.writeManifest({ workspaces: remaining, activeWorkspaceId: state.activeWorkspaceId === id ? fallback.id : state.activeWorkspaceId });
     setConfirmDelete(null);
+  }
+
+  async function handleClearCollections(id: string) {
+    const existing = await StorageDriver.readWorkspace(id) ?? emptyWorkspaceData();
+    const cleared: WorkspaceData = {
+      ...existing,
+      collections: [],
+      collectionVariables: {},
+    };
+    await StorageDriver.writeWorkspace(id, cleared);
+    if (state.activeWorkspaceId === id) {
+      dispatch({ type: 'CLEAR_WORKSPACE_COLLECTIONS' });
+    }
+    setConfirmClear(null);
   }
 
   async function handleDuplicate(w: Workspace) {
@@ -285,7 +302,14 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
             <button onClick={() => startRename(w)} title="Rename" className="text-slate-500 hover:text-slate-300 px-1 text-xs transition-colors">✏</button>
             <button onClick={() => handleDuplicate(w)} title="Duplicate" className="text-slate-500 hover:text-slate-300 px-1 text-xs transition-colors">⧉</button>
             <button
-              onClick={() => setConfirmDelete(w.id)}
+              onClick={() => { setConfirmDelete(null); setConfirmClear(w.id); }}
+              title="Empty workspace (remove all collections)"
+              className="text-slate-500 hover:text-orange-400 px-1 text-xs transition-colors"
+            >
+              ⊘
+            </button>
+            <button
+              onClick={() => { setConfirmClear(null); setConfirmDelete(w.id); }}
               title="Delete"
               disabled={state.workspaces.length <= 1}
               className="text-slate-500 hover:text-red-400 px-1 text-xs transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
@@ -303,6 +327,17 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
           <div className="flex gap-2">
             <button onClick={() => handleDelete(confirmDelete)} className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded transition-colors">Delete</button>
             <button onClick={() => setConfirmDelete(null)} className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Empty workspace confirmation */}
+      {confirmClear && (
+        <div className="mt-3 p-3 bg-red-950/40 border border-red-800/50 rounded-lg text-xs text-slate-300">
+          <p className="mb-2">Remove all collections from <strong>{state.workspaces.find(w => w.id === confirmClear)?.name}</strong>? This cannot be undone.</p>
+          <div className="flex gap-2">
+            <button onClick={() => handleClearCollections(confirmClear)} className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded transition-colors">Empty workspace</button>
+            <button onClick={() => setConfirmClear(null)} className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors">Cancel</button>
           </div>
         </div>
       )}
@@ -342,19 +377,35 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
 // ─── Sync Tab ─────────────────────────────────────────────────────────────────
 
 const PROVIDER_LABELS: Record<SyncProvider, string> = {
-  s3: 'Amazon S3',
+  s3: 'S3 Storage',
+  minio: 'MinIO (legacy)', // not shown in UI; kept for Record<SyncProvider,…> type coverage
   git: 'Git Repository',
   http: 'HTTP Endpoint',
   team: 'Team Server',
 };
 
+// All providers shown in Electron. Browser mode hides providers that require
+// Electron IPC (S3/MinIO presigned URLs) or a local git binary (Git).
+const ELECTRON_ONLY_PROVIDERS: SyncProvider[] = ['s3', 'git'];
+const VISIBLE_PROVIDERS: SyncProvider[] = ['s3', 'git', 'http', 'team'];
+
 const PROVIDER_FIELDS: Record<SyncProvider, { key: string; label: string; placeholder: string; secret?: boolean }[]> = {
   s3: [
+    { key: 'endpoint', label: 'Endpoint URL (optional — leave blank for AWS S3)', placeholder: 'http://localhost:9000' },
     { key: 'bucket', label: 'Bucket', placeholder: 'my-apilix-bucket' },
-    { key: 'region', label: 'Region', placeholder: 'us-east-1' },
+    { key: 'region', label: 'Region (optional)', placeholder: 'us-east-1' },
     { key: 'prefix', label: 'Prefix (optional)', placeholder: 'workspaces/' },
     { key: 'accessKeyId', label: 'Access Key ID', placeholder: 'AKIA...', secret: true },
     { key: 'secretAccessKey', label: 'Secret Access Key', placeholder: '••••••••', secret: true },
+  ],
+  // minio fields kept for type coverage; minio configs are migrated to s3 on load.
+  minio: [
+    { key: 'endpoint', label: 'Endpoint URL', placeholder: 'http://localhost:9000' },
+    { key: 'bucket', label: 'Bucket', placeholder: 'apilix' },
+    { key: 'region', label: 'Region (optional)', placeholder: 'us-east-1' },
+    { key: 'prefix', label: 'Prefix (optional)', placeholder: 'workspaces/' },
+    { key: 'accessKeyId', label: 'Access Key', placeholder: 'minioadmin', secret: true },
+    { key: 'secretAccessKey', label: 'Secret Key', placeholder: '••••••••', secret: true },
   ],
   git: [
     { key: 'remote', label: 'Remote URL', placeholder: 'https://github.com/user/repo.git' },
@@ -378,11 +429,12 @@ const PROVIDER_FIELDS: Record<SyncProvider, { key: string; label: string; placeh
 function SyncTab() {
   const { state, dispatch } = useApp();
   const workspaceId = state.activeWorkspaceId;
+  const isBrowserMode = !(window as { electronAPI?: unknown }).electronAPI;
 
-  const [provider, setProvider] = useState<SyncProvider>('s3');
+  const [provider, setProvider] = useState<SyncProvider>(isBrowserMode ? 'http' : 's3');
   const [fields, setFields] = useState<Record<string, string>>({});
   const [providerDrafts, setProviderDrafts] = useState<Record<SyncProvider, Record<string, string>>>(
-    () => ({ s3: {}, git: {}, http: {}, team: {} })
+    () => ({ s3: {}, minio: {}, git: {}, http: {}, team: {} })
   );
   const [syncMetadata, setSyncMetadata] = useState<SyncMetadata | undefined>(undefined);
   const [loaded, setLoaded] = useState(false);
@@ -403,7 +455,9 @@ function SyncTab() {
     ]).then(([cfg, entries]) => {
       if (!active) return;
       if (cfg) {
-        const loadedProvider = cfg.provider as SyncProvider;
+        // Migrate legacy 'minio' provider to 's3' — the unified adapter accepts
+        // the 'endpoint' field for S3-compatible services.
+        const loadedProvider: SyncProvider = cfg.provider === 'minio' ? 's3' : cfg.provider as SyncProvider;
         const loadedConfig = cfg.config;
         setProvider(loadedProvider);
         setFields(loadedConfig);
@@ -687,6 +741,21 @@ function SyncTab() {
     }
   }
 
+  async function handleTestConnection() {
+    setStatus('busy'); setMsg('Testing connection…');
+    try {
+      const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
+      const result = await syncTestConnection(cfg);
+      if (result.ok) {
+        setStatus('ok'); setMsg(result.message);
+      } else {
+        setStatus('error'); setMsg(result.message);
+      }
+    } catch (err: unknown) {
+      setStatus('error'); setMsg((err as Error).message);
+    }
+  }
+
   if (!loaded) return <div className="py-8 text-center text-xs text-slate-500">Loading…</div>;
 
   return (
@@ -696,7 +765,7 @@ function SyncTab() {
       <div>
         <label className="block text-xs font-medium text-slate-400 mb-1.5">Provider</label>
         <div className="flex gap-2 flex-wrap">
-          {(Object.keys(PROVIDER_LABELS) as SyncProvider[]).map(p => (
+          {VISIBLE_PROVIDERS.filter(p => !isBrowserMode || !ELECTRON_ONLY_PROVIDERS.includes(p)).map(p => (
             <button
               key={p}
               onClick={() => switchProvider(p)}
@@ -727,6 +796,14 @@ function SyncTab() {
           </div>
         ))}
       </div>
+
+      <button
+        onClick={handleTestConnection}
+        disabled={status === 'busy'}
+        className="w-full py-1.5 text-xs font-medium bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-slate-200 rounded transition-colors"
+      >
+        Test connection
+      </button>
 
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-3">
@@ -828,7 +905,6 @@ function SyncTab() {
         Import once (don't save config) ↓
       </button>
 
-      <div className="space-y-2 pt-1">
         <div className="flex items-center justify-between gap-3">
           <span className="text-xs font-medium text-slate-300">Recent sync activity</span>
           <span className="text-[10px] text-slate-500">local telemetry</span>
@@ -861,7 +937,6 @@ function SyncTab() {
           )}
         </div>
       </div>
-      </div>
 
       {conflictPackage && (
         <ConflictMergeModal
@@ -884,99 +959,6 @@ function SyncTab() {
         />
       )}
     </>
-  );
-}
-
-// ─── Team Tab ─────────────────────────────────────────────────────────────────
-
-function TeamTab() {
-  const { state, dispatch } = useApp();
-
-  const [serverUrl, setServerUrl] = useState('');
-  const [token, setToken] = useState('');
-  const [status, setStatus] = useState<'idle' | 'busy' | 'ok' | 'error'>('idle');
-  const [msg, setMsg] = useState('');
-
-  const activeWorkspace = state.workspaces.find(w => w.id === state.activeWorkspaceId);
-  const isTeam = activeWorkspace?.type === 'team';
-
-  useEffect(() => {
-    if (isTeam && activeWorkspace.teamServerUrl) {
-      setServerUrl(activeWorkspace.teamServerUrl);
-    }
-  }, [isTeam, activeWorkspace?.teamServerUrl]);
-
-  async function connectTeam() {
-    setStatus('busy'); setMsg('Connecting…');
-    try {
-      const res = await fetch(`${serverUrl}/workspaces`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(`Server responded ${res.status}`);
-      const body = await res.json() as { workspaces?: unknown[] };
-      const count = Array.isArray(body.workspaces) ? body.workspaces.length : 0;
-      setStatus('ok');
-      setMsg(`Connected — ${count} workspace(s) found on server`);
-    } catch (err: unknown) {
-      setStatus('error');
-      setMsg((err as Error).message);
-    }
-  }
-
-  return (
-    <div className="space-y-4">
-      <div>
-        <p className="text-xs text-slate-400 mb-3">
-          Connect to a self-hosted Apilix team server to share collections with role-based access control.
-        </p>
-
-        <div className="space-y-2.5">
-          <div>
-            <label className="block text-[11px] text-slate-500 mb-1">Server URL</label>
-            <input
-              type="text"
-              value={serverUrl}
-              onChange={e => setServerUrl(e.target.value)}
-              placeholder="https://apilix.yourcompany.com"
-              className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-orange-500 placeholder:text-slate-600"
-            />
-          </div>
-          <div>
-            <label className="block text-[11px] text-slate-500 mb-1">JWT Token</label>
-            <input
-              type="password"
-              value={token}
-              onChange={e => setToken(e.target.value)}
-              placeholder="eyJ…"
-              className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-orange-500 placeholder:text-slate-600"
-            />
-          </div>
-        </div>
-      </div>
-
-      {msg && (
-        <p className={`text-xs px-3 py-2 rounded border ${
-          status === 'ok' ? 'text-green-300 bg-green-950/30 border-green-800/40' :
-          status === 'error' ? 'text-red-300 bg-red-950/30 border-red-800/40' :
-          'text-slate-400 bg-slate-800/40 border-slate-700'
-        }`}>{msg}</p>
-      )}
-
-      <button
-        onClick={connectTeam}
-        disabled={status === 'busy' || !serverUrl || !token}
-        className="w-full py-1.5 text-xs font-medium bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-slate-200 rounded transition-colors"
-      >
-        Test connection
-      </button>
-
-      <div className="pt-2 border-t border-slate-800">
-        <p className="text-[11px] text-slate-600">
-          To start your own team server, deploy the standalone{' '}
-          <code className="text-slate-400">apilix-team-server</code> project.
-        </p>
-      </div>
-    </div>
   );
 }
 

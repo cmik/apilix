@@ -133,6 +133,18 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+    case 'CLEAR_WORKSPACE_COLLECTIONS':
+      return {
+        ...state,
+        collections: [],
+        collectionVariables: {},
+        tabs: [],
+        activeTabId: null,
+        activeRequest: null,
+        response: null,
+        runnerResults: null,
+      };
+
     case 'ADD_ENVIRONMENT':
       return { ...state, environments: [...state.environments, action.payload] };
 

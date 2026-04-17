@@ -42,6 +42,10 @@ export interface SyncAdapter {
     config: Record<string, string>,
     expectedVersion: string,
   ): Promise<void>;
+  testConnection?(
+    workspaceId: string,
+    config: Record<string, string>,
+  ): Promise<{ ok: boolean; message: string }>;
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -138,6 +142,16 @@ export async function checkConflict(syncConfig: SyncConfig): Promise<SyncConflic
 export async function getRemoteSyncState(syncConfig: SyncConfig): Promise<SyncRemoteState> {
   const adapter = getAdapter(syncConfig.provider as string);
   return getAdapterRemoteState(adapter, syncConfig.workspaceId, syncConfig.config);
+}
+
+export async function testConnection(
+  syncConfig: SyncConfig,
+): Promise<{ ok: boolean; message: string }> {
+  const adapter = getAdapter(syncConfig.provider as string);
+  if (!adapter.testConnection) {
+    return { ok: false, message: 'This provider does not support connection testing.' };
+  }
+  return adapter.testConnection(syncConfig.workspaceId, syncConfig.config);
 }
 
 /**
@@ -288,7 +302,9 @@ export { StaleVersionError };
 
 function getAdapter(provider: string): SyncAdapter {
   switch (provider) {
-    case 's3': return s3Adapter;
+    case 's3':
+    case 'minio': // legacy alias — stored configs with provider:'minio' continue to work
+      return s3Adapter;
     case 'git': return gitAdapter;
     case 'http': return httpAdapter;
     case 'team': return teamAdapter;
