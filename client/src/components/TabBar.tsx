@@ -340,6 +340,13 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
     return () => cancelAnimationFrame(raf);
   }, [tabs, updateScrollState]);
 
+  // Scroll the active tab into view whenever the active tab changes
+  useEffect(() => {
+    if (!activeTabId || !scrollContainerRef.current) return;
+    const el = scrollContainerRef.current.querySelector<HTMLElement>(`[data-tab-id="${activeTabId}"]`);
+    el?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [activeTabId]);
+
   // Re-check on container resize (window resize, panel resizing, etc.)
   useEffect(() => {
     const el = scrollContainerRef.current;
@@ -502,7 +509,7 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
         }}
       >
         {tabs.map((tab, i) => (
-          <div key={tab.id} className="relative flex items-stretch shrink-0">
+          <div key={tab.id} data-tab-id={tab.id} className="relative flex items-stretch shrink-0">
             {draggingId && insertBefore === i && (
               <div className="w-0.5 bg-orange-500 self-stretch pointer-events-none shrink-0" />
             )}
