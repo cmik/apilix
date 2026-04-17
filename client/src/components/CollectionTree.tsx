@@ -706,6 +706,7 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
   }
 
   function handleHeaderDrop(e: React.DragEvent) {
+    if (!dragCtx.draggingId) return;
     e.preventDefault();
     e.stopPropagation();
     dragCtx.executeDrop();
