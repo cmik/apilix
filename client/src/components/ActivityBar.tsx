@@ -1,4 +1,4 @@
-import { useState, lazy, Suspense } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { useApp } from '../store';
 import apilixLogo from '../assets/apilix.svg';
 
@@ -24,6 +24,12 @@ interface Props {
 export default function ActivityBar({ settingsTheme, onToggleTheme, onOpenSettings }: Props) {
   const { state, dispatch } = useApp();
   const [manageOpen, setManageOpen] = useState(false);
+
+  useEffect(() => {
+    function onOpen() { setManageOpen(true); }
+    document.addEventListener('apilix:openWorkspaceManager', onOpen);
+    return () => document.removeEventListener('apilix:openWorkspaceManager', onOpen);
+  }, []);
 
   return (
     <div className="w-[72px] shrink-0 h-full bg-slate-950 border-r border-slate-800 flex flex-col items-center py-2 overflow-hidden z-10">
