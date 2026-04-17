@@ -694,8 +694,13 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
 }) {
   const { state, dispatch, getEnvironmentVars, getCollectionVars } = useApp();
   const dragCtx = useDragCtx();
-  const staticCollVars = Object.fromEntries((collection.variable ?? []).filter(v => !v.disabled && v.key).map(v => [v.key, v.value]));
-  const varMap = buildVarMap(getEnvironmentVars(), { ...staticCollVars, ...getCollectionVars(collection._id) }, state.globalVariables);
+  const collectionDefinitionVars = buildCollectionDefinitionVarMap(collection.variable ?? []);
+  const varMap = buildVarMap(
+    getEnvironmentVars(),
+    getCollectionVars(collection._id),
+    state.globalVariables,
+    collectionDefinitionVars,
+  );
   const variableSuggestions = buildVariableSuggestions(varMap);
   const collapseSignal = useContext(CollapseCtx);
   const expandSignal = useContext(ExpandCtx);
