@@ -413,10 +413,10 @@ export default function App() {
     localStorage.setItem('apilix_request_split_width', String(Math.round(requestSplitWidth)));
   }, [requestSplitWidth]);
 
-  function openSettings(tab: SettingsTab = 'appearance') {
-    setSettingsInitialTab(tab);
-    setSettingsOpen(true);
-  }
+  const openSettings = useCallback((tab: SettingsTab = 'appearance') => {
+    setSettingsInitialTab(tab);
+    setSettingsOpen(true);
+  }, []);
 
   // ── Global keyboard shortcuts ──────────────────────────────────────────────
   useEffect(() => {
