@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { useApp } from '../store';
+import { useApp, generateId } from '../store';
 import { runCollectionStream, pauseRun, resumeRun, stopRun } from '../api';
-import type { RunnerIteration, RunnerIterationResult, CollectionItem, ConditionalFlowRecord } from '../types';
+import type { RunnerIteration, RunnerIterationResult, CollectionItem, ConditionalFlowRecord, SavedRunnerRun, RunnerRunSummary } from '../types';
 import { applyInheritedAuth, getAllRequestIds } from '../utils/treeHelpers';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -658,6 +658,29 @@ function parseCSVLine(line: string): string[] {
   return result;
 }
 
+function buildRunSummary(iterations: RunnerIteration[]): RunnerRunSummary {
+  let requests = 0, passed = 0, failed = 0, errors = 0;
+  for (const iter of iterations) {
+    for (const r of iter.results) {
+      requests++;
+      if (r.error) errors++;
+      for (const t of r.testResults) {
+        if (t.passed === true) passed++;
+        else if (t.passed === false) failed++;
+      }
+      for (const c of [...(r.preChildRequests ?? []), ...(r.testChildRequests ?? [])]) {
+        requests++;
+        if (c.result.error) errors++;
+        for (const t of c.result.testResults ?? []) {
+          if (t.passed === true) passed++;
+          else if (t.passed === false) failed++;
+        }
+      }
+    }
+  }
+  return { requests, passed, failed, errors };
+}
+
 export default function RunnerPanel() {
   const { state, dispatch, getEnvironmentVars, getCollectionVars } = useApp();
   const [selectedCollectionId, setSelectedCollectionId] = useState<string>('');
@@ -678,6 +701,10 @@ export default function RunnerPanel() {
   const [error, setError] = useState<string | null>(null);
   const [configOpen, setConfigOpen] = useState(true);
   const [useMockServer, setUseMockServer] = useState(false);
+  const [saveRunModalOpen, setSaveRunModalOpen] = useState(false);
+  const [saveRunName, setSaveRunName] = useState('');
+  const [isViewingLoadedRun, setIsViewingLoadedRun] = useState(false);
+  const lastRunRef = useRef<SavedRunnerRun | null>(null);
   const csvRef = useRef<HTMLInputElement>(null);
   const dragItemRef = useRef<number | null>(null);
   const dragOverRef = useRef<number | null>(null);
@@ -705,6 +732,34 @@ export default function RunnerPanel() {
   // Consume a preselection dispatched from CollectionTree ("Execute in Runner")
   // Use a ref to signal the auto-select-all effect to skip when preselection is applied.
   const skipAutoSelectRef = useRef(false);
+
+  // Reset all local panel state when the active workspace changes
+  useEffect(() => {
+    skipAutoSelectRef.current = false;
+    setSelectedCollectionId('');
+    setSelectedRequestIds(new Set());
+    setExecutionOrder([]);
+    setCsvFile(null);
+    setCsvHeaders([]);
+    setCsvPreviewRows([]);
+    setCsvRowCount(0);
+    setDelay(0);
+    setIterations(1);
+    setExecuteChildRequests(false);
+    setConditionalExecution(true);
+    setResults(null);
+    setIsRunning(false);
+    setIsPaused(false);
+    setRunId(null);
+    setError(null);
+    setConfigOpen(true);
+    setUseMockServer(false);
+    setSaveRunModalOpen(false);
+    setSaveRunName('');
+    setIsViewingLoadedRun(false);
+    lastRunRef.current = null;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.activeWorkspaceId]);
   useEffect(() => {
     if (!state.runnerPreselection) return;
     const { collectionId, requestIds } = state.runnerPreselection;
@@ -715,6 +770,26 @@ export default function RunnerPanel() {
     setResults(null);
     dispatch({ type: 'SET_RUNNER_PRESELECTION', payload: null });
   }, [dispatch, state.runnerPreselection]);
+
+  // Load a run from the RunnerSidePanel
+  useEffect(() => {
+    if (!state.runnerLoadedRun) return;
+    const run = state.runnerLoadedRun;
+    dispatch({ type: 'CLEAR_LOADED_RUNNER_RUN' });
+    const { config } = run;
+    skipAutoSelectRef.current = true;
+    setSelectedCollectionId(config.collectionId);
+    setSelectedRequestIds(new Set(config.selectedRequestIds ?? []));
+    setExecutionOrder(config.executionOrder ?? []);
+    setDelay(config.delay);
+    setIterations(config.iterations);
+    setExecuteChildRequests(config.executeChildRequests);
+    setConditionalExecution(config.conditionalExecution);
+    setResults(run.iterations);
+    setIsViewingLoadedRun(true);
+    setConfigOpen(false);
+    setError(null);
+  }, [dispatch, state.runnerLoadedRun]);
 
   // Auto-select all requests when collection changes
   useEffect(() => {
@@ -820,6 +895,7 @@ export default function RunnerPanel() {
     setRunId(null);
     setError(null);
     setResults(null);
+    setIsViewingLoadedRun(false);
 
     try {
       const envVars = getEnvironmentVars();
@@ -847,6 +923,28 @@ export default function RunnerPanel() {
 
       const streamingResults: RunnerIteration[] = [];
       let currentIteration: RunnerIteration | null = null;
+      const collection = selectedCollection; // narrowed above, capture for nested fn
+
+      function captureRun(): SavedRunnerRun {
+        return {
+          id: generateId(),
+          name: `${collection.info.name} – ${new Date().toLocaleTimeString()}`,
+          collectionId: selectedCollectionId,
+          collectionName: collection.info.name,
+          timestamp: Date.now(),
+          iterations: streamingResults,
+          config: {
+            collectionId: selectedCollectionId,
+            selectedRequestIds: [...selectedRequestIds],
+            executionOrder,
+            iterations,
+            delay,
+            executeChildRequests,
+            conditionalExecution,
+          },
+          summary: buildRunSummary(streamingResults),
+        };
+      }
 
       await runCollectionStream(
         {
@@ -988,10 +1086,14 @@ export default function RunnerPanel() {
             }
           },
           onStopped() {
-            // run was stopped — final state already set via streaming
+            const run = captureRun();
+            lastRunRef.current = run;
+            dispatch({ type: 'ADD_RECENT_RUN', payload: run });
           },
           onDone() {
-            // final state is already set via streaming
+            const run = captureRun();
+            lastRunRef.current = run;
+            dispatch({ type: 'ADD_RECENT_RUN', payload: run });
           },
         },
       );
@@ -1004,30 +1106,7 @@ export default function RunnerPanel() {
   }
 
   // Summary stats
-  const summary = results
-    ? results.reduce(
-        (acc, iter) => {
-          iter.results.forEach(r => {
-            acc.requests++;
-            if (r.error) acc.errors++;
-            r.testResults.forEach(t => {
-              if (t.passed) acc.passed++;
-              else acc.failed++;
-            });
-            [...(r.preChildRequests ?? []), ...(r.testChildRequests ?? [])].forEach(c => {
-              acc.requests++;
-              if (c.result.error) acc.errors++;
-              (c.result.testResults ?? []).forEach(t => {
-                if (t.passed) acc.passed++;
-                else acc.failed++;
-              });
-            });
-          });
-          return acc;
-        },
-        { requests: 0, passed: 0, failed: 0, errors: 0 }
-      )
-    : null;
+  const summary = results ? buildRunSummary(results) : null;
 
   return (
     <div className="flex-1 flex flex-col overflow-y-auto p-4 gap-4">
@@ -1415,6 +1494,31 @@ export default function RunnerPanel() {
       {/* Results */}
       {results !== null && (
         <div className="flex flex-col gap-3 overflow-y-auto flex-1 min-h-0">
+          {/* Viewing loaded run notice */}
+          {isViewingLoadedRun && (
+            <div className="flex items-center gap-2 px-3 py-2 bg-sky-900/20 border border-sky-700/40 rounded text-xs text-sky-300 shrink-0">
+              <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              <span className="flex-1">Viewing saved run — modify config and click <span className="font-semibold">Run</span> to re-execute</span>
+              <button onClick={() => setIsViewingLoadedRun(false)} className="text-sky-500 hover:text-sky-300 text-base leading-none">×</button>
+            </div>
+          )}
+
+          {/* Save Run button */}
+          {!isRunning && results.length > 0 && (
+            <div className="flex items-center justify-end shrink-0">
+              <button
+                onClick={() => {
+                  setSaveRunName(lastRunRef.current?.name ?? `Run ${new Date().toLocaleDateString()}`);
+                  setSaveRunModalOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 text-xs rounded font-medium transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" /></svg>
+                Save Run
+              </button>
+            </div>
+          )}
+
           {/* Summary */}
           {summary && (
             <div className="grid grid-cols-4 gap-2 shrink-0">
@@ -1441,6 +1545,61 @@ export default function RunnerPanel() {
           ) : (
             results.map(iter => <IterationBlock key={iter.iteration} iter={iter} />)
           )}
+        </div>
+      )}
+
+      {/* Save Run modal */}
+      {saveRunModalOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/50 flex items-center justify-center"
+          onClick={e => { if (e.target === e.currentTarget) setSaveRunModalOpen(false); }}
+        >
+          <div className="bg-slate-900 border border-slate-700 rounded-lg shadow-2xl w-full max-w-sm mx-4">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700 shrink-0">
+              <h3 className="text-sm font-semibold text-slate-200">Save Run</h3>
+              <button onClick={() => setSaveRunModalOpen(false)} className="text-slate-500 hover:text-slate-300 text-xl leading-none">×</button>
+            </div>
+            <div className="px-4 py-4 flex flex-col gap-3">
+              <label className="text-xs text-slate-400">Run name</label>
+              <input
+                type="text"
+                value={saveRunName}
+                onChange={e => setSaveRunName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && saveRunName.trim()) {
+                    const base = lastRunRef.current;
+                    if (base) {
+                      dispatch({ type: 'SAVE_RUNNER_RUN', payload: { ...base, id: generateId(), name: saveRunName.trim() } });
+                    }
+                    setSaveRunModalOpen(false);
+                  }
+                }}
+                autoFocus
+                className="bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-orange-500"
+              />
+            </div>
+            <div className="px-4 py-3 border-t border-slate-700 flex justify-end gap-2 shrink-0">
+              <button
+                onClick={() => setSaveRunModalOpen(false)}
+                className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={!saveRunName.trim()}
+                onClick={() => {
+                  const base = lastRunRef.current;
+                  if (base && saveRunName.trim()) {
+                    dispatch({ type: 'SAVE_RUNNER_RUN', payload: { ...base, id: generateId(), name: saveRunName.trim() } });
+                  }
+                  setSaveRunModalOpen(false);
+                }}
+                className="px-4 py-1.5 bg-orange-600 hover:bg-orange-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs rounded font-medium transition-colors"
+              >
+                Save
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

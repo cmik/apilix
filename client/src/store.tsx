@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useReducer, useRef, useState, type ReactNode } from 'react';
-import type { AppState, AppAction, AppSettings, AppCollection, AppEnvironment, CollectionItem, RequestTab, CookieJar, Cookie, MockRoute, MockCollection, Workspace, WorkspaceData, HistoryRequest } from './types';
+import type { AppState, AppAction, AppSettings, AppCollection, AppEnvironment, CollectionItem, RequestTab, CookieJar, Cookie, MockRoute, MockCollection, Workspace, WorkspaceData, HistoryRequest, SavedRunnerRun } from './types';
 import * as StorageDriver from './utils/storageDriver';
 import * as SnapshotEngine from './utils/snapshotEngine';
 import { API_BASE } from './api';
@@ -76,6 +76,9 @@ export const initialState: AppState = {
   captureRunning: false,
   captureGeneration: 0,
   requestHistory: [],
+  recentRuns: [],
+  savedRuns: [],
+  runnerLoadedRun: null,
   captureViewState: {
     search: '',
     filterDomain: '',
@@ -524,6 +527,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         view: 'request',
         mockServerRunning: false,
         requestHistory: [],
+        recentRuns: [],
+        savedRuns: [],
+        runnerLoadedRun: null,
       };
 
     case 'SWITCH_WORKSPACE': {
@@ -554,6 +560,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         view: 'request',
         mockServerRunning: false,
         requestHistory: [],
+        recentRuns: [],
+        savedRuns: [],
+        runnerLoadedRun: null,
       };
     }
 
@@ -608,6 +617,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         view: 'request',
         mockServerRunning: false,
         requestHistory: [],
+        recentRuns: [],
+        savedRuns: [],
+        runnerLoadedRun: null,
       };
     }
 
@@ -697,6 +709,27 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       );
       return { ...state, tabs: updatedTabs };
     }
+
+    case 'ADD_RECENT_RUN':
+      return { ...state, recentRuns: [action.payload, ...state.recentRuns].slice(0, 5) };
+
+    case 'SET_RECENT_RUNS':
+      return { ...state, recentRuns: action.payload };
+
+    case 'SAVE_RUNNER_RUN':
+      return { ...state, savedRuns: [action.payload, ...state.savedRuns] };
+
+    case 'DELETE_SAVED_RUN':
+      return { ...state, savedRuns: state.savedRuns.filter(r => r.id !== action.payload) };
+
+    case 'SET_SAVED_RUNS':
+      return { ...state, savedRuns: action.payload };
+
+    case 'LOAD_RUNNER_RUN':
+      return { ...state, runnerLoadedRun: action.payload, view: 'runner' };
+
+    case 'CLEAR_LOADED_RUNNER_RUN':
+      return { ...state, runnerLoadedRun: null };
 
     default:
       return state;
@@ -875,6 +908,73 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.requestHistory, state.activeWorkspaceId, state.storageReady]);
+
+  // ── Runner recent/saved runs: load on workspace change ────────────────────
+  const runnerRunsLoadedWorkspaceRef = useRef<string | null>(null);
+  const skipNextRunnerRunsPersistRef = useRef(false);
+  const savedRunsSkipRef = useRef(false);
+  useEffect(() => {
+    if (!state.storageReady || !state.activeWorkspaceId) return;
+    const workspaceId = state.activeWorkspaceId;
+    let cancelled = false;
+    runnerRunsLoadedWorkspaceRef.current = null;
+    skipNextRunnerRunsPersistRef.current = true;
+    savedRunsSkipRef.current = true;
+    Promise.all([
+      StorageDriver.readRecentRuns(workspaceId),
+      StorageDriver.readSavedRuns(workspaceId),
+    ]).then(([recent, saved]) => {
+      if (cancelled || state.activeWorkspaceId !== workspaceId) return;
+      dispatch({ type: 'SET_RECENT_RUNS', payload: recent ?? [] });
+      dispatch({ type: 'SET_SAVED_RUNS', payload: saved ?? [] });
+      runnerRunsLoadedWorkspaceRef.current = workspaceId;
+    }).catch(() => {
+      if (cancelled || state.activeWorkspaceId !== workspaceId) return;
+      dispatch({ type: 'SET_RECENT_RUNS', payload: [] });
+      dispatch({ type: 'SET_SAVED_RUNS', payload: [] });
+      runnerRunsLoadedWorkspaceRef.current = workspaceId;
+    });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.activeWorkspaceId, state.storageReady]);
+
+  // ── Runner recent runs: debounced persistence ─────────────────────────────
+  const recentRunsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!state.storageReady || !state.activeWorkspaceId) return;
+    if (runnerRunsLoadedWorkspaceRef.current !== state.activeWorkspaceId) return;
+    if (skipNextRunnerRunsPersistRef.current) {
+      skipNextRunnerRunsPersistRef.current = false;
+      return;
+    }
+    if (recentRunsTimerRef.current) clearTimeout(recentRunsTimerRef.current);
+    recentRunsTimerRef.current = setTimeout(() => {
+      void StorageDriver.writeRecentRuns(state.activeWorkspaceId, state.recentRuns).catch(() => {});
+    }, 500);
+    return () => {
+      if (recentRunsTimerRef.current) clearTimeout(recentRunsTimerRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.recentRuns, state.activeWorkspaceId, state.storageReady]);
+
+  // ── Runner saved runs: debounced persistence ──────────────────────────────
+  const savedRunsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!state.storageReady || !state.activeWorkspaceId) return;
+    if (runnerRunsLoadedWorkspaceRef.current !== state.activeWorkspaceId) return;
+    if (savedRunsSkipRef.current) {
+      savedRunsSkipRef.current = false;
+      return;
+    }
+    if (savedRunsTimerRef.current) clearTimeout(savedRunsTimerRef.current);
+    savedRunsTimerRef.current = setTimeout(() => {
+      void StorageDriver.writeSavedRuns(state.activeWorkspaceId, state.savedRuns).catch(() => {});
+    }, 500);
+    return () => {
+      if (savedRunsTimerRef.current) clearTimeout(savedRunsTimerRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.savedRuns, state.activeWorkspaceId, state.storageReady]);
   // ── Debounced settings persistence ───────────────────────────────────────
   const settingsSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
