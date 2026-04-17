@@ -708,6 +708,23 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
   const [showSettings, setShowSettings] = useState(false);
   const [newItemId, setNewItemId] = useState<string | null>(null);
 
+  function handleHeaderDragOver(e: React.DragEvent) {
+    if (!dragCtx.draggingId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragCtx.dropColId !== collection._id || dragCtx.dropId !== null || dragCtx.dropPos !== 'inside') {
+      dragCtx.updateDrop(null, collection._id, 'inside');
+    }
+  }
+
+  function handleHeaderDrop(e: React.DragEvent) {
+    if (!dragCtx.draggingId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragCtx.executeDrop();
+  }
+
   function openMenu(e: React.MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
@@ -858,10 +875,12 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
       onDrop={handleCollectionDrop}
     >
       <div
-        className={`flex items-center group ${isCollectionDropTarget ? 'ring-1 ring-inset ring-orange-500/60 rounded bg-orange-500/10' : ''}`}
+        className={`flex items-center group rounded transition-colors ${isCollectionDropTarget ? 'ring-1 ring-inset ring-orange-500/60 bg-orange-500/10' : ''}`}
         draggable={!!onDragStart}
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
+        onDragOver={handleHeaderDragOver}
+        onDrop={handleHeaderDrop}
       >
         <button
           onClick={() => !renaming && setOpen(o => !o)}
@@ -1060,17 +1079,20 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
 
     const collections = collectionsRef.current;
 
-    // Drop directly onto a collection header (empty or closed) — append to root
+    // Collection-root drop: dragged onto the collection header (no specific item target)
     if (!tgtId) {
-      const tgtCollection = collections.find(c => c._id === tgtCol);
-      if (!tgtCollection) { endDrag(); return; }
+      if (pos !== 'inside') { endDrag(); return; }
       if (srcCol === tgtCol) {
-        const { items: newItems, extracted } = extractItemById(tgtCollection.item, srcId);
+        // Move to root of same collection — extract and append to end
+        const col = collections.find(c => c._id === srcCol);
+        if (!col) { endDrag(); return; }
+        const { items: withoutSource, extracted } = extractItemById(col.item, srcId);
         if (!extracted) { endDrag(); return; }
-        dispatch({ type: 'UPDATE_COLLECTION', payload: { ...tgtCollection, item: [...newItems, extracted] } });
+        dispatch({ type: 'UPDATE_COLLECTION', payload: { ...col, item: [...withoutSource, extracted] } });
       } else {
         const srcCollection = collections.find(c => c._id === srcCol);
-        if (!srcCollection) { endDrag(); return; }
+        const tgtCollection = collections.find(c => c._id === tgtCol);
+        if (!srcCollection || !tgtCollection) { endDrag(); return; }
         const { items: newSrcItems, extracted } = extractItemById(srcCollection.item, srcId);
         if (!extracted) { endDrag(); return; }
         dispatch({ type: 'UPDATE_COLLECTION', payload: { ...srcCollection, item: newSrcItems } });
