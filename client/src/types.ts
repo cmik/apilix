@@ -632,6 +632,7 @@ export type AppAction =
   | { type: 'UPDATE_TAB_ITEM'; payload: { tabId: string; item: CollectionItem } }
   | { type: 'UPDATE_TAB'; payload: { tabId: string; collectionId: string; item: CollectionItem } }
   | { type: 'OPEN_BLANK_TAB' }
+  | { type: 'DUPLICATE_TAB'; payload: string }
   | { type: 'REORDER_TABS'; payload: string[] }
   | { type: 'REORDER_COLLECTIONS'; payload: string[] }
   | { type: 'UPSERT_DOMAIN_COOKIES'; payload: { domain: string; cookies: Cookie[] } }

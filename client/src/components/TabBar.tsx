@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useApp } from '../store';
 import type { RequestTab } from '../types';
 import { renameItemById } from '../utils/treeHelpers';
@@ -19,14 +20,165 @@ interface TabBarProps {
   dirtyIds: ReadonlySet<string>;
 }
 
+// ── MenuItem ──────────────────────────────────────────────────────────────────
+
+function MenuItem({
+  icon,
+  label,
+  onClick,
+  disabled = false,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      disabled={disabled}
+      onMouseDown={e => e.preventDefault()}
+      onClick={disabled ? undefined : onClick}
+      className={`w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-xs transition-colors ${
+        disabled
+          ? 'text-slate-600 cursor-not-allowed'
+          : 'text-slate-300 hover:bg-slate-700 hover:text-slate-100 cursor-pointer'
+      }`}
+    >
+      <span className="w-3.5 h-3.5 shrink-0 text-slate-500 flex items-center justify-center">
+        {icon}
+      </span>
+      {label}
+    </button>
+  );
+}
+
+// ── TabContextMenu ────────────────────────────────────────────────────────────
+
+interface TabContextMenuProps {
+  tabId: string;
+  tabIndex: number;
+  isDirty: boolean;
+  isActive: boolean;
+  totalTabs: number;
+  pos: { x: number; y: number };
+  onClose: () => void;
+  onRename: () => void;
+  onDuplicate: () => void;
+  onCloseSaved: () => void;
+  onCloseAllToRight: () => void;
+  onCloseOthers: () => void;
+}
+
+function TabContextMenu({
+  tabIndex,
+  isDirty,
+  isActive,
+  totalTabs,
+  pos,
+  onClose,
+  onRename,
+  onDuplicate,
+  onCloseSaved,
+  onCloseAllToRight,
+  onCloseOthers,
+}: TabContextMenuProps) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuWidth = 224;
+  const adjustedX = Math.min(pos.x, window.innerWidth - menuWidth - 8);
+
+  useEffect(() => {
+    function onDown(e: MouseEvent) {
+      if (!menuRef.current?.contains(e.target as Node)) onClose();
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+
+  // "Close saved" is only disabled when the tab is dirty AND not active
+  // (non-active dirty tabs can't be saved without activating them first)
+  const closeSavedDisabled = isDirty && !isActive;
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      style={{ position: 'fixed', top: pos.y, left: adjustedX, zIndex: 9999 }}
+      className="animate-menu-enter w-56 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl overflow-hidden py-1"
+    >
+      <MenuItem
+        icon={
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 3.487a2.25 2.25 0 1 1 3.182 3.182L7.5 19.213l-4.5 1.318 1.318-4.5L16.862 3.487z" />
+          </svg>
+        }
+        label="Rename"
+        onClick={onRename}
+      />
+      <MenuItem
+        icon={
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 0 1-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 0 0-3.375-3.375h-1.5a1.125 1.125 0 0 1-1.125-1.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H9.75" />
+          </svg>
+        }
+        label="Duplicate"
+        onClick={onDuplicate}
+      />
+      <div className="my-1 border-t border-slate-700" />
+      <MenuItem
+        icon={
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
+          </svg>
+        }
+        label={closeSavedDisabled ? 'Close saved (activate tab first)' : 'Close saved'}
+        onClick={onCloseSaved}
+        disabled={closeSavedDisabled}
+      />
+      <MenuItem
+        icon={
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+          </svg>
+        }
+        label="Close all to the right"
+        onClick={onCloseAllToRight}
+        disabled={tabIndex >= totalTabs - 1}
+      />
+      <MenuItem
+        icon={
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+          </svg>
+        }
+        label="Close others"
+        onClick={onCloseOthers}
+        disabled={totalTabs <= 1}
+      />
+    </div>,
+    document.body
+  );
+}
+
+// ── Tab ───────────────────────────────────────────────────────────────────────
+
 function Tab({
   tab,
   isActive,
   isDirty,
   isDragging,
+  isRenaming,
   onActivate,
   onClose,
   onRename,
+  onStartRename,
+  onCancelRename,
+  onOpenMenu,
   onDragStart,
   onDragOver,
   onDrop,
@@ -36,9 +188,13 @@ function Tab({
   isActive: boolean;
   isDirty: boolean;
   isDragging: boolean;
+  isRenaming: boolean;
   onActivate: () => void;
   onClose: (e: React.MouseEvent) => void;
   onRename: (newName: string) => void;
+  onStartRename: () => void;
+  onCancelRename: () => void;
+  onOpenMenu: (e: React.MouseEvent) => void;
   onDragStart: (e: React.DragEvent) => void;
   onDragOver: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent) => void;
@@ -48,20 +204,17 @@ function Tab({
   const methodColor = METHOD_COLORS[method] ?? 'text-slate-400';
   const name = tab.item.name;
 
-  const [renaming, setRenaming] = useState(false);
+  // Local rename input value — reset whenever rename mode starts
   const [renameVal, setRenameVal] = useState(name);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  function startRename(e: React.MouseEvent) {
-    e.stopPropagation();
-    setRenameVal(name);
-    setRenaming(true);
-  }
+  useEffect(() => {
+    if (isRenaming) setRenameVal(name);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRenaming]);
 
   function commitRename() {
     const trimmed = renameVal.trim();
     if (trimmed && trimmed !== name) onRename(trimmed);
-    setRenaming(false);
+    else onCancelRename();
   }
 
   return (
@@ -71,29 +224,29 @@ function Tab({
       onDragOver={onDragOver}
       onDrop={onDrop}
       onDragEnd={onDragEnd}
-      onClick={renaming ? undefined : onActivate}
+      onClick={isRenaming ? undefined : (isActive ? onOpenMenu : onActivate)}
+      onContextMenu={e => { e.preventDefault(); onOpenMenu(e); }}
       onMouseDown={e => { if (e.button === 1) { e.preventDefault(); onClose(e as unknown as React.MouseEvent); } }}
       className={`group relative flex items-center gap-1.5 px-3 py-0 h-full cursor-grab select-none shrink-0 border-r border-slate-800 transition-colors ${
-        renaming ? 'max-w-[260px]' : 'max-w-[200px]'
+        isRenaming ? 'max-w-[260px]' : 'max-w-[200px]'
       } ${isDragging ? 'opacity-40' : ''} ${
         isActive
           ? 'bg-slate-950 text-slate-100 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-orange-500'
           : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
       }`}
-      title={renaming ? undefined : name}
+      title={isRenaming ? undefined : name}
     >
       <span className={`text-[10px] font-bold shrink-0 ${methodColor}`}>{method.slice(0, 4)}</span>
 
-      {renaming ? (
+      {isRenaming ? (
         <input
-          ref={inputRef}
           autoFocus
           value={renameVal}
           onChange={e => setRenameVal(e.target.value)}
           onBlur={commitRename}
           onKeyDown={e => {
             if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
-            if (e.key === 'Escape') { e.preventDefault(); setRenaming(false); }
+            if (e.key === 'Escape') { e.preventDefault(); onCancelRename(); }
           }}
           onClick={e => e.stopPropagation()}
           className="flex-1 min-w-0 bg-slate-700 border border-orange-500 rounded px-1.5 py-0 text-xs text-slate-100 focus:outline-none"
@@ -102,9 +255,9 @@ function Tab({
         <>
           <span className="truncate text-xs min-w-0 flex-1">{name}</span>
 
-          {/* Pencil rename button */}
+          {/* Pencil rename button (hover-only) */}
           <button
-            onClick={startRename}
+            onClick={e => { e.stopPropagation(); onStartRename(); }}
             className="w-3.5 h-3.5 shrink-0 flex items-center justify-center text-slate-600 hover:text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity"
             title="Rename"
           >
@@ -112,6 +265,15 @@ function Tab({
               <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 3.487a2.25 2.25 0 1 1 3.182 3.182L7.5 19.213l-4.5 1.318 1.318-4.5L16.862 3.487z" />
             </svg>
           </button>
+
+          {/* Chevron hint on active tab — shows menu is available; hidden on hover to give room for other buttons */}
+          {isActive && (
+            <span className="w-2.5 h-2.5 shrink-0 text-slate-600 flex items-center justify-center pointer-events-none group-hover:hidden">
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M7 10l5 5 5-5z" />
+              </svg>
+            </span>
+          )}
 
           {/* Dirty dot or close button */}
           {isDirty ? (
@@ -121,7 +283,7 @@ function Tab({
             />
           ) : null}
           <button
-            onClick={onClose}
+            onClick={e => { e.stopPropagation(); onClose(e); }}
             className={`w-4 h-4 shrink-0 rounded flex items-center justify-center text-slate-600 hover:text-slate-200 hover:bg-slate-700 transition-colors ${
               isDirty ? 'hidden group-hover:flex' : 'opacity-0 group-hover:opacity-100'
             }`}
@@ -144,6 +306,15 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [insertBefore, setInsertBefore] = useState<number | null>(null);
   const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
+
+  // Lifted rename state (controlled externally so context menu can trigger it)
+  const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
+
+  // Context menu state
+  const [menuState, setMenuState] = useState<{
+    tabId: string;
+    pos: { x: number; y: number };
+  } | null>(null);
 
   // Scroll navigation state
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -184,6 +355,80 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
     scrollContainerRef.current?.scrollBy({ left: 200, behavior: 'smooth' });
   }
 
+  // ── Context menu helpers ──────────────────────────────────────────────────
+
+  function openMenu(tabId: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setMenuState({ tabId, pos: { x: rect.left, y: rect.bottom + 2 } });
+  }
+
+  function handleMenuRename(tabId: string) {
+    setMenuState(null);
+    setRenamingTabId(tabId);
+  }
+
+  function handleMenuDuplicate(tabId: string) {
+    setMenuState(null);
+    dispatch({ type: 'DUPLICATE_TAB', payload: tabId });
+  }
+
+  function handleMenuCloseSaved(tabId: string) {
+    setMenuState(null);
+    const tab = tabs.find(t => t.id === tabId);
+    const isOrphaned = !tab?.collectionId;
+    if (isOrphaned && tabId === activeTabId) {
+      // Orphaned tab: prompt the user to save to a collection first, then close
+      document.dispatchEvent(new CustomEvent('apilix:save-close'));
+      return;
+    }
+    if (dirtyIds.has(tabId)) {
+      // Save only works reliably for the active tab (RequestBuilder listens to apilix:save)
+      if (tabId === activeTabId) {
+        document.dispatchEvent(new CustomEvent('apilix:save'));
+        setTimeout(() => dispatch({ type: 'CLOSE_TAB', payload: tabId }), 50);
+      }
+      return;
+    }
+    dispatch({ type: 'CLOSE_TAB', payload: tabId });
+  }
+
+  function handleMenuCloseAllToRight(tabId: string) {
+    setMenuState(null);
+    const idx = tabs.findIndex(t => t.id === tabId);
+    tabs.slice(idx + 1)
+      .filter(t => !dirtyIds.has(t.id))
+      .forEach(t => dispatch({ type: 'CLOSE_TAB', payload: t.id }));
+  }
+
+  function handleMenuCloseOthers(tabId: string) {
+    setMenuState(null);
+    tabs.filter(t => t.id !== tabId && !dirtyIds.has(t.id))
+      .forEach(t => dispatch({ type: 'CLOSE_TAB', payload: t.id }));
+  }
+
+  // ── Rename helpers ────────────────────────────────────────────────────────
+
+  function commitRenameForTab(tabId: string, newName: string) {
+    const tab = tabs.find(t => t.id === tabId);
+    if (!tab) { setRenamingTabId(null); return; }
+    const collection = state.collections.find(c => c._id === tab.collectionId);
+    const itemId = tab.item.id;
+    if (collection && itemId) {
+      dispatch({
+        type: 'UPDATE_COLLECTION',
+        payload: { ...collection, item: renameItemById(collection.item, itemId, newName) },
+      });
+    }
+    dispatch({
+      type: 'UPDATE_TAB_ITEM',
+      payload: { tabId, item: { ...tab.item, name: newName } },
+    });
+    setRenamingTabId(null);
+  }
+
+  // ── Drag helpers ──────────────────────────────────────────────────────────
+
   function handleDragStart(e: React.DragEvent, tabId: string) {
     setDraggingId(tabId);
     e.dataTransfer.effectAllowed = 'move';
@@ -215,6 +460,9 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
     setDraggingId(null);
     setInsertBefore(null);
   }
+
+  const menuTab = menuState ? tabs.find(t => t.id === menuState.tabId) ?? null : null;
+  const menuTabIndex = menuState ? tabs.findIndex(t => t.id === menuState.tabId) : -1;
 
   return (
     <div className="relative h-8 bg-slate-900 border-b border-slate-800 shrink-0">
@@ -255,6 +503,7 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
               isActive={tab.id === activeTabId}
               isDirty={dirtyIds.has(tab.id)}
               isDragging={tab.id === draggingId}
+              isRenaming={renamingTabId === tab.id}
               onActivate={() => {
                 if (tab.id !== activeTabId) {
                   dispatch({ type: 'SET_ACTIVE_TAB', payload: tab.id });
@@ -269,20 +518,10 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
                 }
                 dispatch({ type: 'CLOSE_TAB', payload: tab.id });
               }}
-              onRename={newName => {
-                const collection = state.collections.find(c => c._id === tab.collectionId);
-                const itemId = tab.item.id;
-                if (collection && itemId) {
-                  dispatch({
-                    type: 'UPDATE_COLLECTION',
-                    payload: { ...collection, item: renameItemById(collection.item, itemId, newName) },
-                  });
-                }
-                dispatch({
-                  type: 'UPDATE_TAB_ITEM',
-                  payload: { tabId: tab.id, item: { ...tab.item, name: newName } },
-                });
-              }}
+              onRename={newName => commitRenameForTab(tab.id, newName)}
+              onStartRename={() => { setMenuState(null); setRenamingTabId(tab.id); }}
+              onCancelRename={() => setRenamingTabId(null)}
+              onOpenMenu={e => openMenu(tab.id, e)}
               onDragStart={e => handleDragStart(e, tab.id)}
               onDragOver={e => handleDragOver(e, i)}
               onDrop={handleDrop}
@@ -320,6 +559,24 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
           </svg>
         </button>
+      )}
+
+      {/* Context menu (portaled to body to avoid overflow clipping) */}
+      {menuState && menuTab && (
+        <TabContextMenu
+          tabId={menuState.tabId}
+          tabIndex={menuTabIndex}
+          isDirty={dirtyIds.has(menuState.tabId)}
+          isActive={menuState.tabId === activeTabId}
+          totalTabs={tabs.length}
+          pos={menuState.pos}
+          onClose={() => setMenuState(null)}
+          onRename={() => handleMenuRename(menuState.tabId)}
+          onDuplicate={() => handleMenuDuplicate(menuState.tabId)}
+          onCloseSaved={() => handleMenuCloseSaved(menuState.tabId)}
+          onCloseAllToRight={() => handleMenuCloseAllToRight(menuState.tabId)}
+          onCloseOthers={() => handleMenuCloseOthers(menuState.tabId)}
+        />
       )}
 
       {/* Unsaved-tab close confirmation modal */}
