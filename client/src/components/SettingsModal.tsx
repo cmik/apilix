@@ -417,6 +417,10 @@ export default function SettingsModal({ onClose, initialTab }: Props) {
   const { state, dispatch } = useApp();
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab ?? 'appearance');
 
+  useEffect(() => {
+    if (initialTab) setActiveTab(initialTab);
+  }, [initialTab]);
+
   const settings = state.settings;
   function update(patch: Partial<AppSettings>) {
     dispatch({ type: 'UPDATE_SETTINGS', payload: patch });
