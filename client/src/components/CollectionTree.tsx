@@ -314,8 +314,13 @@ interface ItemNodeProps {
 
 function ItemNode({ item, collectionId, collection, depth, startRenaming }: ItemNodeProps) {
   const { state, dispatch, getEnvironmentVars, getCollectionVars } = useApp();
-  const staticCollVars = Object.fromEntries((collection.variable ?? []).filter(v => !v.disabled && v.key).map(v => [v.key, v.value]));
-  const varMap = buildVarMap(getEnvironmentVars(), { ...staticCollVars, ...getCollectionVars(collectionId) }, state.globalVariables);
+  const collectionDefinitionVars = buildCollectionDefinitionVarMap(collection.variable);
+  const varMap = buildVarMap(
+    getEnvironmentVars(),
+    getCollectionVars(collectionId),
+    state.globalVariables,
+    collectionDefinitionVars,
+  );
   const variableSuggestions = buildVariableSuggestions(varMap);
   const dragCtx = useDragCtx();
   const collapseSignal = useContext(CollapseCtx);
