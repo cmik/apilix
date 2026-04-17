@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useApp } from '../store';
 import type { RequestTab } from '../types';
 import { renameItemById } from '../utils/treeHelpers';
@@ -145,6 +145,45 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
   const [insertBefore, setInsertBefore] = useState<number | null>(null);
   const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
 
+  // Scroll navigation state
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+  const [showScrollButtons, setShowScrollButtons] = useState(false);
+
+  const updateScrollState = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const { scrollLeft, scrollWidth, clientWidth } = el;
+    const hasOverflow = scrollWidth > clientWidth + 1;
+    setShowScrollButtons(hasOverflow);
+    setCanScrollLeft(scrollLeft > 0);
+    setCanScrollRight(scrollLeft < scrollWidth - clientWidth - 1);
+  }, []);
+
+  // Re-check when tab list changes (tabs added/removed/reordered)
+  useEffect(() => {
+    const raf = requestAnimationFrame(updateScrollState);
+    return () => cancelAnimationFrame(raf);
+  }, [tabs, updateScrollState]);
+
+  // Re-check on container resize (window resize, panel resizing, etc.)
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(updateScrollState);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [updateScrollState]);
+
+  function handleScrollLeft() {
+    scrollContainerRef.current?.scrollBy({ left: -200, behavior: 'smooth' });
+  }
+
+  function handleScrollRight() {
+    scrollContainerRef.current?.scrollBy({ left: 200, behavior: 'smooth' });
+  }
+
   function handleDragStart(e: React.DragEvent, tabId: string) {
     setDraggingId(tabId);
     e.dataTransfer.effectAllowed = 'move';
@@ -178,69 +217,110 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
   }
 
   return (
-    <div
-      className="flex h-8 bg-slate-900 border-b border-slate-800 overflow-x-auto shrink-0 scrollbar-none"
-      onDragLeave={e => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node)) setInsertBefore(null);
-      }}
-    >
-      {tabs.map((tab, i) => (
-        <div key={tab.id} className="relative flex items-stretch shrink-0">
-          {draggingId && insertBefore === i && (
-            <div className="w-0.5 bg-orange-500 self-stretch pointer-events-none shrink-0" />
-          )}
-          <Tab
-            tab={tab}
-            isActive={tab.id === activeTabId}
-            isDirty={dirtyIds.has(tab.id)}
-            isDragging={tab.id === draggingId}
-            onActivate={() => {
-              if (tab.id !== activeTabId) {
-                dispatch({ type: 'SET_ACTIVE_TAB', payload: tab.id });
-                dispatch({ type: 'SET_VIEW', payload: 'request' });
-              }
-            }}
-            onClose={e => {
-              e.stopPropagation();
-              if (dirtyIds.has(tab.id)) {
-                setPendingCloseTabId(tab.id);
-                return;
-              }
-              dispatch({ type: 'CLOSE_TAB', payload: tab.id });
-            }}
-            onRename={newName => {
-              const collection = state.collections.find(c => c._id === tab.collectionId);
-              const itemId = tab.item.id;
-              if (collection && itemId) {
-                dispatch({
-                  type: 'UPDATE_COLLECTION',
-                  payload: { ...collection, item: renameItemById(collection.item, itemId, newName) },
-                });
-              }
-              dispatch({
-                type: 'UPDATE_TAB_ITEM',
-                payload: { tabId: tab.id, item: { ...tab.item, name: newName } },
-              });
-            }}
-            onDragStart={e => handleDragStart(e, tab.id)}
-            onDragOver={e => handleDragOver(e, i)}
-            onDrop={handleDrop}
-            onDragEnd={handleDragEnd}
-          />
-        </div>
-      ))}
-      {draggingId && insertBefore === tabs.length && (
-        <div className="w-0.5 bg-orange-500 self-stretch pointer-events-none shrink-0" />
+    <div className="relative h-8 bg-slate-900 border-b border-slate-800 shrink-0">
+      {/* Left scroll button — overlays the scroll container with a gradient fade */}
+      {showScrollButtons && (
+        <button
+          onMouseDown={e => e.preventDefault()}
+          onClick={handleScrollLeft}
+          disabled={!canScrollLeft}
+          className="absolute left-0 top-0 bottom-0 z-10 w-7 flex items-center justify-center
+            bg-gradient-to-r from-slate-900 via-slate-900/80 to-transparent
+            text-slate-400 hover:text-orange-400 disabled:text-slate-700
+            transition-colors duration-150"
+          title="Scroll tabs left"
+        >
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
       )}
-      <button
-        onClick={() => dispatch({ type: 'OPEN_BLANK_TAB' })}
-        className="flex items-center justify-center w-7 h-full shrink-0 text-slate-500 hover:text-slate-200 hover:bg-slate-800/60 transition-colors"
-        title="New request"
+
+      {/* Scrollable tabs container */}
+      <div
+        ref={scrollContainerRef}
+        className={`flex h-full overflow-x-auto scrollbar-none${showScrollButtons ? ' px-7' : ''}`}
+        onScroll={updateScrollState}
+        onDragLeave={e => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) setInsertBefore(null);
+        }}
       >
-        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-        </svg>
-      </button>
+        {tabs.map((tab, i) => (
+          <div key={tab.id} className="relative flex items-stretch shrink-0">
+            {draggingId && insertBefore === i && (
+              <div className="w-0.5 bg-orange-500 self-stretch pointer-events-none shrink-0" />
+            )}
+            <Tab
+              tab={tab}
+              isActive={tab.id === activeTabId}
+              isDirty={dirtyIds.has(tab.id)}
+              isDragging={tab.id === draggingId}
+              onActivate={() => {
+                if (tab.id !== activeTabId) {
+                  dispatch({ type: 'SET_ACTIVE_TAB', payload: tab.id });
+                  dispatch({ type: 'SET_VIEW', payload: 'request' });
+                }
+              }}
+              onClose={e => {
+                e.stopPropagation();
+                if (dirtyIds.has(tab.id)) {
+                  setPendingCloseTabId(tab.id);
+                  return;
+                }
+                dispatch({ type: 'CLOSE_TAB', payload: tab.id });
+              }}
+              onRename={newName => {
+                const collection = state.collections.find(c => c._id === tab.collectionId);
+                const itemId = tab.item.id;
+                if (collection && itemId) {
+                  dispatch({
+                    type: 'UPDATE_COLLECTION',
+                    payload: { ...collection, item: renameItemById(collection.item, itemId, newName) },
+                  });
+                }
+                dispatch({
+                  type: 'UPDATE_TAB_ITEM',
+                  payload: { tabId: tab.id, item: { ...tab.item, name: newName } },
+                });
+              }}
+              onDragStart={e => handleDragStart(e, tab.id)}
+              onDragOver={e => handleDragOver(e, i)}
+              onDrop={handleDrop}
+              onDragEnd={handleDragEnd}
+            />
+          </div>
+        ))}
+        {draggingId && insertBefore === tabs.length && (
+          <div className="w-0.5 bg-orange-500 self-stretch pointer-events-none shrink-0" />
+        )}
+        <button
+          onClick={() => dispatch({ type: 'OPEN_BLANK_TAB' })}
+          className="flex items-center justify-center w-7 h-full shrink-0 text-slate-500 hover:text-slate-200 hover:bg-slate-800/60 transition-colors"
+          title="New request"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+          </svg>
+        </button>
+      </div>
+
+      {/* Right scroll button — overlays the scroll container with a gradient fade */}
+      {showScrollButtons && (
+        <button
+          onMouseDown={e => e.preventDefault()}
+          onClick={handleScrollRight}
+          disabled={!canScrollRight}
+          className="absolute right-0 top-0 bottom-0 z-10 w-7 flex items-center justify-center
+            bg-gradient-to-l from-slate-900 via-slate-900/80 to-transparent
+            text-slate-400 hover:text-orange-400 disabled:text-slate-700
+            transition-colors duration-150"
+          title="Scroll tabs right"
+        >
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+      )}
 
       {/* Unsaved-tab close confirmation modal */}
       {pendingCloseTabId && (() => {
