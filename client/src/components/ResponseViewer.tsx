@@ -1,6 +1,9 @@
-import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
 import { useApp } from '../store';
 import type { TestResult, TlsCertInfo, NetworkTimings, RedirectHop } from '../types';
+import SaveToVarModal from './SaveToVarModal';
+import TestValueModal from './TestValueModal';
+import { buildSaveToVarSnippet } from '../utils/testSnippetUtils';
 
 type RespTab = 'Body' | 'Headers' | 'Test Results' | 'TLS' | 'Timeline' | 'Redirects';
 
@@ -211,9 +214,11 @@ type JsonNodeProps = {
   depth: number;
   isLast: boolean;
   searchQuery?: string;
+  path?: (string | number)[];
+  onSaveToVar?: (path: (string | number)[], value: unknown, x: number, y: number) => void;
 };
 
-function JsonNode({ data, name, depth, isLast, searchQuery }: JsonNodeProps) {
+function JsonNode({ data, name, depth, isLast, searchQuery, path, onSaveToVar }: JsonNodeProps) {
   const [open, setOpen] = useState(true);
   const paddingLeft = depth * 16;
   const comma = !isLast ? <span className="text-slate-500">,</span> : null;
@@ -221,22 +226,30 @@ function JsonNode({ data, name, depth, isLast, searchQuery }: JsonNodeProps) {
     ? <><span className="text-amber-300">"</span><span className="text-amber-300">{searchQuery ? highlightText(name, searchQuery) : name}</span><span className="text-amber-300">"</span><span className="text-slate-500">: </span></>
     : null;
 
+  const leafCtx = onSaveToVar
+    ? {
+        onContextMenu: (e: React.MouseEvent) => { e.preventDefault(); onSaveToVar(path ?? [], data, e.clientX, e.clientY); },
+        title: 'Right-click to save as variable',
+      }
+    : {};
+  const leafCls = onSaveToVar ? ' cursor-context-menu hover:bg-slate-700/50 rounded' : '';
+
   if (data === null) {
-    return <div style={{ paddingLeft }} className="leading-5">{keyEl}<span className="text-slate-400">null</span>{comma}</div>;
+    return <div style={{ paddingLeft }} className={`leading-5${leafCls}`} {...leafCtx}>{keyEl}<span className="text-rose-400 hover:bg-rose-400/15 rounded px-0.5">null</span>{comma}</div>;
   }
   if (typeof data === 'boolean') {
-    return <div style={{ paddingLeft }} className="leading-5">{keyEl}<span className="text-purple-400">{String(data)}</span>{comma}</div>;
+    return <div style={{ paddingLeft }} className={`leading-5${leafCls}`} {...leafCtx}>{keyEl}<span className="text-purple-400 hover:bg-purple-400/15 rounded px-0.5">{String(data)}</span>{comma}</div>;
   }
   if (typeof data === 'number') {
-    return <div style={{ paddingLeft }} className="leading-5">{keyEl}<span className="text-sky-300">{data}</span>{comma}</div>;
+    return <div style={{ paddingLeft }} className={`leading-5${leafCls}`} {...leafCtx}>{keyEl}<span className="text-sky-300 hover:bg-sky-300/15 rounded px-0.5">{data}</span>{comma}</div>;
   }
   if (typeof data === 'string') {
     return (
-      <div style={{ paddingLeft }} className="leading-5 break-all">
+      <div style={{ paddingLeft }} className={`leading-5 break-all${leafCls}`} {...leafCtx}>
         {keyEl}
-        <span className="text-emerald-400">"</span>
-        <span className="text-emerald-400">{searchQuery ? highlightText(data, searchQuery) : data}</span>
-        <span className="text-emerald-400">"</span>
+        <span className="text-emerald-400 hover:bg-emerald-400/15 rounded px-0.5">
+          &quot;{searchQuery ? highlightText(data, searchQuery) : data}&quot;
+        </span>
         {comma}
       </div>
     );
@@ -265,7 +278,7 @@ function JsonNode({ data, name, depth, isLast, searchQuery }: JsonNodeProps) {
         {open && (
           <>
             {data.map((item, i) => (
-              <JsonNode key={i} data={item} depth={depth + 1} isLast={i === data.length - 1} searchQuery={searchQuery} />
+              <JsonNode key={i} data={item} depth={depth + 1} isLast={i === data.length - 1} searchQuery={searchQuery} path={[...(path ?? []), i]} onSaveToVar={onSaveToVar} />
             ))}
             <div style={{ paddingLeft: paddingLeft + 14 }} className="leading-5">
               <span className="text-slate-300">]</span>{comma}
@@ -300,7 +313,7 @@ function JsonNode({ data, name, depth, isLast, searchQuery }: JsonNodeProps) {
         {open && (
           <>
             {entries.map(([k, v], i) => (
-              <JsonNode key={k} data={v} name={k} depth={depth + 1} isLast={i === entries.length - 1} searchQuery={searchQuery} />
+              <JsonNode key={k} data={v} name={k} depth={depth + 1} isLast={i === entries.length - 1} searchQuery={searchQuery} path={[...(path ?? []), k]} onSaveToVar={onSaveToVar} />
             ))}
             <div style={{ paddingLeft: paddingLeft + 14 }} className="leading-5">
               <span className="text-slate-300">{'}'}</span>{comma}
@@ -442,7 +455,11 @@ function XmlTreeView({ body }: { body: string }) {
   );
 }
 
-function JsonTreeView({ body, searchQuery }: { body: string; searchQuery?: string }) {
+function JsonTreeView({ body, searchQuery, onSaveToVar }: {
+  body: string;
+  searchQuery?: string;
+  onSaveToVar?: (path: (string | number)[], value: unknown, x: number, y: number) => void;
+}) {
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
@@ -455,7 +472,7 @@ function JsonTreeView({ body, searchQuery }: { body: string; searchQuery?: strin
   }
   return (
     <div className="p-3 text-sm font-mono text-slate-200">
-      <JsonNode data={parsed} depth={0} isLast={true} searchQuery={searchQuery} />
+      <JsonNode data={parsed} depth={0} isLast={true} searchQuery={searchQuery} path={[]} onSaveToVar={onSaveToVar} />
     </div>
   );
 }
@@ -571,6 +588,20 @@ function applyJsonPath(root: unknown, expr: string): { value: unknown; error?: s
 }
 // ────────────────────────────────────────────────────────────────────────────
 
+// ── Context-menu position helper ────────────────────────────────────────────
+/** Clamp a context-menu so it stays inside the viewport. */
+function clampMenuPosition(
+  x: number,
+  y: number,
+  menuWidth = 180,
+  menuHeight = 80,
+): { left: number; top: number } {
+  const left = Math.min(x, window.innerWidth - menuWidth - 4);
+  const top = Math.min(y, window.innerHeight - menuHeight - 4);
+  return { left: Math.max(4, left), top: Math.max(4, top) };
+}
+// ────────────────────────────────────────────────────────────────────────────
+
 export default function ResponseViewer() {
   const { state } = useApp();
   const [tab, setTab] = useState<RespTab>('Body');
@@ -582,6 +613,13 @@ export default function ResponseViewer() {
   const [jsonPathExpr, setJsonPathExpr] = useState('');
   const [jsonPathOpen, setJsonPathOpen] = useState(false);
   const jsonPathInputRef = useRef<HTMLInputElement>(null);
+  const [ctxMenu, setCtxMenu] = useState<{ left: number; top: number; path: (string | number)[]; value: unknown } | null>(null);
+  const [saveToVarTarget, setSaveToVarTarget] = useState<{ path: (string | number)[]; value: unknown } | null>(null);
+  const [testValueTarget, setTestValueTarget] = useState<{ path: (string | number)[]; value: unknown } | null>(null);
+
+  const handleSaveToVar = useCallback((path: (string | number)[], value: unknown, x: number, y: number) => {
+    setCtxMenu({ ...clampMenuPosition(x, y), path, value });
+  }, []);
 
   const copyBody = () => {
     if (!response) return;
@@ -913,7 +951,7 @@ export default function ResponseViewer() {
           ) : isXml ? (
             <XmlTreeView body={response.body} />
           ) : (
-            <JsonTreeView body={response.body} searchQuery={searchQuery.trim() ? searchQuery : undefined} />
+            <JsonTreeView body={response.body} searchQuery={searchQuery.trim() ? searchQuery : undefined} onSaveToVar={handleSaveToVar} />
           );
         })()}
 
@@ -958,6 +996,61 @@ export default function ResponseViewer() {
           <NetworkTimeline timings={response.networkTimings} />
         )}
       </div>
+
+      {/* Context menu: actions for a response value */}
+      {ctxMenu && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setCtxMenu(null)} />
+          <div
+            className="fixed z-50 bg-slate-800 border border-slate-600 rounded shadow-xl text-xs py-1"
+            style={{ left: ctxMenu.left, top: ctxMenu.top }}
+          >
+            <button
+              className="block w-full text-left px-4 py-2 text-slate-200 hover:bg-slate-700 transition-colors whitespace-nowrap"
+              onClick={() => {
+                setSaveToVarTarget({ path: ctxMenu.path, value: ctxMenu.value });
+                setCtxMenu(null);
+              }}
+            >
+              Save as variable…
+            </button>
+            <button
+              className="block w-full text-left px-4 py-2 text-slate-200 hover:bg-slate-700 transition-colors whitespace-nowrap"
+              onClick={() => {
+                setTestValueTarget({ path: ctxMenu.path, value: ctxMenu.value });
+                setCtxMenu(null);
+              }}
+            >
+              Test this value…
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* Save-to-variable modal */}
+      {saveToVarTarget && (
+        <SaveToVarModal
+          path={saveToVarTarget.path}
+          value={saveToVarTarget.value}
+          collectionId={state.activeRequest?.collectionId || null}
+          onConfirm={(varName, scope) => {
+            const snippet = buildSaveToVarSnippet(varName, scope, saveToVarTarget.path);
+            document.dispatchEvent(
+              new CustomEvent('apilix:inject-test-snippet', { detail: { snippet } })
+            );
+            setSaveToVarTarget(null);
+          }}
+          onClose={() => setSaveToVarTarget(null)}
+        />
+      )}
+
+      {testValueTarget && (
+        <TestValueModal
+          path={testValueTarget.path}
+          value={testValueTarget.value}
+          onClose={() => setTestValueTarget(null)}
+        />
+      )}
     </div>
   );
 }
