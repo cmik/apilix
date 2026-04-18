@@ -124,6 +124,8 @@ export async function deleteWorkspace(id: string): Promise<void> {
   // ── localStorage ──────────────────────────────────────────────────────────
   lsDelete(LS_WORKSPACE(id));
   lsDelete(LS_REQUEST_HISTORY(id));
+  lsDelete(LS_RUNNER_RECENT(id));
+  lsDelete(LS_RUNNER_SAVED(id));
 
   // Remove entry from sync-config store
   const lsSyncConfig = lsRead<SyncConfigStore>(LS_SYNC_CONFIG);
@@ -413,10 +415,6 @@ export async function writeRequestHistory(workspaceId: string, entries: HistoryR
 const LS_RUNNER_RECENT = (id: string) => `apilix_runner_recent_${id}`;
 const LS_RUNNER_SAVED  = (id: string) => `apilix_runner_saved_${id}`;
 
-export function clearRunnerRunHistory(workspaceId: string): void {
-  lsDel(LS_RUNNER_RECENT(workspaceId));
-  lsDel(LS_RUNNER_SAVED(workspaceId));
-}
 export async function readRecentRuns(workspaceId: string): Promise<SavedRunnerRun[] | null> {
   const api = eAPI();
   if (api) {
