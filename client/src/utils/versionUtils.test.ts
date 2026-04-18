@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { compareSemver, isVersionGreater } from './versionUtils';
+import { describe, expect, it, vi, afterEach } from 'vitest';
+import { compareSemver, isVersionGreater, fetchLatestGitHubVersion } from './versionUtils';
 
 describe('compareSemver', () => {
   it('returns 0 for equivalent versions', () => {
@@ -39,5 +39,43 @@ describe('isVersionGreater', () => {
   it('returns false for non-semver input', () => {
     expect(isVersionGreater('nightly', '1.2.3')).toBe(false);
     expect(isVersionGreater('1.2.3', 'nightly')).toBe(false);
+  });
+});
+
+describe('fetchLatestGitHubVersion', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('returns version string without leading v', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ tag_name: 'v1.2.3' }),
+    }));
+    await expect(fetchLatestGitHubVersion()).resolves.toBe('1.2.3');
+  });
+
+  it('preserves prerelease identifiers after stripping v', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ tag_name: 'v2.0.0-beta.1' }),
+    }));
+    await expect(fetchLatestGitHubVersion()).resolves.toBe('2.0.0-beta.1');
+  });
+
+  it('throws when response status is not ok', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+    }));
+    await expect(fetchLatestGitHubVersion()).rejects.toThrow('404');
+  });
+
+  it('throws when tag_name is absent from response body', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ other_field: 'value' }),
+    }));
+    await expect(fetchLatestGitHubVersion()).rejects.toThrow('Unexpected GitHub API response shape');
   });
 });

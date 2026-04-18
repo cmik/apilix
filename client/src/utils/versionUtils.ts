@@ -57,3 +57,22 @@ export function isVersionGreater(candidate: string, current: string): boolean {
   const compared = compareSemver(candidate, current);
   return compared !== null && compared > 0;
 }
+
+const GITHUB_RELEASES_URL = 'https://api.github.com/repos/cmik/apilix/releases/latest';
+
+/**
+ * Fetches the latest Apilix release tag from GitHub and returns the version
+ * string with any leading "v" stripped (e.g. "1.2.3").
+ * Throws when the request fails, the response is not OK, or the payload shape
+ * is unexpected — callers are responsible for error handling.
+ */
+export async function fetchLatestGitHubVersion(signal?: AbortSignal): Promise<string> {
+  const res = await fetch(GITHUB_RELEASES_URL, {
+    headers: { Accept: 'application/vnd.github+json' },
+    signal,
+  });
+  if (!res.ok) throw new Error(`GitHub API returned ${res.status}`);
+  const data = await res.json() as { tag_name?: unknown };
+  if (typeof data.tag_name !== 'string') throw new Error('Unexpected GitHub API response shape');
+  return data.tag_name.replace(/^v/, '');
+}

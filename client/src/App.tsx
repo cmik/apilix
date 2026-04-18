@@ -43,9 +43,7 @@ import {
   type WorkspaceSwitchDecision,
   type UnsavedRequestTabSummary,
 } from './utils/requestTabSyncGuard';
-import { isVersionGreater } from './utils/versionUtils';
-
-declare const __APP_VERSION__: string;
+import { isVersionGreater, fetchLatestGitHubVersion } from './utils/versionUtils';
 
 // --- Env Quick Panel ---
 
@@ -578,25 +576,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
     const version = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : null;
     if (!version) return;
-    fetch('https://api.github.com/repos/cmik/apilix/releases/latest', {
-      headers: { Accept: 'application/vnd.github+json' },
-      signal: AbortSignal.timeout(5000),
-    })
-      .then(r => r.ok ? r.json() : Promise.reject())
-      .then((data: { tag_name?: unknown }) => {
-        if (cancelled) return;
-        if (typeof data.tag_name !== 'string') return;
-        const latest = data.tag_name.replace(/^v/, '');
+    const controller = new AbortController();
+    fetchLatestGitHubVersion(controller.signal)
+      .then(latest => {
+        if (controller.signal.aborted) return;
         if (isVersionGreater(latest, version)) {
           setLatestVersion(latest);
           setUpdateAvailable(true);
         }
       })
       .catch(() => {});
-    return () => { cancelled = true; };
+    return () => { controller.abort(); };
   }, []);
 
   useEffect(() => {

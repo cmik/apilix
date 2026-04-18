@@ -1,9 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useApp } from '../store';
 import type { AppSettings } from '../types';
 import apilixLogo from '../assets/apilix1.svg';
-
-declare const __APP_VERSION__: string;
+import { fetchLatestGitHubVersion, isVersionGreater } from '../utils/versionUtils';
 
 export type SettingsTab = 'appearance' | 'requests' | 'proxy' | 'cors' | 'shortcuts' | 'about';
 
@@ -260,19 +259,21 @@ function AboutTab() {
   const version = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '—';
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle');
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   async function checkForUpdate() {
     setUpdateStatus('checking');
     try {
-      const res = await fetch('https://api.github.com/repos/cmik/apilix/releases/latest', {
-        headers: { Accept: 'application/vnd.github+json' },
-      });
-      if (!res.ok) throw new Error(`GitHub API returned ${res.status}`);
-      const data = await res.json() as { tag_name: string };
-      const latest = data.tag_name.replace(/^v/, '');
+      const latest = await fetchLatestGitHubVersion(AbortSignal.timeout(10000));
+      if (!mountedRef.current) return;
       setLatestVersion(latest);
-      setUpdateStatus(latest === version ? 'up-to-date' : 'update-available');
+      setUpdateStatus(isVersionGreater(latest, version) ? 'update-available' : 'up-to-date');
     } catch {
+      if (!mountedRef.current) return;
       setUpdateStatus('error');
     }
   }

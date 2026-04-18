@@ -1,7 +1,5 @@
 import type { ConsoleEntry } from '../types';
 
-declare const __APP_VERSION__: string;
-
 type ServerStatus = 'checking' | 'online' | 'offline';
 
 interface StatusBarProps {
