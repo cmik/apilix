@@ -51,7 +51,7 @@ Download the installer for your platform from the [Releases](https://github.com/
 
 ### From Source (Web Mode)
 
-**Prerequisites:** Node.js v18+ and npm v9+
+**Prerequisites:** Node.js v20.19.0+ and npm v9+
 
 ```bash
 # 1. Clone the repository
