@@ -1,0 +1,526 @@
+# Sync & Collaboration
+
+Apilix workspaces can be synced to a remote provider so that your collections, environments, and settings are available on multiple machines and can be shared with teammates. This page covers all four sync providers, conflict resolution, and team server administration.
+
+> **S3 provider requires Electron (desktop app):** The S3 / S3-compatible provider generates presigned URLs via the Electron main process, so it only works in the desktop app. All other providers — Git, HTTP Endpoint, and Team Server — work in both desktop and web mode. In web mode, credentials are stored in plaintext `localStorage` — use desktop mode for production.
+
+---
+
+## Table of Contents
+
+- [Sync \& Collaboration](#sync--collaboration)
+  - [Table of Contents](#table-of-contents)
+  - [Overview](#overview)
+  - [Opening Sync Settings](#opening-sync-settings)
+  - [Sync Operations](#sync-operations)
+  - [Conflict Detection \& Resolution](#conflict-detection--resolution)
+    - [Three-way Merge Modal](#three-way-merge-modal)
+    - [Bulk Actions](#bulk-actions)
+    - [Stale Apply Recovery](#stale-apply-recovery)
+    - [Legacy Fallback](#legacy-fallback)
+  - [Sync Activity Log](#sync-activity-log)
+  - [Provider: Git Repository](#provider-git-repository)
+    - [How it Works](#how-it-works)
+    - [Prerequisites](#prerequisites)
+    - [Field Reference](#field-reference)
+    - [Generating a Personal Access Token](#generating-a-personal-access-token)
+    - [Step-by-step Setup](#step-by-step-setup)
+    - [Authentication](#authentication)
+    - [Ongoing Usage](#ongoing-usage)
+  - [Provider: Amazon S3 / S3-Compatible](#provider-amazon-s3--s3-compatible)
+    - [How it Works (S3)](#how-it-works-s3)
+    - [IAM Permissions Required](#iam-permissions-required)
+    - [Field Reference (S3)](#field-reference-s3)
+    - [Step-by-step Setup (S3)](#step-by-step-setup-s3)
+    - [S3-compatible Storage (MinIO, etc.)](#s3-compatible-storage-minio-etc)
+  - [Provider: HTTP Endpoint](#provider-http-endpoint)
+    - [API Contract](#api-contract)
+    - [Field Reference (HTTP)](#field-reference-http)
+    - [Step-by-step Setup (HTTP)](#step-by-step-setup-http)
+    - [Minimal Node.js Endpoint Example](#minimal-nodejs-endpoint-example)
+  - [Provider: Team Server](#provider-team-server)
+    - [How it Works (Team)](#how-it-works-team)
+    - [Field Reference (Team)](#field-reference-team)
+    - [Team Server Administration](#team-server-administration)
+    - [Roles](#roles)
+    - [Self-hosting the Team Server](#self-hosting-the-team-server)
+  - [Provider Comparison](#provider-comparison)
+  - [See Also](#see-also)
+
+---
+
+## Overview
+
+All sync providers share the same workspace data model: collections, environments, global variables, mock server routes, and the cookie jar are all included in a single sync snapshot.
+
+| Provider | Best for | Requires |
+|---|---|---|
+| **Git Repository** | Version-controlled history, PR reviews, GitHub/GitLab teams | Git installed on the machine |
+| **Amazon S3 / S3-Compatible** | Cloud backup, simple multi-machine sharing; supports AWS S3 and self-hosted services (MinIO, Backblaze B2, Cloudflare R2) | S3-compatible bucket; Electron desktop app |
+| **HTTP Endpoint** | Custom sync microservice, serverless function | A deployed HTTP endpoint you control |
+| **Team Server** | Real-time collaboration, role-based access, no git knowledge required | A running Apilix Team Server instance |
+
+![Sync settings panel](images/sync-overview.png)
+
+---
+
+## Opening Sync Settings
+
+Click the **gear icon** next to the workspace name in the sidebar, then select the **Sync** tab in the Manage Workspaces modal.
+
+Each workspace has independent sync configuration. The settings and credentials are stored per-workspace and are never shared between workspaces.
+
+![Manage Workspaces — Sync tab](images/sync-settings-tab.png)
+
+---
+
+## Sync Operations
+
+All four providers expose the same four actions:
+
+| Button | Operation | Description |
+|---|---|---|
+| **Push ↑** | Upload | Serialise the current workspace and upload it to the remote. Credentials are saved first. |
+| **Pull ↓** | Download | Check for conflicts, then download remote data and replace the local workspace. |
+| **Save config** | Persist credentials | Save the connection fields to disk without pushing or pulling. |
+| **Import once ↓** | One-time clone | Pull once without persisting the sync configuration — useful for cloning a workspace without setting up ongoing sync. |
+
+> **Tip:** Use **Import once ↓** when you want to copy a colleague's workspace to your machine for a single session, or when the remote already has existing commits and you need to pull before your first push.
+
+---
+
+## Conflict Detection & Resolution
+
+Before every **Pull ↓**, Apilix compares the remote timestamp against the local sync metadata (`lastSyncedAt`). If the remote was modified after your last sync, a **conflict review** is triggered.
+
+### Three-way Merge Modal
+
+The merge modal uses three data sources:
+
+| Pane | Source |
+|---|---|
+| **Base** | Last known common snapshot (`lastMergeBaseSnapshotId`) — the version both sides diverged from |
+| **Local** | Current workspace state in the app |
+| **Remote** | Latest data from the provider |
+
+![Conflict merge modal — three-pane view](images/sync-conflict-merge.png)
+
+The modal is divided into three columns:
+
+- **Left** — Conflict navigator, grouped by domain (Requests, Collections, Environments, Global Variables, Mock Routes). An "unresolved" badge shows how many conflicts remain.
+- **Centre** — Side-by-side comparison of the local value vs the remote value for the selected conflict, with the base value shown as a hint below.
+- **Right** — Merged preview — the current resolved value. Editable in free-form mode.
+
+**Conflict types detected:**
+
+| Type | Description |
+|---|---|
+| `Field conflict` | The same field was modified on both sides |
+| `Move vs edit` | One side moved/reordered; the other edited content |
+| `Delete vs edit` | One side deleted the item; the other edited it |
+| `Rename conflict` | Both sides renamed the same item to different names |
+| `JSON key conflict` | Conflicting values at a specific JSON key |
+| `Text merge conflict` | Fallback diff when JSON-level merge is not possible |
+
+**Per-conflict actions:**
+
+| Action | Result |
+|---|---|
+| **Take Local** | Resolve with the local value and advance to the next unresolved conflict |
+| **Take Remote** | Resolve with the remote value and advance |
+| **Edit** | Open the merged preview as a free-form text editor to write a custom value |
+| Click resolved badge | Unresolve — reopen the conflict for re-review |
+
+A **Filter: Unresolved only** toggle hides already-resolved conflicts to focus on what remains.
+
+### Bulk Actions
+
+| Button | Effect |
+|---|---|
+| **Keep All Local** | Resolve every conflict with the local value and close |
+| **Keep All Remote** | Resolve every conflict with the remote value and close |
+| **Apply Merged** | Apply the current mix of resolutions. Only enabled when all conflicts are resolved. |
+
+### Stale Apply Recovery
+
+When **Apply Merged** is clicked, Apilix attempts an optimistic conditional write to the provider (using `If-Match` headers or `expectedVersion` parameters, depending on the provider). If another push arrived between the time you opened the merge modal and clicked Apply — making your base stale — the provider returns a `409 STALE_VERSION` error.
+
+Apilix handles this automatically:
+
+1. Fetches the newest remote state.
+2. Rebuilds a fresh three-way merge package (new base → your local → newest remote).
+3. Reopens the merge modal so you can review whatever new conflicts exist.
+
+You never lose data in this scenario — the cycle simply repeats until your apply succeeds.
+
+### Legacy Fallback
+
+For providers configured before the three-way merge feature was introduced, or when base snapshot data is unavailable, the UI falls back to a simpler binary choice:
+
+- **Use Remote** — overwrite local with remote data
+- **Keep Local** — discard pull and keep the local state unchanged
+
+---
+
+## Sync Activity Log
+
+The **Sync** tab shows a **Recent Sync Activity** section listing the last 100 sync events for the current workspace (newest first). Persisted in `sync-activity.json` (desktop) or `apilix_sync_activity` (browser mode).
+
+| Event type | Description |
+|---|---|
+| `push` | Successful push to remote |
+| `pull` | Successful pull and apply |
+| `import-once` | One-time cloned without saving config |
+| `conflict-detected` | Remote was newer — merge review triggered |
+| `merge-applied` | Merged result applied successfully |
+| `stale-rebase` | Stale apply detected — fresh merge rebuild triggered |
+| `save-config` | Credentials saved |
+
+---
+
+## Provider: Git Repository
+
+### How it Works
+
+1. On first push, Apilix initialises a local bare git repository at `{userData}/git-sync/workspaces/{workspaceId}/`.
+2. The workspace data is written to `workspace.json` and committed with the configured author name and email.
+3. The commit is pushed to the configured remote using `simple-git` running server-side.
+4. On pull, the remote is fetched and `workspace.json` is read back from the latest commit on the configured branch.
+
+> Git commands run on the **server process** (not in the browser renderer), so no git credentials are ever exposed to the UI.
+
+### Prerequisites
+
+- **Git must be installed** on the machine running the Apilix server (`git --version` in a terminal to confirm).
+- A remote repository on GitHub, GitLab, Gitea, Bitbucket, or any compatible host.
+- The remote should be **empty** (no initial commit) for a clean first push.
+
+### Field Reference
+
+| Field | Required | Notes |
+|---|:---:|---|
+| Remote URL | ✅ | HTTPS or SSH URL, e.g. `https://github.com/user/repo.git` |
+| Branch | — | Defaults to `main` if blank |
+| Username | — | HTTPS auth only; leave blank for SSH |
+| Token / Password | — | Personal Access Token used with Username |
+| Author Name | ⚠ | Required for commits unless `git config --global user.name` is set system-wide |
+| Author Email | ⚠ | Required for commits unless `git config --global user.email` is set system-wide |
+
+### Generating a Personal Access Token
+
+**GitHub:**
+1. Settings → Developer settings → Personal access tokens → Generate new token (classic)
+2. Select the `repo` scope (read/write repository access)
+3. Copy the token into the **Token** field in Apilix
+
+**GitLab:**
+1. User Settings → Access Tokens
+2. Select `read_repository` + `write_repository` scopes
+3. Copy the token
+
+**Gitea / other hosts:** Follow the host's documentation for generating a personal access token with repository read/write permissions.
+
+### Step-by-step Setup
+
+1. Create an **empty** repository on your git host (no README, no .gitignore, no commits).
+2. Generate a PAT (see above).
+3. Open **Manage Workspaces → Sync** and select **Git Repository**.
+4. Fill in: Remote URL, Branch (e.g. `main`), Username, Token, Author Name, Author Email.
+5. Click **Save config** to persist credentials.
+6. Click **Push ↑** — the first push initialises the local clone and commits `workspace.json`.
+7. On another machine, fill in the same credentials and click **Pull ↓**.
+
+### Authentication
+
+When Username and Token are both provided, Apilix embeds the credentials in the remote URL server-side:
+```
+https://{username}:{token}@github.com/user/repo.git
+```
+The credential-embedded URL is never stored to disk.
+
+For **SSH remotes** (`git@github.com:user/repo.git`), leave Username and Token blank. The server-side git process uses the system's SSH agent or `~/.ssh/config`.
+
+### Ongoing Usage
+
+| Scenario | Action |
+|---|---|
+| You made changes locally | Push ↑ |
+| A teammate pushed changes | Pull ↓ |
+| First time on a new machine | Configure fields → Pull ↓ |
+| One-off clone without saving credentials | Import once ↓ |
+| Remote already has existing commits | Import once ↓ first, then Push ↑ |
+
+---
+
+## Provider: Amazon S3 / S3-Compatible
+
+### How it Works (S3)
+
+1. The Electron main process generates a presigned URL (valid 60 s) for PUT, GET, or HEAD operations.
+2. The renderer performs the HTTP operation directly with S3 using the presigned URL.
+3. AWS credentials never leave the Electron main process.
+4. The workspace object key is `{prefix}{workspaceId}.json` (default prefix: `apilix/`).
+
+> Like all sync providers, the S3 provider requires the Electron desktop app.
+
+### IAM Permissions Required
+
+Create an IAM user (or role) with the following minimal policy:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": ["s3:GetObject", "s3:PutObject", "s3:HeadObject"],
+  "Resource": "arn:aws:s3:::your-bucket-name/apilix/*"
+}
+```
+
+For **viewer-only** teammates, grant only `s3:GetObject` and `s3:HeadObject`.
+
+### Field Reference (S3)
+
+| Field | Required | Notes |
+|---|:---:|---|
+| Endpoint URL | — | Leave blank for AWS S3. Set to server URL for S3-compatible services, e.g. `http://localhost:9000` |
+| Bucket | ✅ | Bucket name, e.g. `my-apilix-bucket` |
+| Region | — | AWS region, e.g. `us-east-1`. Optional for S3-compatible services |
+| Prefix | — | Key prefix; defaults to `apilix/` |
+| Access Key ID | ✅ | IAM credential, stored encrypted |
+| Secret Access Key | ✅ | IAM credential, stored encrypted |
+
+### Step-by-step Setup (S3)
+
+**AWS S3:**
+
+1. Create an S3 bucket in the AWS console (block all public access).
+2. Create an IAM user/role with the minimal policy above.
+3. Generate an Access Key ID and Secret Access Key.
+4. Open **Manage Workspaces → Sync → S3 Storage**.
+5. Leave **Endpoint URL** blank. Fill in Bucket, Region, Access Key ID, and Secret Access Key.
+6. Click **Test connection** to verify, then **Save config**.
+7. Click **Push ↑** — verify the object appears in the S3 console at `{prefix}{workspaceId}.json`.
+8. Share the bucket name, region, prefix, and credentials with teammates; they click **Pull ↓** to get the workspace.
+
+**MinIO / S3-compatible:** See [S3-compatible Storage](#s3-compatible-storage-minio-etc) below.
+
+### S3-compatible Storage (MinIO, etc.)
+
+The S3 provider supports any S3-compatible service by entering an **Endpoint URL**. When an endpoint is set, the AWS SDK is configured with `forcePathStyle: true` automatically, which is required by MinIO and most self-hosted services.
+
+**Step-by-step (MinIO example):**
+
+1. Start MinIO: `docker run -p 9000:9000 minio/minio server /data`
+2. Open the MinIO console (`http://localhost:9001` by default), create a bucket, and generate an Access Key + Secret.
+3. Open **Manage Workspaces → Sync → S3 Storage**.
+4. Set **Endpoint URL** to `http://localhost:9000` (or your MinIO server URL).
+5. Fill in Bucket, Access Key ID, and Secret Access Key. Region is optional.
+6. Click **Test connection** to verify, then **Save config** and **Push ↑**.
+
+Other S3-compatible services (Backblaze B2, Cloudflare R2, DigitalOcean Spaces) follow the same pattern — enter the provider’s endpoint URL and the credentials from your provider’s console.
+
+> **Note on conditional writes:** Default presigned PUT operations are not inherently conditional. For strict optimistic locking, prefer Git, HTTP Endpoint, or Team Server providers.
+
+---
+
+## Provider: HTTP Endpoint
+
+The HTTP Endpoint provider pushes and pulls workspace JSON to/from any HTTP endpoint you control — a microservice, a serverless function, or any storage API.
+
+### API Contract
+
+Your endpoint must implement three operations:
+
+| Operation | Method | Request | Success Response |
+|---|---|---|---|
+| **Push** | `PUT {endpoint}` | JSON body `{ "data": WorkspaceData, "lastModified": "ISO string", "expectedVersion"?: string }` + optional `If-Match` header | Any `2xx` |
+| **Pull** | `GET {endpoint}` | No body | `{ "data": WorkspaceData }` or `404` |
+| **Timestamp** | `HEAD {endpoint}` | No body | `Last-Modified` or `X-Last-Modified` header; optionally `ETag` or `X-Version` header |
+
+Returning `404` on GET signals an empty remote — treated as "nothing to pull", not an error.
+
+**For optimistic locking support** (recommended), return:
+- `409` with body `{ "code": "STALE_VERSION" }` when `expectedVersion` does not match the current version.
+- A version header (`ETag` or `X-Version`) on GET/HEAD responses for stale-apply recovery.
+
+### Field Reference (HTTP)
+
+| Field | Required | Notes |
+|---|:---:|---|
+| Endpoint URL | ✅ | Full URL, e.g. `https://api.example.com/workspaces/my-project` |
+| Bearer Token | — | Sent as `Authorization: Bearer <token>` if provided |
+
+### Step-by-step Setup (HTTP)
+
+1. Deploy an endpoint that satisfies the API contract above.
+2. Open **Manage Workspaces → Sync → HTTP Endpoint**.
+3. Enter the endpoint URL and optional bearer token.
+4. Click **Save config**, then **Push ↑**.
+
+### Minimal Node.js Endpoint Example
+
+```js
+const express = require('express');
+const app = express();
+app.use(express.json({ limit: '50mb' }));
+
+let store = null; // replace with a real database
+
+app.put('/workspace', (req, res) => {
+  store = req.body;
+  res.set('Last-Modified', new Date().toUTCString()).json({ ok: true });
+});
+
+app.get('/workspace', (req, res) => {
+  if (!store) return res.status(404).json({ error: 'empty' });
+  res.set('Last-Modified', store.lastModified ?? new Date().toUTCString()).json(store);
+});
+
+app.head('/workspace', (req, res) => {
+  if (!store) return res.status(404).end();
+  res.set('Last-Modified', store.lastModified ?? new Date().toUTCString()).end();
+});
+
+app.listen(4000, () => console.log('Sync endpoint on :4000'));
+```
+
+> Replace `let store = null` with a real database for production use. See the full WORKSPACES.md for a versioned example with `ETag` support.
+
+---
+
+## Provider: Team Server
+
+The Team Server is the recommended solution for teams. It adds user accounts, role-based access (owner / editor / viewer), workspace invitation management, and real-time push notifications when a teammate pushes changes.
+
+### How it Works (Team)
+
+1. An administrator deploys the Apilix Team Server (a Node.js Express app).
+2. Users register an account on the team server.
+3. The workspace owner creates the workspace on the team server and invites teammates by email.
+4. Each team member opens **Manage Workspaces → Sync → Team Server**, enters the server URL and their credentials, and clicks **Pull ↓** to join.
+5. Pushing and pulling works the same as other providers — with roles enforced server-side.
+
+### Field Reference (Team)
+
+| Field | Required | Notes |
+|---|:---:|---|
+| Team Server URL | ✅ | Base URL of the team server, e.g. `https://apilix.yourcompany.com` |
+| Email | ✅ | User account email |
+| Password | ✅ | User account password (stored encrypted) |
+| Workspace ID | ✅ | The workspace ID to connect to (provided by the workspace owner) |
+
+### Team Server Administration
+
+The team server exposes an admin REST API. Common operations:
+
+**Create a workspace on the server:**
+```bash
+curl -X POST https://apilix.yourcompany.com/api/workspaces \
+  -H "Authorization: Bearer <admin-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "My API Project", "ownerId": "<user-id>"}'
+```
+
+**Invite a teammate:**
+```bash
+curl -X POST https://apilix.yourcompany.com/api/workspaces/<workspace-id>/members \
+  -H "Authorization: Bearer <admin-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"email": "teammate@example.com", "role": "editor"}'
+```
+
+**List workspace members:**
+```bash
+curl https://apilix.yourcompany.com/api/workspaces/<workspace-id>/members \
+  -H "Authorization: Bearer <admin-token>"
+```
+
+**Remove a member:**
+```bash
+curl -X DELETE https://apilix.yourcompany.com/api/workspaces/<workspace-id>/members/<user-id> \
+  -H "Authorization: Bearer <admin-token>"
+```
+
+### Roles
+
+| Role | Push | Pull | Manage members | Delete workspace |
+|---|:---:|:---:|:---:|:---:|
+| **Owner** | ✅ | ✅ | ✅ | ✅ |
+| **Editor** | ✅ | ✅ | ❌ | ❌ |
+| **Viewer** | ❌ | ✅ | ❌ | ❌ |
+
+### Self-hosting the Team Server
+
+The Apilix team server is a Node.js Express application included in the `server/` directory.
+
+**Install and start:**
+```bash
+cd server
+npm install
+node index.js
+# Listening on :3001 by default
+```
+
+**Environment variables:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `3001` | HTTP port to listen on |
+| `DATA_DIR` | `./data` | Directory where workspace data is persisted |
+| `JWT_SECRET` | — | Required in production — a strong random secret for JWT signing |
+| `ADMIN_TOKEN` | — | Optional static token for admin API calls |
+
+**Production deployment with nginx reverse proxy:**
+
+```nginx
+server {
+  listen 443 ssl;
+  server_name apilix.yourcompany.com;
+
+  location / {
+    proxy_pass         http://localhost:3001;
+    proxy_set_header   Host $host;
+    proxy_set_header   X-Real-IP $remote_addr;
+    proxy_read_timeout 300s;
+  }
+}
+```
+
+**Running as a systemd service:**
+
+```ini
+[Unit]
+Description=Apilix Team Server
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/apilix/server
+ExecStart=/usr/bin/node index.js
+Restart=on-failure
+Environment=PORT=3001
+Environment=JWT_SECRET=<your-secret>
+
+[Install]
+WantedBy=multi-user.target
+```
+
+---
+
+## Provider Comparison
+
+| Feature | Git | S3 | HTTP Endpoint | Team Server |
+|---|:---:|:---:|:---:|:---:|
+| Version history on remote | ✅ (git log) | ❌ (unless versioned bucket) | Depends | Depends |
+| No third-party cloud required | ✅ (self-host git) | ❌ | ✅ | ✅ |
+| Role-based access | ❌ (via github permissions) | ❌ (via IAM) | Custom | ✅ built-in |
+| Real-time change notifications | ❌ | ❌ | Custom | ✅ |
+| Optimistic conflict locking | ✅ | ❌ | Optional | ✅ |
+| Setup complexity | Medium | Medium | High | Medium |
+| Best for | Developers, open-source teams | Personal backup, simple sharing | Custom infra | Company teams |
+
+---
+
+## See Also
+
+- [Workspaces](Workspaces) — workspace contents, local storage layout, and snapshot history
+- [Variables & Environments](Variables-and-Environments) — what's included in a sync snapshot
+- [Import & Export](Import-and-Export) — moving data without a sync provider
