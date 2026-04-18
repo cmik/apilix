@@ -1,9 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
-import { isInsomniaExport, parseInsomniaExport } from './insomniaUtils';
+import { isInsomniaExport, parseInsomniaExport, parseInsomniaV5Export, tryParseInsomniaText } from './insomniaUtils';
 
-vi.mock('../store', () => ({
-  generateId: () => Math.random().toString(36).slice(2, 10),
-}));
+let mockGenerateIdCounter = 0;  
+
+vi.mock('../store', () => ({  
+  generateId: () => `mock-id-${++mockGenerateIdCounter}`,  
+}));  
+
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -518,8 +521,8 @@ describe('parseInsomniaExport — environments', () => {
 });
 
 // ─── parseInsomniaExport — method normalisation ───────────────────────────────
-// Review finding: method must always be uppercase to be consistent with all other
-// Apilix importers (harUtils, openApiUtils, hurlUtils all produce uppercase).
+// Normalise request methods to uppercase so imported requests are consistent  
+// with the method format produced by the other Apilix importers. 
 
 describe('parseInsomniaExport — method normalisation', () => {
   it('uppercases a lowercase method', () => {
@@ -615,5 +618,375 @@ describe('parseInsomniaExport — cycle detection', () => {
     expect(folderA.name).toBe('Folder A');
     // Good Request and fld_b are both direct children of fld_a
     expect(folderA.item!.some(i => i.name === 'Good Request')).toBe(true);
+  });
+});
+
+// ─── Insomnia v5 YAML fixtures ────────────────────────────────────────────────
+
+const V5_YAML_MINIMAL = `
+type: collection.insomnia.rest/5.0
+schema_version: "5.1"
+name: My Collection
+meta:
+  id: wrk_abc
+  description: ""
+collection: []
+`.trim();
+
+const V5_YAML_WITH_REQUESTS = `
+type: collection.insomnia.rest/5.0
+schema_version: "5.1"
+name: My Collection
+meta:
+  id: wrk_1
+  description: ""
+collection:
+  - url: ""
+    name: New Request
+    meta:
+      id: req_1
+      description: ""
+    method: GET
+    headers:
+      - name: User-Agent
+        value: insomnia/12.5.0
+        disabled: false
+  - url: https://www.google.fr
+    name: New Request 2
+    meta:
+      id: req_2
+      description: Ceci est une doc
+    method: GET
+    headers:
+      - name: X-Skip
+        value: skip
+        disabled: true
+  - url: https://httpbin.org/get
+    name: New Request 3
+    meta:
+      id: req_3
+      description: ""
+    method: GET
+    parameters:
+      - name: test1
+        value: "&"
+        disabled: false
+      - name: test2
+        value: "  3@"
+        disabled: false
+`.trim();
+
+const V5_YAML_WITH_ENV = `
+type: collection.insomnia.rest/5.0
+schema_version: "5.1"
+name: My Collection
+meta:
+  id: wrk_1
+collection: []
+environments:
+  name: Base Environment
+  meta:
+    id: env_1
+  data:
+    baseUrl: https://api.example.com
+    apiKey: secret123
+`.trim();
+
+// ─── parseInsomniaV5Export ────────────────────────────────────────────────────
+
+describe('parseInsomniaV5Export', () => {
+  it('produces one empty collection for a minimal export with no requests', () => {
+    const { collections, environments } = parseInsomniaV5Export({
+      type: 'collection.insomnia.rest/5.0',
+      schema_version: '5.1',
+      name: 'Empty',
+      meta: { id: 'wrk_1' },
+      collection: [],
+    });
+    expect(collections).toHaveLength(1);
+    expect(collections[0].info.name).toBe('Empty');
+    expect(collections[0].item).toHaveLength(0);
+    expect(environments).toHaveLength(0);
+  });
+
+  it('maps collection name to info.name', () => {
+    const { collections } = parseInsomniaV5Export({
+      type: 'collection.insomnia.rest/5.0',
+      schema_version: '5.1',
+      name: 'Acme API',
+      meta: { id: 'wrk_1' },
+      collection: [],
+    });
+    expect(collections[0].info.name).toBe('Acme API');
+  });
+
+  it('assigns the Postman v2.1 schema string', () => {
+    const { collections } = parseInsomniaV5Export({
+      type: 'collection.insomnia.rest/5.0',
+      schema_version: '5.1',
+      name: 'Test',
+      meta: { id: 'wrk_1' },
+      collection: [],
+    });
+    expect(collections[0].info.schema).toBe(
+      'https://schema.getpostman.com/json/collection/v2.1.0/collection.json'
+    );
+  });
+
+  it('uppercases a lowercase method', () => {
+    const { collections } = parseInsomniaV5Export({
+      type: 'collection.insomnia.rest/5.0',
+      schema_version: '5.1',
+      name: 'T',
+      meta: { id: 'wrk_1' },
+      collection: [{ url: '', name: 'R', meta: { id: 'req_1' }, method: 'post' }],
+    });
+    expect(collections[0].item[0].request?.method).toBe('POST');
+  });
+
+  it('defaults to GET when method is empty string', () => {
+    const { collections } = parseInsomniaV5Export({
+      type: 'collection.insomnia.rest/5.0',
+      schema_version: '5.1',
+      name: 'T',
+      meta: { id: 'wrk_1' },
+      collection: [{ url: '', name: 'R', meta: { id: 'req_1' }, method: '' }],
+    });
+    expect(collections[0].item[0].request?.method).toBe('GET');
+  });
+
+  it('maps enabled headers to CollectionHeader', () => {
+    const { collections } = parseInsomniaV5Export({
+      type: 'collection.insomnia.rest/5.0',
+      schema_version: '5.1',
+      name: 'T',
+      meta: { id: 'wrk_1' },
+      collection: [{
+        url: '',
+        name: 'R',
+        meta: { id: 'req_1' },
+        method: 'GET',
+        headers: [
+          { name: 'Accept', value: 'application/json', disabled: false },
+          { name: 'X-Skip', value: 'nope', disabled: true },
+        ],
+      }],
+    });
+    const headers = collections[0].item[0].request?.header ?? [];
+    expect(headers).toHaveLength(1);
+    expect(headers[0].key).toBe('Accept');
+    expect(headers[0].value).toBe('application/json');
+  });
+
+  it('omits header when all headers are disabled', () => {
+    const { collections } = parseInsomniaV5Export({
+      type: 'collection.insomnia.rest/5.0',
+      schema_version: '5.1',
+      name: 'T',
+      meta: { id: 'wrk_1' },
+      collection: [{
+        url: 'https://example.com',
+        name: 'R',
+        meta: { id: 'req_1' },
+        method: 'GET',
+        headers: [{ name: 'X-Skip', value: 'nope', disabled: true }],
+      }],
+    });
+    expect(collections[0].item[0].request?.header).toBeUndefined();
+  });
+
+  it('produces CollectionUrl with query when parameters are present', () => {
+    const { collections } = parseInsomniaV5Export({
+      type: 'collection.insomnia.rest/5.0',
+      schema_version: '5.1',
+      name: 'T',
+      meta: { id: 'wrk_1' },
+      collection: [{
+        url: 'https://httpbin.org/get',
+        name: 'R',
+        meta: { id: 'req_1' },
+        method: 'GET',
+        parameters: [
+          { name: 'page', value: '1', disabled: false },
+          { name: 'skip', value: 'x', disabled: true },
+        ],
+      }],
+    });
+    const url = collections[0].item[0].request?.url as { raw: string; query?: unknown[] };
+    expect(typeof url).toBe('object');
+    expect(url.raw).toBe('https://httpbin.org/get');
+    expect(url.query).toHaveLength(1);
+    expect((url.query![0] as { key: string }).key).toBe('page');
+  });
+
+  it('produces CollectionUrl with no query when all parameters are disabled', () => {
+    const { collections } = parseInsomniaV5Export({
+      type: 'collection.insomnia.rest/5.0',
+      schema_version: '5.1',
+      name: 'T',
+      meta: { id: 'wrk_1' },
+      collection: [{
+        url: 'https://example.com',
+        name: 'R',
+        meta: { id: 'req_1' },
+        method: 'GET',
+        parameters: [{ name: 'hidden', value: 'x', disabled: true }],
+      }],
+    });
+    const url = collections[0].item[0].request?.url;
+    expect(typeof url).toBe('object');
+    expect((url as { raw: string }).raw).toBe('https://example.com');
+    expect((url as { query?: unknown }).query).toBeUndefined();
+  });
+
+  it('does not include auth on a request with no authentication (noauth must not pollute)', () => {
+    const { collections } = parseInsomniaV5Export({
+      type: 'collection.insomnia.rest/5.0',
+      schema_version: '5.1',
+      name: 'T',
+      meta: { id: 'wrk_1' },
+      collection: [{
+        url: 'https://example.com',
+        name: 'R',
+        meta: { id: 'req_1' },
+        method: 'GET',
+      }],
+    });
+    expect(collections[0].item[0].request?.auth).toBeUndefined();
+  });
+
+  it('does not include auth when authentication is disabled', () => {
+    const { collections } = parseInsomniaV5Export({
+      type: 'collection.insomnia.rest/5.0',
+      schema_version: '5.1',
+      name: 'T',
+      meta: { id: 'wrk_1' },
+      collection: [{
+        url: 'https://example.com',
+        name: 'R',
+        meta: { id: 'req_1' },
+        method: 'GET',
+        authentication: { type: 'bearer', token: 'tok', disabled: true },
+      }],
+    });
+    expect(collections[0].item[0].request?.auth).toBeUndefined();
+  });
+
+  it('maps environment data to AppEnvironment values', () => {
+    const { environments } = parseInsomniaV5Export({
+      type: 'collection.insomnia.rest/5.0',
+      schema_version: '5.1',
+      name: 'T',
+      meta: { id: 'wrk_1' },
+      collection: [],
+      environments: {
+        name: 'Staging',
+        meta: { id: 'env_1' },
+        data: { baseUrl: 'https://staging.example.com', apiKey: 'key123' },
+      },
+    });
+    expect(environments).toHaveLength(1);
+    expect(environments[0].name).toBe('Staging');
+    const kv = Object.fromEntries(environments[0].values.map(v => [v.key, v.value]));
+    expect(kv.baseUrl).toBe('https://staging.example.com');
+    expect(kv.apiKey).toBe('key123');
+  });
+
+  it('produces no environment when data is absent', () => {
+    const { environments } = parseInsomniaV5Export({
+      type: 'collection.insomnia.rest/5.0',
+      schema_version: '5.1',
+      name: 'T',
+      meta: { id: 'wrk_1' },
+      collection: [],
+    });
+    expect(environments).toHaveLength(0);
+  });
+
+  it('produces no environment when data is empty', () => {
+    const { environments } = parseInsomniaV5Export({
+      type: 'collection.insomnia.rest/5.0',
+      schema_version: '5.1',
+      name: 'T',
+      meta: { id: 'wrk_1' },
+      collection: [],
+      environments: { name: 'Empty', meta: { id: 'env_1' }, data: {} },
+    });
+    expect(environments).toHaveLength(0);
+  });
+
+  it('stringifies non-string environment values', () => {
+    const { environments } = parseInsomniaV5Export({
+      type: 'collection.insomnia.rest/5.0',
+      schema_version: '5.1',
+      name: 'T',
+      meta: { id: 'wrk_1' },
+      collection: [],
+      environments: {
+        name: 'Config',
+        meta: { id: 'env_1' },
+        data: { timeout: 30, debug: true },
+      },
+    });
+    const kv = Object.fromEntries(environments[0].values.map(v => [v.key, v.value]));
+    expect(kv.timeout).toBe('30');
+    expect(kv.debug).toBe('true');
+  });
+});
+
+// ─── tryParseInsomniaText ─────────────────────────────────────────────────────
+
+describe('tryParseInsomniaText', () => {
+  it('returns null for empty string', () => {
+    expect(tryParseInsomniaText('')).toBeNull();
+  });
+
+  it('returns null for plain prose text', () => {
+    expect(tryParseInsomniaText('Hello, world!')).toBeNull();
+  });
+
+  it('returns null for Postman v2.1 JSON', () => {
+    const postman = JSON.stringify({
+      info: {
+        name: 'My API',
+        schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+      },
+      item: [],
+    });
+    expect(tryParseInsomniaText(postman)).toBeNull();
+  });
+
+  it('returns null for OpenAPI 3.0 YAML (must not misidentify)', () => {
+    const openapi = `openapi: "3.0.0"\ninfo:\n  title: Test\n  version: "1.0"\npaths: {}`;
+    expect(tryParseInsomniaText(openapi)).toBeNull();
+  });
+
+  it('returns parsed result for a valid v4 JSON export', () => {
+    const exp = JSON.stringify({ __export_format: 4, resources: [] });
+    const result = tryParseInsomniaText(exp);
+    expect(result).not.toBeNull();
+    expect(result!.collections).toHaveLength(0);
+  });
+
+  it('returns null for v4 JSON with wrong format (v3)', () => {
+    const exp = JSON.stringify({ __export_format: 3, resources: [] });
+    expect(tryParseInsomniaText(exp)).toBeNull();
+  });
+
+  it('returns parsed result for a valid v5 YAML export with 3 requests', () => {
+    const result = tryParseInsomniaText(V5_YAML_WITH_REQUESTS);
+    expect(result).not.toBeNull();
+    expect(result!.collections).toHaveLength(1);
+    expect(result!.collections[0].item).toHaveLength(3);
+  });
+
+  it('returns parsed result for v5 YAML with environment data', () => {
+    const result = tryParseInsomniaText(V5_YAML_WITH_ENV);
+    expect(result).not.toBeNull();
+    expect(result!.environments).toHaveLength(1);
+    expect(result!.environments[0].name).toBe('Base Environment');
+    const kv = Object.fromEntries(result!.environments[0].values.map(v => [v.key, v.value]));
+    expect(kv.baseUrl).toBe('https://api.example.com');
+    expect(kv.apiKey).toBe('secret123');
   });
 });

@@ -50,7 +50,7 @@ Click **Import** in the Sidebar toolbar (or use the keyboard shortcut) to open t
 | Tab | What it imports |
 |---|---|
 | **Upload File** | Any supported file type via file picker or drag-and-drop |
-| **JSON** | Postman Collection v2.1, Environment JSON, or Insomnia v4 export JSON pasted as text |
+| **JSON** | Postman Collection v2.1, Environment JSON, or Insomnia export (v4 JSON / v5 YAML) pasted as text |
 | **cURL** | A single `curl` command pasted as text |
 | **HURL** | One or more requests in HURL format |
 | **OpenAPI** | OpenAPI 3.x or Swagger 2.0 spec (YAML or JSON) — paste, URL, or file |
@@ -75,6 +75,7 @@ The **Upload File** tab accepts files via a click-to-browse picker or by draggin
 | Extension | Detected as |
 |---|---|
 | `.json` (with `__export_format: 4` + `resources` keys) | Insomnia v4 export |
+| `.yaml` / `.yml` (with `type: collection.insomnia.rest/…` key) | Insomnia v5 export |
 | `.json` (with `info` + `item` keys) | Postman Collection v2.1 |
 | `.json` (with `name` + `values` keys) | Postman Environment |
 | `.json` / `.yaml` / `.yml` (with `openapi` or `swagger` key) | OpenAPI / Swagger spec |
@@ -93,10 +94,13 @@ The **JSON** tab accepts raw JSON pasted into a text area.
 
 **Supported payloads (auto-detected):**
 
-- **Insomnia v4 export** — must contain `__export_format: 4` and a `resources` array. Creates one collection per workspace and one environment per named environment with data. See [Import — Insomnia](#import--insomnia) for details.
+- **Insomnia v4 export (JSON)** — must contain `__export_format: 4` and a `resources` array. Creates one collection per workspace and one environment per named environment with data.
+- **Insomnia v5 export (YAML or JSON)** — must contain `type: collection.insomnia.rest/5.x` and a `collection` array. Creates one collection and optionally one environment.
 - **Postman Collection v2.1** — must contain `info` and `item` keys. Creates a new collection.
 - **Postman Environment** — must contain `name` and `values` keys. Creates a new environment.
 - **OpenAPI / Swagger JSON** — if the pasted object contains an `openapi` or `swagger` root key, it is parsed as an OpenAPI spec and a new collection is created.
+
+See [Import — Insomnia](#import--insomnia) for full details on both Insomnia formats.
 
 Click **Import** after pasting. An error is shown if the JSON is malformed or in an unrecognised format.
 
@@ -104,30 +108,46 @@ Click **Import** after pasting. An error is shown if the JSON is malformed or in
 
 ## Import — Insomnia
 
-Apilix imports **Insomnia v4 export files** (`.json`). A single export file can contain multiple workspaces, request groups (folders), requests, and environments — everything is imported in one step.
+Apilix imports both **Insomnia v4** (`.json`, legacy format) and **Insomnia v5** (`.yaml`/`.yml`, produced by Insomnia 10+). Both formats are auto-detected — no manual format selection is needed.
 
-### Steps
+### Insomnia v4 (JSON)
 
-1. In Insomnia, go to the **Application Menu → Preferences → Data → Export Data** (or use the **Export** button on the Dashboard).
+Produced by **Insomnia ≤ 9** via the Application Menu → Preferences → Data → Export Data.
+
+#### Steps
+
+1. In Insomnia, open **Application Menu → Preferences → Data → Export Data**.
 2. Select **All** or choose specific workspaces. Keep the format as **Insomnia v4** and save the `.json` file.
 3. In Apilix: **Import → Upload File** → select the file (or drag and drop it onto the panel).
    Alternatively: **Import → JSON** → paste the file contents.
 4. Apilix shows a confirmation: `Insomnia import: N collection(s), M environment(s).`
 
-### What gets imported
+**What gets imported:** One **collection per workspace**. Request groups (folders) become nested folders (unlimited depth). Each workspace's named environments with at least one variable become Apilix environments.
 
-#### Collections
+### Insomnia v5 (YAML)
 
-One **collection** is created per Insomnia workspace. The workspace name becomes the collection name.
+Produced by **Insomnia 10+** via the collection **Export** button in the top-right of the collection view.
 
-`request_group` resources (folders in Insomnia) are preserved as nested folders. Groups can be nested to any depth.
+#### Steps
 
-Each **request** is imported with the following fields:
+1. In Insomnia, open the collection you want to export.
+2. Click the **⋮ menu → Export** and save the `.yaml` file.
+3. In Apilix: **Import → Upload File** → select the `.yaml` file (or drag and drop it).
+   Alternatively: **Import → JSON** → paste the YAML text.
+4. Apilix shows a confirmation: `Insomnia import: 1 collection(s), M environment(s).`
+
+**What gets imported:** One **collection** with all requests from the flat `collection[]` array. If the `environments` block has at least one variable, one Apilix environment is created.
+
+> **Note:** Insomnia v5 exports one collection per file. If you have multiple collections, export them separately and import each file.
+
+### What gets imported — request fields
+
+This mapping applies to both v4 and v5 requests.
 
 | Insomnia field | Apilix mapping |
 |---|---|
-| `method` | HTTP method |
-| `url` | Request URL (raw) |
+| `method` | HTTP method (uppercased; defaults to `GET` if empty) |
+| `url` | Request URL |
 | `headers` | Request headers (disabled headers are excluded) |
 | `parameters` | URL query parameters (disabled params are excluded) |
 | `body` | Request body — see [Body types](#body-types) below |
@@ -363,7 +383,8 @@ The heading shows a running count: `Collections (3/10)`.
 
 | Format | Import | Export | Use case |
 |---|---|---|---|
-| Insomnia v4 JSON | ✅ | — | Migrate from Insomnia (collections + environments) |
+| Insomnia v4 JSON | ✅ | — | Migrate from Insomnia ≤ 9 (multi-workspace, collections + environments) |
+| Insomnia v5 YAML | ✅ | — | Migrate from Insomnia 10+ (single collection + environment per file) |
 | Postman Collection v2.1 JSON | ✅ | ✅ | Share with Postman / other Apilix users |
 | Postman Environment JSON | ✅ (import) | ✅ (Postman format) | Move environments between tools |
 | OpenAPI 3.x / Swagger 2.0 | ✅ (YAML + JSON + URL) | — | Bootstrap collection from an API spec |
@@ -377,11 +398,24 @@ The heading shows a running count: `Collections (3/10)`.
 
 ### Import from Insomnia
 
-1. In Insomnia, open the **Application Menu → Preferences → Data → Export Data**.
+**Insomnia ≤ 9 (v4 JSON):**
+
+1. Open the **Application Menu → Preferences → Data → Export Data**.
 2. Select **All workspaces** (or choose specific ones). Keep the format as **Insomnia v4**. Save the `.json` file.
-3. In Apilix: **Import → Upload File** → select the exported file.
+3. In Apilix: **Import → Upload File** → select the exported `.json` file.
 4. All workspaces become collections and all named environments with variables are created automatically.
-5. If your requests use `{{variables}}`, verify those variable values are set in the corresponding Apilix environment.
+
+**Insomnia 10+ (v5 YAML):**
+
+1. Open the collection you want to export.
+2. Click the **⋮ menu → Export** and save the `.yaml` file.
+3. In Apilix: **Import → Upload File** → select the `.yaml` file.
+4. One collection is created; if the base environment has variables, one environment is created.
+
+**Both formats:**
+
+- Variable syntax (`{{variableName}}`) is identical between Insomnia and Apilix — no conversion needed.
+- If your requests use `{{variables}}`, verify those values are set in the corresponding Apilix environment after import.
 
 > **OAuth 2.0 note:** Insomnia's OAuth 2 configuration (client ID, secret, token URL, scopes) is not transferable from the export format. Apilix creates the auth entry with type `oauth2` but the credentials must be re-entered in the request's **Auth** panel after import.
 
