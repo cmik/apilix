@@ -53,7 +53,6 @@ coverage/
 
 # Misc
 feat/
-wiki/
 .pid_client
 .pid_server
 
