@@ -710,6 +710,7 @@ export default function RunnerPanel() {
   const dragOverRef = useRef<number | null>(null);
 
   const selectedCollection = state.collections.find(c => c._id === selectedCollectionId);
+  const hasBaseRunToSave = !!lastRunRef.current;
 
   // When conditional execution is on, resolve one chain per selected request
   // (primary order) by following setNextRequest() targets (secondary chains).
@@ -1507,11 +1508,14 @@ export default function RunnerPanel() {
           {!isRunning && results.length > 0 && (
             <div className="flex items-center justify-end shrink-0">
               <button
+                disabled={!hasBaseRunToSave}
                 onClick={() => {
+                  if (!hasBaseRunToSave) return;
                   setSaveRunName(lastRunRef.current?.name ?? `Run ${new Date().toLocaleDateString()}`);
                   setSaveRunModalOpen(true);
                 }}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 text-xs rounded font-medium transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:hover:bg-slate-700 border border-slate-600 text-slate-300 hover:text-slate-100 disabled:text-slate-500 text-xs rounded font-medium transition-colors disabled:cursor-not-allowed"
+                title={!hasBaseRunToSave ? 'No base run available to save' : undefined}
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" /></svg>
                 Save Run
@@ -1586,7 +1590,7 @@ export default function RunnerPanel() {
                 Cancel
               </button>
               <button
-                disabled={!saveRunName.trim()}
+                disabled={!saveRunName.trim() || !hasBaseRunToSave}
                 onClick={() => {
                   const base = lastRunRef.current;
                   if (base && saveRunName.trim()) {
