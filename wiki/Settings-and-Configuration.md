@@ -1,6 +1,6 @@
 # Settings and Configuration
 
-The **Settings** modal provides global configuration for Apilix. Changes take effect immediately and are persisted to the current workspace.
+The **Settings** modal provides global configuration for Apilix. Changes take effect immediately and are persisted at the app level across workspaces.
 
 Open it by clicking the gear icon (⚙️) in the bottom-left corner of the Activity Bar, or via the keyboard shortcut **⌘,** / **Ctrl+,**.
 
