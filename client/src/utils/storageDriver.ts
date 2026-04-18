@@ -413,6 +413,10 @@ export async function writeRequestHistory(workspaceId: string, entries: HistoryR
 const LS_RUNNER_RECENT = (id: string) => `apilix_runner_recent_${id}`;
 const LS_RUNNER_SAVED  = (id: string) => `apilix_runner_saved_${id}`;
 
+export function clearRunnerRunHistory(workspaceId: string): void {
+  lsDel(LS_RUNNER_RECENT(workspaceId));
+  lsDel(LS_RUNNER_SAVED(workspaceId));
+}
 export async function readRecentRuns(workspaceId: string): Promise<SavedRunnerRun[] | null> {
   const api = eAPI();
   if (api) {
