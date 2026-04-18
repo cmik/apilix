@@ -35,6 +35,7 @@ interface HarRequest {
 interface HarEntry {
   pageref?: string;
   startedDateTime?: string;
+  comment?: string;
   request: HarRequest;
 }
 
@@ -201,7 +202,7 @@ function entryToItem(entry: HarEntry): CollectionItem {
 
   return {
     id: generateId(),
-    name: nameFromRequest(method, rawUrl),
+    name: entry.comment?.trim() || nameFromRequest(method, rawUrl),
     request: {
       method,
       url: { raw: rawUrl },
@@ -240,6 +241,7 @@ interface HarExportEntry {
   };
   cache: Record<string, never>;
   timings: { send: number; wait: number; receive: number };
+  comment?: string;
 }
 
 function collectionItemToHarEntry(item: CollectionItem): HarExportEntry | null {
@@ -343,6 +345,7 @@ function collectionItemToHarEntry(item: CollectionItem): HarExportEntry | null {
     },
     cache: {},
     timings: { send: 0, wait: 0, receive: 0 },
+    comment: item.name,
   };
 }
 
