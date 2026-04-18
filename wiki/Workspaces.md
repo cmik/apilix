@@ -272,7 +272,7 @@ The credential-embedded URL is never stored on disk. For SSH remotes (`git@githu
 
 ## Sync Provider: Amazon S3 / S3-Compatible
 
-Stores the workspace as a JSON object in an S3 or S3-compatible bucket (MinIO, Backblaze B2, Cloudflare R2, DigitalOcean Spaces, etc.). AWS credentials never reach the renderer — presigned URLs are generated inside the Electron main process.
+Stores the workspace as a JSON object in an S3 or S3-compatible bucket (MinIO, Backblaze B2, Cloudflare R2, DigitalOcean Spaces, etc.). AWS credentials never leave the local machine or reach the Apilix API server; the Electron main process uses them to generate presigned URLs.
 
 > **Electron (desktop) only** — this provider is not available in web/browser mode.
 
