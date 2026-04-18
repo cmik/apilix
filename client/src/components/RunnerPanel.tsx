@@ -1590,7 +1590,7 @@ export default function RunnerPanel() {
                 Cancel
               </button>
               <button
-                disabled={!saveRunName.trim() || !hasBaseRunToSave}
+                disabled={!saveRunName.trim()}
                 onClick={() => {
                   const base = lastRunRef.current;
                   if (base && saveRunName.trim()) {
