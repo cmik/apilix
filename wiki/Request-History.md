@@ -92,7 +92,7 @@ When you press **Save** (toolbar button or `⌘S` / `Ctrl+S`) on a tab opened fr
 The modal offers two choices:
 
 | Option | Effect |
-|---|---||
+|---|---|
 | **Overwrite original request** | Replaces the request in its original collection with your current edits. The tab becomes a normal (non-snapshot) request tab linked to that collection item. |
 | **Save as new request** | Adds a copy of the current edits as a new item at the root of the collection you choose. The tab is re-linked to the new item. The original collection item is not modified. |
 
