@@ -202,6 +202,8 @@ export default function EnvironmentPanel() {
           <button
             onClick={() => setSortAZ(s => !s)}
             disabled={state.environments.length <= 1}
+            aria-label={sortAZ ? 'Sorted A–Z (click to restore original order)' : 'Sort environments A–Z'}
+            aria-pressed={sortAZ}
             title={sortAZ ? 'Sorted A–Z (click to restore)' : 'Sort A–Z'}
             className={`px-2 py-1.5 text-xs rounded font-medium transition-colors border disabled:opacity-30 disabled:cursor-not-allowed ${
               sortAZ

@@ -216,7 +216,7 @@ function EnvironmentSelector() {
         <div className="absolute right-0 top-full mt-1 z-50 bg-slate-800 border border-slate-600 rounded shadow-xl w-56">
           <div className="p-1 border-b border-slate-700">
             <input
-              autoFocus
+              autoFocus={!creating}
               type="text"
               placeholder="Search environments…"
               value={query}
@@ -272,6 +272,8 @@ function EnvironmentSelector() {
                 />
                 <button
                   onClick={() => { setCreating(false); setNewName(''); }}
+                  aria-label="Cancel new environment"
+                  title="Cancel new environment"
                   className="px-2 py-1 bg-slate-600 hover:bg-slate-500 text-slate-300 text-xs rounded transition-colors"
                 >
                   ✕
