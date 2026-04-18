@@ -78,6 +78,56 @@ describe('parseHarFile — GET request', () => {
   });
 });
 
+// ─── Entry comment as name ────────────────────────────────────────────────────
+
+describe('parseHarFile — entry comment as name', () => {
+  function makeEntry(url: string, comment?: string) {
+    const entry: Record<string, unknown> = {
+      request: { method: 'GET', url },
+    };
+    if (comment !== undefined) entry.comment = comment;
+    return entry;
+  }
+
+  it('uses comment as name when non-empty', () => {
+    const har = JSON.stringify({ log: { entries: [makeEntry('https://api.example.com/users', 'My Request')] } });
+    const items = parseHarFile(har);
+    expect(items[0].name).toBe('My Request');
+  });
+
+  it('falls back to URL-derived name when comment is empty string', () => {
+    const har = JSON.stringify({ log: { entries: [makeEntry('https://api.example.com/users', '')] } });
+    const items = parseHarFile(har);
+    expect(items[0].name).toBe('GET /users');
+  });
+
+  it('falls back to URL-derived name when comment is whitespace only', () => {
+    const har = JSON.stringify({ log: { entries: [makeEntry('https://api.example.com/users', '   ')] } });
+    const items = parseHarFile(har);
+    expect(items[0].name).toBe('GET /users');
+  });
+
+  it('falls back to URL-derived name when comment is absent', () => {
+    const har = JSON.stringify({ log: { entries: [makeEntry('https://api.example.com/users')] } });
+    const items = parseHarFile(har);
+    expect(items[0].name).toBe('GET /users');
+  });
+
+  it('preserves distinct comments per entry in a multi-entry HAR', () => {
+    const har = JSON.stringify({
+      log: {
+        entries: [
+          makeEntry('https://api.example.com/users', 'List Users'),
+          makeEntry('https://api.example.com/posts', 'List Posts'),
+        ],
+      },
+    });
+    const items = parseHarFile(har);
+    expect(items[0].name).toBe('List Users');
+    expect(items[1].name).toBe('List Posts');
+  });
+});
+
 // ─── Pseudo-headers filtering ─────────────────────────────────────────────────
 
 describe('parseHarFile — pseudo-header filtering', () => {
@@ -226,6 +276,80 @@ describe('parseHarFile — multipart body', () => {
     });
     const items = parseHarFile(har);
     expect(items[0].request?.body?.mode).toBe('formdata');
+  });
+});
+
+// ─── Entry comment as name ────────────────────────────────────────────────────
+
+describe('parseHarFile — entry comment as name', () => {
+  function makeEntry(url: string, comment?: string) {
+    return { request: { method: 'GET', url, headers: [] }, ...(comment !== undefined ? { comment } : {}) };
+  }
+
+  it('uses comment as item name when non-empty', () => {
+    const har = JSON.stringify({ log: { entries: [makeEntry('https://api.example.com/users', 'My Request')] } });
+    const items = parseHarFile(har);
+    expect(items[0].name).toBe('My Request');
+  });
+
+  it('falls back to URL-derived name when comment is empty string', () => {
+    const har = JSON.stringify({ log: { entries: [makeEntry('https://api.example.com/users', '')] } });
+    const items = parseHarFile(har);
+    expect(items[0].name).toBe('GET /users');
+  });
+
+  it('falls back to URL-derived name when comment is whitespace-only', () => {
+    const har = JSON.stringify({ log: { entries: [makeEntry('https://api.example.com/users', '   ')] } });
+    const items = parseHarFile(har);
+    expect(items[0].name).toBe('GET /users');
+  });
+
+  it('falls back to URL-derived name when comment field is absent', () => {
+    const har = JSON.stringify({ log: { entries: [makeEntry('https://api.example.com/users')] } });
+    const items = parseHarFile(har);
+    expect(items[0].name).toBe('GET /users');
+  });
+
+  it('uses distinct comment per entry in multi-entry HAR', () => {
+    const har = JSON.stringify({
+      log: {
+        entries: [
+          makeEntry('https://api.example.com/a', 'First'),
+          makeEntry('https://api.example.com/b', 'Second'),
+        ],
+      },
+    });
+    const items = parseHarFile(har);
+    expect(items[0].name).toBe('First');
+    expect(items[1].name).toBe('Second');
+  });
+});
+
+// ─── HAR export — comment field ───────────────────────────────────────────────
+
+import { generateHarFromItems } from './harUtils';
+
+describe('generateHarFromItems — entry comment field', () => {
+  it('sets comment to item name on each entry', () => {
+    const items = [
+      {
+        id: 'mock-id-x',
+        name: 'Get Users',
+        request: { method: 'GET', url: { raw: 'https://api.example.com/users' }, header: [] },
+      },
+    ];
+    const raw = JSON.parse(generateHarFromItems(items));
+    expect(raw.log.entries[0].comment).toBe('Get Users');
+  });
+
+  it('sets distinct comment per entry when multiple items', () => {
+    const items = [
+      { id: 'a', name: 'Alpha', request: { method: 'GET', url: { raw: 'https://example.com/a' }, header: [] } },
+      { id: 'b', name: 'Beta', request: { method: 'POST', url: { raw: 'https://example.com/b' }, header: [] } },
+    ];
+    const raw = JSON.parse(generateHarFromItems(items));
+    expect(raw.log.entries[0].comment).toBe('Alpha');
+    expect(raw.log.entries[1].comment).toBe('Beta');
   });
 });
 

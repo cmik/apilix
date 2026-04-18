@@ -5,6 +5,7 @@ import { parseHurlFile, HURL_METHOD_REGEX } from '../utils/hurlUtils';
 import { parseOpenApiSpec } from '../utils/openApiUtils';
 import { parseHarFile } from '../utils/harUtils';
 import { parseWsdlToCollection, isWsdlContent } from '../utils/wsdlUtils';
+import { tryParseInsomniaText } from '../utils/insomniaUtils';
 import { fetchWsdl } from '../api';
 import { useToast } from './Toast';
 import type { CollectionItem, CollectionAuth, CollectionBody } from '../types';
@@ -70,7 +71,7 @@ paths:
 };
 
 const PASTE_LABELS: Record<PasteFormat, string> = {
-  json: 'Paste Postman Collection or Environment JSON',
+  json: 'Paste Postman Collection, Environment, or Insomnia export (v4 JSON / v5 YAML)',
   curl: 'Paste cURL command',
   hurl: 'Paste HURL content',
   openapi: 'Paste OpenAPI or Swagger spec',
@@ -96,6 +97,24 @@ export default function ImportModal({ onClose }: ImportModalProps) {
 
   async function parseAndImport(text: string, filename?: string, sourceUrl?: string) {
     setError(null);
+
+    // Detect Insomnia v4 (JSON) or v5 (YAML/JSON) export
+    const insomniaResult = tryParseInsomniaText(text);
+    if (insomniaResult) {
+      try {
+        const { collections, environments } = insomniaResult;
+        collections.forEach(col => dispatch({ type: 'ADD_COLLECTION', payload: col }));
+        environments.forEach(env => dispatch({ type: 'ADD_ENVIRONMENT', payload: env }));
+        toast.success(
+          `Insomnia import: ${collections.length} collection(s), ${environments.length} environment(s).`
+        );
+        onClose();
+      } catch (e) {
+        const msg = `Insomnia parse error: ${(e as Error).message}`;
+        setError(msg); toast.error(msg);
+      }
+      return;
+    }
 
     // Detect WSDL by filename or content (must come before JSON parsing)
     if (isWsdlContent(text, filename)) {
@@ -551,7 +570,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
             >
               <div className="text-4xl mb-3">📂</div>
               <p className="text-slate-300 font-medium">Click to browse or drag & drop</p>
-              <p className="text-slate-500 text-sm mt-1">Postman Collection v2.1 JSON, Environment JSON, OpenAPI/Swagger (.yaml/.yml/.json), HURL (.hurl), HAR (.har), or WSDL (.wsdl)</p>
+              <p className="text-slate-500 text-sm mt-1">Postman Collection v2.1 JSON, Environment JSON, Insomnia export (.json / .yaml), OpenAPI/Swagger (.yaml/.yml/.json), HURL (.hurl), HAR (.har), or WSDL (.wsdl)</p>
               <input
                 ref={fileRef}
                 type="file"
@@ -566,7 +585,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
           {tab === 'url' && (
             <div className="flex flex-col gap-3">
               <p className="text-slate-400 text-xs bg-slate-900/50 border border-slate-700 rounded p-2 leading-relaxed">
-                Enter a public URL pointing to a Postman Collection, Environment JSON, OpenAPI/Swagger spec, HURL file, HAR file, or WSDL. WSDL URLs (ending in <code className="text-orange-400">?WSDL</code>) are fetched via the local proxy to avoid CORS.
+                Enter a public URL pointing to a Postman Collection, Environment JSON, Insomnia export, OpenAPI/Swagger spec, HURL file, HAR file, or WSDL. WSDL URLs (ending in <code className="text-orange-400">?WSDL</code>) are fetched via the local proxy to avoid CORS.
               </p>
               <div className="flex gap-2">
                 <input
