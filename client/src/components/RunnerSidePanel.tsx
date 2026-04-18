@@ -6,14 +6,16 @@ import type { AppAction, SavedRunnerRun } from '../types';
 
 function formatRelativeTime(ts: number): string {
   const diff = Date.now() - ts;
-  const secs = Math.floor(diff / 1000);
-  if (secs < 60) return `${secs}s ago`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  const isFuture = diff < 0;  
+  const absDiff = Math.abs(diff);  
+  const secs = Math.floor(absDiff / 1000);  
+  if (secs < 60) return isFuture ? `in ${secs}s` : `${secs}s ago`;  
+  const mins = Math.floor(secs / 60);  
+  if (mins < 60) return isFuture ? `in ${mins}m` : `${mins}m ago`;  
+  const hours = Math.floor(mins / 60);  
+  if (hours < 24) return isFuture ? `in ${hours}h` : `${hours}h ago`;  
+  const days = Math.floor(hours / 24);  
+  return isFuture ? `in ${days}d` : `${days}d ago`; 
 }
 
 // ─── RunEntryRow ─────────────────────────────────────────────────────────────
@@ -43,8 +45,11 @@ function RunEntryRow({ run, dispatch, isSaved, onDelete }: RunEntryRowProps) {
 
   return (
     <div
-      className="px-3 py-2.5 border-b border-slate-800/60 cursor-pointer hover:bg-slate-800/50 transition-colors group"
+      role="button"
+      tabIndex={0}
+      className="px-3 py-2.5 border-b border-slate-800/60 cursor-pointer hover:bg-slate-800/50 transition-colors group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-inset"
       onClick={handleClick}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleClick(); } }}
     >
       <div className="flex items-start gap-1.5">
         <div className="flex-1 min-w-0">
