@@ -144,7 +144,7 @@ All data is stored in `localStorage`:
 
 > **Looking for request history?** This section covers the *workspace snapshot* history — a timeline of collection/environment saves that lets you roll back the entire workspace. For a log of individual HTTP requests you've sent, see [Request History](Request-History).
 
-Apilix saves a snapshot of the active workspace automatically after every change (debounced ~1–2 seconds after the last edit). No manual action is needed.
+Apilix saves a snapshot of the active workspace automatically after every change (debounced ~300 ms after the last edit). No manual action is needed.
 
 ![Workspace manager — History tab](images/workspaces-history-tab.png)
 
