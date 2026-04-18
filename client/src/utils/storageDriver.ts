@@ -9,7 +9,7 @@
  * is used, and the module remains crash-free.
  */
 
-import type { WorkspaceData, Workspace, SyncMetadata, SyncActivityEntry, AppSettings, HistoryRequest } from '../types';
+import type { WorkspaceData, Workspace, SyncMetadata, SyncActivityEntry, AppSettings, HistoryRequest, SavedRunnerRun } from '../types';
 
 // ─── Electron API shim ────────────────────────────────────────────────────────
 
@@ -124,6 +124,8 @@ export async function deleteWorkspace(id: string): Promise<void> {
   // ── localStorage ──────────────────────────────────────────────────────────
   lsDelete(LS_WORKSPACE(id));
   lsDelete(LS_REQUEST_HISTORY(id));
+  lsDelete(LS_RUNNER_RECENT(id));
+  lsDelete(LS_RUNNER_SAVED(id));
 
   // Remove entry from sync-config store
   const lsSyncConfig = lsRead<SyncConfigStore>(LS_SYNC_CONFIG);
@@ -405,5 +407,52 @@ export async function writeRequestHistory(workspaceId: string, entries: HistoryR
   if (api) {
     const dir = await api.getDataDir();
     await api.writeJsonFile(`${dir}/workspaces/${workspaceId}/request-history.json`, entries);
+  }
+}
+
+// ─── Runner run history ───────────────────────────────────────────────────────
+
+const LS_RUNNER_RECENT = (id: string) => `apilix_runner_recent_${id}`;
+const LS_RUNNER_SAVED  = (id: string) => `apilix_runner_saved_${id}`;
+
+export async function readRecentRuns(workspaceId: string): Promise<SavedRunnerRun[] | null> {
+  const api = eAPI();
+  if (api) {
+    try {
+      const dir = await api.getDataDir();
+      const data = await api.readJsonFile(`${dir}/workspaces/${workspaceId}/runner-recent.json`);
+      if (Array.isArray(data)) return data as SavedRunnerRun[];
+    } catch { /* fall through */ }
+  }
+  return lsRead<SavedRunnerRun[]>(LS_RUNNER_RECENT(workspaceId));
+}
+
+export async function writeRecentRuns(workspaceId: string, runs: SavedRunnerRun[]): Promise<void> {
+  lsWrite(LS_RUNNER_RECENT(workspaceId), runs);
+  const api = eAPI();
+  if (api) {
+    const dir = await api.getDataDir();
+    await api.writeJsonFile(`${dir}/workspaces/${workspaceId}/runner-recent.json`, runs);
+  }
+}
+
+export async function readSavedRuns(workspaceId: string): Promise<SavedRunnerRun[] | null> {
+  const api = eAPI();
+  if (api) {
+    try {
+      const dir = await api.getDataDir();
+      const data = await api.readJsonFile(`${dir}/workspaces/${workspaceId}/runner-saved.json`);
+      if (Array.isArray(data)) return data as SavedRunnerRun[];
+    } catch { /* fall through */ }
+  }
+  return lsRead<SavedRunnerRun[]>(LS_RUNNER_SAVED(workspaceId));
+}
+
+export async function writeSavedRuns(workspaceId: string, runs: SavedRunnerRun[]): Promise<void> {
+  lsWrite(LS_RUNNER_SAVED(workspaceId), runs);
+  const api = eAPI();
+  if (api) {
+    const dir = await api.getDataDir();
+    await api.writeJsonFile(`${dir}/workspaces/${workspaceId}/runner-saved.json`, runs);
   }
 }

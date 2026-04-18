@@ -7,6 +7,7 @@ const ImportModal = lazy(() => import('./ImportModal'));
 const ExportModal = lazy(() => import('./ExportModal'));
 const WorkspaceManagerModal = lazy(() => import('./WorkspaceManagerModal'));
 const HistoryPanel = lazy(() => import('./HistoryPanel'));
+const RunnerSidePanel = lazy(() => import('./RunnerSidePanel'));
 
 export default function Sidebar() {
   const { state, dispatch } = useApp(); // dispatch used by collection actions
@@ -34,6 +35,10 @@ export default function Sidebar() {
       {state.view === 'history' ? (
         <Suspense fallback={null}>
           <HistoryPanel />
+        </Suspense>
+      ) : state.view === 'runner' ? (
+        <Suspense fallback={null}>
+          <RunnerSidePanel />
         </Suspense>
       ) : (
         <>

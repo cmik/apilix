@@ -237,6 +237,38 @@ export interface ActiveRequest {
   item: CollectionItem;
 }
 
+/** Config snapshot stored alongside a run so it can be re-executed later. */
+export interface RunnerRunConfig {
+  collectionId: string;
+  selectedRequestIds: string[];
+  executionOrder: string[];
+  iterations: number;
+  delay: number;
+  executeChildRequests: boolean;
+  conditionalExecution: boolean;
+}
+
+/** Aggregate counts shown in the sidebar run rows. */
+export interface RunnerRunSummary {
+  requests: number;
+  passed: number;
+  failed: number;
+  errors: number;
+}
+
+/** A single completed run, either auto-saved (recent) or user-saved. */
+export interface SavedRunnerRun {
+  id: string;
+  /** User-provided name for saved runs; auto-generated label for recent runs. */
+  name: string;
+  collectionId: string;
+  collectionName: string;
+  timestamp: number;
+  iterations: RunnerIteration[];
+  config: RunnerRunConfig;
+  summary: RunnerRunSummary;
+}
+
 export interface HistoryRequest {
   id: string;
   timestamp: number;
@@ -579,6 +611,9 @@ export interface AppState {
   captureGeneration: number;
   settings: AppSettings;
   requestHistory: HistoryRequest[];
+  recentRuns: SavedRunnerRun[];
+  savedRuns: SavedRunnerRun[];
+  runnerLoadedRun: SavedRunnerRun | null;
 }
 
 export interface RequestTab {
@@ -675,4 +710,12 @@ export type AppAction =
   | { type: 'ADD_REQUEST_HISTORY'; payload: HistoryRequest }
   | { type: 'CLEAR_REQUEST_HISTORY' }
   | { type: 'SET_REQUEST_HISTORY'; payload: HistoryRequest[] }
-  | { type: 'CLEAR_TAB_HISTORY_FLAG'; payload: string };
+  | { type: 'CLEAR_TAB_HISTORY_FLAG'; payload: string }
+  // ── Runner run history actions ───────────────────────────────────────────────
+  | { type: 'ADD_RECENT_RUN'; payload: SavedRunnerRun }
+  | { type: 'SET_RECENT_RUNS'; payload: SavedRunnerRun[] }
+  | { type: 'SAVE_RUNNER_RUN'; payload: SavedRunnerRun }
+  | { type: 'DELETE_SAVED_RUN'; payload: string }
+  | { type: 'SET_SAVED_RUNS'; payload: SavedRunnerRun[] }
+  | { type: 'LOAD_RUNNER_RUN'; payload: SavedRunnerRun }
+  | { type: 'CLEAR_LOADED_RUNNER_RUN' };

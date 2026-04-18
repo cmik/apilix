@@ -6,7 +6,7 @@ vi.mock('./utils/storageDriver', () => ({}));
 vi.mock('./utils/snapshotEngine', () => ({}));
 
 import { appReducer, initialState } from './store';
-import type { AppState, HistoryRequest, CollectionItem, Workspace, WorkspaceData } from './types';
+import type { AppState, HistoryRequest, CollectionItem, Workspace, WorkspaceData, SavedRunnerRun } from './types';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -564,5 +564,165 @@ describe('DUPLICATE_TAB', () => {
     expect(next.tabs[1].id).toBe('tab2');
     // duplicate is at index 2
     expect(next.tabs[2].item.name).toBe('Test (copy)');
+  });
+});
+
+// ─── Runner run history ───────────────────────────────────────────────────────
+
+
+function makeRun(id: string, name = `Run ${id}`): SavedRunnerRun {
+  return {
+    id,
+    name,
+    collectionId: 'col1',
+    collectionName: 'My Collection',
+    timestamp: Date.now(),
+    iterations: [],
+    config: {
+      collectionId: 'col1',
+      selectedRequestIds: [],
+      executionOrder: ['req1'],
+      iterations: 1,
+      delay: 0,
+      executeChildRequests: false,
+      conditionalExecution: false,
+    },
+    summary: { requests: 2, passed: 1, failed: 0, errors: 0 },
+  };
+}
+
+function stateWithRuns(recent: SavedRunnerRun[] = [], saved: SavedRunnerRun[] = []): AppState {
+  return { ...initialState, recentRuns: recent, savedRuns: saved };
+}
+
+describe('ADD_RECENT_RUN', () => {
+  it('adds the first run to an empty list', () => {
+    const run = makeRun('r1');
+    const next = appReducer(initialState, { type: 'ADD_RECENT_RUN', payload: run });
+    expect(next.recentRuns).toHaveLength(1);
+    expect(next.recentRuns[0].id).toBe('r1');
+  });
+
+  it('prepends so the newest run comes first', () => {
+    const s = stateWithRuns([makeRun('old')]);
+    const next = appReducer(s, { type: 'ADD_RECENT_RUN', payload: makeRun('new') });
+    expect(next.recentRuns[0].id).toBe('new');
+    expect(next.recentRuns[1].id).toBe('old');
+  });
+
+  it('caps the list at 5 entries, dropping the oldest', () => {
+    const runs = ['r1', 'r2', 'r3', 'r4', 'r5'].map(id => makeRun(id));
+    const s = stateWithRuns(runs);
+    const fresh = makeRun('r6');
+    const next = appReducer(s, { type: 'ADD_RECENT_RUN', payload: fresh });
+    expect(next.recentRuns).toHaveLength(5);
+    expect(next.recentRuns[0].id).toBe('r6');
+    expect(next.recentRuns.find(r => r.id === 'r5')).toBeUndefined();
+  });
+
+  it('does not mutate savedRuns', () => {
+    const saved = [makeRun('s1')];
+    const s = stateWithRuns([], saved);
+    const next = appReducer(s, { type: 'ADD_RECENT_RUN', payload: makeRun('r1') });
+    expect(next.savedRuns).toBe(saved);
+  });
+});
+
+describe('SET_RECENT_RUNS', () => {
+  it('replaces the entire recentRuns list', () => {
+    const s = stateWithRuns([makeRun('r1'), makeRun('r2')]);
+    const next = appReducer(s, { type: 'SET_RECENT_RUNS', payload: [] });
+    expect(next.recentRuns).toEqual([]);
+  });
+});
+
+describe('SAVE_RUNNER_RUN', () => {
+  it('prepends the new run to savedRuns', () => {
+    const s = stateWithRuns([], [makeRun('s1')]);
+    const next = appReducer(s, { type: 'SAVE_RUNNER_RUN', payload: makeRun('s2') });
+    expect(next.savedRuns).toHaveLength(2);
+    expect(next.savedRuns[0].id).toBe('s2');
+  });
+
+  it('does not mutate recentRuns', () => {
+    const recent = [makeRun('r1')];
+    const s = stateWithRuns(recent);
+    const next = appReducer(s, { type: 'SAVE_RUNNER_RUN', payload: makeRun('s1') });
+    expect(next.recentRuns).toBe(recent);
+  });
+});
+
+describe('DELETE_SAVED_RUN', () => {
+  it('removes the run with the given id', () => {
+    const s = stateWithRuns([], [makeRun('s1'), makeRun('s2')]);
+    const next = appReducer(s, { type: 'DELETE_SAVED_RUN', payload: 's1' });
+    expect(next.savedRuns).toHaveLength(1);
+    expect(next.savedRuns[0].id).toBe('s2');
+  });
+
+  it('is a no-op for an unknown id', () => {
+    const s = stateWithRuns([], [makeRun('s1')]);
+    const next = appReducer(s, { type: 'DELETE_SAVED_RUN', payload: 'nope' });
+    expect(next.savedRuns).toHaveLength(1);
+  });
+});
+
+describe('LOAD_RUNNER_RUN', () => {
+  it('sets runnerLoadedRun to the given run', () => {
+    const run = makeRun('r1');
+    const next = appReducer(initialState, { type: 'LOAD_RUNNER_RUN', payload: run });
+    expect(next.runnerLoadedRun).toBe(run);
+  });
+
+  it('switches view to runner', () => {
+    const run = makeRun('r1');
+    const next = appReducer(initialState, { type: 'LOAD_RUNNER_RUN', payload: run });
+    expect(next.view).toBe('runner');
+  });
+});
+
+describe('CLEAR_LOADED_RUNNER_RUN', () => {
+  it('nullifies runnerLoadedRun', () => {
+    const s = { ...initialState, runnerLoadedRun: makeRun('r1') };
+    const next = appReducer(s, { type: 'CLEAR_LOADED_RUNNER_RUN' });
+    expect(next.runnerLoadedRun).toBeNull();
+  });
+});
+
+describe('workspace transitions reset runner runs', () => {
+  function stateWithRunnerData(): AppState {
+    return {
+      ...initialState,
+      recentRuns: [makeRun('r1')],
+      savedRuns: [makeRun('s1')],
+      runnerLoadedRun: makeRun('r2'),
+    };
+  }
+
+  it('CREATE_WORKSPACE resets recentRuns, savedRuns, runnerLoadedRun', () => {
+    const next = appReducer(stateWithRunnerData(), { type: 'CREATE_WORKSPACE', payload: workspace });
+    expect(next.recentRuns).toEqual([]);
+    expect(next.savedRuns).toEqual([]);
+    expect(next.runnerLoadedRun).toBeNull();
+  });
+
+  it('SWITCH_WORKSPACE resets recentRuns, savedRuns, runnerLoadedRun', () => {
+    const next = appReducer(stateWithRunnerData(), {
+      type: 'SWITCH_WORKSPACE',
+      payload: { workspace, data: emptyWorkspaceData },
+    });
+    expect(next.recentRuns).toEqual([]);
+    expect(next.savedRuns).toEqual([]);
+    expect(next.runnerLoadedRun).toBeNull();
+  });
+
+  it('DUPLICATE_WORKSPACE resets recentRuns, savedRuns, runnerLoadedRun', () => {
+    const next = appReducer(stateWithRunnerData(), {
+      type: 'DUPLICATE_WORKSPACE',
+      payload: { workspace, data: emptyWorkspaceData },
+    });
+    expect(next.recentRuns).toEqual([]);
+    expect(next.savedRuns).toEqual([]);
+    expect(next.runnerLoadedRun).toBeNull();
   });
 });
