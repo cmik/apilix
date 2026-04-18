@@ -1,5 +1,15 @@
-import { useState, useEffect, useCallback } from 'react';
-import type { Workspace, WorkspaceData, SyncConfig, SyncProvider, HistoryEntry, SyncMetadata, ConflictPackage, SyncActivityEntry, SyncActivityLevel } from '../types';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import type { Workspace, WorkspaceData, SyncConfig, SyncProvider, HistoryEntry, SyncMetadata, ConflictPackage, SyncActivityEntry, SyncActivityLevel, SyncExportPackage, WorkspaceExportPackage } from '../types';
+import {
+  buildSyncExportPackage,
+  parseSyncExportPackage,
+  decryptSyncExportConfig,
+  downloadJsonFile,
+} from '../utils/syncExportUtils';
+import {
+  buildWorkspaceExportPackage,
+  parseWorkspaceExportPackage,
+} from '../utils/workspaceExportUtils';
 import { useApp, generateId } from '../store';
 import * as StorageDriver from '../utils/storageDriver';
 import {
@@ -117,6 +127,15 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
   const [syncedIds, setSyncedIds] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
+  const [importPkg, setImportPkg] = useState<SyncExportPackage | null>(null);
+  const [importPassphrase, setImportPassphrase] = useState('');
+  const [importError, setImportError] = useState('');
+  const [importSuccess, setImportSuccess] = useState('');
+  const importFileRef = useRef<HTMLInputElement>(null);
+  const [dataImportPkg, setDataImportPkg] = useState<WorkspaceExportPackage | null>(null);
+  const [dataImportError, setDataImportError] = useState('');
+  const [dataImportSuccess, setDataImportSuccess] = useState('');
+  const dataImportFileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     StorageDriver.readSyncConfigStore().then(store => {
@@ -124,10 +143,10 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
     });
   }, [state.workspaces, state.syncConfigVersion]);
 
-  async function handleSwitch(workspace: Workspace) {
-    if (workspace.id === state.activeWorkspaceId) return;
+  async function doSwitch(workspace: Workspace): Promise<boolean> {
+    if (workspace.id === state.activeWorkspaceId) return false;
     const { decision, summary } = await requestWorkspaceSwitchGuard();
-    if (decision === 'cancel') return;
+    if (decision === 'cancel') return false;
     if (decision === 'save-and-switch') {
       const saveResult = await saveExistingRequestTabs(summary.existingDirtyTabIds);
       // Flush updated collections to disk immediately — the debounced persist effect
@@ -147,7 +166,16 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
     }
     const data = await StorageDriver.readWorkspace(workspace.id) ?? emptyWorkspaceData();
     dispatch({ type: 'SWITCH_WORKSPACE', payload: { workspace, data } });
-    onClose();
+    return true;
+  }
+
+  async function handleSwitch(workspace: Workspace) {
+    await doSwitch(workspace);
+  }
+
+  async function handleSwitchAndClose(workspace: Workspace) {
+    const switched = await doSwitch(workspace);
+    if (switched) onClose();
   }
 
   function startRename(w: Workspace) {
@@ -222,6 +250,131 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
     dispatch({ type: 'SET_WORKSPACE_COLOR', payload: { id, color } });
     const updated = state.workspaces.map(w => w.id === id ? { ...w, color } : w);
     StorageDriver.writeManifest({ workspaces: updated, activeWorkspaceId: state.activeWorkspaceId });
+  }
+
+  async function handleExportWorkspace(w: Workspace) {
+    let data: WorkspaceData;
+    if (w.id === state.activeWorkspaceId) {
+      data = {
+        collections: state.collections,
+        environments: state.environments,
+        activeEnvironmentId: state.activeEnvironmentId,
+        collectionVariables: state.collectionVariables,
+        globalVariables: state.globalVariables,
+        cookieJar: state.cookieJar,
+        mockCollections: state.mockCollections,
+        mockRoutes: state.mockRoutes,
+        mockPort: state.mockPort,
+      };
+    } else {
+      try {
+        data = await StorageDriver.readWorkspace(w.id) ?? {
+          collections: [], environments: [], activeEnvironmentId: null,
+          collectionVariables: {}, globalVariables: {}, cookieJar: {},
+          mockCollections: [], mockRoutes: [], mockPort: 3002,
+        };
+      } catch (err: unknown) {
+        setDataImportError(`Failed to read workspace data: ${(err as Error).message}`);
+        return;
+      }
+    }
+    const pkg = buildWorkspaceExportPackage(w.name, w.id, data);
+    const safeName = w.name.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+    downloadJsonFile(`apilix-workspace-${safeName}.json`, pkg);
+  }
+
+  async function handleDataImportFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (dataImportFileRef.current) dataImportFileRef.current.value = '';
+    if (!file) return;
+    setDataImportError('');
+    setDataImportSuccess('');
+    try {
+      const text = await file.text();
+      const raw = JSON.parse(text);
+      const pkg = parseWorkspaceExportPackage(raw);
+      setDataImportPkg(pkg);
+    } catch (err: unknown) {
+      setDataImportError((err as Error).message);
+    }
+  }
+
+  async function handleDataImportConfirm() {
+    if (!dataImportPkg) return;
+    setDataImportError('');
+    if (state.workspaces.some(w => w.id === dataImportPkg.workspaceId)) {
+      setDataImportError('A workspace with this ID already exists.');
+      return;
+    }
+    const newWorkspace: Workspace = {
+      id: dataImportPkg.workspaceId,
+      name: dataImportPkg.workspaceName,
+      color: PRESET_COLORS[state.workspaces.length % PRESET_COLORS.length],
+      createdAt: new Date().toISOString(),
+      type: 'local',
+    };
+    // Use DUPLICATE_WORKSPACE so in-memory state is populated with the imported
+    // data immediately. CREATE_WORKSPACE resets all data fields to empty, and
+    // the debounced persist effect would then overwrite the disk file within
+    // 300 ms, destroying the imported data before the user can see it.
+    await StorageDriver.writeWorkspace(newWorkspace.id, dataImportPkg.data);
+    dispatch({ type: 'DUPLICATE_WORKSPACE', payload: { workspace: newWorkspace, data: dataImportPkg.data } });
+    await StorageDriver.writeManifest({ workspaces: [...state.workspaces, newWorkspace], activeWorkspaceId: state.activeWorkspaceId });
+    const colCount = dataImportPkg.data.collections.length;
+    const envCount = dataImportPkg.data.environments.length;
+    setDataImportPkg(null);
+    setDataImportSuccess(`Workspace "${newWorkspace.name}" imported with ${colCount} collection(s) and ${envCount} environment(s).`);
+  }
+
+  async function handleImportFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (importFileRef.current) importFileRef.current.value = '';
+    if (!file) return;
+    setImportError('');
+    setImportSuccess('');
+    try {
+      const text = await file.text();
+      const raw = JSON.parse(text);
+      const pkg = parseSyncExportPackage(raw);
+      setImportPkg(pkg);
+      setImportPassphrase('');
+    } catch (err: unknown) {
+      setImportError((err as Error).message);
+    }
+  }
+
+  async function handleImportConfirm() {
+    if (!importPkg) return;
+    setImportError('');
+    if (state.workspaces.some(w => w.id === importPkg.workspaceId)) {
+      setImportError('A workspace with this ID already exists.');
+      return;
+    }
+    let config: Record<string, string>;
+    try {
+      config = importPkg.encrypted
+        ? await decryptSyncExportConfig(importPkg, importPassphrase)
+        : { ...importPkg.config };
+    } catch (err: unknown) {
+      setImportError((err as Error).message);
+      return;
+    }
+    const newWorkspace: Workspace = {
+      id: importPkg.workspaceId,
+      name: importPkg.workspaceName,
+      color: PRESET_COLORS[state.workspaces.length % PRESET_COLORS.length],
+      createdAt: new Date().toISOString(),
+      type: 'local',
+    };
+    const emptyData = emptyWorkspaceData();
+    await StorageDriver.writeWorkspace(newWorkspace.id, emptyData);
+    await StorageDriver.writeSyncConfig(newWorkspace.id, importPkg.provider, config, undefined, false);
+    dispatch({ type: 'CREATE_WORKSPACE', payload: newWorkspace });
+    await StorageDriver.writeManifest({ workspaces: [...state.workspaces, newWorkspace], activeWorkspaceId: state.activeWorkspaceId });
+    dispatch({ type: 'BUMP_SYNC_CONFIG_VERSION' });
+    setImportPkg(null);
+    setImportPassphrase('');
+    setImportSuccess(`Workspace "${newWorkspace.name}" created. Switch to it, then open the Sync tab and click Pull ↓ to load data from ${importPkg.provider.toUpperCase()}.`);
   }
 
   async function handleCreate() {
@@ -300,13 +453,28 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
                 {w.type === 'team' && w.role && <span className="ml-1 text-[10px] text-slate-500 shrink-0">{w.role}</span>}
               </button>
             )}
-            <p className="text-[10px] text-slate-600 mt-0.5">{new Date(w.createdAt).toLocaleDateString()}</p>
+            <p className="text-[10px] text-slate-600 mt-0.5">
+              {new Date(w.createdAt).toLocaleDateString()}
+              {w.id === state.activeWorkspaceId && (
+                <span className="ml-2 font-mono text-slate-600 select-all">{w.id}</span>
+              )}
+            </p>
           </div>
 
           {/* Actions */}
           <div className="flex items-center gap-1 shrink-0">
+            {w.id !== state.activeWorkspaceId && (
+              <button
+                onClick={() => handleSwitchAndClose(w)}
+                title="Switch to workspace and close"
+                className="text-slate-500 hover:text-orange-400 px-1 text-xs transition-colors"
+              >
+                ↵
+              </button>
+            )}
             <button onClick={() => startRename(w)} title="Rename" className="text-slate-500 hover:text-slate-300 px-1 text-xs transition-colors">✏</button>
             <button onClick={() => handleDuplicate(w)} title="Duplicate" className="text-slate-500 hover:text-slate-300 px-1 text-xs transition-colors">⧉</button>
+            <button onClick={() => handleExportWorkspace(w)} title="Export workspace data" className="text-slate-500 hover:text-slate-300 px-1 text-xs transition-colors">⬇</button>
             <button
               onClick={() => { setConfirmDelete(null); setConfirmClear(w.id); }}
               title="Empty workspace (remove all collections)"
@@ -376,6 +544,122 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
           </button>
         )}
       </div>
+
+      {/* Import sync config */}
+      <div className="pt-1">
+        <input
+          ref={importFileRef}
+          type="file"
+          accept=".json,application/json"
+          className="hidden"
+          onChange={handleImportFileChange}
+        />
+        {!importPkg ? (
+          <button
+            onClick={() => { setImportError(''); setImportSuccess(''); importFileRef.current?.click(); }}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-500 transition-colors text-sm"
+          >
+            <span className="text-base leading-none">↑</span>
+            Import sync config
+          </button>
+        ) : (
+          <div className="p-3 bg-slate-800/60 border border-slate-700 rounded-lg space-y-3">
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-slate-200">{importPkg.workspaceName}</p>
+              <p className="text-[10px] text-slate-500">
+                Provider: <span className="text-slate-300">{importPkg.provider.toUpperCase()}</span>
+                {' · '}ID: <span className="font-mono text-slate-400">{importPkg.workspaceId.slice(0, 12)}…</span>
+                {importPkg.encrypted && <span className="ml-1 text-yellow-400">🔒 encrypted</span>}
+              </p>
+            </div>
+            {importPkg.encrypted && (
+              <div>
+                <label className="block text-[11px] text-slate-500 mb-1">Passphrase</label>
+                <input
+                  type="password"
+                  autoFocus
+                  value={importPassphrase}
+                  onChange={e => setImportPassphrase(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleImportConfirm(); }}
+                  placeholder="Enter the passphrase used during export"
+                  className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-orange-500 placeholder:text-slate-600"
+                />
+              </div>
+            )}
+            {importError && (
+              <p className="text-xs text-red-400 bg-red-950/30 border border-red-800/40 rounded px-2 py-1.5">{importError}</p>
+            )}
+            <div className="flex gap-2">
+              <button
+                onClick={handleImportConfirm}
+                className="flex-1 py-1.5 text-xs font-medium bg-orange-600 hover:bg-orange-500 text-white rounded transition-colors"
+              >
+                Create workspace
+              </button>
+              <button
+                onClick={() => { setImportPkg(null); setImportPassphrase(''); setImportError(''); }}
+                className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 rounded transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+        {importSuccess && (
+          <p className="mt-2 text-xs text-green-300 bg-green-950/30 border border-green-800/40 rounded px-3 py-2">{importSuccess}</p>
+        )}
+      </div>
+
+      {/* Import workspace data */}
+      <div className="pt-1">
+        <input
+          ref={dataImportFileRef}
+          type="file"
+          accept=".json,application/json"
+          className="hidden"
+          onChange={handleDataImportFileChange}
+        />
+        {!dataImportPkg ? (
+          <button
+            onClick={() => { setDataImportError(''); setDataImportSuccess(''); dataImportFileRef.current?.click(); }}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-500 transition-colors text-sm"
+          >
+            <span className="text-base leading-none">↑</span>
+            Import workspace data
+          </button>
+        ) : (
+          <div className="p-3 bg-slate-800/60 border border-slate-700 rounded-lg space-y-3">
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-slate-200">{dataImportPkg.workspaceName}</p>
+              <p className="text-[10px] text-slate-500">
+                Exported: <span className="text-slate-300">{new Date(dataImportPkg.exportedAt).toLocaleString()}</span>
+                {' · '}{dataImportPkg.data.collections.length} collection(s)
+                {' · '}{dataImportPkg.data.environments.length} environment(s)
+              </p>
+            </div>
+            {dataImportError && (
+              <p className="text-xs text-red-400 bg-red-950/30 border border-red-800/40 rounded px-2 py-1.5">{dataImportError}</p>
+            )}
+            <div className="flex gap-2">
+              <button
+                onClick={handleDataImportConfirm}
+                className="flex-1 py-1.5 text-xs font-medium bg-orange-600 hover:bg-orange-500 text-white rounded transition-colors"
+              >
+                Import workspace
+              </button>
+              <button
+                onClick={() => { setDataImportPkg(null); setDataImportError(''); }}
+                className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 rounded transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+        {dataImportSuccess && (
+          <p className="mt-2 text-xs text-green-300 bg-green-950/30 border border-green-800/40 rounded px-3 py-2">{dataImportSuccess}</p>
+        )}
+      </div>
     </div>
   );
 }
@@ -395,6 +679,86 @@ export async function cloneWorkspaceSyncConfig(sourceWorkspaceId: string, target
     srcSync.readOnly,
   );
   return true;
+}
+
+// ─── Export Panel (sub-component used by SyncTab) ────────────────────────────
+
+interface ExportPanelProps {
+  workspaceId: string;
+  provider: SyncProvider;
+  fields: Record<string, string>;
+  workspaceName: string;
+  exportEncrypt: boolean;
+  setExportEncrypt: (v: boolean) => void;
+  exportPassphrase: string;
+  setExportPassphrase: (v: string) => void;
+  exportStatus: string;
+  setExportStatus: (v: string) => void;
+}
+
+function ExportPanel({
+  workspaceId, provider, fields, workspaceName,
+  exportEncrypt, setExportEncrypt,
+  exportPassphrase, setExportPassphrase,
+  exportStatus, setExportStatus,
+}: ExportPanelProps) {
+  async function handleDownload() {
+    setExportStatus('');
+    const passphrase = exportEncrypt ? exportPassphrase.trim() : undefined;
+    if (exportEncrypt && !passphrase) {
+      setExportStatus('Enter a passphrase, or uncheck the encryption option.');
+      return;
+    }
+    const pkg = await buildSyncExportPackage(workspaceId, workspaceName, provider, fields, passphrase);
+    const safeName = workspaceName.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+    downloadJsonFile(`apilix-sync-${safeName}.json`, pkg);
+    setExportPassphrase('');
+    setExportStatus('Downloaded.');
+  }
+
+  return (
+    <div className="space-y-2.5 p-3 bg-slate-800/40 border border-slate-700 rounded-lg">
+      <div className="flex items-center gap-2">
+        <input
+          id={`export-encrypt-${workspaceId}`}
+          type="checkbox"
+          checked={exportEncrypt}
+          onChange={e => setExportEncrypt(e.target.checked)}
+          className="accent-orange-500 cursor-pointer"
+        />
+        <label htmlFor={`export-encrypt-${workspaceId}`} className="text-xs text-slate-300 cursor-pointer">
+          Encrypt credentials with a passphrase <span className="text-slate-500">(recommended)</span>
+        </label>
+      </div>
+      {exportEncrypt && (
+        <div>
+          <label className="block text-[11px] text-slate-500 mb-1">Passphrase</label>
+          <input
+            type="password"
+            value={exportPassphrase}
+            onChange={e => setExportPassphrase(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handleDownload(); }}
+            placeholder="Secret passphrase for the recipient"
+            className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-orange-500 placeholder:text-slate-600"
+          />
+        </div>
+      )}
+      {!exportEncrypt && (
+        <p className="text-[10px] text-yellow-400 bg-yellow-950/30 border border-yellow-800/40 rounded px-2 py-1.5">
+          ⚠ Credentials will be stored in plaintext in the exported file.
+        </p>
+      )}
+      {exportStatus && (
+        <p className="text-[10px] text-green-400">{exportStatus}</p>
+      )}
+      <button
+        onClick={handleDownload}
+        className="w-full py-1.5 text-xs font-medium bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors"
+      >
+        Download JSON ↓
+      </button>
+    </div>
+  );
 }
 
 // ─── Sync Tab ─────────────────────────────────────────────────────────────────
@@ -468,6 +832,13 @@ function SyncTab() {
   const [conflictPackage, setConflictPackage] = useState<ConflictPackage | null>(null);
   const [activity, setActivity] = useState<SyncActivityEntry[]>([]);
   const [pendingPushConfirm, setPendingPushConfirm] = useState<{ message: string; resolve: (v: boolean) => void } | null>(null);
+  const [showExport, setShowExport] = useState(false);
+  const [exportEncrypt, setExportEncrypt] = useState(true);
+  const [exportPassphrase, setExportPassphrase] = useState('');
+  const [exportStatus, setExportStatus] = useState('');
+
+  // Reset export panel when active workspace changes
+  useEffect(() => { setShowExport(false); setExportPassphrase(''); setExportStatus(''); }, [workspaceId]);
 
   // Load persisted sync config on mount / workspace change
   useEffect(() => {
@@ -927,6 +1298,32 @@ function SyncTab() {
       >
         Import once (don't save config) ↓
       </button>
+
+      {/* Export sync config — S3 / MinIO only */}
+      {(provider === 's3' || provider === 'minio') && (
+        <div className="space-y-2 pt-1 border-t border-slate-800">
+          <button
+            onClick={() => { setShowExport(v => !v); setExportStatus(''); }}
+            className="w-full text-left text-xs text-slate-500 hover:text-slate-300 transition-colors"
+          >
+            {showExport ? '▲' : '▶'} Share sync config with a teammate
+          </button>
+          {showExport && (
+            <ExportPanel
+              workspaceId={workspaceId}
+              provider={provider}
+              fields={fields}
+              workspaceName={state.workspaces.find(w => w.id === workspaceId)?.name ?? 'workspace'}
+              exportEncrypt={exportEncrypt}
+              setExportEncrypt={setExportEncrypt}
+              exportPassphrase={exportPassphrase}
+              setExportPassphrase={setExportPassphrase}
+              exportStatus={exportStatus}
+              setExportStatus={setExportStatus}
+            />
+          )}
+        </div>
+      )}
 
         <div className="flex items-center justify-between gap-3">
           <span className="text-xs font-medium text-slate-300">Recent sync activity</span>

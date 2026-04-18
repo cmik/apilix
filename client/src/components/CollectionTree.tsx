@@ -294,7 +294,7 @@ function KebabBtn({ onClick }: { onClick: (e: React.MouseEvent) => void }) {
   return (
     <button
       onClick={onClick}
-      className="px-1.5 py-1 text-slate-600 hover:text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity text-base leading-none shrink-0 font-bold select-none"
+      className="px-1.5 py-1 mr-1 text-slate-600 hover:text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity text-base leading-none shrink-0 font-bold select-none"
       title="Actions"
     >
       ···

@@ -51,6 +51,7 @@ jobs:
       - name: Build macOS DMG
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DISABLE_DEVTOOLS: '1'
         run: npm run dist:mac
 
       - name: Upload DMG to Release
@@ -77,6 +78,7 @@ jobs:
       - name: Build Windows EXE
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DISABLE_DEVTOOLS: '1'
         run: npm run dist:win
 
       - name: Upload EXE to Release
