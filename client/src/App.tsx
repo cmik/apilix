@@ -43,6 +43,7 @@ import {
   type WorkspaceSwitchDecision,
   type UnsavedRequestTabSummary,
 } from './utils/requestTabSyncGuard';
+import { isVersionGreater, fetchLatestGitHubVersion } from './utils/versionUtils';
 
 // --- Env Quick Panel ---
 
@@ -353,6 +354,8 @@ export default function App() {
   const [urlBarPortalEl, setUrlBarPortalEl] = useState<HTMLElement | null>(null);
   const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
   const [serverStatus, setServerStatus] = useState<ServerStatus>('checking');
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [cookieManagerOpen, setCookieManagerOpen] = useState(false);
   const [syncConfigured, setSyncConfigured] = useState(false);
   const [syncReadOnly, setSyncReadOnly] = useState(false);
@@ -414,8 +417,8 @@ export default function App() {
   }, [requestSplitWidth]);
 
   const openSettings = useCallback((tab: SettingsTab = 'appearance') => {
-    setSettingsInitialTab(tab);
-    setSettingsOpen(true);
+    setSettingsInitialTab(tab);
+    setSettingsOpen(true);
   }, []);
 
   // ── Global keyboard shortcuts ──────────────────────────────────────────────
@@ -570,6 +573,22 @@ export default function App() {
     check();
     const id = setInterval(check, 10000);
     return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
+  useEffect(() => {
+    const version = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : null;
+    if (!version) return;
+    const controller = new AbortController();
+    fetchLatestGitHubVersion(controller.signal)
+      .then(latest => {
+        if (controller.signal.aborted) return;
+        if (isVersionGreater(latest, version)) {
+          setLatestVersion(latest);
+          setUpdateAvailable(true);
+        }
+      })
+      .catch(() => {});
+    return () => { controller.abort(); };
   }, []);
 
   useEffect(() => {
@@ -1066,6 +1085,8 @@ export default function App() {
         logCount={state.consoleLogs.length}
         lastEntry={state.consoleLogs[0] ?? null}
         serverStatus={serverStatus}
+        updateAvailable={updateAvailable}
+        latestVersion={latestVersion}
       />
 
       {/* Env quick panel */}
