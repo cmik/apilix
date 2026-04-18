@@ -1510,7 +1510,6 @@ export default function RunnerPanel() {
               <button
                 disabled={!hasBaseRunToSave}
                 onClick={() => {
-                  if (!hasBaseRunToSave) return;
                   setSaveRunName(lastRunRef.current?.name ?? `Run ${new Date().toLocaleDateString()}`);
                   setSaveRunModalOpen(true);
                 }}
