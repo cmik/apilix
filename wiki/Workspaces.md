@@ -207,7 +207,7 @@ Stores the workspace as a `workspace.json` file inside a local git clone that is
 
 ### How it works
 
-1. On first push, Apilix initialises a bare git repo at `{userData}/git-sync/workspaces/{workspaceId}/`.
+1. On first push, Apilix initialises a local git repo at `{userData}/git-sync/workspaces/{workspaceId}/`.
 2. The workspace JSON is written to `workspace.json` and committed.
 3. The commit is pushed to the configured remote using `simple-git`.
 4. On pull, the remote is fetched and `workspace.json` is read back.
