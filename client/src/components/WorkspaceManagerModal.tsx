@@ -74,6 +74,8 @@ interface Props {
 export default function WorkspaceManagerModal({ onClose }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>('workspaces');
   const visibleTabs: Tab[] = ['workspaces', 'sync', 'history'];
+  const [modalDragging, setModalDragging] = useState(false);
+  const [droppedFile, setDroppedFile] = useState<File | null>(null);
 
   useEffect(() => {
     if (!visibleTabs.includes(activeTab)) {
@@ -81,9 +83,34 @@ export default function WorkspaceManagerModal({ onClose }: Props) {
     }
   }, [activeTab, visibleTabs]);
 
+  function handleModalDragOver(e: React.DragEvent) {
+    if (activeTab !== 'workspaces') return;
+    e.preventDefault();
+    setModalDragging(true);
+  }
+
+  function handleModalDragLeave(e: React.DragEvent) {
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setModalDragging(false);
+  }
+
+  function handleModalDrop(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setModalDragging(false);
+    if (activeTab !== 'workspaces') return;
+    const file = e.dataTransfer.files[0];
+    if (file) setDroppedFile(file);
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-[640px] max-h-[80vh] flex flex-col overflow-hidden">
+      <div
+        className="relative bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-[640px] max-h-[80vh] flex flex-col overflow-hidden"
+        onDragOver={handleModalDragOver}
+        onDragLeave={handleModalDragLeave}
+        onDrop={handleModalDrop}
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-800">
           <h2 className="text-sm font-semibold text-slate-200">Manage Workspaces</h2>
@@ -113,7 +140,21 @@ export default function WorkspaceManagerModal({ onClose }: Props) {
           {activeTab === 'sync' && <SyncTab />}
           {activeTab === 'history' && <HistoryTab />}
         </div>
-        {activeTab === 'workspaces' && <ImportPanel />}
+        {activeTab === 'workspaces' && (
+          <ImportPanel
+            droppedFile={droppedFile}
+            onDropConsumed={() => setDroppedFile(null)}
+          />
+        )}
+
+        {/* Full-modal drag overlay */}
+        {activeTab === 'workspaces' && modalDragging && (
+          <div className="absolute inset-0 rounded-xl z-50 flex flex-col items-center justify-center gap-3 bg-slate-900/90 border-2 border-dashed border-orange-500/60 pointer-events-none">
+            <span className="text-4xl leading-none text-orange-400">↓</span>
+            <p className="text-sm font-medium text-orange-300">Drop to import</p>
+            <p className="text-xs text-slate-400">Workspace export or sync config</p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -559,13 +600,17 @@ type ImportCandidate =
   | { kind: 'workspace'; pkg: WorkspaceExportPackage }
   | { kind: 'sync';      pkg: SyncExportPackage };
 
-function ImportPanel() {
+interface ImportPanelProps {
+  droppedFile: File | null;
+  onDropConsumed: () => void;
+}
+
+function ImportPanel({ droppedFile, onDropConsumed }: ImportPanelProps) {
   const { state, dispatch } = useApp();
   const [candidate, setCandidate] = useState<ImportCandidate | null>(null);
   const [importPassphrase, setImportPassphrase] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [dragging, setDragging] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function handleFile(file: File) {
@@ -592,26 +637,12 @@ function ImportPanel() {
     }
   }
 
-  function handleDragOver(e: React.DragEvent) {
-    e.preventDefault();
-    setDragging(true);
-  }
-
-  function handleDragLeave(e: React.DragEvent) {
-    // Only clear the dragging state when the cursor truly leaves the drop zone.
-    // Without this check the state flickers whenever the cursor moves over a
-    // child element (span), because the browser fires dragLeave on the parent.
-    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
-    setDragging(false);
-  }
-
-  function handleDrop(e: React.DragEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
-  }
+  useEffect(() => {
+    if (droppedFile) {
+      handleFile(droppedFile);
+      onDropConsumed();
+    }
+  }, [droppedFile]);
 
   async function handleWorkspaceImportConfirm() {
     if (!candidate || candidate.kind !== 'workspace') return;
@@ -757,19 +788,12 @@ function ImportPanel() {
           role="button"
           tabIndex={0}
           aria-label="Import workspace file — click to browse or drag a file here"
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
           onClick={() => { setError(''); fileRef.current?.click(); }}
           onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileRef.current?.click(); } }}
-          className={`flex items-center justify-center gap-2 px-3 py-3 rounded-lg border border-dashed transition-colors cursor-pointer select-none ${
-            dragging
-              ? 'border-orange-500/60 bg-orange-950/20 text-orange-400'
-              : 'border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-500'
-          }`}
+          className="flex items-center justify-center gap-2 px-3 py-3 rounded-lg border border-dashed border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-500 transition-colors cursor-pointer select-none"
         >
-          <span className="text-base leading-none">{dragging ? '↓' : '↑'}</span>
-          <span className="text-sm">{dragging ? 'Drop to import' : 'Import workspace file'}</span>
+          <span className="text-base leading-none">↑</span>
+          <span className="text-sm">Import workspace file</span>
         </div>
       )}
 
