@@ -81,3 +81,46 @@
 .code-editor textarea::placeholder {
   color: #475569;
 }
+
+/* ─── Light theme token overrides ──────────────────────────────────────── */
+html.light .code-highlight .token.comment,
+html.light .code-highlight .token.prolog,
+html.light .code-highlight .token.doctype,
+html.light .code-highlight .token.cdata { color: #6b7280; font-style: italic; }
+
+html.light .code-highlight .token.punctuation { color: #374151; }
+
+html.light .code-highlight .token.property,
+html.light .code-highlight .token.tag,
+html.light .code-highlight .token.constant,
+html.light .code-highlight .token.symbol,
+html.light .code-highlight .token.deleted { color: #be123c; }
+
+html.light .code-highlight .token.boolean,
+html.light .code-highlight .token.number { color: #b45309; }
+
+html.light .code-highlight .token.null { color: #0891b2; }
+
+html.light .code-highlight .token.selector,
+html.light .code-highlight .token.attr-name,
+html.light .code-highlight .token.string,
+html.light .code-highlight .token.char,
+html.light .code-highlight .token.builtin,
+html.light .code-highlight .token.inserted,
+html.light .code-highlight .token.attr-value { color: #15803d; }
+
+html.light .code-highlight .token.operator,
+html.light .code-highlight .token.entity,
+html.light .code-highlight .token.url { color: #0891b2; }
+
+html.light .code-highlight .token.atrule,
+html.light .code-highlight .token.keyword { color: #7c3aed; }
+
+html.light .code-highlight .token.function,
+html.light .code-highlight .token.class-name { color: #1d4ed8; }
+
+html.light .code-highlight .token.regex,
+html.light .code-highlight .token.important,
+html.light .code-highlight .token.variable { color: #b45309; }
+
+html.light .code-highlight .placeholder-highlight { color: #0369a1; }

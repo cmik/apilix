@@ -10,6 +10,7 @@ import {
   flattenRequestNames, flattenRequestItems, sortChildrenByName,
 } from '../utils/treeHelpers';
 import { generateHurlFromItems } from '../utils/hurlUtils';
+import { useImportFile } from '../utils/useImportFile';
 
 const ItemSettingsModal = lazy(() => import('./ItemSettingsModal'));
 
@@ -1009,7 +1010,39 @@ interface CollectionTreeProps {
 
 export default function CollectionTree({ filter = '', renamingCollectionId, onRenamingDone, collapseSignal = 0, expandSignal = 0, sortAZ = false }: CollectionTreeProps) {
   const { state, dispatch } = useApp();
+  const importFile = useImportFile();
   const trimmed = filter.trim();
+
+  // ── File drag-and-drop import state ─────────────────────────────────────────
+  const [fileDropActive, setFileDropActive] = useState(false);
+
+  function isFileDrag(e: React.DragEvent): boolean {
+    return Array.from(e.dataTransfer.types).includes('Files');
+  }
+
+  function handleFilesDragOver(e: React.DragEvent) {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    setFileDropActive(true);
+  }
+
+  function handleFilesDragLeave(e: React.DragEvent) {
+    if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) {
+      setFileDropActive(false);
+    }
+  }
+
+  async function handleFilesDrop(e: React.DragEvent) {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    setFileDropActive(false);
+    const files = Array.from(e.dataTransfer.files);
+    for (const file of files) {
+      const text = await file.text();
+      await importFile(text, file.name);
+    }
+  }
 
   // ── Collection-level drag state (reordering top-level collections) ───────────
   const [draggingColIdx, setDraggingColIdx] = useState<number | null>(null);
@@ -1142,10 +1175,21 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
 
   if (state.collections.length === 0) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center text-center p-4">
+      <div
+        className={`flex-1 flex flex-col items-center justify-center text-center p-4 rounded-lg transition-colors ${
+          fileDropActive ? 'bg-orange-500/10 ring-2 ring-inset ring-orange-500' : ''
+        }`}
+        onDragOver={handleFilesDragOver}
+        onDragLeave={handleFilesDragLeave}
+        onDrop={handleFilesDrop}
+      >
         <div className="text-4xl mb-3">📭</div>
-        <p className="text-slate-400 text-sm">No collections yet</p>
-        <p className="text-slate-600 text-xs mt-1">Click Import to get started</p>
+        <p className="text-slate-400 text-sm">
+          {fileDropActive ? 'Drop to import' : 'No collections yet'}
+        </p>
+        <p className="text-slate-600 text-xs mt-1">
+          {fileDropActive ? '' : 'Click Import or drop a file here'}
+        </p>
       </div>
     );
   }
@@ -1216,15 +1260,28 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
       <CollapseCtx.Provider value={collapseSignal}>
       <ExpandCtx.Provider value={expandSignal}>
       <div
-        className="flex-1 overflow-y-auto scrollbar-thin py-1"
+        className="flex-1 overflow-y-auto scrollbar-thin py-1 relative"
+        onDragOver={(e) => {
+          // File drops take priority over internal reorder drags
+          if (isFileDrag(e)) { handleFilesDragOver(e); return; }
+        }}
         onDragLeave={(e) => {
+          handleFilesDragLeave(e);
           if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) {
             updateDrop(null, null, null);
             setColInsertBefore(null);
           }
         }}
+        onDrop={(e) => {
+          if (isFileDrag(e)) { handleFilesDrop(e); return; }
+        }}
         onDragEnd={() => { endDrag(); handleColDragEnd(); }}
       >
+        {fileDropActive && (
+          <div className="absolute inset-0 z-20 bg-orange-500/10 ring-2 ring-inset ring-orange-500 rounded-lg pointer-events-none flex items-center justify-center">
+            <span className="text-orange-400 font-medium text-sm">Drop to import</span>
+          </div>
+        )}
         {(sortAZ
           ? [...state.collections].sort((a, b) => a.info.name.localeCompare(b.info.name))
           : state.collections
