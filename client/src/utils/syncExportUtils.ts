@@ -142,6 +142,8 @@ export async function buildSyncExportPackage(
 
 // ─── Package parser ────────────────────────────────────────────────────────────
 
+const KNOWN_PROVIDERS = new Set<SyncProvider>(['s3', 'minio', 'git', 'http', 'team']);
+
 /** Parse and validate an unknown value as a SyncExportPackage. Throws on invalid input. */
 export function parseSyncExportPackage(raw: unknown): SyncExportPackage {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -160,6 +162,9 @@ export function parseSyncExportPackage(raw: unknown): SyncExportPackage {
   }
   if (typeof obj.provider !== 'string' || !obj.provider) {
     throw new Error('Invalid sync export file — missing provider');
+  }
+  if (!KNOWN_PROVIDERS.has(obj.provider as SyncProvider)) {
+    throw new Error(`Invalid sync export file — unknown provider "${obj.provider}". Expected one of: ${[...KNOWN_PROVIDERS].join(', ')}`);
   }
   if (!obj.config || typeof obj.config !== 'object' || Array.isArray(obj.config)) {
     throw new Error('Invalid sync export file — missing or invalid config');
@@ -183,6 +188,24 @@ export function parseSyncExportPackage(raw: unknown): SyncExportPackage {
   }
   if (!(obj.encryptedFields as unknown[]).every(f => typeof f === 'string')) {
     throw new Error('Invalid sync export file — encryptedFields must be an array of strings');
+  }
+
+  // Invariant: an encrypted package must carry a non-empty salt so decryption
+  // can succeed. Catching this at parse time avoids a confusing late failure
+  // inside decryptSyncExportConfig.
+  if (obj.encrypted === true) {
+    if (typeof obj.salt !== 'string' || obj.salt.length === 0) {
+      throw new Error('Invalid sync export file — encrypted package is missing salt');
+    }
+    if ((obj.encryptedFields as string[]).length === 0) {
+      throw new Error('Invalid sync export file — encrypted package must list at least one encryptedField');
+    }
+    const unknownFields = (obj.encryptedFields as string[]).filter(
+      k => !Object.prototype.hasOwnProperty.call(safeConfig, k),
+    );
+    if (unknownFields.length > 0) {
+      throw new Error(`Invalid sync export file — encryptedFields references keys not present in config: ${unknownFields.join(', ')}`);
+    }
   }
 
   return {

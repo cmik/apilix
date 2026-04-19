@@ -6,9 +6,9 @@ const fs = require('fs');
 const net = require('net');
 
 const isDev = !app.isPackaged;
-// DevTools are always available in dev; can be disabled in production
-// builds by setting DISABLE_DEVTOOLS=1 in the environment before packaging.
-const devToolsEnabled = isDev || process.env.DISABLE_DEVTOOLS !== '1';
+// DevTools are always available in dev. In packaged builds they are disabled  
+// by default, with an optional runtime override via DISABLE_DEVTOOLS=0.  
+const devToolsEnabled = isDev || process.env.DISABLE_DEVTOOLS === '0';
 
 let mainWindow = null;
 let serverProcess = null;

@@ -46,7 +46,7 @@ export function isWorkspaceExportPackage(raw: unknown): raw is WorkspaceExportPa
  * Parse and lightly validate a raw JSON value as a `WorkspaceExportPackage`.
  * Throws with a user-readable message if the value is not a valid package.
  * Missing optional `WorkspaceData` fields are backfilled with safe defaults
- * so that files exported by future versions remain importable.
+ * for supported workspace export packages.
  */
 export function parseWorkspaceExportPackage(raw: unknown): WorkspaceExportPackage {
   if (!isWorkspaceExportPackage(raw)) {

@@ -136,6 +136,7 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
   const [dataImportError, setDataImportError] = useState('');
   const [dataImportSuccess, setDataImportSuccess] = useState('');
   const dataImportFileRef = useRef<HTMLInputElement>(null);
+  const [exportError, setExportError] = useState('');
 
   useEffect(() => {
     StorageDriver.readSyncConfigStore().then(store => {
@@ -274,7 +275,7 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
           mockCollections: [], mockRoutes: [], mockPort: 3002,
         };
       } catch (err: unknown) {
-        setDataImportError(`Failed to read workspace data: ${(err as Error).message}`);
+        setExportError(`Failed to read workspace data: ${(err as Error).message}`);
         return;
       }
     }
@@ -513,6 +514,14 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
             <button onClick={() => handleClearCollections(confirmClear)} className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded transition-colors">Empty workspace</button>
             <button onClick={() => setConfirmClear(null)} className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors">Cancel</button>
           </div>
+        </div>
+      )}
+
+      {/* Export error */}
+      {exportError && (
+        <div className="mt-2 flex items-start gap-2 px-3 py-2 bg-red-950/40 border border-red-800/50 rounded-lg text-xs text-red-400">
+          <span className="flex-1">{exportError}</span>
+          <button onClick={() => setExportError('')} className="text-red-400/60 hover:text-red-300 shrink-0 leading-none" aria-label="Dismiss">✕</button>
         </div>
       )}
 

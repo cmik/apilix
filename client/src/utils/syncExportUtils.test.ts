@@ -168,6 +168,27 @@ describe('parseSyncExportPackage', () => {
     expect(() => parseSyncExportPackage(rest)).toThrow('provider');
   });
 
+  it('throws on an unknown provider string', () => {
+    expect(() => parseSyncExportPackage({ ...valid, provider: 'ftp' })).toThrow('unknown provider');
+    expect(() => parseSyncExportPackage({ ...valid, provider: 'ftp' })).toThrow('ftp');
+  });
+
+  it('error message for unknown provider lists the allowed values', () => {
+    let msg = '';
+    try { parseSyncExportPackage({ ...valid, provider: 'ftp' }); } catch (e) { msg = (e as Error).message; }
+    expect(msg).toMatch(/s3/);
+    expect(msg).toMatch(/git/);
+    expect(msg).toMatch(/http/);
+    expect(msg).toMatch(/team/);
+    expect(msg).toMatch(/minio/);
+  });
+
+  it('accepts all known providers', () => {
+    for (const provider of ['s3', 'minio', 'git', 'http', 'team'] as const) {
+      expect(() => parseSyncExportPackage({ ...valid, provider })).not.toThrow();
+    }
+  });
+
   it('throws on non-object input', () => {
     expect(() => parseSyncExportPackage('not an object')).toThrow('Invalid sync export file');
     expect(() => parseSyncExportPackage(null)).toThrow('Invalid sync export file');
@@ -182,5 +203,71 @@ describe('parseSyncExportPackage', () => {
   it('throws when encryptedFields is missing', () => {
     const { encryptedFields: _, ...rest } = valid;
     expect(() => parseSyncExportPackage(rest)).toThrow('encryptedFields');
+  });
+
+  // ── Encrypted invariant checks ────────────────────────────────────────────
+
+  it('throws when encrypted=true and salt is absent', () => {
+    const pkg = {
+      ...valid,
+      config: { accessKeyId: 'ENC' },
+      encrypted: true,
+      encryptedFields: ['accessKeyId'],
+      // salt intentionally omitted
+    };
+    expect(() => parseSyncExportPackage(pkg)).toThrow('missing salt');
+  });
+
+  it('throws when encrypted=true and salt is an empty string', () => {
+    const pkg = {
+      ...valid,
+      config: { accessKeyId: 'ENC' },
+      encrypted: true,
+      encryptedFields: ['accessKeyId'],
+      salt: '',
+    };
+    expect(() => parseSyncExportPackage(pkg)).toThrow('missing salt');
+  });
+
+  it('throws when encrypted=true and encryptedFields is empty', () => {
+    const pkg = {
+      ...valid,
+      config: { accessKeyId: 'ENC' },
+      encrypted: true,
+      encryptedFields: [],
+      salt: btoa('some-salt-bytes'),
+    };
+    expect(() => parseSyncExportPackage(pkg)).toThrow('at least one encryptedField');
+  });
+
+  it('throws when encryptedFields references a key absent from config', () => {
+    const pkg = {
+      ...valid,
+      config: { accessKeyId: 'ENC' },
+      encrypted: true,
+      encryptedFields: ['accessKeyId', 'secretAccessKey'],
+      salt: btoa('some-salt-bytes'),
+    };
+    expect(() => parseSyncExportPackage(pkg)).toThrow('secretAccessKey');
+  });
+
+  it('accepts a valid encrypted package when all invariants are satisfied', () => {
+    const pkg = {
+      ...valid,
+      config: { accessKeyId: 'ENC_AK', secretAccessKey: 'ENC_SK', bucket: 'my-bucket' },
+      encrypted: true,
+      encryptedFields: ['accessKeyId', 'secretAccessKey'],
+      salt: btoa('sixteen-byte-sal'),
+    };
+    const parsed = parseSyncExportPackage(pkg);
+    expect(parsed.encrypted).toBe(true);
+    expect(parsed.salt).toBe(btoa('sixteen-byte-sal'));
+    expect(parsed.encryptedFields).toEqual(['accessKeyId', 'secretAccessKey']);
+  });
+
+  it('does not check salt or encryptedFields length when encrypted=false', () => {
+    // These checks only apply to encrypted packages; unencrypted packages with
+    // an empty encryptedFields array are fine.
+    expect(() => parseSyncExportPackage(valid)).not.toThrow();
   });
 });
