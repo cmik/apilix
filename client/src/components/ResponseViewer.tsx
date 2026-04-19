@@ -616,6 +616,7 @@ function clampMenuPosition(
 // ────────────────────────────────────────────────────────────────────────────
 
 export default function ResponseViewer() {
+  const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().startsWith('MAC');
   const { state } = useApp();
   const [tab, setTab] = useState<RespTab>('Body');
   const [rawMode, setRawMode] = useState(false);
@@ -768,9 +769,35 @@ export default function ResponseViewer() {
   }
 
   if (!response) {
+    const mod = isMac ? '⌘' : 'Ctrl';
+    const shortcuts = [
+      { keys: [mod, '↵'],  label: 'Send request'  },
+      { keys: [mod, 'S'],  label: 'Save request'  },
+      { keys: [mod, 'L'],  label: 'Focus URL bar' },
+      { keys: [mod, 'N'],  label: 'New request'   },
+    ];
     return (
       <div className="h-full min-h-0 flex items-center justify-center border-t border-slate-700 bg-slate-900">
-        <p className="text-slate-600 text-sm">Hit Send to see the response</p>
+        <div className="flex flex-col items-center gap-4">
+          <p className="text-slate-600 text-xs uppercase tracking-widest">Keyboard shortcuts</p>
+          <div className="flex flex-col gap-2">
+            {shortcuts.map(({ keys, label }) => (
+              <div key={label} className="flex items-center justify-between gap-6">
+                <div className="flex items-center gap-1">
+                  {keys.map((k, i) => (
+                    <kbd
+                      key={i}
+                      className="inline-flex items-center justify-center min-w-[28px] h-6 px-1.5 bg-slate-800 border border-slate-700 rounded text-[11px] font-mono text-slate-400 leading-none"
+                    >
+                      {k}
+                    </kbd>
+                  ))}
+                </div>
+                <span className="text-slate-500 text-xs">{label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     );
   }
