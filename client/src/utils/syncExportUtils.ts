@@ -108,21 +108,25 @@ export async function buildSyncExportPackage(
     const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
     const key = await deriveKey(passphrase, salt);
     const encryptedConfig: Record<string, string> = { ...config };
+    const encryptedFields: string[] = [];
     for (const k of secretKeys) {
       if (encryptedConfig[k]) {
         encryptedConfig[k] = await encryptField(encryptedConfig[k], key);
+        encryptedFields.push(k);
       }
     }
-    return {
-      apilixSyncExport: '1',
-      workspaceId,
-      workspaceName,
-      provider,
-      config: encryptedConfig,
-      encrypted: true,
-      encryptedFields: secretKeys.filter(k => !!config[k]),
-      salt: btoa(String.fromCharCode(...salt)),
-    };
+    if (encryptedFields.length > 0) {
+      return {
+        apilixSyncExport: '1',
+        workspaceId,
+        workspaceName,
+        provider,
+        config: encryptedConfig,
+        encrypted: true,
+        encryptedFields,
+        salt: btoa(String.fromCharCode(...salt)),
+      };
+    }
   }
 
   return {
