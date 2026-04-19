@@ -44,7 +44,22 @@ Apilix workspaces can be synced to a remote provider so that your collections, e
     - [Team Server Administration](#team-server-administration)
     - [Roles](#roles)
     - [Self-hosting the Team Server](#self-hosting-the-team-server)
+  - [Sharing Sync Configuration](#sharing-sync-configuration)
+    - [Exporting a sync config](#exporting-a-sync-config)
+    - [Importing a sync config](#importing-a-sync-config)
   - [Provider Comparison](#provider-comparison)
+  - [Three-Way Merge — Technical Reference](#three-way-merge--technical-reference)
+    - [Pipeline Overview](#pipeline-overview)
+    - [Differ — Request Identity and Change Classification](#differ--request-identity-and-change-classification)
+    - [Merge Rules by Domain](#merge-rules-by-domain)
+      - [Requests (`mergeRequestItem`)](#requests-mergerequestitem)
+      - [Body — JSON Structural Merge](#body--json-structural-merge)
+      - [Environments](#environments)
+      - [Global Variables and Collection Variables](#global-variables-and-collection-variables)
+      - [Mock Routes](#mock-routes)
+      - [Fields Outside the Merge Pipeline](#fields-outside-the-merge-pipeline)
+    - [Snapshot Ring Buffer](#snapshot-ring-buffer)
+    - [Stale-Apply Cycle](#stale-apply-cycle)
   - [See Also](#see-also)
 
 ---
@@ -505,6 +520,47 @@ WantedBy=multi-user.target
 
 ---
 
+## Sharing Sync Configuration
+
+You can export a workspace's sync configuration to a portable `.json` file and import it on another machine. This is the fastest way to set up the same sync provider on a second computer — especially for encrypted configurations where re-entering every field manually would be tedious.
+
+### Exporting a sync config
+
+1. Open **Manage Workspaces → Sync**.
+2. Configure and save your sync provider settings for the workspace.
+3. Scroll to the bottom of the Sync tab and click **Export config**.
+4. Choose whether to **encrypt** the export. Encryption requires a passphrase of your choice; the config cannot be imported without it.
+5. A file named `apilix-sync-{name}.json` is downloaded.
+
+**What is included:**
+
+| Included | Not included |
+|---|---|
+| Provider type (`s3`, `minio`, `git`, `http`, `team`) | Workspace data (collections, requests, etc.) |
+| All credential fields (token, secret key, URL, etc.) | Snapshot history |
+| Workspace ID (used to resolve the remote object) | Sync activity log |
+| `readOnly` flag | |
+
+**Encryption note:** When the export is encrypted, all credential fields are encrypted with AES-256-GCM using a key derived from your passphrase (PBKDF2, 100 000 iterations, SHA-256). The provider name, workspace ID, and workspace name remain in plaintext so the recipient can see what they are importing before decryption.
+
+> **Encrypted exports include a salt** that is stored in the file. The passphrase must match exactly — there is no recovery if the passphrase is lost.
+
+### Importing a sync config
+
+Sync config files are imported through the same unified **Import** footer used for workspace data files.
+
+1. Open **Manage Workspaces → Workspaces** tab.
+2. Click **↑ Import workspace file** (or drag and drop the file).
+3. Apilix detects the `apilixSyncExport` sentinel and shows a confirmation card with the provider name and encryption badge.
+4. If the export is encrypted, enter the passphrase.
+5. Click **Create workspace**.
+
+A new workspace is created with the sync configuration applied. It starts empty — switch to the workspace, open the **Sync** tab, and click **Pull ↓** to load data from the provider.
+
+> **After importing a sync config, the workspace is empty until you Pull.** The export contains credentials, not workspace data. If you need both, export the workspace data separately using the **⬇** button in the workspace row, or just Pull after configuring sync.
+
+---
+
 ## Provider Comparison
 
 | Feature | Git | S3 | HTTP Endpoint | Team Server |
@@ -516,6 +572,151 @@ WantedBy=multi-user.target
 | Optimistic conflict locking | ✅ | ❌ | Optional | ✅ |
 | Setup complexity | Medium | Medium | High | Medium |
 | Best for | Developers, open-source teams | Personal backup, simple sharing | Custom infra | Company teams |
+
+---
+
+## Three-Way Merge — Technical Reference
+
+This section documents the internal merge pipeline for developers and advanced users who want to understand exactly how conflicting edits are resolved.
+
+### Pipeline Overview
+
+A pull that detects a newer remote triggers the following sequence:
+
+```
+Pull ↓
+  1. Fetch remote workspace JSON
+  2. Compare remote.timestamp vs syncMetadata.lastSyncedAt
+     → remote is newer → enter merge pipeline
+  3. Load base snapshot (lastMergeBaseSnapshotId from SnapshotEngine)
+  4. diffWorkspace(base, local)   → localDiff
+     diffWorkspace(base, remote)  → remoteDiff
+  5. mergeWorkspaces(base, local, remote)
+     → MergeResult { merged, conflicts[], autoMergedCount }
+  6. autoMergedCount > 0 and conflicts === 0 → apply silently
+     conflicts > 0                           → open ConflictMergeModal
+  7. On Apply: write merged, push to remote, update lastMergeBaseSnapshotId
+```
+
+The **base** is the last snapshot written after a successful push or pull (stored in a ring buffer of up to 50 snapshots per workspace). If no base is available, the pipeline falls back to binary "Use Remote / Keep Local".
+
+### Differ — Request Identity and Change Classification
+
+`workspaceDiffer.ts` produces a `WorkspaceDiff` with change sets for every domain:
+
+```
+collections, requests, environments,
+globalVariables, collectionVariables, mockRoutes
+```
+
+Requests are matched in two passes:
+
+1. **Primary — by stable `id`**: requests that share the same UUID are compared directly. A change is classified as:
+   - `added` — present in `changed`, absent in `base`
+   - `removed` — present in `base`, absent in `changed`
+   - `modified` — same id, different content
+   - `moved` — same id, different parent collection/folder path
+   - `renamed` — collection-level name change detected via `diffCollectionShapes`
+
+2. **Fallback heuristic** — for requests with mismatched or missing IDs (e.g. after an import from Postman): matches on a normalised key of `method + URL path + name`. If the heuristic finds a pair and their content differs, the result is `modified`. Unmatched items become `added` or `removed`.
+
+### Merge Rules by Domain
+
+#### Requests (`mergeRequestItem`)
+
+For each request modified on both sides, fields are merged independently:
+
+| Field | Auto-merge rule | Conflict type when both sides differ |
+|---|---|---|
+| **Name** | Only one side renamed → take that rename | `rename-vs-rename` |
+| **Body (`raw`)** | Try JSON key-level merge; fall back to line-based LCS | `json-conflict` (JSON) or `json-parse-fallback` / `field-overlap` (text) |
+| **Pre-request script** | Only one side changed → take that change; both changed → line-based merge | `field-overlap` |
+| **Test script** | Same as pre-request script | `field-overlap` |
+| **Headers** | Merged by header key name — non-overlapping key edits always auto-resolve | (no conflict currently produced for headers) |
+
+The merged result starts as a **shallow copy of local** (`merged = { ...local }`). Remote changes are applied only when the local side did not also change that field. This means local is always the default winner for any field not explicitly handled — no data is ever silently discarded from the local side.
+
+**Structural item decisions (`mergeItems`):**
+
+| Scenario | Auto-merge result | Conflict? |
+|---|---|---|
+| Added only by local | Include | No |
+| Added only by remote | Include | No |
+| Deleted by both | Omit | No |
+| Deleted by local, unmodified by remote | Omit | No |
+| Deleted by remote, unmodified by local | Omit | No |
+| **Deleted by local, modified by remote** | Include remote version | Yes — `delete-vs-edit` |
+| **Deleted by remote, modified by local** | Include local version | Yes — `delete-vs-edit` |
+| Present on both sides, both modified | Run `mergeRequestItem` | Yes if fields overlap |
+
+Folders recurse: `mergeItems` is called on `item[]` for every folder node, so the same rules apply at any nesting depth.
+
+#### Body — JSON Structural Merge
+
+When both sides changed `request.body.raw` and all three versions (base, local, remote) parse as valid JSON objects or arrays, Apilix performs a **key-level** three-way merge:
+
+- Keys changed only by local → take local value
+- Keys changed only by remote → take remote value  
+- Keys changed by both → `json-conflict` conflict node (user resolves per-key)
+- Keys added only by local or remote → include
+- Keys deleted by one side, unchanged by other → delete
+
+If any version does not parse as JSON, the merge falls back to **line-based LCS diff**. Non-overlapping changed line ranges are auto-resolved. Overlapping ranges produce a `json-parse-fallback` conflict node with hunk-level navigation in the merge modal.
+
+#### Environments
+
+Merged by environment `_id`. Values are merged by variable key name:
+
+| Scenario | Result |
+|---|---|
+| Key changed only by local | Take local |
+| Key changed only by remote | Take remote |
+| Key changed by both, same value | Take either (auto) |
+| Key changed by both, different values | `field-overlap` conflict on `{envName} — {key}` |
+| Key deleted by one side, unchanged by other | Delete |
+
+Name renames follow the same rule as request names.
+
+#### Global Variables and Collection Variables
+
+Merged as flat key→value maps with the same rule as environment values above.
+
+#### Mock Routes
+
+Merged by route `id`, with `delete-vs-edit` logic equivalent to requests. Route content conflicts are raised as `field-overlap` at the route level (no sub-field merge for routes).
+
+#### Fields Outside the Merge Pipeline
+
+| Field | Strategy | Reason |
+|---|---|---|
+| `cookieJar` | Always keep local | Session-local; cookies are not meaningful across machines |
+| `activeEnvironmentId` | Always keep local | Per-session UI state |
+| `mockCollections` | Always keep local | Rarely edited concurrently |
+| `mockPort` | Take local if changed from base, else take remote | Simple last-writer-wins |
+
+### Snapshot Ring Buffer
+
+After every successful push or pull, Apilix creates a snapshot via `SnapshotEngine.createSnapshot` and stores its ID in `syncMetadata.lastMergeBaseSnapshotId`. Up to **50 snapshots** are kept per workspace (older ones are automatically evicted). The merge pipeline uses this ID to load the base version.
+
+If the snapshot has been evicted (unlikely but possible if a workspace has not synced in a very long time), the base is unavailable and the fallback binary UI is shown.
+
+### Stale-Apply Cycle
+
+```
+User opens merge modal (base = version N)
+     ↓
+Teammate pushes (remote advances to version N+1)
+     ↓
+User clicks Apply Merged
+     ↓
+Provider returns 409 STALE_VERSION
+     ↓
+Apilix fetches version N+1 as new remote
+Re-runs diffWorkspace + mergeWorkspaces (base=N, local=user's local, remote=N+1)
+Reopens merge modal with fresh conflict set
+```
+
+This cycle repeats until the apply succeeds. Because the pipeline always defaults to local values, no local edits are ever lost during a stale-apply recovery.
 
 ---
 

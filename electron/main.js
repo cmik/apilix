@@ -6,6 +6,9 @@ const fs = require('fs');
 const net = require('net');
 
 const isDev = !app.isPackaged;
+// DevTools are always available in dev. In packaged builds they are disabled  
+// by default, with an optional runtime override via DISABLE_DEVTOOLS=0.  
+const devToolsEnabled = isDev || process.env.DISABLE_DEVTOOLS === '0';
 
 let mainWindow = null;
 let serverProcess = null;
@@ -90,6 +93,7 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
+      devTools: devToolsEnabled,
     },
   });
 
@@ -349,7 +353,21 @@ function buildAppMenu() {
       ],
     }] : []),
     { role: 'editMenu' },
-    { role: 'viewMenu' },
+    devToolsEnabled
+      ? { role: 'viewMenu' }
+      : {
+          label: 'View',
+          submenu: [
+            { role: 'reload' },
+            { role: 'forceReload' },
+            { type: 'separator' },
+            { role: 'resetZoom' },
+            { role: 'zoomIn' },
+            { role: 'zoomOut' },
+            { type: 'separator' },
+            { role: 'togglefullscreen' },
+          ],
+        },
     { role: 'windowMenu' },
     {
       label: 'Help',

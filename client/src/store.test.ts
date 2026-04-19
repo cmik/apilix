@@ -726,3 +726,155 @@ describe('workspace transitions reset runner runs', () => {
     expect(next.runnerLoadedRun).toBeNull();
   });
 });
+
+// ─── Workspace data import: CREATE_WORKSPACE vs DUPLICATE_WORKSPACE ───────────
+//
+// These tests pin the behaviour that a workspace data import MUST use
+// DUPLICATE_WORKSPACE (not CREATE_WORKSPACE) so that in-memory state carries
+// the imported data and the debounced persist effect writes the correct content
+// back to disk rather than overwriting it with empty arrays.
+
+describe('workspace data import — action choice determines persisted content', () => {
+  const importedData: WorkspaceData = {
+    collections: [
+      {
+        _id: 'col-imported',
+        info: { name: 'Imported Collection', schema: '' },
+        item: [{ id: 'req-1', name: 'GET /users', request: { method: 'GET', url: 'https://api.example.com/users' } }],
+      },
+    ],
+    environments: [{ _id: 'env-1', name: 'Production', values: [{ key: 'BASE_URL', value: 'https://prod.example.com', enabled: true }] }],
+    activeEnvironmentId: 'env-1',
+    collectionVariables: { 'col-imported': { timeout: '5000' } },
+    globalVariables: { RETRY: '3' },
+    cookieJar: { 'api.example.com': [{ name: 'session', value: 'abc', domain: 'api.example.com', path: '/', expires: null, httpOnly: false, secure: false, sameSite: 'Lax', enabled: true }] },
+    mockCollections: [],
+    mockRoutes: [],
+    mockPort: 4000,
+  };
+
+  it('CREATE_WORKSPACE erases imported data — demonstrates the wrong pattern', () => {
+    // This test documents the bug: dispatching CREATE_WORKSPACE after writing
+    // imported data to disk immediately zeroes out in-memory state. The 300 ms
+    // debounced persist effect will then overwrite the disk file with empty data.
+    const next = appReducer(initialState, { type: 'CREATE_WORKSPACE', payload: workspace });
+
+    expect(next.collections).toEqual([]);
+    expect(next.environments).toEqual([]);
+    expect(next.activeEnvironmentId).toBeNull();
+    expect(next.collectionVariables).toEqual({});
+    expect(next.globalVariables).toEqual({});
+    expect(next.cookieJar).toEqual({});
+    expect(next.mockPort).toBe(3002);
+  });
+
+  it('DUPLICATE_WORKSPACE preserves imported data in memory — the correct pattern', () => {
+    // Dispatching DUPLICATE_WORKSPACE with the import payload keeps all data
+    // fields in state so the debounced persist effect writes the correct content.
+    const next = appReducer(initialState, {
+      type: 'DUPLICATE_WORKSPACE',
+      payload: { workspace, data: importedData },
+    });
+
+    expect(next.activeWorkspaceId).toBe(workspace.id);
+    expect(next.workspaces).toContainEqual(workspace);
+    expect(next.collections).toHaveLength(1);
+    expect(next.collections[0]._id).toBe('col-imported');
+    expect(next.environments).toHaveLength(1);
+    expect(next.environments[0]._id).toBe('env-1');
+    expect(next.activeEnvironmentId).toBe('env-1');
+    expect(next.collectionVariables).toEqual({ 'col-imported': { timeout: '5000' } });
+    expect(next.globalVariables).toEqual({ RETRY: '3' });
+    expect(next.cookieJar).toEqual(importedData.cookieJar);
+    expect(next.mockPort).toBe(4000);
+  });
+
+  it('DUPLICATE_WORKSPACE request items get ensureIds applied', () => {
+    // ensureIds is called inside the DUPLICATE_WORKSPACE case — items without
+    // an id should receive one, items with an id should keep it.
+    const dataWithId: WorkspaceData = {
+      ...emptyWorkspaceData,
+      collections: [
+        {
+          _id: 'col-1',
+          info: { name: 'Col', schema: '' },
+          item: [{ id: 'req-keep', name: 'Keep me', request: { method: 'GET', url: '' } }],
+        },
+      ],
+    };
+    const next = appReducer(initialState, {
+      type: 'DUPLICATE_WORKSPACE',
+      payload: { workspace, data: dataWithId },
+    });
+    expect(next.collections[0].item[0].id).toBe('req-keep');
+  });
+
+  it('after DUPLICATE_WORKSPACE the debounced persist sees non-empty collections', () => {
+    // Simulate the debounced persist snapshot: it reads state.collections after
+    // the dispatch. With DUPLICATE_WORKSPACE this should be the imported list.
+    const next = appReducer(initialState, {
+      type: 'DUPLICATE_WORKSPACE',
+      payload: { workspace, data: importedData },
+    });
+    // The persist effect reads these fields to build its WorkspaceData snapshot:
+    const persistSnapshot: WorkspaceData = {
+      collections: next.collections,
+      environments: next.environments,
+      activeEnvironmentId: next.activeEnvironmentId,
+      collectionVariables: next.collectionVariables,
+      globalVariables: next.globalVariables,
+      cookieJar: next.cookieJar,
+      mockCollections: next.mockCollections,
+      mockRoutes: next.mockRoutes,
+      mockPort: next.mockPort,
+    };
+    // The snapshot that would be written to disk should carry the imported data:
+    expect(persistSnapshot.collections).toHaveLength(1);
+    expect(persistSnapshot.environments).toHaveLength(1);
+    expect(persistSnapshot.globalVariables).toEqual({ RETRY: '3' });
+    expect(persistSnapshot.mockPort).toBe(4000);
+  });
+
+  it('after CREATE_WORKSPACE the debounced persist snapshot is empty — wrong for import', () => {
+    // Documents the data-loss scenario: CREATE_WORKSPACE leaves empty fields,
+    // so the debounced persist will overwrite the imported file with empty data.
+    const next = appReducer(initialState, { type: 'CREATE_WORKSPACE', payload: workspace });
+    const persistSnapshot: WorkspaceData = {
+      collections: next.collections,
+      environments: next.environments,
+      activeEnvironmentId: next.activeEnvironmentId,
+      collectionVariables: next.collectionVariables,
+      globalVariables: next.globalVariables,
+      cookieJar: next.cookieJar,
+      mockCollections: next.mockCollections,
+      mockRoutes: next.mockRoutes,
+      mockPort: next.mockPort,
+    };
+    expect(persistSnapshot.collections).toEqual([]);
+    expect(persistSnapshot.environments).toEqual([]);
+    expect(persistSnapshot.globalVariables).toEqual({});
+  });
+});
+
+// ─── Workspace data import: duplicate-ID guard ────────────────────────────────
+
+describe('workspace data import — duplicate workspace ID', () => {
+  it('DUPLICATE_WORKSPACE with an already-present id adds a second copy to workspaces list', () => {
+    // The duplicate-ID guard lives in handleDataImportConfirm (before dispatch),
+    // not in the reducer. This test documents what the reducer does if the guard
+    // is bypassed — a second workspace with the same id would appear in the list.
+    const existingState: AppState = {
+      ...initialState,
+      workspaces: [{ id: 'w-new', name: 'Existing', createdAt: '2026-01-01T00:00:00Z', type: 'local' }],
+      activeWorkspaceId: 'w-new',
+    };
+    const duplicate: Workspace = { id: 'w-new', name: 'Duplicate', createdAt: '2026-04-01T00:00:00Z', type: 'local' };
+    const next = appReducer(existingState, {
+      type: 'DUPLICATE_WORKSPACE',
+      payload: { workspace: duplicate, data: emptyWorkspaceData },
+    });
+    // Guard must prevent this in UI; reducer does not deduplicate.
+    const count = next.workspaces.filter(w => w.id === 'w-new').length;
+    expect(count).toBe(2);
+  });
+});

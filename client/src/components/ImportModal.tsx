@@ -1,13 +1,13 @@
 import { useState, useRef } from 'react';
-import { useApp, parseCollectionFile, parseEnvironmentFile, generateId } from '../store';
+import { useApp, generateId } from '../store';
 import { parseCurlCommand } from '../utils/curlUtils';
-import { parseHurlFile, HURL_METHOD_REGEX } from '../utils/hurlUtils';
+import { parseHurlFile } from '../utils/hurlUtils';
 import { parseOpenApiSpec } from '../utils/openApiUtils';
 import { parseHarFile } from '../utils/harUtils';
-import { parseWsdlToCollection, isWsdlContent } from '../utils/wsdlUtils';
-import { tryParseInsomniaText } from '../utils/insomniaUtils';
+import { parseWsdlToCollection } from '../utils/wsdlUtils';
 import { fetchWsdl } from '../api';
 import { useToast } from './Toast';
+import { useImportFile } from '../utils/useImportFile';
 import type { CollectionItem, CollectionAuth, CollectionBody } from '../types';
 
 interface ImportModalProps {
@@ -82,6 +82,7 @@ const PASTE_LABELS: Record<PasteFormat, string> = {
 export default function ImportModal({ onClose }: ImportModalProps) {
   const { state, dispatch } = useApp();
   const toast = useToast();
+  const importFile = useImportFile();
   const [tab, setTab] = useState<'file' | 'url' | 'paste'>('file');
   const [pasteFormat, setPasteFormat] = useState<PasteFormat>('json');
   const [pasteText, setPasteText] = useState('');
@@ -97,206 +98,8 @@ export default function ImportModal({ onClose }: ImportModalProps) {
 
   async function parseAndImport(text: string, filename?: string, sourceUrl?: string) {
     setError(null);
-
-    // Detect Insomnia v4 (JSON) or v5 (YAML/JSON) export
-    const insomniaResult = tryParseInsomniaText(text);
-    if (insomniaResult) {
-      try {
-        const { collections, environments } = insomniaResult;
-        collections.forEach(col => dispatch({ type: 'ADD_COLLECTION', payload: col }));
-        environments.forEach(env => dispatch({ type: 'ADD_ENVIRONMENT', payload: env }));
-        toast.success(
-          `Insomnia import: ${collections.length} collection(s), ${environments.length} environment(s).`
-        );
-        onClose();
-      } catch (e) {
-        const msg = `Insomnia parse error: ${(e as Error).message}`;
-        setError(msg); toast.error(msg);
-      }
-      return;
-    }
-
-    // Detect WSDL by filename or content (must come before JSON parsing)
-    if (isWsdlContent(text, filename)) {
-      try {
-        const { collectionName, items } = parseWsdlToCollection(text, sourceUrl);
-        const newColId = generateId();
-        dispatch({
-          type: 'ADD_COLLECTION',
-          payload: {
-            _id: newColId,
-            info: {
-              name: collectionName,
-              schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
-            },
-            item: items,
-          },
-        });
-        const total = items.length;
-        toast.success(`Collection "${collectionName}" with ${total} operation(s) imported from WSDL!`);
-        onClose();
-      } catch (e) {
-        const msg = `WSDL parse error: ${(e as Error).message}`;
-        setError(msg); toast.error(msg);
-      }
-      return;
-    }
-
-    // Detect OpenAPI / Swagger files by extension or content
-    const isOpenApiFile =
-      filename?.toLowerCase().endsWith('.yaml') ||
-      filename?.toLowerCase().endsWith('.yml') ||
-      (filename?.toLowerCase().endsWith('.json') && (() => {
-        try { const j = JSON.parse(text); return !!(j.openapi || j.swagger); } catch { return false; }
-      })());
-
-    if (isOpenApiFile) {
-      try {
-        const { collectionName, items, collectionAuth } = parseOpenApiSpec(text, filename);
-        const newColId = generateId();
-        dispatch({
-          type: 'ADD_COLLECTION',
-          payload: {
-            _id: newColId,
-            info: {
-              name: collectionName,
-              schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
-            },
-            item: items,
-            ...(collectionAuth && { auth: collectionAuth }),
-          },
-        });
-        const total = items.reduce((sum, i) => sum + (i.item ? i.item.length : 1), 0);
-        toast.success(`Collection "${collectionName}" with ${total} request(s) imported!`);
-        onClose();
-      } catch (e) {
-        const msg = `OpenAPI parse error: ${(e as Error).message}`;
-        setError(msg); toast.error(msg);
-      }
-      return;
-    }
-
-    // Detect HAR files by extension or log.entries structure
-    const isHarFile =
-      filename?.toLowerCase().endsWith('.har') ||
-      (!filename && (() => { try { const j = JSON.parse(text); return !!(j?.log?.entries); } catch { return false; } })());
-    if (isHarFile) {
-      try {
-        const items = parseHarFile(text);
-        if (items.length === 0) {
-          setError('No requests found in HAR file.'); toast.error('No requests found in HAR file.');
-          return;
-        }
-        const newColId = generateId();
-        const colName = filename ? filename.replace(/\.har$/i, '') : 'HAR Import';
-        dispatch({
-          type: 'ADD_COLLECTION',
-          payload: {
-            _id: newColId,
-            info: {
-              name: colName,
-              schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
-            },
-            item: items,
-          },
-        });
-        const total = items.reduce((sum, i) => sum + (i.item ? i.item.length : 1), 0);
-        toast.success(`Collection "${colName}" with ${total} request(s) imported!`);
-        onClose();
-      } catch (e) {
-        const msg = `HAR parse error: ${(e as Error).message}`;
-        setError(msg); toast.error(msg);
-      }
-      return;
-    }
-
-    // Detect HURL files by extension or try parsing as HURL first if it looks like one
-    const isHurlFile = filename?.toLowerCase().endsWith('.hurl');
-    if (isHurlFile || (!text.trimStart().startsWith('{') && HURL_METHOD_REGEX.test(text))) {
-      const col = state.collections.find(c => c._id === targetCollectionId);
-      const items = parseHurlFile(text);
-      if (items.length === 0) {
-        if (!isHurlFile) {
-          // Fall through to JSON parsing
-        } else {
-          setError('No valid HURL requests found in file.');
-          return;
-        }
-      } else {
-        if (col) {
-          dispatch({ type: 'UPDATE_COLLECTION', payload: { ...col, item: [...col.item, ...items] } });
-          toast.success(`${items.length} request(s) from HURL file added to "${col.info.name}".`);
-          onClose();
-        } else {
-          // Create a new collection from HURL
-          const newColId = generateId();
-          const colName = filename ? filename.replace(/\.hurl$/i, '') : 'HURL Import';
-          dispatch({
-            type: 'ADD_COLLECTION',
-            payload: {
-              _id: newColId,
-              info: {
-                name: colName,
-                schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
-              },
-              item: items,
-            },
-          });
-          toast.success(`Collection "${colName}" with ${items.length} request(s) imported!`);
-          onClose();
-        }
-        return;
-      }
-    }
-    try {
-      const json = JSON.parse(text);
-      if (json.info && json.item) {
-        const { collection: col, version, validationWarnings } = await parseCollectionFile(json);
-        dispatch({ type: 'ADD_COLLECTION', payload: col });
-        const versionLabel = `Postman Collection v${version}`;
-        if (validationWarnings.length > 0) {
-          toast.warning(`"${col.info.name}" imported as ${versionLabel} with ${validationWarnings.length} schema warning(s):\n• ${validationWarnings.join('\n• ')}`, 8000);
-        } else {
-          toast.success(`"${col.info.name}" imported as ${versionLabel}.`);
-        }
-        onClose();
-      } else if (json.name && Array.isArray(json.values)) {
-        const env = parseEnvironmentFile(json);
-        dispatch({ type: 'ADD_ENVIRONMENT', payload: env });
-        toast.success(`Environment "${env.name}" imported!`);
-        onClose();
-      } else if (json.openapi || json.swagger) {
-        // OpenAPI/Swagger JSON pasted into the paste tab
-        try {
-          const { collectionName, items, collectionAuth } = parseOpenApiSpec(text);
-          const newColId = generateId();
-          dispatch({
-            type: 'ADD_COLLECTION',
-            payload: {
-              _id: newColId,
-              info: {
-                name: collectionName,
-                schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
-              },
-              item: items,
-              ...(collectionAuth && { auth: collectionAuth }),
-            },
-          });
-          const total = items.reduce((sum, i) => sum + (i.item ? i.item.length : 1), 0);
-          toast.success(`Collection "${collectionName}" with ${total} request(s) imported!`);
-          onClose();
-        } catch (e) {
-          const msg = `OpenAPI parse error: ${(e as Error).message}`;
-          setError(msg); toast.error(msg);
-        }
-      } else {
-        const msg = 'Unrecognised format. Expected a Postman Collection v2.0/v2.1, Environment JSON, HURL, or OpenAPI/Swagger spec.';
-        setError(msg); toast.error(msg);
-      }
-    } catch (e) {
-      const msg = `Invalid JSON: ${(e as Error).message}`;
-      setError(msg); toast.error(msg);
-    }
+    const ok = await importFile(text, filename, sourceUrl, targetCollectionId);
+    if (ok) onClose();
   }
 
   function looksLikeWsdlUrl(url: string): boolean {

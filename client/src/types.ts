@@ -492,6 +492,50 @@ export interface SyncConfig {
   readOnly?: boolean;
 }
 
+/** Format version identifier for sync export files. */
+export type SyncExportVersion = '1';
+
+/** Format version identifier for workspace data export files. */
+export type WorkspaceExportVersion = '1';
+
+/**
+ * Portable workspace data package written to / read from a
+ * `*.apilix-workspace.json` file. Contains the full WorkspaceData so it can
+ * be restored as a new workspace on any Apilix instance.
+ */
+export interface WorkspaceExportPackage {
+  /** Sentinel that unambiguously identifies the file format — never changes. */
+  apilixWorkspaceExport: WorkspaceExportVersion;
+  /** ISO-8601 timestamp of when the export was created. */
+  exportedAt: string;
+  workspaceName: string;
+  /** Preserved so re-importing to the same machine can detect duplicates. */
+  workspaceId: string;
+  data: WorkspaceData;
+}
+
+/**
+ * Portable sync configuration package written to / read from a .json file.
+ * The `remoteWorkspaceId` is used as the S3 object key so the importer's
+ * workspace resolves the same remote object without manual key renaming.
+ */
+export interface SyncExportPackage {
+  /** Sentinel so the file is unambiguously identifiable — never changes. */
+  apilixSyncExport: SyncExportVersion;
+  /** UUID identifying the remote S3 object. Never the local workspace ID. */
+  remoteWorkspaceId: string;
+  workspaceName: string;
+  provider: SyncProvider;
+  /** Config fields. When `encrypted === true`, fields listed in `encryptedFields`
+   *  hold base64-encoded values: [12-byte IV || AES-GCM ciphertext]. */
+  config: Record<string, string>;
+  encrypted: boolean;
+  /** Keys within `config` whose values are AES-GCM encrypted. */
+  encryptedFields: string[];
+  /** Base64-encoded 16-byte PBKDF2 salt. Present only when `encrypted === true`. */
+  salt?: string;
+}
+
 export type SyncActivityLevel = 'info' | 'success' | 'warning' | 'error';
 
 export interface SyncActivityEntry {

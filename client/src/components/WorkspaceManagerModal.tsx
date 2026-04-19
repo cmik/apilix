@@ -1,5 +1,17 @@
-import { useState, useEffect, useCallback } from 'react';
-import type { Workspace, WorkspaceData, SyncConfig, SyncProvider, HistoryEntry, SyncMetadata, ConflictPackage, SyncActivityEntry, SyncActivityLevel } from '../types';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import type { Workspace, WorkspaceData, SyncConfig, SyncProvider, HistoryEntry, SyncMetadata, ConflictPackage, SyncActivityEntry, SyncActivityLevel, SyncExportPackage, WorkspaceExportPackage } from '../types';
+import {
+  buildSyncExportPackage,
+  parseSyncExportPackage,
+  decryptSyncExportConfig,
+  downloadJsonFile,
+} from '../utils/syncExportUtils';
+import {
+  buildWorkspaceExportPackage,
+  parseWorkspaceExportPackage,
+  isWorkspaceExportPackage,
+} from '../utils/workspaceExportUtils';
 import { useApp, generateId } from '../store';
 import * as StorageDriver from '../utils/storageDriver';
 import {
@@ -62,6 +74,8 @@ interface Props {
 export default function WorkspaceManagerModal({ onClose }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>('workspaces');
   const visibleTabs: Tab[] = ['workspaces', 'sync', 'history'];
+  const [modalDragging, setModalDragging] = useState(false);
+  const [droppedFile, setDroppedFile] = useState<File | null>(null);
 
   useEffect(() => {
     if (!visibleTabs.includes(activeTab)) {
@@ -69,9 +83,34 @@ export default function WorkspaceManagerModal({ onClose }: Props) {
     }
   }, [activeTab, visibleTabs]);
 
+  function handleModalDragOver(e: React.DragEvent) {
+    if (activeTab !== 'workspaces') return;
+    e.preventDefault();
+    setModalDragging(true);
+  }
+
+  function handleModalDragLeave(e: React.DragEvent) {
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setModalDragging(false);
+  }
+
+  function handleModalDrop(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setModalDragging(false);
+    if (activeTab !== 'workspaces') return;
+    const file = e.dataTransfer.files[0];
+    if (file) setDroppedFile(file);
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-[640px] max-h-[80vh] flex flex-col overflow-hidden">
+      <div
+        className="relative bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-[640px] max-h-[80vh] flex flex-col overflow-hidden"
+        onDragOver={handleModalDragOver}
+        onDragLeave={handleModalDragLeave}
+        onDrop={handleModalDrop}
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-800">
           <h2 className="text-sm font-semibold text-slate-200">Manage Workspaces</h2>
@@ -96,11 +135,26 @@ export default function WorkspaceManagerModal({ onClose }: Props) {
         </div>
 
         {/* Tab content */}
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="flex-1 overflow-y-auto p-4" data-workspaces-scroll>
           {activeTab === 'workspaces' && <WorkspacesTab onClose={onClose} />}
           {activeTab === 'sync' && <SyncTab />}
           {activeTab === 'history' && <HistoryTab />}
         </div>
+        {activeTab === 'workspaces' && (
+          <ImportPanel
+            droppedFile={droppedFile}
+            onDropConsumed={() => setDroppedFile(null)}
+          />
+        )}
+
+        {/* Full-modal drag overlay */}
+        {activeTab === 'workspaces' && modalDragging && (
+          <div className="absolute inset-0 rounded-xl z-50 flex flex-col items-center justify-center gap-3 bg-slate-900/90 border-2 border-dashed border-orange-500/60 pointer-events-none">
+            <span className="text-4xl leading-none text-orange-400">↓</span>
+            <p className="text-sm font-medium text-orange-300">Drop to import</p>
+            <p className="text-xs text-slate-400">Workspace export or sync config</p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -117,6 +171,9 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
   const [syncedIds, setSyncedIds] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
+  const [exportError, setExportError] = useState('');
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [menuRect, setMenuRect] = useState<DOMRect | null>(null);
 
   useEffect(() => {
     StorageDriver.readSyncConfigStore().then(store => {
@@ -124,10 +181,31 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
     });
   }, [state.workspaces, state.syncConfigVersion]);
 
-  async function handleSwitch(workspace: Workspace) {
-    if (workspace.id === state.activeWorkspaceId) return;
+  useEffect(() => {
+    if (!openMenuId) return;
+    function closeMenu() { setOpenMenuId(null); setMenuRect(null); }
+    function handleOutside(e: MouseEvent) {
+      const target = e.target as Node;
+      const menus = document.querySelectorAll('[data-workspace-menu]');
+      for (const el of menus) {
+        if (el.contains(target)) return;
+      }
+      closeMenu();
+    }
+    document.addEventListener('mousedown', handleOutside);
+    // Close if the scroll container scrolls (menu would drift from anchor)
+    const scrollEl = document.querySelector('[data-workspaces-scroll]');
+    scrollEl?.addEventListener('scroll', closeMenu);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      scrollEl?.removeEventListener('scroll', closeMenu);
+    };
+  }, [openMenuId]);
+
+  async function doSwitch(workspace: Workspace): Promise<boolean> {
+    if (workspace.id === state.activeWorkspaceId) return false;
     const { decision, summary } = await requestWorkspaceSwitchGuard();
-    if (decision === 'cancel') return;
+    if (decision === 'cancel') return false;
     if (decision === 'save-and-switch') {
       const saveResult = await saveExistingRequestTabs(summary.existingDirtyTabIds);
       // Flush updated collections to disk immediately — the debounced persist effect
@@ -147,7 +225,16 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
     }
     const data = await StorageDriver.readWorkspace(workspace.id) ?? emptyWorkspaceData();
     dispatch({ type: 'SWITCH_WORKSPACE', payload: { workspace, data } });
-    onClose();
+    return true;
+  }
+
+  async function handleSwitch(workspace: Workspace) {
+    await doSwitch(workspace);
+  }
+
+  async function handleSwitchAndClose(workspace: Workspace) {
+    const switched = await doSwitch(workspace);
+    if (switched) onClose();
   }
 
   function startRename(w: Workspace) {
@@ -224,6 +311,37 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
     StorageDriver.writeManifest({ workspaces: updated, activeWorkspaceId: state.activeWorkspaceId });
   }
 
+  async function handleExportWorkspace(w: Workspace) {
+    let data: WorkspaceData;
+    if (w.id === state.activeWorkspaceId) {
+      data = {
+        collections: state.collections,
+        environments: state.environments,
+        activeEnvironmentId: state.activeEnvironmentId,
+        collectionVariables: state.collectionVariables,
+        globalVariables: state.globalVariables,
+        cookieJar: state.cookieJar,
+        mockCollections: state.mockCollections,
+        mockRoutes: state.mockRoutes,
+        mockPort: state.mockPort,
+      };
+    } else {
+      try {
+        data = await StorageDriver.readWorkspace(w.id) ?? {
+          collections: [], environments: [], activeEnvironmentId: null,
+          collectionVariables: {}, globalVariables: {}, cookieJar: {},
+          mockCollections: [], mockRoutes: [], mockPort: 3002,
+        };
+      } catch (err: unknown) {
+        setExportError(`Failed to read workspace data: ${(err as Error).message}`);
+        return;
+      }
+    }
+    const pkg = buildWorkspaceExportPackage(w.name, w.id, data);
+    const safeName = w.name.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+    downloadJsonFile(`apilix-workspace-${safeName}.json`, pkg);
+  }
+
   async function handleCreate() {
     const name = newName.trim() || 'New Workspace';
     const newWorkspace: Workspace = {
@@ -256,18 +374,22 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
       {state.workspaces.map(w => (
         <div
           key={w.id}
-          className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors ${
+          role="button"
+          tabIndex={0}
+          onClick={() => handleSwitch(w)}
+          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSwitch(w); } }}
+          className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors cursor-pointer ${
             w.id === state.activeWorkspaceId
               ? 'border-orange-500/40 bg-slate-800/60'
               : 'border-slate-800 bg-slate-800/20 hover:bg-slate-800/40'
           }`}
         >
           {/* Color picker */}
-          <div className="flex gap-0.5">
+          <div className="flex gap-0.5" onClick={e => e.stopPropagation()}>
             {PRESET_COLORS.map(c => (
               <button
                 key={c}
-                onClick={() => setColor(w.id, c)}
+                onClick={e => { e.stopPropagation(); setColor(w.id, c); }}
                 className={`w-3 h-3 rounded-full border transition-transform hover:scale-125 ${(w.color ?? '#f97316') === c ? 'border-white scale-110' : 'border-transparent'}`}
                 style={{ background: c }}
               />
@@ -275,7 +397,7 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
           </div>
 
           {/* Name / rename input */}
-          <div className="flex-1 min-w-0">
+          <div className="flex-1 min-w-0" onClick={e => e.stopPropagation()}>
             {editingId === w.id ? (
               <input
                 autoFocus
@@ -287,7 +409,7 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
               />
             ) : (
               <button
-                onClick={() => handleSwitch(w)}
+                onClick={e => { e.stopPropagation(); handleSwitch(w); }}
                 className="text-sm font-medium text-slate-200 truncate text-left w-full hover:text-orange-400 transition-colors flex items-center gap-1.5"
               >
                 <span className="truncate">{w.name}</span>
@@ -300,28 +422,111 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
                 {w.type === 'team' && w.role && <span className="ml-1 text-[10px] text-slate-500 shrink-0">{w.role}</span>}
               </button>
             )}
-            <p className="text-[10px] text-slate-600 mt-0.5">{new Date(w.createdAt).toLocaleDateString()}</p>
+            <p className="text-[10px] text-slate-600 mt-0.5">
+              {new Date(w.createdAt).toLocaleDateString()}
+              {w.id === state.activeWorkspaceId && (
+                <span className="ml-2 font-mono text-slate-600 select-all">{w.id}</span>
+              )}
+            </p>
           </div>
 
-          {/* Actions */}
-          <div className="flex items-center gap-1 shrink-0">
-            <button onClick={() => startRename(w)} title="Rename" className="text-slate-500 hover:text-slate-300 px-1 text-xs transition-colors">✏</button>
-            <button onClick={() => handleDuplicate(w)} title="Duplicate" className="text-slate-500 hover:text-slate-300 px-1 text-xs transition-colors">⧉</button>
+          {/* Actions dropdown */}
+          <div
+            className="relative shrink-0"
+            data-workspace-menu="true"
+            onClick={e => e.stopPropagation()}
+          >
             <button
-              onClick={() => { setConfirmDelete(null); setConfirmClear(w.id); }}
-              title="Empty workspace (remove all collections)"
-              className="text-slate-500 hover:text-orange-400 px-1 text-xs transition-colors"
+              onClick={e => {
+                if (openMenuId === w.id) { setOpenMenuId(null); setMenuRect(null); return; }
+                setMenuRect((e.currentTarget as HTMLElement).getBoundingClientRect());
+                setOpenMenuId(w.id);
+              }}
+              aria-label="Workspace actions"
+              aria-expanded={openMenuId === w.id}
+              aria-haspopup="menu"
+              onKeyDown={e => { if (e.key === 'Escape') { setOpenMenuId(null); setMenuRect(null); } }}
+              className="flex items-center justify-center w-7 h-7 rounded text-slate-500 hover:text-slate-200 hover:bg-slate-700/60 transition-colors text-sm font-bold tracking-widest"
             >
-              ⊘
+              ···
             </button>
-            <button
-              onClick={() => { setConfirmClear(null); setConfirmDelete(w.id); }}
-              title="Delete"
-              disabled={state.workspaces.length <= 1}
-              className="text-slate-500 hover:text-red-400 px-1 text-xs transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-            >
-              🗑
-            </button>
+
+            {openMenuId === w.id && menuRect && createPortal(
+              <div
+                data-workspace-menu="true"
+                role="menu"
+                style={{
+                  position: 'fixed',
+                  right: window.innerWidth - menuRect.right,
+                  ...(window.innerHeight - menuRect.bottom >= 220
+                    ? { top: menuRect.bottom + 4 }
+                    : { bottom: window.innerHeight - menuRect.top + 4 }),
+                  zIndex: 9999,
+                }}
+                className="min-w-[210px] bg-slate-800 border border-slate-700 rounded-lg shadow-2xl py-1 text-xs"
+                onKeyDown={e => { if (e.key === 'Escape') { setOpenMenuId(null); setMenuRect(null); } }}
+              >
+                {w.id !== state.activeWorkspaceId && (
+                  <button
+                    role="menuitem"
+                    onClick={() => { setOpenMenuId(null); handleSwitchAndClose(w); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-slate-300 hover:bg-slate-700/60 hover:text-orange-300 transition-colors"
+                  >
+                    <span className="w-4 shrink-0 text-center">↵</span>
+                    Switch to workspace and close
+                  </button>
+                )}
+
+                <button
+                  role="menuitem"
+                  onClick={() => { setOpenMenuId(null); startRename(w); }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-slate-300 hover:bg-slate-700/60 hover:text-slate-100 transition-colors"
+                >
+                  <span className="w-4 shrink-0 text-center">✏</span>
+                  Rename
+                </button>
+
+                <button
+                  role="menuitem"
+                  onClick={() => { setOpenMenuId(null); handleDuplicate(w); }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-slate-300 hover:bg-slate-700/60 hover:text-slate-100 transition-colors"
+                >
+                  <span className="w-4 shrink-0 text-center">⧉</span>
+                  Duplicate
+                </button>
+
+                <button
+                  role="menuitem"
+                  onClick={() => { setOpenMenuId(null); handleExportWorkspace(w); }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-slate-300 hover:bg-slate-700/60 hover:text-slate-100 transition-colors"
+                >
+                  <span className="w-4 shrink-0 text-center">⬇</span>
+                  Export workspace data
+                </button>
+
+                <div className="border-t border-slate-700 my-1" />
+
+                <button
+                  role="menuitem"
+                  onClick={() => { setOpenMenuId(null); setConfirmDelete(null); setConfirmClear(w.id); }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-slate-300 hover:bg-slate-700/60 hover:text-orange-400 transition-colors"
+                >
+                  <span className="w-4 shrink-0 text-center">⊘</span>
+                  Delete all collections
+                </button>
+
+                <button
+                  role="menuitem"
+                  onClick={() => { setOpenMenuId(null); setConfirmClear(null); setConfirmDelete(w.id); }}
+                  disabled={state.workspaces.length <= 1}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-slate-300 hover:bg-slate-700/60 hover:text-red-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <span className="w-4 shrink-0 text-center">🗑</span>
+                  Delete workspace
+                </button>
+              </div>,
+              document.body
+            )}
           </div>
         </div>
       ))}
@@ -345,6 +550,14 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
             <button onClick={() => handleClearCollections(confirmClear)} className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded transition-colors">Empty workspace</button>
             <button onClick={() => setConfirmClear(null)} className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors">Cancel</button>
           </div>
+        </div>
+      )}
+
+      {/* Export error */}
+      {exportError && (
+        <div className="mt-2 flex items-start gap-2 px-3 py-2 bg-red-950/40 border border-red-800/50 rounded-lg text-xs text-red-400">
+          <span className="flex-1">{exportError}</span>
+          <button onClick={() => setExportError('')} className="text-red-400/60 hover:text-red-300 shrink-0 leading-none" aria-label="Dismiss">✕</button>
         </div>
       )}
 
@@ -376,6 +589,220 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
           </button>
         )}
       </div>
+
+    </div>
+  );
+}
+
+// ─── Import Panel (fixed footer of the workspaces tab) ───────────────────────
+
+type ImportCandidate =
+  | { kind: 'workspace'; pkg: WorkspaceExportPackage }
+  | { kind: 'sync';      pkg: SyncExportPackage };
+
+interface ImportPanelProps {
+  droppedFile: File | null;
+  onDropConsumed: () => void;
+}
+
+function ImportPanel({ droppedFile, onDropConsumed }: ImportPanelProps) {
+  const { state, dispatch } = useApp();
+  const [candidate, setCandidate] = useState<ImportCandidate | null>(null);
+  const [importPassphrase, setImportPassphrase] = useState('');
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  async function handleFile(file: File) {
+    setError('');
+    setSuccess('');
+    setCandidate(null);
+    setImportPassphrase('');
+    try {
+      const raw = JSON.parse(await file.text());
+      if (isWorkspaceExportPackage(raw)) {
+        setCandidate({ kind: 'workspace', pkg: parseWorkspaceExportPackage(raw) });
+      } else if (
+        raw &&
+        typeof raw === 'object' &&
+        !Array.isArray(raw) &&
+        (raw as Record<string, unknown>).apilixSyncExport !== undefined
+      ) {
+        setCandidate({ kind: 'sync', pkg: parseSyncExportPackage(raw) });
+      } else {
+        throw new Error('Unrecognized file format. Select a file exported from Apilix (workspace data or sync config).');
+      }
+    } catch (err: unknown) {
+      setError((err as Error).message);
+    }
+  }
+
+  useEffect(() => {
+    if (droppedFile) {
+      handleFile(droppedFile);
+      onDropConsumed();
+    }
+  }, [droppedFile]);
+
+  async function handleWorkspaceImportConfirm() {
+    if (!candidate || candidate.kind !== 'workspace') return;
+    const pkg = candidate.pkg;
+    setError('');
+    if (state.workspaces.some(w => w.id === pkg.workspaceId)) {
+      setError('A workspace with this ID already exists.');
+      return;
+    }
+    const newWorkspace: Workspace = {
+      id: pkg.workspaceId,
+      name: pkg.workspaceName,
+      color: PRESET_COLORS[state.workspaces.length % PRESET_COLORS.length],
+      createdAt: new Date().toISOString(),
+      type: 'local',
+    };
+    await StorageDriver.writeWorkspace(newWorkspace.id, pkg.data);
+    dispatch({ type: 'DUPLICATE_WORKSPACE', payload: { workspace: newWorkspace, data: pkg.data } });
+    await StorageDriver.writeManifest({ workspaces: [...state.workspaces, newWorkspace], activeWorkspaceId: state.activeWorkspaceId });
+    const colCount = pkg.data.collections.length;
+    const envCount = pkg.data.environments.length;
+    setCandidate(null);
+    setSuccess(`Workspace "${newWorkspace.name}" imported with ${colCount} collection(s) and ${envCount} environment(s).`);
+  }
+
+  async function handleSyncImportConfirm() {
+    if (!candidate || candidate.kind !== 'sync') return;
+    const pkg = candidate.pkg;
+    setError('');
+    let config: Record<string, string>;
+    try {
+      config = pkg.encrypted
+        ? await decryptSyncExportConfig(pkg, importPassphrase)
+        : { ...pkg.config };
+    } catch (err: unknown) {
+      setError((err as Error).message);
+      return;
+    }
+    const newWorkspace: Workspace = {
+      id: generateId(),
+      name: pkg.workspaceName,
+      color: PRESET_COLORS[state.workspaces.length % PRESET_COLORS.length],
+      createdAt: new Date().toISOString(),
+      type: 'local',
+    };
+    const emptyData = emptyWorkspaceData();
+    await StorageDriver.writeWorkspace(newWorkspace.id, emptyData);
+    await StorageDriver.writeSyncConfig(newWorkspace.id, pkg.provider, config, undefined, false);
+    dispatch({ type: 'CREATE_WORKSPACE', payload: newWorkspace });
+    await StorageDriver.writeManifest({ workspaces: [...state.workspaces, newWorkspace], activeWorkspaceId: state.activeWorkspaceId });
+    dispatch({ type: 'BUMP_SYNC_CONFIG_VERSION' });
+    setCandidate(null);
+    setImportPassphrase('');
+    setSuccess(`Workspace "${newWorkspace.name}" created. Switch to it, then open the Sync tab and click Pull ↓ to load data from ${pkg.provider.toUpperCase()}.`);
+  }
+
+  return (
+    <div className="border-t border-slate-700 px-4 pb-4 pt-3 shrink-0">
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".json,application/json"
+        className="hidden"
+        onChange={e => {
+          const file = e.target.files?.[0];
+          if (fileRef.current) fileRef.current.value = '';
+          if (file) handleFile(file);
+        }}
+      />
+
+      {candidate ? (
+        <div className="p-3 bg-slate-800/60 border border-slate-700 rounded-lg space-y-3">
+          {candidate.kind === 'workspace' ? (
+            <>
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-slate-200">{candidate.pkg.workspaceName}</p>
+                <p className="text-[10px] text-slate-500">
+                  Exported: <span className="text-slate-300">{new Date(candidate.pkg.exportedAt).toLocaleString()}</span>
+                  {' · '}{candidate.pkg.data.collections.length} collection(s)
+                  {' · '}{candidate.pkg.data.environments.length} environment(s)
+                </p>
+              </div>
+              {error && <p className="text-xs text-red-400 bg-red-950/30 border border-red-800/40 rounded px-2 py-1.5">{error}</p>}
+              <div className="flex gap-2">
+                <button
+                  onClick={handleWorkspaceImportConfirm}
+                  className="flex-1 py-1.5 text-xs font-medium bg-orange-600 hover:bg-orange-500 text-white rounded transition-colors"
+                >
+                  Import workspace
+                </button>
+                <button
+                  onClick={() => { setCandidate(null); setError(''); }}
+                  className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 rounded transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-slate-200">{candidate.pkg.workspaceName}</p>
+                <p className="text-[10px] text-slate-500">
+                  Provider: <span className="text-slate-300">{candidate.pkg.provider.toUpperCase()}</span>
+                  {' · '}Remote ID: <span className="font-mono text-slate-400">{candidate.pkg.remoteWorkspaceId.slice(0, 12)}…</span>
+                  {candidate.pkg.encrypted && <span className="ml-1 text-yellow-400"> 🔒 encrypted</span>}
+                </p>
+              </div>
+              {candidate.pkg.encrypted && (
+                <div>
+                  <label className="block text-[11px] text-slate-500 mb-1">Passphrase</label>
+                  <input
+                    type="password"
+                    autoFocus
+                    value={importPassphrase}
+                    onChange={e => setImportPassphrase(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') handleSyncImportConfirm(); }}
+                    placeholder="Enter the passphrase used during export"
+                    className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-orange-500 placeholder:text-slate-600"
+                  />
+                </div>
+              )}
+              {error && <p className="text-xs text-red-400 bg-red-950/30 border border-red-800/40 rounded px-2 py-1.5">{error}</p>}
+              <div className="flex gap-2">
+                <button
+                  onClick={handleSyncImportConfirm}
+                  className="flex-1 py-1.5 text-xs font-medium bg-orange-600 hover:bg-orange-500 text-white rounded transition-colors"
+                >
+                  Create workspace
+                </button>
+                <button
+                  onClick={() => { setCandidate(null); setImportPassphrase(''); setError(''); }}
+                  className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 rounded transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      ) : (
+        <div
+          role="button"
+          tabIndex={0}
+          aria-label="Import workspace file — click to browse or drag a file here"
+          onClick={() => { setError(''); fileRef.current?.click(); }}
+          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileRef.current?.click(); } }}
+          className="flex items-center justify-center gap-2 px-3 py-3 rounded-lg border border-dashed border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-500 transition-colors cursor-pointer select-none"
+        >
+          <span className="text-base leading-none">↑</span>
+          <span className="text-sm">Import workspace file</span>
+        </div>
+      )}
+
+      {error && !candidate && (
+        <p className="mt-2 text-xs text-red-400 bg-red-950/30 border border-red-800/40 rounded px-3 py-2">{error}</p>
+      )}
+      {success && (
+        <p className="mt-2 text-xs text-green-300 bg-green-950/30 border border-green-800/40 rounded px-3 py-2">{success}</p>
+      )}
     </div>
   );
 }
@@ -395,6 +822,86 @@ export async function cloneWorkspaceSyncConfig(sourceWorkspaceId: string, target
     srcSync.readOnly,
   );
   return true;
+}
+
+// ─── Export Panel (sub-component used by SyncTab) ────────────────────────────
+
+interface ExportPanelProps {
+  workspaceId: string;
+  provider: SyncProvider;
+  fields: Record<string, string>;
+  workspaceName: string;
+  exportEncrypt: boolean;
+  setExportEncrypt: (v: boolean) => void;
+  exportPassphrase: string;
+  setExportPassphrase: (v: string) => void;
+  exportStatus: string;
+  setExportStatus: (v: string) => void;
+}
+
+function ExportPanel({
+  workspaceId, provider, fields, workspaceName,
+  exportEncrypt, setExportEncrypt,
+  exportPassphrase, setExportPassphrase,
+  exportStatus, setExportStatus,
+}: ExportPanelProps) {
+  async function handleDownload() {
+    setExportStatus('');
+    const passphrase = exportEncrypt ? exportPassphrase.trim() : undefined;
+    if (exportEncrypt && !passphrase) {
+      setExportStatus('Enter a passphrase, or uncheck the encryption option.');
+      return;
+    }
+    const pkg = await buildSyncExportPackage(workspaceName, provider, fields, passphrase);
+    const safeName = workspaceName.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+    downloadJsonFile(`apilix-sync-${safeName}.json`, pkg);
+    setExportPassphrase('');
+    setExportStatus('Downloaded.');
+  }
+
+  return (
+    <div className="space-y-2.5 p-3 bg-slate-800/40 border border-slate-700 rounded-lg">
+      <div className="flex items-center gap-2">
+        <input
+          id={`export-encrypt-${workspaceId}`}
+          type="checkbox"
+          checked={exportEncrypt}
+          onChange={e => setExportEncrypt(e.target.checked)}
+          className="accent-orange-500 cursor-pointer"
+        />
+        <label htmlFor={`export-encrypt-${workspaceId}`} className="text-xs text-slate-300 cursor-pointer">
+          Encrypt credentials with a passphrase <span className="text-slate-500">(recommended)</span>
+        </label>
+      </div>
+      {exportEncrypt && (
+        <div>
+          <label className="block text-[11px] text-slate-500 mb-1">Passphrase</label>
+          <input
+            type="password"
+            value={exportPassphrase}
+            onChange={e => setExportPassphrase(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handleDownload(); }}
+            placeholder="Secret passphrase for the recipient"
+            className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-orange-500 placeholder:text-slate-600"
+          />
+        </div>
+      )}
+      {!exportEncrypt && (
+        <p className="text-[10px] text-yellow-400 bg-yellow-950/30 border border-yellow-800/40 rounded px-2 py-1.5">
+          ⚠ Credentials will be stored in plaintext in the exported file.
+        </p>
+      )}
+      {exportStatus && (
+        <p className="text-[10px] text-green-400">{exportStatus}</p>
+      )}
+      <button
+        onClick={handleDownload}
+        className="w-full py-1.5 text-xs font-medium bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors"
+      >
+        Download JSON ↓
+      </button>
+    </div>
+  );
 }
 
 // ─── Sync Tab ─────────────────────────────────────────────────────────────────
@@ -468,6 +975,13 @@ function SyncTab() {
   const [conflictPackage, setConflictPackage] = useState<ConflictPackage | null>(null);
   const [activity, setActivity] = useState<SyncActivityEntry[]>([]);
   const [pendingPushConfirm, setPendingPushConfirm] = useState<{ message: string; resolve: (v: boolean) => void } | null>(null);
+  const [showExport, setShowExport] = useState(false);
+  const [exportEncrypt, setExportEncrypt] = useState(true);
+  const [exportPassphrase, setExportPassphrase] = useState('');
+  const [exportStatus, setExportStatus] = useState('');
+
+  // Reset export panel when active workspace changes
+  useEffect(() => { setShowExport(false); setExportPassphrase(''); setExportStatus(''); }, [workspaceId]);
 
   // Load persisted sync config on mount / workspace change
   useEffect(() => {
@@ -481,7 +995,12 @@ function SyncTab() {
         // Migrate legacy 'minio' provider to 's3' — the unified adapter accepts
         // the 'endpoint' field for S3-compatible services.
         const loadedProvider: SyncProvider = cfg.provider === 'minio' ? 's3' : cfg.provider as SyncProvider;
-        const loadedConfig = cfg.config;
+        const rawConfig = cfg.config;
+        // Backward compat: inject remoteWorkspaceId for existing S3/MinIO configs that predate the feature
+        const loadedConfig =
+          (loadedProvider === 's3' || loadedProvider === 'minio') && !rawConfig.remoteWorkspaceId
+            ? { ...rawConfig, remoteWorkspaceId: workspaceId }
+            : rawConfig;
         setProvider(loadedProvider);
         setFields(loadedConfig);
         setProviderDrafts(prev => ({
@@ -491,7 +1010,12 @@ function SyncTab() {
         setSyncMetadata(cfg.metadata ?? (cfg.lastSynced ? { lastSyncedAt: cfg.lastSynced } : undefined));
         setReadOnly(cfg.readOnly === true);
       } else {
-        setFields({});
+        // No saved config — seed remoteWorkspaceId for S3/MinIO so the export
+        // button always has a valid ID ready before the user saves config.
+        const initialFields: Record<string, string> =
+          !isBrowserMode ? { remoteWorkspaceId: generateId() } : {};
+        setFields(initialFields);
+        setProviderDrafts(prev => ({ ...prev, s3: initialFields, minio: initialFields }));
         setSyncMetadata(undefined);
         setReadOnly(false);
       }
@@ -565,12 +1089,15 @@ function SyncTab() {
     setProvider(prevProvider => {
       if (prevProvider === nextProvider) return prevProvider;
       setProviderDrafts(drafts => {
-        const nextDrafts = {
-          ...drafts,
-          [prevProvider]: fields,
-        };
-        setFields(nextDrafts[nextProvider] ?? {});
-        return nextDrafts;
+        const saved = { ...drafts, [prevProvider]: fields };
+        let nextFields = saved[nextProvider] ?? {};
+        // Auto-generate remoteWorkspaceId for new S3/MinIO configurations
+        if ((nextProvider === 's3' || nextProvider === 'minio') && !nextFields.remoteWorkspaceId) {
+          nextFields = { ...nextFields, remoteWorkspaceId: generateId() };
+          saved[nextProvider] = nextFields;
+        }
+        setFields(nextFields);
+        return saved;
       });
       setConflict(null);
       setConflictPackage(null);
@@ -818,6 +1345,28 @@ function SyncTab() {
             />
           </div>
         ))}
+        {/* Remote Workspace ID — S3/MinIO only, read-only, used as S3 object key */}
+        {(provider === 's3' || provider === 'minio') && fields.remoteWorkspaceId && (
+          <div>
+            <label className="block text-[11px] text-slate-500 mb-1">
+              Remote Workspace ID <span className="text-slate-600">(read‑only · used as S3 object key)</span>
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                readOnly
+                value={fields.remoteWorkspaceId}
+                className="flex-1 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-xs font-mono text-slate-400 outline-none cursor-default select-all"
+              />
+              <button
+                type="button"
+                onClick={() => navigator.clipboard.writeText(fields.remoteWorkspaceId)}
+                className="px-2 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 rounded transition-colors"
+              >
+                Copy
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <button
@@ -927,6 +1476,32 @@ function SyncTab() {
       >
         Import once (don't save config) ↓
       </button>
+
+      {/* Export sync config — S3 / MinIO only */}
+      {(provider === 's3' || provider === 'minio') && (
+        <div className="space-y-2 pt-1 border-t border-slate-800">
+          <button
+            onClick={() => { setShowExport(v => !v); setExportStatus(''); }}
+            className="w-full text-left text-xs text-slate-500 hover:text-slate-300 transition-colors"
+          >
+            {showExport ? '▲' : '▶'} Share sync config with a teammate
+          </button>
+          {showExport && (
+            <ExportPanel
+              workspaceId={workspaceId}
+              provider={provider}
+              fields={fields}
+              workspaceName={state.workspaces.find(w => w.id === workspaceId)?.name ?? 'workspace'}
+              exportEncrypt={exportEncrypt}
+              setExportEncrypt={setExportEncrypt}
+              exportPassphrase={exportPassphrase}
+              setExportPassphrase={setExportPassphrase}
+              exportStatus={exportStatus}
+              setExportStatus={setExportStatus}
+            />
+          )}
+        </div>
+      )}
 
         <div className="flex items-center justify-between gap-3">
           <span className="text-xs font-medium text-slate-300">Recent sync activity</span>
