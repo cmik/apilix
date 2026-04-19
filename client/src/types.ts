@@ -516,13 +516,14 @@ export interface WorkspaceExportPackage {
 
 /**
  * Portable sync configuration package written to / read from a .json file.
- * The `workspaceId` matches the S3 object key so the importer's workspace
- * resolves the same remote object without manual key renaming.
+ * The `remoteWorkspaceId` is used as the S3 object key so the importer's
+ * workspace resolves the same remote object without manual key renaming.
  */
 export interface SyncExportPackage {
   /** Sentinel so the file is unambiguously identifiable — never changes. */
   apilixSyncExport: SyncExportVersion;
-  workspaceId: string;
+  /** UUID identifying the remote S3 object. Never the local workspace ID. */
+  remoteWorkspaceId: string;
   workspaceName: string;
   provider: SyncProvider;
   /** Config fields. When `encrypted === true`, fields listed in `encryptedFields`

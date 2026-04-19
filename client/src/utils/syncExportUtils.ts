@@ -89,14 +89,14 @@ export async function decryptField(encoded: string, key: CryptoKey): Promise<str
 /**
  * Build a portable sync export package.
  *
- * @param workspaceId   Local workspace UUID (determines S3 object key).
  * @param workspaceName Human-readable name embedded in the file.
  * @param provider      Sync provider (e.g. 's3').
- * @param config        Provider config fields (may contain secrets).
+ * @param config        Provider config fields (may contain secrets). Must include
+ *                      `remoteWorkspaceId` for S3/MinIO so teammates resolve the
+ *                      same object key without needing the local workspace ID.
  * @param passphrase    When provided, encrypts all secret fields for this provider.
  */
 export async function buildSyncExportPackage(
-  workspaceId: string,
   workspaceName: string,
   provider: SyncProvider,
   config: Record<string, string>,
@@ -118,7 +118,7 @@ export async function buildSyncExportPackage(
     if (encryptedFields.length > 0) {
       return {
         apilixSyncExport: '1',
-        workspaceId,
+        remoteWorkspaceId: config.remoteWorkspaceId ?? '',
         workspaceName,
         provider,
         config: encryptedConfig,
@@ -131,7 +131,7 @@ export async function buildSyncExportPackage(
 
   return {
     apilixSyncExport: '1',
-    workspaceId,
+    remoteWorkspaceId: config.remoteWorkspaceId ?? '',
     workspaceName,
     provider,
     config: { ...config },
@@ -149,13 +149,17 @@ export function parseSyncExportPackage(raw: unknown): SyncExportPackage {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error('Invalid sync export file — expected a JSON object');
   }
-  const obj = raw as Record<string, unknown>;
+  let obj = raw as Record<string, unknown>;
 
   if (obj.apilixSyncExport !== '1') {
     throw new Error('Invalid sync export file — missing or unsupported format marker');
   }
-  if (typeof obj.workspaceId !== 'string' || !obj.workspaceId) {
-    throw new Error('Invalid sync export file — missing workspaceId');
+  // Backward compat: files exported before remoteWorkspaceId was introduced used workspaceId
+  if (!obj.remoteWorkspaceId && typeof obj.workspaceId === 'string') {
+    obj = { ...obj, remoteWorkspaceId: obj.workspaceId };
+  }
+  if (typeof obj.remoteWorkspaceId !== 'string' || !obj.remoteWorkspaceId) {
+    throw new Error('Invalid sync export file — missing remoteWorkspaceId');
   }
   if (typeof obj.workspaceName !== 'string' || !obj.workspaceName) {
     throw new Error('Invalid sync export file — missing workspaceName');
@@ -210,10 +214,10 @@ export function parseSyncExportPackage(raw: unknown): SyncExportPackage {
 
   return {
     apilixSyncExport: '1',
-    workspaceId: obj.workspaceId as string,
+    remoteWorkspaceId: obj.remoteWorkspaceId as string,
     workspaceName: obj.workspaceName as string,
     provider: obj.provider as SyncProvider,
-    config: safeConfig,
+    config: { ...safeConfig, remoteWorkspaceId: obj.remoteWorkspaceId as string },
     encrypted: obj.encrypted as boolean,
     encryptedFields: obj.encryptedFields as string[],
     salt: typeof obj.salt === 'string' ? obj.salt : undefined,

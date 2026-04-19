@@ -97,7 +97,7 @@ export async function getPresignedUrl(
     region: config.region,
     keyId,
     secret,
-    objectKey: `${config.prefix ?? 'apilix/'}${workspaceId}.json`,
+    objectKey: `${config.prefix ?? 'apilix/'}${config.remoteWorkspaceId ?? workspaceId}.json`,
     ...(endpoint ? { endpoint } : {}),
   });
 }

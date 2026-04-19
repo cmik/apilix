@@ -379,3 +379,48 @@ describe('parseWorkspaceExportPackage — malformed data fields', () => {
     expect(parsed.data.mockPort).toBe(9999);
   });
 });
+
+// ─── parseWorkspaceExportPackage — prototype-pollution guard ─────────────────
+
+describe('parseWorkspaceExportPackage — prototype-pollution guard', () => {
+  function makeRaw(dataOverrides: Record<string, unknown>) {
+    return {
+      apilixWorkspaceExport: '1',
+      exportedAt: new Date().toISOString(),
+      workspaceName: 'WS',
+      workspaceId: 'id',
+      data: {
+        collections: [],
+        environments: [],
+        activeEnvironmentId: null,
+        collectionVariables: {},
+        globalVariables: {},
+        cookieJar: {},
+        mockCollections: [],
+        mockRoutes: [],
+        mockPort: 3002,
+        ...dataOverrides,
+      },
+    };
+  }
+
+  it('strips __proto__ keys from globalVariables', () => {
+    const raw = makeRaw({ globalVariables: { '__proto__': { isAdmin: true }, safe: 'val' } });
+    const parsed = parseWorkspaceExportPackage(raw);
+    expect(Object.prototype.hasOwnProperty.call(parsed.data.globalVariables, '__proto__')).toBe(false);
+    expect((parsed.data.globalVariables as Record<string, string>).safe).toBe('val');
+  });
+
+  it('strips constructor and prototype keys from globalVariables', () => {
+    const raw = makeRaw({ globalVariables: { 'constructor': 'x', 'prototype': 'y', ok: 'z' } });
+    const parsed = parseWorkspaceExportPackage(raw);
+    expect(Object.keys(parsed.data.globalVariables)).toEqual(['ok']);
+  });
+
+  it('strips __proto__ keys from collectionVariables', () => {
+    const raw = makeRaw({ collectionVariables: { '__proto__': { isAdmin: true }, 'col-1': { key: 'val' } } });
+    const parsed = parseWorkspaceExportPackage(raw);
+    expect(Object.prototype.hasOwnProperty.call(parsed.data.collectionVariables, '__proto__')).toBe(false);
+    expect(Object.keys(parsed.data.collectionVariables)).toEqual(['col-1']);
+  });
+});

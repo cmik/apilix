@@ -2,7 +2,7 @@
 
 A **workspace** is the top-level isolation unit in Apilix. Everything you see in the UI — collections, environments, variables, cookies, and mock server routes — belongs to the active workspace. Switching workspaces replaces the entire UI context instantly.
 
-This page covers creating and managing workspaces, the automatic snapshot history, and all four sync providers (Git, S3, HTTP Endpoint, Team Server), including conflict resolution.
+This page covers creating and managing workspaces, exporting and importing workspace data, the automatic snapshot history, and all four sync providers (Git, S3, HTTP Endpoint, Team Server), including conflict resolution.
 
 ---
 
@@ -10,16 +10,17 @@ This page covers creating and managing workspaces, the automatic snapshot histor
 
 1. [What a Workspace Contains](#what-a-workspace-contains)
 2. [Managing Workspaces](#managing-workspaces)
-3. [Storage Layout](#storage-layout)
-4. [Automatic Snapshot History](#automatic-snapshot-history)
-5. [Sync Overview](#sync-overview)
-6. [Sync Provider: Git Repository](#sync-provider-git-repository)
-7. [Sync Provider: Amazon S3 / S3-Compatible](#sync-provider-amazon-s3--s3-compatible)
-8. [Sync Provider: HTTP Endpoint](#sync-provider-http-endpoint)
-9. [Sync Provider: Team Server](#sync-provider-team-server)
-10. [Team Server Setup & Administration](#team-server-setup--administration)
-11. [Conflict Resolution](#conflict-resolution)
-12. [Choosing the Right Provider](#choosing-the-right-provider)
+3. [Exporting and Importing Workspaces](#exporting-and-importing-workspaces)
+4. [Storage Layout](#storage-layout)
+5. [Automatic Snapshot History](#automatic-snapshot-history)
+6. [Sync Overview](#sync-overview)
+7. [Sync Provider: Git Repository](#sync-provider-git-repository)
+8. [Sync Provider: Amazon S3 / S3-Compatible](#sync-provider-amazon-s3--s3-compatible)
+9. [Sync Provider: HTTP Endpoint](#sync-provider-http-endpoint)
+10. [Sync Provider: Team Server](#sync-provider-team-server)
+11. [Team Server Setup & Administration](#team-server-setup--administration)
+12. [Conflict Resolution](#conflict-resolution)
+13. [Choosing the Right Provider](#choosing-the-right-provider)
 
 ---
 
@@ -62,6 +63,7 @@ Open the workspace manager by clicking the gear icon next to the workspace name 
 | **Rename** | Click the ✏ pencil icon next to any workspace |
 | **Change accent colour** | Click any colour dot on the left side of a workspace row |
 | **Duplicate** | Click ⧉ — deep-clones all collections, environments, and variables into a new workspace with the same IDs; immediately activates the clone |
+| **Export** | Click ⬇ — downloads the workspace as a portable `.json` file that can be imported on any Apilix instance |
 | **Empty workspace** | Click ⊘ — removes all collections from the workspace after confirmation; environments, variables, and mock routes are kept |
 | **Delete** | Click 🗑 — at least one other workspace must exist |
 | **Open data folder** | Click **Open data folder ↗** to reveal the Electron userData directory in the system file manager (desktop only) |
@@ -93,6 +95,71 @@ The ⊘ button removes every collection from a workspace without deleting the wo
 - Mock server routes and collections
 
 If the emptied workspace is the currently active one, all open tabs are closed immediately. For inactive workspaces the data is zeroed in storage; no UI state changes occur.
+
+---
+
+## Exporting and Importing Workspaces
+
+The workspace export/import feature lets you move a complete workspace — collections, environments, variables, mock routes, and the cookie jar — between Apilix instances as a single portable file. This is the quickest way to back up a workspace or share it with someone who does not use the same sync provider.
+
+This is separate from the collection-level [Import and Export](Import-and-Export) feature, which works at the individual collection or environment level. A workspace export contains everything.
+
+### Exporting a workspace
+
+1. Open **Manage Workspaces** (gear icon in the sidebar).
+2. Find the workspace you want to export and click the **⬇** button in its action row.
+3. A file named `apilix-workspace-{name}.json` is downloaded to your default downloads folder (web) or saved via a file dialog (desktop).
+
+> **Active vs. inactive workspaces:** The active workspace is exported from live in-memory state, so the file always reflects unsaved in-progress changes. Inactive workspaces are exported from the last persisted snapshot on disk.
+
+The exported file is a standard JSON document. Its top-level shape:
+
+```json
+{
+  "apilixWorkspaceExport": "1",
+  "exportedAt": "2026-04-19T14:00:00.000Z",
+  "workspaceName": "My API Project",
+  "workspaceId": "f3a…",
+  "data": {
+    "collections": [ … ],
+    "environments": [ … ],
+    "globalVariables": { … },
+    "collectionVariables": { … },
+    "cookieJar": { … },
+    "mockRoutes": [ … ],
+    "mockCollections": [ … ],
+    "mockPort": 3002,
+    "activeEnvironmentId": "env-id-or-null"
+  }
+}
+```
+
+### Importing a workspace
+
+Workspace files (and sync config files) are imported through the unified **Import** footer at the bottom of the **Workspaces** tab in the Manage Workspaces modal.
+
+1. Open **Manage Workspaces → Workspaces** tab.
+2. Either:
+   - Click the **↑ Import workspace file** area to open a file picker, or
+   - Drag and drop a `.json` file anywhere onto that area.
+3. Apilix detects the file type automatically:
+   - A workspace export (`apilixWorkspaceExport`) shows a confirmation card with the workspace name, export date, and collection/environment counts.
+   - A sync config export (`apilixSyncExport`) shows a confirmation card with the provider name and encryption status.
+4. Review the details and click **Import workspace** (or **Create workspace** for sync configs).
+
+The workspace is created immediately and appears in the workspace list. It is not automatically activated — switch to it manually when ready.
+
+> **Duplicate ID guard:** If a workspace with the same ID already exists on this machine, the import is blocked with an error. This prevents accidentally overwriting an existing workspace. To import the same data as a separate workspace, edit the `workspaceId` field in the JSON before importing.
+
+### What is and is not included
+
+| Included | Not included |
+|---|---|
+| All collections and requests | Sync configuration / credentials |
+| Environments and their variables | Snapshot history |
+| Global and collection variables | Request history / logs |
+| Cookie jar | Open request tabs |
+| Mock server routes, collections, and port | |
 
 ---
 

@@ -59,18 +59,39 @@ export function parseWorkspaceExportPackage(raw: unknown): WorkspaceExportPackag
     throw new Error('Not a valid Apilix workspace export file. Make sure you selected a file exported from "Export workspace data".');
   }
 
-  // Backfill any fields added in future WorkspaceData versions
+  // Backfill any fields added in future WorkspaceData versions.
+  // Sanitize Record-typed fields to block prototype-poisoning keys (same
+  // pattern used in parseSyncExportPackage).
   const d = raw.data as unknown as Record<string, unknown>;
+  const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+  function sanitizeStringRecord(value: unknown): Record<string, string> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    const safe: Record<string, string> = Object.create(null);
+    for (const k of Object.keys(value as object)) {
+      if (FORBIDDEN_KEYS.has(k)) continue;
+      const v = (value as Record<string, unknown>)[k];
+      if (typeof v === 'string') safe[k] = v;
+    }
+    return safe;
+  }
+
+  function sanitizeNestedStringRecord(value: unknown): Record<string, Record<string, string>> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    const safe: Record<string, Record<string, string>> = Object.create(null);
+    for (const k of Object.keys(value as object)) {
+      if (FORBIDDEN_KEYS.has(k)) continue;
+      safe[k] = sanitizeStringRecord((value as Record<string, unknown>)[k]);
+    }
+    return safe;
+  }
+
   const data: WorkspaceData = {
     collections: Array.isArray(d.collections) ? d.collections as WorkspaceData['collections'] : [],
     environments: Array.isArray(d.environments) ? d.environments as WorkspaceData['environments'] : [],
     activeEnvironmentId: typeof d.activeEnvironmentId === 'string' ? d.activeEnvironmentId : null,
-    collectionVariables: (d.collectionVariables && typeof d.collectionVariables === 'object' && !Array.isArray(d.collectionVariables))
-      ? d.collectionVariables as WorkspaceData['collectionVariables']
-      : {},
-    globalVariables: (d.globalVariables && typeof d.globalVariables === 'object' && !Array.isArray(d.globalVariables))
-      ? d.globalVariables as WorkspaceData['globalVariables']
-      : {},
+    collectionVariables: sanitizeNestedStringRecord(d.collectionVariables),
+    globalVariables: sanitizeStringRecord(d.globalVariables),
     cookieJar: (d.cookieJar && typeof d.cookieJar === 'object' && !Array.isArray(d.cookieJar))
       ? d.cookieJar as WorkspaceData['cookieJar']
       : {},

@@ -60,8 +60,8 @@ describe('encryptField / decryptField', () => {
 
 describe('buildSyncExportPackage — unencrypted', () => {
   it('returns encrypted: false with no encryptedFields', async () => {
-    const config = { bucket: 'my-bucket', accessKeyId: 'AKID', secretAccessKey: 'SECRET', endpoint: '' };
-    const pkg = await buildSyncExportPackage('ws-id', 'My Workspace', 's3', config);
+    const config = { bucket: 'my-bucket', accessKeyId: 'AKID', secretAccessKey: 'SECRET', endpoint: '', remoteWorkspaceId: 'remote-id' };
+    const pkg = await buildSyncExportPackage('My Workspace', 's3', config);
     expect(pkg.encrypted).toBe(false);
     expect(pkg.encryptedFields).toHaveLength(0);
     expect(pkg.config.accessKeyId).toBe('AKID');
@@ -70,9 +70,9 @@ describe('buildSyncExportPackage — unencrypted', () => {
   });
 
   it('populates required fields', async () => {
-    const pkg = await buildSyncExportPackage('ws-123', 'Prod Workspace', 's3', { bucket: 'b' });
+    const pkg = await buildSyncExportPackage('Prod Workspace', 's3', { bucket: 'b', remoteWorkspaceId: 'remote-123' });
     expect(pkg.apilixSyncExport).toBe('1');
-    expect(pkg.workspaceId).toBe('ws-123');
+    expect(pkg.remoteWorkspaceId).toBe('remote-123');
     expect(pkg.workspaceName).toBe('Prod Workspace');
     expect(pkg.provider).toBe('s3');
   });
@@ -80,8 +80,8 @@ describe('buildSyncExportPackage — unencrypted', () => {
 
 describe('buildSyncExportPackage — encrypted', () => {
   it('encrypts secret fields and leaves non-secret fields plain', async () => {
-    const config = { bucket: 'my-bucket', accessKeyId: 'AKID', secretAccessKey: 'SECRET' };
-    const pkg = await buildSyncExportPackage('ws-id', 'My WS', 's3', config, 'super-secret');
+    const config = { bucket: 'my-bucket', accessKeyId: 'AKID', secretAccessKey: 'SECRET', remoteWorkspaceId: 'r-id' };
+    const pkg = await buildSyncExportPackage('My WS', 's3', config, 'super-secret');
     expect(pkg.encrypted).toBe(true);
     expect(pkg.encryptedFields).toContain('accessKeyId');
     expect(pkg.encryptedFields).toContain('secretAccessKey');
@@ -94,8 +94,8 @@ describe('buildSyncExportPackage — encrypted', () => {
 
   it('only lists fields that are present in config', async () => {
     // accessKeyId present, secretAccessKey absent
-    const config = { accessKeyId: 'AKID', bucket: 'b' };
-    const pkg = await buildSyncExportPackage('ws-id', 'WS', 's3', config, 'pass');
+    const config = { accessKeyId: 'AKID', bucket: 'b', remoteWorkspaceId: 'r-id' };
+    const pkg = await buildSyncExportPackage('WS', 's3', config, 'pass');
     expect(pkg.encryptedFields).toContain('accessKeyId');
     expect(pkg.encryptedFields).not.toContain('secretAccessKey');
   });
@@ -105,8 +105,8 @@ describe('buildSyncExportPackage — encrypted', () => {
 
 describe('buildSyncExportPackage + decryptSyncExportConfig round-trip', () => {
   it('decrypted config equals original config', async () => {
-    const config = { bucket: 'b', accessKeyId: 'AKID', secretAccessKey: 'SECRET', endpoint: 'http://localhost:9000' };
-    const pkg = await buildSyncExportPackage('ws-id', 'WS', 's3', config, 'my-pass');
+    const config = { bucket: 'b', accessKeyId: 'AKID', secretAccessKey: 'SECRET', endpoint: 'http://localhost:9000', remoteWorkspaceId: 'r-ws-1' };
+    const pkg = await buildSyncExportPackage('WS', 's3', config, 'my-pass');
     const decrypted = await decryptSyncExportConfig(pkg, 'my-pass');
     expect(decrypted.bucket).toBe(config.bucket);
     expect(decrypted.accessKeyId).toBe(config.accessKeyId);
@@ -115,14 +115,14 @@ describe('buildSyncExportPackage + decryptSyncExportConfig round-trip', () => {
   });
 
   it('throws "Wrong passphrase" when using incorrect passphrase', async () => {
-    const config = { accessKeyId: 'AKID', secretAccessKey: 'SECRET' };
-    const pkg = await buildSyncExportPackage('ws-id', 'WS', 's3', config, 'correct-pass');
+    const config = { accessKeyId: 'AKID', secretAccessKey: 'SECRET', remoteWorkspaceId: 'r-ws-2' };
+    const pkg = await buildSyncExportPackage('WS', 's3', config, 'correct-pass');
     await expect(decryptSyncExportConfig(pkg, 'wrong-pass')).rejects.toThrow('Wrong passphrase');
   });
 
   it('returns config unchanged when encrypted: false', async () => {
-    const config = { bucket: 'b', accessKeyId: 'AKID' };
-    const pkg = await buildSyncExportPackage('ws-id', 'WS', 's3', config);
+    const config = { bucket: 'b', accessKeyId: 'AKID', remoteWorkspaceId: 'r-ws-3' };
+    const pkg = await buildSyncExportPackage('WS', 's3', config);
     const result = await decryptSyncExportConfig(pkg, 'irrelevant');
     expect(result).toEqual(config);
   });
@@ -133,7 +133,7 @@ describe('buildSyncExportPackage + decryptSyncExportConfig round-trip', () => {
 describe('parseSyncExportPackage', () => {
   const valid = {
     apilixSyncExport: '1',
-    workspaceId: 'ws-abc',
+    remoteWorkspaceId: 'rws-abc',
     workspaceName: 'My WS',
     provider: 's3',
     config: { bucket: 'b' },
@@ -141,9 +141,9 @@ describe('parseSyncExportPackage', () => {
     encryptedFields: [],
   };
 
-  it('returns the package unchanged for a valid input', () => {
+  it('returns the package for a valid input', () => {
     const pkg = parseSyncExportPackage(valid);
-    expect(pkg.workspaceId).toBe('ws-abc');
+    expect(pkg.remoteWorkspaceId).toBe('rws-abc');
     expect(pkg.workspaceName).toBe('My WS');
     expect(pkg.provider).toBe('s3');
     expect(pkg.encrypted).toBe(false);
@@ -153,9 +153,21 @@ describe('parseSyncExportPackage', () => {
     expect(() => parseSyncExportPackage({ ...valid, apilixSyncExport: '2' })).toThrow('Invalid sync export file');
   });
 
-  it('throws on missing workspaceId', () => {
-    const { workspaceId: _, ...rest } = valid;
-    expect(() => parseSyncExportPackage(rest)).toThrow('workspaceId');
+  it('throws on missing remoteWorkspaceId', () => {
+    const { remoteWorkspaceId: _, ...rest } = valid;
+    expect(() => parseSyncExportPackage(rest)).toThrow('remoteWorkspaceId');
+  });
+
+  it('accepts legacy files that have workspaceId instead of remoteWorkspaceId', () => {
+    const legacy = { ...valid, workspaceId: 'old-ws-id' };
+    const { remoteWorkspaceId: _, ...withoutRemote } = legacy;
+    const pkg = parseSyncExportPackage(withoutRemote);
+    expect(pkg.remoteWorkspaceId).toBe('old-ws-id');
+  });
+
+  it('injects remoteWorkspaceId into returned config', () => {
+    const pkg = parseSyncExportPackage(valid);
+    expect(pkg.config.remoteWorkspaceId).toBe('rws-abc');
   });
 
   it('throws on missing workspaceName', () => {
@@ -263,6 +275,8 @@ describe('parseSyncExportPackage', () => {
     expect(parsed.encrypted).toBe(true);
     expect(parsed.salt).toBe(btoa('sixteen-byte-sal'));
     expect(parsed.encryptedFields).toEqual(['accessKeyId', 'secretAccessKey']);
+    // remoteWorkspaceId must be injected into config
+    expect(parsed.config.remoteWorkspaceId).toBe('rws-abc');
   });
 
   it('does not check salt or encryptedFields length when encrypted=false', () => {

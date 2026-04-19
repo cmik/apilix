@@ -40,6 +40,7 @@ Apilix can exchange data with other tools through a variety of formats — both 
     - [Convert a cURL snippet from the browser](#convert-a-curl-snippet-from-the-browser)
     - [Export for use in CI](#export-for-use-in-ci)
     - [Backup your workspace](#backup-your-workspace)
+    - [Share a workspace without sync](#share-a-workspace-without-sync)
 
 ---
 
@@ -391,6 +392,8 @@ The heading shows a running count: `Collections (3/10)`.
 | HAR | ✅ | ✅ | Browser DevTools → Apilix, proxy recordings |
 | HURL | ✅ | ✅ | Text-based CI/CD-friendly HTTP requests |
 | cURL | ✅ (single command) | — | Copy from browser DevTools → Apilix |
+| **Apilix Workspace Export** | ✅ (via Manage Workspaces) | ✅ (via Manage Workspaces) | Full workspace backup and transfer between Apilix instances |
+| **Apilix Sync Config Export** | ✅ (via Manage Workspaces) | ✅ (via Sync tab) | Move sync credentials to a new machine |
 
 ---
 
@@ -460,7 +463,24 @@ Alternatively, use [Browser Capture](Browser-Capture.md) to record directly into
 
 ### Backup your workspace
 
-1. **Export** → **Postman JSON** format.
-2. Select all collections and all environments.
-3. Desktop: pick a backup folder — all files are saved at once.
-4. Web: all files are downloaded to your browser's default download folder.
+Use the workspace export feature to create a portable backup of an entire workspace, including all collections, environments, variables, the cookie jar, and mock server routes.
+
+1. Open **Manage Workspaces** (gear icon in the sidebar).
+2. Find the workspace row and click the **⬇** export button.
+3. A file named `apilix-workspace-{name}.json` is downloaded.
+
+To restore later, or copy to another machine:
+
+1. Open **Manage Workspaces → Workspaces** tab.
+2. Click **↑ Import workspace file** (or drag and drop the file onto that area).
+3. Review the confirmation card and click **Import workspace**.
+
+> The workspace export includes collections, environments, variables, cookie jar, and mock routes. It does **not** include sync credentials, snapshot history, or request logs. See [Workspaces — Exporting and Importing](Workspaces#exporting-and-importing-workspaces) for full details.
+
+### Share a workspace without sync
+
+If a colleague does not use the same sync provider, export the workspace and send them the file:
+
+1. Export the workspace using the **⬇** button in the workspace row.
+2. Send the `.json` file (email, file share, etc.).
+3. On the other machine: **Manage Workspaces → Workspaces** → drag the file onto the **↑ Import workspace file** zone → click **Import workspace**.

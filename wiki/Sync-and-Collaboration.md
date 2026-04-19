@@ -44,6 +44,9 @@ Apilix workspaces can be synced to a remote provider so that your collections, e
     - [Team Server Administration](#team-server-administration)
     - [Roles](#roles)
     - [Self-hosting the Team Server](#self-hosting-the-team-server)
+  - [Sharing Sync Configuration](#sharing-sync-configuration)
+    - [Exporting a sync config](#exporting-a-sync-config)
+    - [Importing a sync config](#importing-a-sync-config)
   - [Provider Comparison](#provider-comparison)
   - [See Also](#see-also)
 
@@ -502,6 +505,47 @@ Environment=JWT_SECRET=<your-secret>
 [Install]
 WantedBy=multi-user.target
 ```
+
+---
+
+## Sharing Sync Configuration
+
+You can export a workspace's sync configuration to a portable `.json` file and import it on another machine. This is the fastest way to set up the same sync provider on a second computer — especially for encrypted configurations where re-entering every field manually would be tedious.
+
+### Exporting a sync config
+
+1. Open **Manage Workspaces → Sync**.
+2. Configure and save your sync provider settings for the workspace.
+3. Scroll to the bottom of the Sync tab and click **Export config**.
+4. Choose whether to **encrypt** the export. Encryption requires a passphrase of your choice; the config cannot be imported without it.
+5. A file named `apilix-sync-{name}.json` is downloaded.
+
+**What is included:**
+
+| Included | Not included |
+|---|---|
+| Provider type (`s3`, `minio`, `git`, `http`, `team`) | Workspace data (collections, requests, etc.) |
+| All credential fields (token, secret key, URL, etc.) | Snapshot history |
+| Workspace ID (used to resolve the remote object) | Sync activity log |
+| `readOnly` flag | |
+
+**Encryption note:** When the export is encrypted, all credential fields are encrypted with AES-256-GCM using a key derived from your passphrase (PBKDF2, 100 000 iterations, SHA-256). The provider name, workspace ID, and workspace name remain in plaintext so the recipient can see what they are importing before decryption.
+
+> **Encrypted exports include a salt** that is stored in the file. The passphrase must match exactly — there is no recovery if the passphrase is lost.
+
+### Importing a sync config
+
+Sync config files are imported through the same unified **Import** footer used for workspace data files.
+
+1. Open **Manage Workspaces → Workspaces** tab.
+2. Click **↑ Import workspace file** (or drag and drop the file).
+3. Apilix detects the `apilixSyncExport` sentinel and shows a confirmation card with the provider name and encryption badge.
+4. If the export is encrypted, enter the passphrase.
+5. Click **Create workspace**.
+
+A new workspace is created with the sync configuration applied. It starts empty — switch to the workspace, open the **Sync** tab, and click **Pull ↓** to load data from the provider.
+
+> **After importing a sync config, the workspace is empty until you Pull.** The export contains credentials, not workspace data. If you need both, export the workspace data separately using the **⬇** button in the workspace row, or just Pull after configuring sync.
 
 ---
 
