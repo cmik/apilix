@@ -199,6 +199,16 @@ function escapeRegex(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function isJsonNodeFoldable(data: unknown): boolean {
+  if (Array.isArray(data)) return data.length > 0;
+  if (typeof data !== 'object' || data === null) return false;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for (const _key in data as Record<string, unknown>) {
+    return true;
+  }
+  return false;
+}
+
 function highlightText(text: string, query: string): React.ReactNode {
   if (!query.trim()) return text;
   const regex = new RegExp(`(${escapeRegex(query)})`, 'gi');
@@ -310,10 +320,7 @@ type JsonNodeProps = {
 
 function JsonNode({ data, name, depth, isLast, searchQuery, path, onSaveToVar, onFoldContextMenu }: JsonNodeProps) {
   const [open, setOpen] = useState(true);
-  const isArray = Array.isArray(data);
-  const isObject = typeof data === 'object' && data !== null && !isArray;
-  const canFold = (isArray && data.length > 0) || (isObject && Object.keys(data as Record<string, unknown>).length > 0);
-  useFoldNode(path ?? [], setOpen, canFold);
+  useFoldNode(path ?? [], setOpen, isJsonNodeFoldable(data));
   const paddingLeft = depth * 16;
   const comma = !isLast ? <span className="text-slate-500">,</span> : null;
   const keyEl = name !== undefined
