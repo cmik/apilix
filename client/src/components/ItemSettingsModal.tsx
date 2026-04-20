@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { marked } from 'marked';
 import type { CollectionAuth, CollectionEvent, CollectionVariable, OAuth2Config } from '../types';
+import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
 import ScriptEditor from './ScriptEditor';
 import OAuthConfigPanel from './OAuthConfigPanel';
 import { API_BASE } from '../api';
@@ -67,6 +68,51 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
   const [description, setDescription] = useState(initialDescription ?? '');
   const [docsMode, setDocsMode] = useState<'edit' | 'preview'>('edit');
   const [vars, setVars] = useState<CollectionVariable[]>(initialVariables ?? []);
+
+  const preScriptRef = useRef<HTMLTextAreaElement>(null);
+  const testScriptRef = useRef<HTMLTextAreaElement>(null);
+
+  const handlePreInsert = useCallback((code: string) => {
+    const el = preScriptRef.current;
+    if (!el) {
+      setPreScript(prev => prev ? prev + '\n\n' + code : code);
+      return;
+    }
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const separator = (preScript.length > 0 && !preScript.endsWith('\n')) ? '\n\n' : (preScript.length > 0 ? '\n' : '');
+    const before = preScript.slice(0, start);
+    const after = preScript.slice(end);
+    const newValue = before + (start === end && start === preScript.length ? separator : '') + code + after;
+    setPreScript(newValue);
+    // Restore focus and move cursor after inserted snippet
+    requestAnimationFrame(() => {
+      const insertPos = start + (start === end && start === preScript.length ? separator.length : 0) + code.length;
+      el.focus();
+      el.setSelectionRange(insertPos, insertPos);
+    });
+  }, [preScript]);
+
+  const handleTestInsert = useCallback((code: string) => {
+    const el = testScriptRef.current;
+    if (!el) {
+      setTestScript(prev => prev ? prev + '\n\n' + code : code);
+      return;
+    }
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const separator = (testScript.length > 0 && !testScript.endsWith('\n')) ? '\n\n' : (testScript.length > 0 ? '\n' : '');
+    const before = testScript.slice(0, start);
+    const after = testScript.slice(end);
+    const newValue = before + (start === end && start === testScript.length ? separator : '') + code + after;
+    setTestScript(newValue);
+    // Restore focus and move cursor after inserted snippet
+    requestAnimationFrame(() => {
+      const insertPos = start + (start === end && start === testScript.length ? separator.length : 0) + code.length;
+      el.focus();
+      el.setSelectionRange(insertPos, insertPos);
+    });
+  }, [testScript]);
 
   function buildAuth(): CollectionAuth | undefined {
     if (authType === 'inherit') return undefined;
@@ -355,8 +401,12 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
           {/* ── Pre-request Script ── */}
           {activeTab === 'prerequest' && (
             <div className="flex flex-col gap-2">
-              <p className="text-xs text-slate-400">Runs before every request in this {kind}.</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-slate-400">Runs before every request in this {kind}.</p>
+                <ScriptSnippetsLibrary target="prerequest" onInsert={handlePreInsert} />
+              </div>
               <ScriptEditor
+                textareaRef={preScriptRef}
                 value={preScript}
                 onChange={setPreScript}
                 onSave={handleSave}
@@ -371,8 +421,12 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
           {/* ── Tests ── */}
           {activeTab === 'tests' && (
             <div className="flex flex-col gap-2">
-              <p className="text-xs text-slate-400">Runs after every request in this {kind}.</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-slate-400">Runs after every request in this {kind}.</p>
+                <ScriptSnippetsLibrary target="test" onInsert={handleTestInsert} />
+              </div>
               <ScriptEditor
+                textareaRef={testScriptRef}
                 value={testScript}
                 onChange={setTestScript}
                 onSave={handleSave}
