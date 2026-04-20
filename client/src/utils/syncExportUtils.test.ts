@@ -392,6 +392,73 @@ describe('computeIntegrityHash / verifyIntegrityHash', () => {
     const valid = await verifyIntegrityHash(policy, remoteId, 'wrong-passphrase', saltB64, hash);
     expect(valid).toBe(false);
   });
+
+  it('returns false for a corrupted (non-base64) salt without throwing', async () => {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const hash = await computeIntegrityHash(policy, remoteId, passphrase, salt);
+    const valid = await verifyIntegrityHash(policy, remoteId, passphrase, '!!!invalid-base64!!!', hash);
+    expect(valid).toBe(false);
+  });
+
+  it('returns false for a truncated/malformed hash without throwing', async () => {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const saltB64 = btoa(String.fromCharCode(...salt));
+    const valid = await verifyIntegrityHash(policy, remoteId, passphrase, saltB64, 'AAAA');
+    expect(valid).toBe(false);
+  });
+
+  // ─── Key separation — domain-prefix proof ────────────────────────────────────
+
+  it('HMAC key uses apilix-hmac: domain prefix (output matches manual derivation with prefix)', async () => {
+    // Manually replicate deriveHmacKey using the same domain prefix the function uses.
+    // If the result matches, the function definitely uses the prefix.
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const hash = await computeIntegrityHash(policy, remoteId, passphrase, salt);
+
+    const enc = new TextEncoder();
+    const domainPassphrase = 'apilix-hmac:' + passphrase;
+    const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(domainPassphrase), 'PBKDF2', false, ['deriveBits']);
+    const rawBytes = await crypto.subtle.deriveBits(
+      { name: 'PBKDF2', salt, iterations: 200_000, hash: 'SHA-256' },
+      keyMaterial,
+      256,
+    );
+    const hmacKey = await crypto.subtle.importKey('raw', rawBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const payload = enc.encode(JSON.stringify({ sharePolicy: policy, remoteWorkspaceId: remoteId }));
+    const mac = await crypto.subtle.sign('HMAC', hmacKey, payload);
+    let binary = '';
+    const bytes = new Uint8Array(mac);
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    const manualHash = btoa(binary);
+
+    expect(hash).toBe(manualHash);
+  });
+
+  it('HMAC key is distinct from the AES-GCM key (different output when passphrase has no prefix)', async () => {
+    // Manually compute HMAC using the bare passphrase (no domain prefix).
+    // This simulates the old, non-domain-separated behaviour.
+    // The result must differ from computeIntegrityHash to prove separation.
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const hash = await computeIntegrityHash(policy, remoteId, passphrase, salt);
+
+    const enc = new TextEncoder();
+    const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveBits']);
+    const rawBytes = await crypto.subtle.deriveBits(
+      { name: 'PBKDF2', salt, iterations: 200_000, hash: 'SHA-256' },
+      keyMaterial,
+      256,
+    );
+    const hmacKey = await crypto.subtle.importKey('raw', rawBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const payload = enc.encode(JSON.stringify({ sharePolicy: policy, remoteWorkspaceId: remoteId }));
+    const mac = await crypto.subtle.sign('HMAC', hmacKey, payload);
+    let binary = '';
+    const bytes = new Uint8Array(mac);
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    const unprefixedHash = btoa(binary);
+
+    // Domain-separated hash MUST differ from the unprefixed hash
+    expect(hash).not.toBe(unprefixedHash);
+  });
 });
 
 // ─── buildSyncExportPackage — with sharePolicy and remotePassphrase ────────────
