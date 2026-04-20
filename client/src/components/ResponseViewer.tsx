@@ -202,9 +202,9 @@ function escapeRegex(s: string) {
 function isJsonNodeFoldable(data: unknown): boolean {
   if (Array.isArray(data)) return data.length > 0;
   if (typeof data !== 'object' || data === null) return false;
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for (const _key in data as Record<string, unknown>) {
-    return true;
+  const obj = data as Record<string, unknown>;
+  for (const key in obj) {
+    if (Object.prototype.hasOwnProperty.call(obj, key)) return true;
   }
   return false;
 }
