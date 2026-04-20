@@ -260,24 +260,24 @@ function buildFoldContextValue(): FoldContextValue {
     setSiblingsOpen: (nodePath, open) => {
       const nk = foldPathKey(nodePath);
       const parent = nodePath.slice(0, -1);
-      registry.forEach((r) => {
-        if (r.path.length === nodePath.length && foldPathStartsWith(r.path, parent) && foldPathKey(r.path) !== nk) {
+      registry.forEach((r, key) => {
+        if (r.path.length === nodePath.length && foldPathStartsWith(r.path, parent) && key !== nk) {
           r.setOpen(open);
         }
       });
     },
     setDescendantsOpen: (nodePath, open) => {
       const nk = foldPathKey(nodePath);
-      registry.forEach((r) => {
-        if (foldPathStartsWith(r.path, nodePath) && foldPathKey(r.path) !== nk) {
+      registry.forEach((r, key) => {
+        if (foldPathStartsWith(r.path, nodePath) && key !== nk) {
           r.setOpen(open);
         }
       });
     },
     setAncestorsOpen: (nodePath, open) => {
       const nk = foldPathKey(nodePath);
-      registry.forEach((r) => {
-        if (foldPathStartsWith(nodePath, r.path) && foldPathKey(r.path) !== nk) {
+      registry.forEach((r, key) => {
+        if (foldPathStartsWith(nodePath, r.path) && key !== nk) {
           r.setOpen(open);
         }
       });
