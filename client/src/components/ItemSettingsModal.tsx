@@ -72,47 +72,40 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
   const preScriptRef = useRef<HTMLTextAreaElement>(null);
   const testScriptRef = useRef<HTMLTextAreaElement>(null);
 
-  const handlePreInsert = useCallback((code: string) => {
-    const el = preScriptRef.current;
+  const insertScriptAtCursor = useCallback((
+    ref: React.RefObject<HTMLTextAreaElement>,
+    value: string,
+    setValue: React.Dispatch<React.SetStateAction<string>>,
+    code: string,
+  ) => {
+    const el = ref.current;
     if (!el) {
-      setPreScript(prev => prev ? prev + '\n\n' + code : code);
+      setValue(prev => prev ? prev + '\n\n' + code : code);
       return;
     }
     const start = el.selectionStart;
     const end = el.selectionEnd;
-    const separator = (preScript.length > 0 && !preScript.endsWith('\n')) ? '\n\n' : (preScript.length > 0 ? '\n' : '');
-    const before = preScript.slice(0, start);
-    const after = preScript.slice(end);
-    const newValue = before + (start === end && start === preScript.length ? separator : '') + code + after;
-    setPreScript(newValue);
+    const separator = (value.length > 0 && !value.endsWith('\n')) ? '\n\n' : (value.length > 0 ? '\n' : '');
+    const before = value.slice(0, start);
+    const after = value.slice(end);
+    const shouldInsertSeparator = start === end && start === value.length;
+    const newValue = before + (shouldInsertSeparator ? separator : '') + code + after;
+    setValue(newValue);
     // Restore focus and move cursor after inserted snippet
     requestAnimationFrame(() => {
-      const insertPos = start + (start === end && start === preScript.length ? separator.length : 0) + code.length;
+      const insertPos = start + (shouldInsertSeparator ? separator.length : 0) + code.length;
       el.focus();
       el.setSelectionRange(insertPos, insertPos);
     });
-  }, [preScript]);
+  }, []);
+
+  const handlePreInsert = useCallback((code: string) => {
+    insertScriptAtCursor(preScriptRef, preScript, setPreScript, code);
+  }, [insertScriptAtCursor, preScript]);
 
   const handleTestInsert = useCallback((code: string) => {
-    const el = testScriptRef.current;
-    if (!el) {
-      setTestScript(prev => prev ? prev + '\n\n' + code : code);
-      return;
-    }
-    const start = el.selectionStart;
-    const end = el.selectionEnd;
-    const separator = (testScript.length > 0 && !testScript.endsWith('\n')) ? '\n\n' : (testScript.length > 0 ? '\n' : '');
-    const before = testScript.slice(0, start);
-    const after = testScript.slice(end);
-    const newValue = before + (start === end && start === testScript.length ? separator : '') + code + after;
-    setTestScript(newValue);
-    // Restore focus and move cursor after inserted snippet
-    requestAnimationFrame(() => {
-      const insertPos = start + (start === end && start === testScript.length ? separator.length : 0) + code.length;
-      el.focus();
-      el.setSelectionRange(insertPos, insertPos);
-    });
-  }, [testScript]);
+    insertScriptAtCursor(testScriptRef, testScript, setTestScript, code);
+  }, [insertScriptAtCursor, testScript]);
 
   function buildAuth(): CollectionAuth | undefined {
     if (authType === 'inherit') return undefined;
