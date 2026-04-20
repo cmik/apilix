@@ -976,14 +976,18 @@ export default function ResponseViewer() {
             {(isJson || isXml) && !rawMode && (
               <>
                 <button
+                  type="button"
                   onClick={() => foldCtxValue.setAllOpen(false)}
                   className="text-xs px-1.5 py-0.5 rounded transition-colors font-mono text-slate-500 hover:text-slate-300"
                   title="Fold all"
+                  aria-label="Fold all"
                 >▸</button>
                 <button
+                  type="button"
                   onClick={() => foldCtxValue.setAllOpen(true)}
                   className="text-xs px-1.5 py-0.5 rounded transition-colors font-mono text-slate-500 hover:text-slate-300"
                   title="Unfold all"
+                  aria-label="Unfold all"
                 >▾</button>
               </>
             )}
