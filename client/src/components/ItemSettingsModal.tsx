@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { marked } from 'marked';
 import type { CollectionAuth, CollectionEvent, CollectionVariable, OAuth2Config } from '../types';
+import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
 import ScriptEditor from './ScriptEditor';
 import OAuthConfigPanel from './OAuthConfigPanel';
 import { API_BASE } from '../api';
@@ -67,6 +68,44 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
   const [description, setDescription] = useState(initialDescription ?? '');
   const [docsMode, setDocsMode] = useState<'edit' | 'preview'>('edit');
   const [vars, setVars] = useState<CollectionVariable[]>(initialVariables ?? []);
+
+  const preScriptRef = useRef<HTMLTextAreaElement>(null);
+  const testScriptRef = useRef<HTMLTextAreaElement>(null);
+
+  const insertScriptAtCursor = useCallback((
+    ref: React.RefObject<HTMLTextAreaElement>,
+    value: string,
+    setValue: React.Dispatch<React.SetStateAction<string>>,
+    code: string,
+  ) => {
+    const el = ref.current;
+    if (!el) {
+      setValue(prev => prev ? prev + '\n\n' + code : code);
+      return;
+    }
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const separator = (value.length > 0 && !value.endsWith('\n')) ? '\n\n' : (value.length > 0 ? '\n' : '');
+    const before = value.slice(0, start);
+    const after = value.slice(end);
+    const shouldInsertSeparator = start === end && start === value.length;
+    const newValue = before + (shouldInsertSeparator ? separator : '') + code + after;
+    setValue(newValue);
+    // Restore focus and move cursor after inserted snippet
+    requestAnimationFrame(() => {
+      const insertPos = start + (shouldInsertSeparator ? separator.length : 0) + code.length;
+      el.focus();
+      el.setSelectionRange(insertPos, insertPos);
+    });
+  }, []);
+
+  const handlePreInsert = useCallback((code: string) => {
+    insertScriptAtCursor(preScriptRef, preScript, setPreScript, code);
+  }, [insertScriptAtCursor, preScript]);
+
+  const handleTestInsert = useCallback((code: string) => {
+    insertScriptAtCursor(testScriptRef, testScript, setTestScript, code);
+  }, [insertScriptAtCursor, testScript]);
 
   function buildAuth(): CollectionAuth | undefined {
     if (authType === 'inherit') return undefined;
@@ -355,8 +394,12 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
           {/* ── Pre-request Script ── */}
           {activeTab === 'prerequest' && (
             <div className="flex flex-col gap-2">
-              <p className="text-xs text-slate-400">Runs before every request in this {kind}.</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-slate-400">Runs before every request in this {kind}.</p>
+                <ScriptSnippetsLibrary target="prerequest" onInsert={handlePreInsert} />
+              </div>
               <ScriptEditor
+                textareaRef={preScriptRef}
                 value={preScript}
                 onChange={setPreScript}
                 onSave={handleSave}
@@ -371,8 +414,12 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
           {/* ── Tests ── */}
           {activeTab === 'tests' && (
             <div className="flex flex-col gap-2">
-              <p className="text-xs text-slate-400">Runs after every request in this {kind}.</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-slate-400">Runs after every request in this {kind}.</p>
+                <ScriptSnippetsLibrary target="test" onInsert={handleTestInsert} />
+              </div>
               <ScriptEditor
+                textareaRef={testScriptRef}
                 value={testScript}
                 onChange={setTestScript}
                 onSave={handleSave}
