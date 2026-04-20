@@ -285,14 +285,14 @@ function buildFoldContextValue(): FoldContextValue {
   };
 }
 
-function useFoldNode(path: (string | number)[], setOpen: (v: boolean) => void) {
+function useFoldNode(path: (string | number)[], setOpen: (v: boolean) => void, enabled = true) {
   const ctx = useContext(FoldContext);
   const pk = foldPathKey(path);
   useEffect(() => {
-    if (!ctx) return;
+    if (!ctx || !enabled) return;
     return ctx.register(pk, { setOpen, path });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ctx, pk]);
+  }, [ctx, pk, enabled]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -310,7 +310,10 @@ type JsonNodeProps = {
 
 function JsonNode({ data, name, depth, isLast, searchQuery, path, onSaveToVar, onFoldContextMenu }: JsonNodeProps) {
   const [open, setOpen] = useState(true);
-  useFoldNode(path ?? [], setOpen);
+  const isArray = Array.isArray(data);
+  const isObject = typeof data === 'object' && data !== null && !isArray;
+  const canFold = (isArray && data.length > 0) || (isObject && Object.keys(data as Record<string, unknown>).length > 0);
+  useFoldNode(path ?? [], setOpen, canFold);
   const paddingLeft = depth * 16;
   const comma = !isLast ? <span className="text-slate-500">,</span> : null;
   const keyEl = name !== undefined
