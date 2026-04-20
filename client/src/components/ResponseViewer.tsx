@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, createContext, useContext } from 'react';
 import { useApp } from '../store';
 import type { TestResult, TlsCertInfo, NetworkTimings, RedirectHop } from '../types';
 import SaveToVarModal from './SaveToVarModal';
@@ -199,6 +199,16 @@ function escapeRegex(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function isJsonNodeFoldable(data: unknown): boolean {
+  if (Array.isArray(data)) return data.length > 0;
+  if (typeof data !== 'object' || data === null) return false;
+  const obj = data as Record<string, unknown>;
+  for (const key in obj) {
+    if (Object.prototype.hasOwnProperty.call(obj, key)) return true;
+  }
+  return false;
+}
+
 function highlightText(text: string, query: string): React.ReactNode {
   if (!query.trim()) return text;
   const regex = new RegExp(`(${escapeRegex(query)})`, 'gi');
@@ -210,6 +220,93 @@ function highlightText(text: string, query: string): React.ReactNode {
   );
 }
 
+// ── Fold context ──────────────────────────────────────────────────────────────
+
+interface FoldRegistrant {
+  setOpen: (open: boolean) => void;
+  path: (string | number)[];
+}
+
+interface FoldContextValue {
+  register: (key: string, r: FoldRegistrant) => () => void;
+  setAllOpen: (open: boolean) => void;
+  setChildrenOpen: (nodePath: (string | number)[], open: boolean) => void;
+  setSiblingsOpen: (nodePath: (string | number)[], open: boolean) => void;
+  setDescendantsOpen: (nodePath: (string | number)[], open: boolean) => void;
+  setAncestorsOpen: (nodePath: (string | number)[], open: boolean) => void;
+}
+
+const FoldContext = createContext<FoldContextValue | null>(null);
+
+function foldPathKey(p: (string | number)[]): string {
+  return JSON.stringify(p);
+}
+
+function foldPathStartsWith(child: (string | number)[], ancestor: (string | number)[]): boolean {
+  if (ancestor.length > child.length) return false;
+  for (let i = 0; i < ancestor.length; i++) {
+    if (child[i] !== ancestor[i]) return false;
+  }
+  return true;
+}
+
+function buildFoldContextValue(): FoldContextValue {
+  const registry = new Map<string, FoldRegistrant>();
+  return {
+    register: (key, r) => {
+      registry.set(key, r);
+      return () => registry.delete(key);
+    },
+    setAllOpen: (open) => {
+      registry.forEach(r => r.setOpen(open));
+    },
+    setChildrenOpen: (nodePath, open) => {
+      registry.forEach((r) => {
+        if (r.path.length === nodePath.length + 1 && foldPathStartsWith(r.path, nodePath)) {
+          r.setOpen(open);
+        }
+      });
+    },
+    setSiblingsOpen: (nodePath, open) => {
+      const nk = foldPathKey(nodePath);
+      const parent = nodePath.slice(0, -1);
+      registry.forEach((r, key) => {
+        if (r.path.length === nodePath.length && foldPathStartsWith(r.path, parent) && key !== nk) {
+          r.setOpen(open);
+        }
+      });
+    },
+    setDescendantsOpen: (nodePath, open) => {
+      const nk = foldPathKey(nodePath);
+      registry.forEach((r, key) => {
+        if (foldPathStartsWith(r.path, nodePath) && key !== nk) {
+          r.setOpen(open);
+        }
+      });
+    },
+    setAncestorsOpen: (nodePath, open) => {
+      const nk = foldPathKey(nodePath);
+      registry.forEach((r, key) => {
+        if (foldPathStartsWith(nodePath, r.path) && key !== nk) {
+          r.setOpen(open);
+        }
+      });
+    },
+  };
+}
+
+function useFoldNode(path: (string | number)[], setOpen: (v: boolean) => void, enabled = true) {
+  const ctx = useContext(FoldContext);
+  const pk = foldPathKey(path);
+  useEffect(() => {
+    if (!ctx || !enabled) return;
+    return ctx.register(pk, { setOpen, path });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx, pk, enabled]);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 type JsonNodeProps = {
   data: unknown;
   name?: string;
@@ -218,10 +315,12 @@ type JsonNodeProps = {
   searchQuery?: string;
   path?: (string | number)[];
   onSaveToVar?: (path: (string | number)[], value: unknown, x: number, y: number) => void;
+  onFoldContextMenu?: (path: (string | number)[], x: number, y: number) => void;
 };
 
-function JsonNode({ data, name, depth, isLast, searchQuery, path, onSaveToVar }: JsonNodeProps) {
+function JsonNode({ data, name, depth, isLast, searchQuery, path, onSaveToVar, onFoldContextMenu }: JsonNodeProps) {
   const [open, setOpen] = useState(true);
+  useFoldNode(path ?? [], setOpen, isJsonNodeFoldable(data));
   const paddingLeft = depth * 16;
   const comma = !isLast ? <span className="text-slate-500">,</span> : null;
   const keyEl = name !== undefined
@@ -266,6 +365,7 @@ function JsonNode({ data, name, depth, isLast, searchQuery, path, onSaveToVar }:
         <div style={{ paddingLeft }} className="flex items-center leading-5">
           <button
             onClick={() => setOpen(o => !o)}
+            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onFoldContextMenu?.(path ?? [], e.clientX, e.clientY); }}
             className="text-slate-500 hover:text-orange-400 w-3.5 shrink-0 text-center select-none"
             style={{ fontSize: 10 }}
           >
@@ -280,7 +380,7 @@ function JsonNode({ data, name, depth, isLast, searchQuery, path, onSaveToVar }:
         {open && (
           <>
             {data.map((item, i) => (
-              <JsonNode key={i} data={item} depth={depth + 1} isLast={i === data.length - 1} searchQuery={searchQuery} path={[...(path ?? []), i]} onSaveToVar={onSaveToVar} />
+              <JsonNode key={i} data={item} depth={depth + 1} isLast={i === data.length - 1} searchQuery={searchQuery} path={[...(path ?? []), i]} onSaveToVar={onSaveToVar} onFoldContextMenu={onFoldContextMenu} />
             ))}
             <div style={{ paddingLeft: paddingLeft + 14 }} className="leading-5">
               <span className="text-slate-300">]</span>{comma}
@@ -301,6 +401,7 @@ function JsonNode({ data, name, depth, isLast, searchQuery, path, onSaveToVar }:
         <div style={{ paddingLeft }} className="flex items-center leading-5">
           <button
             onClick={() => setOpen(o => !o)}
+            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onFoldContextMenu?.(path ?? [], e.clientX, e.clientY); }}
             className="text-slate-500 hover:text-orange-400 w-3.5 shrink-0 text-center select-none"
             style={{ fontSize: 10 }}
           >
@@ -315,7 +416,7 @@ function JsonNode({ data, name, depth, isLast, searchQuery, path, onSaveToVar }:
         {open && (
           <>
             {entries.map(([k, v], i) => (
-              <JsonNode key={k} data={v} name={k} depth={depth + 1} isLast={i === entries.length - 1} searchQuery={searchQuery} path={[...(path ?? []), k]} onSaveToVar={onSaveToVar} />
+              <JsonNode key={k} data={v} name={k} depth={depth + 1} isLast={i === entries.length - 1} searchQuery={searchQuery} path={[...(path ?? []), k]} onSaveToVar={onSaveToVar} onFoldContextMenu={onFoldContextMenu} />
             ))}
             <div style={{ paddingLeft: paddingLeft + 14 }} className="leading-5">
               <span className="text-slate-300">{'}'}</span>{comma}
@@ -334,10 +435,13 @@ function JsonNode({ data, name, depth, isLast, searchQuery, path, onSaveToVar }:
 interface XmlNodeProps {
   node: Element | Text | Node;
   depth: number;
+  path: (string | number)[];
+  onFoldContextMenu?: (path: (string | number)[], x: number, y: number) => void;
 }
 
-function XmlNode({ node, depth }: XmlNodeProps) {
+function XmlNode({ node, depth, path, onFoldContextMenu }: XmlNodeProps) {
   const [open, setOpen] = useState(true);
+  useFoldNode(path, setOpen);
   const paddingLeft = depth * 16;
 
   if (node.nodeType === Node.TEXT_NODE) {
@@ -402,6 +506,7 @@ function XmlNode({ node, depth }: XmlNodeProps) {
       <div style={{ paddingLeft }} className="flex items-center leading-5">
         <button
           onClick={() => setOpen(o => !o)}
+          onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onFoldContextMenu?.(path, e.clientX, e.clientY); }}
           className="text-slate-500 hover:text-orange-400 w-3.5 shrink-0 text-center select-none"
           style={{ fontSize: 10 }}
         >
@@ -427,7 +532,7 @@ function XmlNode({ node, depth }: XmlNodeProps) {
       {open && (
         <>
           {children.map((child, i) => (
-            <XmlNode key={i} node={child} depth={depth + 1} />
+            <XmlNode key={i} node={child} depth={depth + 1} path={[...path, i]} onFoldContextMenu={onFoldContextMenu} />
           ))}
           <div style={{ paddingLeft: paddingLeft + 14 }} className="leading-5">
             <span className="text-slate-500">{'</'}</span>
@@ -440,7 +545,10 @@ function XmlNode({ node, depth }: XmlNodeProps) {
   );
 }
 
-function XmlTreeView({ body }: { body: string }) {
+function XmlTreeView({ body, onFoldContextMenu }: {
+  body: string;
+  onFoldContextMenu?: (path: (string | number)[], x: number, y: number) => void;
+}) {
   const doc = new DOMParser().parseFromString(body, 'text/xml');
   const parseErr = doc.querySelector('parsererror');
   if (parseErr) {
@@ -452,15 +560,16 @@ function XmlTreeView({ body }: { body: string }) {
   }
   return (
     <div className="p-3 text-sm font-mono text-slate-200">
-      <XmlNode node={doc.documentElement} depth={0} />
+      <XmlNode node={doc.documentElement} depth={0} path={[]} onFoldContextMenu={onFoldContextMenu} />
     </div>
   );
 }
 
-function JsonTreeView({ body, searchQuery, onSaveToVar }: {
+function JsonTreeView({ body, searchQuery, onSaveToVar, onFoldContextMenu }: {
   body: string;
   searchQuery?: string;
   onSaveToVar?: (path: (string | number)[], value: unknown, x: number, y: number) => void;
+  onFoldContextMenu?: (path: (string | number)[], x: number, y: number) => void;
 }) {
   let parsed: unknown;
   try {
@@ -474,7 +583,7 @@ function JsonTreeView({ body, searchQuery, onSaveToVar }: {
   }
   return (
     <div className="p-3 text-sm font-mono text-slate-200">
-      <JsonNode data={parsed} depth={0} isLast={true} searchQuery={searchQuery} path={[]} onSaveToVar={onSaveToVar} />
+      <JsonNode data={parsed} depth={0} isLast={true} searchQuery={searchQuery} path={[]} onSaveToVar={onSaveToVar} onFoldContextMenu={onFoldContextMenu} />
     </div>
   );
 }
@@ -630,6 +739,8 @@ export default function ResponseViewer() {
   const [ctxMenu, setCtxMenu] = useState<{ left: number; top: number; path: (string | number)[]; value: unknown; tabId: string | null; collectionId: string | null } | null>(null);
   const [saveToVarTarget, setSaveToVarTarget] = useState<{ path: (string | number)[]; value: unknown; tabId: string | null; collectionId: string | null } | null>(null);
   const [testValueTarget, setTestValueTarget] = useState<{ path: (string | number)[]; value: unknown; tabId: string | null } | null>(null);
+  const [foldCtxMenu, setFoldCtxMenu] = useState<{ left: number; top: number; path: (string | number)[] } | null>(null);
+  const foldCtxValue = useMemo(() => buildFoldContextValue(), []);
 
   const activeTabId = state.activeTabId;
   const activeCollectionId = state.activeRequest?.collectionId ?? null;
@@ -637,6 +748,10 @@ export default function ResponseViewer() {
   const handleSaveToVar = useCallback((path: (string | number)[], value: unknown, x: number, y: number) => {
     setCtxMenu({ ...clampMenuPosition(x, y), path, value, tabId: activeTabId, collectionId: activeCollectionId });
   }, [activeTabId, activeCollectionId]);
+
+  const handleFoldContextMenu = useCallback((path: (string | number)[], x: number, y: number) => {
+    setFoldCtxMenu({ ...clampMenuPosition(x, y, 220, 290), path });
+  }, []);
 
   const copyBody = () => {
     if (!response) return;
@@ -868,6 +983,24 @@ export default function ResponseViewer() {
             >
               {copied ? '✓' : '⧉'}
             </button>
+            {(isJson || isXml) && !rawMode && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => foldCtxValue.setAllOpen(false)}
+                  className="text-xs px-1.5 py-0.5 rounded transition-colors font-mono text-slate-500 hover:text-slate-300"
+                  title="Fold all"
+                  aria-label="Fold all"
+                >▸</button>
+                <button
+                  type="button"
+                  onClick={() => foldCtxValue.setAllOpen(true)}
+                  className="text-xs px-1.5 py-0.5 rounded transition-colors font-mono text-slate-500 hover:text-slate-300"
+                  title="Unfold all"
+                  aria-label="Unfold all"
+                >▾</button>
+              </>
+            )}
             {isJson && (
               <button
                 onClick={() => { setJsonPathOpen(o => !o); if (!jsonPathOpen) setTimeout(() => jsonPathInputRef.current?.focus(), 50); }}
@@ -971,6 +1104,7 @@ export default function ResponseViewer() {
       )}
 
       {/* Content */}
+      <FoldContext.Provider value={foldCtxValue}>
       <div ref={bodyContentRef} className="flex-1 overflow-auto">
         {tab === 'Body' && (() => {
           // JSONPath active and has a result
@@ -984,7 +1118,7 @@ export default function ResponseViewer() {
                 {searchQuery.trim() ? highlightText(serialized, searchQuery) : serialized}
               </pre>
             ) : (
-              <JsonTreeView body={serialized} searchQuery={searchQuery.trim() ? searchQuery : undefined} />
+              <JsonTreeView body={serialized} searchQuery={searchQuery.trim() ? searchQuery : undefined} onFoldContextMenu={handleFoldContextMenu} />
             );
           }
           return rawMode ? (
@@ -992,9 +1126,9 @@ export default function ResponseViewer() {
               {searchQuery.trim() ? highlightText(response.body, searchQuery) : response.body}
             </pre>
           ) : isXml ? (
-            <XmlTreeView body={response.body} />
+            <XmlTreeView body={response.body} onFoldContextMenu={handleFoldContextMenu} />
           ) : (
-            <JsonTreeView body={response.body} searchQuery={searchQuery.trim() ? searchQuery : undefined} onSaveToVar={handleSaveToVar} />
+            <JsonTreeView body={response.body} searchQuery={searchQuery.trim() ? searchQuery : undefined} onSaveToVar={handleSaveToVar} onFoldContextMenu={handleFoldContextMenu} />
           );
         })()}
 
@@ -1039,6 +1173,7 @@ export default function ResponseViewer() {
           <NetworkTimeline timings={response.networkTimings} />
         )}
       </div>
+      </FoldContext.Provider>
 
       {/* Context menu: actions for a response value */}
       {ctxMenu && (
@@ -1066,6 +1201,39 @@ export default function ResponseViewer() {
             >
               Test this value…
             </button>
+          </div>
+        </>
+      )}
+
+      {/* Fold context menu */}
+      {foldCtxMenu && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setFoldCtxMenu(null)} />
+          <div
+            className="fixed z-50 bg-slate-800 border border-slate-600 rounded shadow-xl text-xs py-1 min-w-[200px]"
+            style={{ left: foldCtxMenu.left, top: foldCtxMenu.top }}
+          >
+            {(([
+              { label: 'Fold children',      action: () => foldCtxValue.setChildrenOpen(foldCtxMenu.path, false) },
+              { label: 'Unfold children',    action: () => foldCtxValue.setChildrenOpen(foldCtxMenu.path, true) },
+              null,
+              { label: 'Fold siblings',      action: () => foldCtxValue.setSiblingsOpen(foldCtxMenu.path, false) },
+              { label: 'Unfold siblings',    action: () => foldCtxValue.setSiblingsOpen(foldCtxMenu.path, true) },
+              null,
+              { label: 'Fold descendants',   action: () => foldCtxValue.setDescendantsOpen(foldCtxMenu.path, false) },
+              { label: 'Unfold descendants', action: () => foldCtxValue.setDescendantsOpen(foldCtxMenu.path, true) },
+              null,
+              { label: 'Fold ancestors',     action: () => foldCtxValue.setAncestorsOpen(foldCtxMenu.path, false) },
+              { label: 'Unfold ancestors',   action: () => foldCtxValue.setAncestorsOpen(foldCtxMenu.path, true) },
+            ] as Array<{ label: string; action: () => void } | null>)).map((item, i) =>
+              item === null
+                ? <div key={i} className="border-t border-slate-700 my-1" />
+                : <button
+                    key={i}
+                    className="block w-full text-left px-4 py-1.5 text-slate-200 hover:bg-slate-700 transition-colors whitespace-nowrap"
+                    onClick={() => { item.action(); setFoldCtxMenu(null); }}
+                  >{item.label}</button>
+            )}
           </div>
         </>
       )}
