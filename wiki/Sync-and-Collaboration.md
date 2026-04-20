@@ -44,9 +44,13 @@ Apilix workspaces can be synced to a remote provider so that your collections, e
     - [Team Server Administration](#team-server-administration)
     - [Roles](#roles)
     - [Self-hosting the Team Server](#self-hosting-the-team-server)
+  - [Remote Data Encryption](#remote-data-encryption)
   - [Sharing Sync Configuration](#sharing-sync-configuration)
     - [Exporting a sync config](#exporting-a-sync-config)
+    - [Sharing policies](#sharing-policies)
+    - [Embedding the remote passphrase](#embedding-the-remote-passphrase)
     - [Importing a sync config](#importing-a-sync-config)
+    - [Shared workspace behavior](#shared-workspace-behavior)
   - [Provider Comparison](#provider-comparison)
   - [Three-Way Merge — Technical Reference](#three-way-merge--technical-reference)
     - [Pipeline Overview](#pipeline-overview)
@@ -520,17 +524,61 @@ WantedBy=multi-user.target
 
 ---
 
+## Remote Data Encryption
+
+Remote data encryption protects the workspace data stored on your sync provider. When enabled, Apilix encrypts the entire workspace JSON with AES-256-GCM before every push and decrypts it transparently after every pull. Even if your S3 bucket, git repository, or HTTP endpoint is compromised, the workspace contents remain unreadable without the passphrase.
+
+> **Desktop (Electron) only.** Remote data encryption requires Electron's `safeStorage` API to protect the passphrase at rest. The toggle is not available in browser mode.
+
+### Enabling remote data encryption
+
+1. Open **Manage Workspaces → Sync** and configure your provider.
+2. Toggle **Encrypt remote data** to on.
+3. Enter a **Remote passphrase**. This passphrase is required for every push and pull — store it somewhere safe.
+4. Click **Save config**.
+
+The passphrase is immediately encrypted with `safeStorage` and stored in `sync-config.json`. It is never written to disk in plaintext.
+
+### How it works
+
+On every **Push ↑** or auto-merge write, the workspace JSON is encrypted with:
+
+- **Algorithm:** AES-256-GCM (authenticated encryption — tampering is detectable)
+- **Key derivation:** PBKDF2 — 200 000 iterations, SHA-256, 16-byte random salt
+- **Salt storage:** the salt is stored alongside the ciphertext in the remote object
+
+On every **Pull ↓**, Apilix detects the encrypted envelope (a JSON object with `_apilixEncrypted: true`) and decrypts it automatically using the stored passphrase. If the passphrase is missing or incorrect, the pull is blocked with an error.
+
+### Rotating the passphrase
+
+1. Push with the current passphrase to ensure the remote is up to date.
+2. Update the **Remote passphrase** field in the Sync tab and click **Save config**.
+3. Push again — the workspace is re-encrypted with the new key.
+
+> Any teammates using a sync config export that embedded the old passphrase will need a new export after rotation.
+
+### Encryption scope
+
+| Protected by remote encryption | Not protected |
+|---|---|
+| Collections, environments, variables | Provider credentials (protected separately by `safeStorage`) |
+| Requests, headers, body, scripts | Workspace metadata on the remote (object key / path) |
+| Mock routes, cookie jar | |
+
+---
+
 ## Sharing Sync Configuration
 
-You can export a workspace's sync configuration to a portable `.json` file and import it on another machine. This is the fastest way to set up the same sync provider on a second computer — especially for encrypted configurations where re-entering every field manually would be tedious.
+You can export a workspace's sync configuration to a portable `.json` file and import it on another machine or share it with a teammate. This is the fastest way to onboard someone to the same remote without manually re-entering every field.
 
 ### Exporting a sync config
 
 1. Open **Manage Workspaces → Sync**.
 2. Configure and save your sync provider settings for the workspace.
-3. Scroll to the bottom of the Sync tab and click **Export config**.
-4. Choose whether to **encrypt** the export. Encryption requires a passphrase of your choice; the config cannot be imported without it.
-5. A file named `apilix-sync-{name}.json` is downloaded.
+3. Scroll to the bottom of the Sync tab and click **Share sync config with a teammate**.
+4. Choose whether to **encrypt** the export. Encryption requires a passphrase; the file cannot be imported without it.
+5. Optionally configure a [sharing policy](#sharing-policies) (see below).
+6. Click **Export**. A file named `apilix-sync-{name}.json` is downloaded.
 
 **What is included:**
 
@@ -540,10 +588,36 @@ You can export a workspace's sync configuration to a portable `.json` file and i
 | All credential fields (token, secret key, URL, etc.) | Snapshot history |
 | Workspace ID (used to resolve the remote object) | Sync activity log |
 | `readOnly` flag | |
+| Sharing policy (when set) | |
+| Remote passphrase (when embedded, encrypted) | |
 
-**Encryption note:** When the export is encrypted, all credential fields are encrypted with AES-256-GCM using a key derived from your passphrase (PBKDF2, 100 000 iterations, SHA-256). The provider name, workspace ID, and workspace name remain in plaintext so the recipient can see what they are importing before decryption.
+**Encryption:** All credential fields are encrypted with AES-256-GCM using a key derived from the export passphrase (PBKDF2, 200 000 iterations, SHA-256). The provider name, workspace ID, and workspace name remain in plaintext so the recipient can confirm what they are importing before decryption.
 
-> **Encrypted exports include a salt** that is stored in the file. The passphrase must match exactly — there is no recovery if the passphrase is lost.
+> **Encrypted exports include a per-file salt.** The passphrase must match exactly — there is no recovery if it is lost.
+
+### Sharing policies
+
+When exporting a sync config to share with a teammate, you can attach a **sharing policy** to govern how the recipient uses the workspace:
+
+| Policy option | Effect when imported |
+|---|---|
+| **Force read-only** | The recipient's workspace is permanently set to read-only. Push is disabled — they can only pull. Useful for distributing a workspace snapshot you don't want overwritten. |
+
+Sharing policies are integrity-protected when the export is passphrase-encrypted: an HMAC-SHA-256 over the policy and workspace ID is embedded in the file. On import, Apilix verifies the MAC before applying the policy. If the file was tampered with (e.g. `forceReadOnly` changed to `false`), the import is blocked.
+
+> **HMAC protection only applies to encrypted exports.** Unencrypted exports do not carry an integrity hash — the policy fields are present but are not tamper-evident.
+
+### Embedding the remote passphrase
+
+If you have [remote data encryption](#remote-data-encryption) enabled, teammates who import your sync config also need the remote passphrase to decrypt workspace data after pulling. Rather than sharing the passphrase through a separate channel, you can embed it directly in the encrypted export:
+
+1. Enable **Encrypt this export** and enter an export passphrase.
+2. Enable **Embed remote decryption passphrase**.
+3. Export the file.
+
+When the recipient imports the file and enters the correct export passphrase, Apilix automatically extracts and stores the remote passphrase so their subsequent pulls decrypt transparently.
+
+> **The export must be encrypted to embed the remote passphrase.** Embedding in an unencrypted file would expose the passphrase in plaintext — Apilix strips it from unencrypted exports.
 
 ### Importing a sync config
 
@@ -559,6 +633,22 @@ A new workspace is created with the sync configuration applied. It starts empty 
 
 > **After importing a sync config, the workspace is empty until you Pull.** The export contains credentials, not workspace data. If you need both, export the workspace data separately using the **⬇** button in the workspace row, or just Pull after configuring sync.
 
+### Shared workspace behavior
+
+Workspaces created by importing a share package are marked as **shared workspaces** and display an informational banner in the Sync tab:
+
+> *"This workspace was imported from a share package. Sync settings are managed by the original owner and cannot be changed here."*
+
+Behavior differences in a shared workspace:
+
+| Aspect | Shared workspace |
+|---|---|
+| Provider settings | Locked — fields cannot be edited |
+| Remote data encryption toggle | Locked |
+| Push ↑ | Disabled when the export had **Force read-only** set |
+| Pull ↓ | Always available |
+| Save config | Preserves the original sharing policy; does not unlock fields |
+
 ---
 
 ## Provider Comparison
@@ -570,6 +660,8 @@ A new workspace is created with the sync configuration applied. It starts empty 
 | Role-based access | ❌ (via github permissions) | ❌ (via IAM) | Custom | ✅ built-in |
 | Real-time change notifications | ❌ | ❌ | Custom | ✅ |
 | Optimistic conflict locking | ✅ | ❌ | Optional | ✅ |
+| Remote data encryption | ✅ | ✅ | ✅ | ✅ |
+| Share config with policy | ✅ | ✅ | ✅ | ✅ |
 | Setup complexity | Medium | Medium | High | Medium |
 | Best for | Developers, open-source teams | Personal backup, simple sharing | Custom infra | Company teams |
 

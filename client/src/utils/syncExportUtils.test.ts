@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import type { SyncProvider } from '../types';
 import {
   deriveKey,
   encryptField,
@@ -307,6 +308,13 @@ describe('isEncryptedEnvelope', () => {
     expect(isEncryptedEnvelope('string')).toBe(false);
     expect(isEncryptedEnvelope({})).toBe(false);
   });
+
+  it('returns false when ciphertext or salt are missing (malformed envelope)', () => {
+    expect(isEncryptedEnvelope({ _apilixEncrypted: true })).toBe(false);
+    expect(isEncryptedEnvelope({ _apilixEncrypted: true, ciphertext: 'abc' })).toBe(false);
+    expect(isEncryptedEnvelope({ _apilixEncrypted: true, salt: 'xyz' })).toBe(false);
+    expect(isEncryptedEnvelope({ _apilixEncrypted: true, ciphertext: 42, salt: 'xyz' })).toBe(false);
+  });
 });
 
 // ─── encryptWorkspaceData / decryptWorkspaceData ──────────────────────────────
@@ -431,6 +439,28 @@ describe('buildSyncExportPackage — sharing options', () => {
   it('does not include integrityHash when no passphrase is provided', async () => {
     const pkg = await buildSyncExportPackage('WS', 's3', config, undefined, { sharePolicy });
     expect(pkg.integrityHash).toBeUndefined();
+  });
+
+  it('never includes _remotePassphrase in plaintext when export is unencrypted', async () => {
+    // No passphrase → unencrypted path; _remotePassphrase must be stripped
+    const pkg = await buildSyncExportPackage('WS', 's3', config, undefined, { remotePassphrase: 'secret' });
+    expect(pkg.encrypted).toBe(false);
+    expect('_remotePassphrase' in pkg.config).toBe(false);
+  });
+
+  it('never includes _remotePassphrase in plaintext when no secrets match', async () => {
+    // Provider with no secret fields matching → also falls through to unencrypted
+    const minimalConfig = { remoteWorkspaceId: 'rid' };
+    const pkg = await buildSyncExportPackage('WS', 'http' as SyncProvider, minimalConfig, 'pass', { remotePassphrase: 'secret' });
+    // _remotePassphrase is in SECRET_FIELDS for http, so it will be encrypted;
+    // but if config has no other fields and _remotePassphrase is the only secret,
+    // it should still be encrypted (not leak). Confirm config does not have it plaintext.
+    if (!pkg.encrypted) {
+      expect('_remotePassphrase' in pkg.config).toBe(false);
+    } else {
+      // encrypted path — value must not equal plaintext 'secret'
+      expect(pkg.config['_remotePassphrase']).not.toBe('secret');
+    }
   });
 });
 

@@ -821,6 +821,7 @@ function SyncTab() {
   const [remotePassphrase, setRemotePassphrase] = useState('');
   const [showRemotePassphrase, setShowRemotePassphrase] = useState(false);
   const [isShared, setIsShared] = useState(false);
+  const [sharePolicy, setSharePolicy] = useState<SyncSharePolicy | undefined>(undefined);
   const [conflict, setConflict] = useState<null | { remoteTimestamp: string; localTimestamp: string | null }>(null);
   const [conflictPackage, setConflictPackage] = useState<ConflictPackage | null>(null);
   const [activity, setActivity] = useState<SyncActivityEntry[]>([]);
@@ -857,6 +858,7 @@ function SyncTab() {
         setEncryptRemote(cfg.encryptRemote === true);
         setRemotePassphrase(cfg.remotePassphrase ?? '');
         setIsShared(cfg.isShared === true);
+        setSharePolicy(cfg.sharePolicy);
       } else {
         setFields({});
         setSyncMetadata(undefined);
@@ -864,6 +866,7 @@ function SyncTab() {
         setEncryptRemote(false);
         setRemotePassphrase('');
         setIsShared(false);
+        setSharePolicy(undefined);
       }
       setActivity(entries);
       setLoaded(true);
@@ -889,6 +892,8 @@ function SyncTab() {
     await StorageDriver.writeSyncConfig(workspaceId, provider, fields, syncMetadata, readOnly, {
       encryptRemote,
       remotePassphrase: remotePassphrase || undefined,
+      isShared,
+      sharePolicy,
     });
     await logActivity('save-config', 'info', 'Sync configuration saved');
     dispatch({ type: 'BUMP_SYNC_CONFIG_VERSION' });

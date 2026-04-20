@@ -189,7 +189,7 @@ Data lives inside the system app-data directory:
         {snapshotId}.json      ← full workspace data blob at a point in time
 ```
 
-> **Credential security:** Sync credentials (tokens, secret keys) are encrypted with Electron's `safeStorage` API before being written to `sync-config.json`. They are never stored in plaintext on disk.
+> **Credential security:** Sync credentials (tokens, secret keys) and remote data encryption passphrases are encrypted with Electron's `safeStorage` API before being written to `sync-config.json`. They are never stored in plaintext on disk.
 
 ### Web / Browser Mode
 
@@ -255,6 +255,26 @@ The **Sync** tab in **Manage Workspaces** connects a workspace to a remote provi
 | **Import once ↓** | One-shot clone | Pulls once without persisting the config — useful for a one-time import. |
 
 ![Workspace manager — Sync tab](images/workspaces-sync-tab.png)
+
+### Remote data encryption
+
+Every sync provider supports **remote data encryption**: when enabled, the workspace JSON is encrypted with AES-256-GCM before being pushed and decrypted transparently after every pull. This keeps your workspace data unreadable on the remote even if the provider is compromised.
+
+- Toggle **Encrypt remote data** in the Sync tab (desktop / Electron only).
+- Enter a **Remote passphrase**; it is stored using `safeStorage` and never written to disk in plaintext.
+- The passphrase is required on every machine that pulls the workspace — share it through a separate secure channel, or embed it in an encrypted [sync config export](#sync-configuration-sharing).
+
+See [Remote Data Encryption](Sync-and-Collaboration#remote-data-encryption) in the full sync reference for key derivation details.
+
+### Sync configuration sharing
+
+You can export a workspace's sync configuration as a portable `.json` file and import it on another machine or share it with a teammate. The export can be:
+
+- **Passphrase-encrypted** — credentials are encrypted with AES-256-GCM; the recipient must enter the passphrase to import.
+- **Decorated with a sharing policy** — optionally marks the imported workspace as read-only so the recipient can only pull, not push.
+- **Bundled with the remote passphrase** — lets a teammate decrypt remote data immediately after their first pull, without a separate passphrase handoff.
+
+See [Sharing Sync Configuration](Sync-and-Collaboration#sharing-sync-configuration) for step-by-step instructions.
 
 ### Sync activity log
 

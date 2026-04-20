@@ -1,10 +1,21 @@
 /**
- * syncExportUtils — utilities for exporting and importing S3 sync configurations.
+ * syncExportUtils — cryptographic helpers for sync config sharing and remote data encryption.
  *
- * Allows a user to export their S3 sync config (including the workspace ID,
- * so a teammate's local workspace resolves the same S3 object) and optionally
- * encrypt the credential fields (accessKeyId, secretAccessKey) with a
- * user-supplied passphrase using AES-GCM 256 + PBKDF2.
+ * Responsibilities:
+ *  1. **Sync config export/import** — build and parse portable `.json` packages that let a
+ *     user share provider credentials (S3, Git, HTTP, Team) with a teammate. Secret fields are
+ *     optionally encrypted with AES-256-GCM + PBKDF2 (200 000 iterations, SHA-256).
+ *
+ *  2. **Sharing policies** — a `SyncSharePolicy` can be embedded in an encrypted export.
+ *     Its integrity is protected by HMAC-SHA-256 (domain-separated key, `crypto.subtle.verify`
+ *     for constant-time comparison) so tampering is detectable on import.
+ *
+ *  3. **Remote workspace data encryption** — `encryptWorkspaceData` / `decryptWorkspaceData`
+ *     wrap an entire `WorkspaceData` object in an `EncryptedDataEnvelope` (AES-256-GCM).
+ *     `syncEngine` calls these transparently on every push / pull when `encryptRemote` is set.
+ *
+ * All cryptographic operations use the Web Crypto API (`crypto.subtle`) and are available in
+ * both Electron renderer and browser contexts.
  */
 
 import type { SyncExportPackage, SyncProvider, SyncSharePolicy, WorkspaceData, EncryptedDataEnvelope } from '../types';
@@ -91,10 +102,12 @@ export async function decryptField(encoded: string, key: CryptoKey): Promise<str
  * Used in syncEngine to decide whether to decrypt after pull.
  */
 export function isEncryptedEnvelope(data: unknown): data is EncryptedDataEnvelope {
+  if (!data || typeof data !== 'object') return false;
+  const obj = data as Record<string, unknown>;
   return (
-    !!data &&
-    typeof data === 'object' &&
-    (data as Record<string, unknown>)._apilixEncrypted === true
+    obj._apilixEncrypted === true &&
+    typeof obj.ciphertext === 'string' &&
+    typeof obj.salt === 'string'
   );
 }
 
@@ -134,16 +147,28 @@ export async function decryptWorkspaceData(
 // ─── Integrity hash (for export sharePolicy tamper-detection) ─────────────────
 
 /**
- * Derive raw PBKDF2 key bytes (used as an HMAC key).
- * Re-uses the same passphrase+salt input as deriveKey but exports 32 raw bytes.
+ * Derive an HMAC-SHA-256 CryptoKey from a passphrase + salt using PBKDF2.
+ *
+ * Uses a domain-separated passphrase ("apilix-hmac:<passphrase>") so the
+ * derived key material is provably distinct from the AES-GCM key derived by
+ * deriveKey() even when the same passphrase and salt are supplied.
  */
-async function deriveRawBytes(passphrase: string, salt: Uint8Array): Promise<ArrayBuffer> {
+async function deriveHmacKey(passphrase: string, salt: Uint8Array): Promise<CryptoKey> {
   const enc = new TextEncoder();
-  const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveBits']);
-  return crypto.subtle.deriveBits(
+  // Domain-separation: prefix differs from the bare passphrase used by deriveKey()
+  const domainPassphrase = 'apilix-hmac:' + passphrase;
+  const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(domainPassphrase), 'PBKDF2', false, ['deriveBits']);
+  const rawBytes = await crypto.subtle.deriveBits(
     { name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' } as Pbkdf2Params,
     keyMaterial,
     256,
+  );
+  return crypto.subtle.importKey(
+    'raw',
+    rawBytes,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign', 'verify'],
   );
 }
 
@@ -158,14 +183,7 @@ export async function computeIntegrityHash(
   passphrase: string,
   salt: Uint8Array,
 ): Promise<string> {
-  const rawBytes = await deriveRawBytes(passphrase, salt);
-  const hmacKey = await crypto.subtle.importKey(
-    'raw',
-    rawBytes,
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
+  const hmacKey = await deriveHmacKey(passphrase, salt);
   const payload = new TextEncoder().encode(JSON.stringify({ sharePolicy, remoteWorkspaceId }));
   const mac = await crypto.subtle.sign('HMAC', hmacKey, payload);
   let binary = '';
@@ -176,6 +194,7 @@ export async function computeIntegrityHash(
 
 /**
  * Verify an HMAC-SHA-256 integrity hash previously computed by computeIntegrityHash.
+ * Uses crypto.subtle.verify for constant-time comparison — avoids timing side-channels.
  * Returns false if the passphrase is wrong or the data has been tampered with.
  */
 export async function verifyIntegrityHash(
@@ -187,8 +206,10 @@ export async function verifyIntegrityHash(
 ): Promise<boolean> {
   try {
     const salt = Uint8Array.from(atob(saltBase64), c => c.charCodeAt(0));
-    const computed = await computeIntegrityHash(sharePolicy, remoteWorkspaceId, passphrase, salt);
-    return computed === expectedHash;
+    const hmacKey = await deriveHmacKey(passphrase, salt);
+    const payload = new TextEncoder().encode(JSON.stringify({ sharePolicy, remoteWorkspaceId }));
+    const expectedBytes = Uint8Array.from(atob(expectedHash), c => c.charCodeAt(0));
+    return await crypto.subtle.verify('HMAC', hmacKey, expectedBytes, payload);
   } catch {
     return false;
   }
@@ -263,12 +284,18 @@ export async function buildSyncExportPackage(
     }
   }
 
+  // Unencrypted path: _remotePassphrase must never appear in cleartext output.
+  // Drop it from config regardless of whether the caller supplied it — the UI
+  // warns, but the builder enforces the invariant unconditionally.
+  const safeConfig = { ...workingConfig };
+  delete safeConfig['_remotePassphrase'];
+
   return {
     apilixSyncExport: '1',
     remoteWorkspaceId: workingConfig.remoteWorkspaceId ?? '',
     workspaceName,
     provider,
-    config: { ...workingConfig },
+    config: safeConfig,
     encrypted: false,
     encryptedFields: [],
     ...(options?.remotePassphrase ? { remoteEncryption: { enabled: true } } : {}),

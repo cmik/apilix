@@ -9,7 +9,7 @@
  * is used, and the module remains crash-free.
  */
 
-import type { WorkspaceData, Workspace, SyncMetadata, SyncActivityEntry, AppSettings, HistoryRequest, SavedRunnerRun } from '../types';
+import type { WorkspaceData, Workspace, SyncMetadata, SyncActivityEntry, AppSettings, HistoryRequest, SavedRunnerRun, SyncSharePolicy } from '../types';
 
 // ─── Electron API shim ────────────────────────────────────────────────────────
 
@@ -219,7 +219,7 @@ export interface StoredSyncConfig {
   /** True when workspace was created by importing a shared sync export file. */
   isShared?: boolean;
   /** Sharing policy from the export package. Present only when isShared is true. */
-  sharePolicy?: import('../types').SyncSharePolicy;
+  sharePolicy?: SyncSharePolicy;
 }
 
 export type SyncConfigStore = Record<string, StoredSyncConfig>;
@@ -259,7 +259,7 @@ export async function readSyncConfig(workspaceId: string): Promise<StoredSyncCon
   const encryptRemote = raw.encryptRemote === true ? true : undefined;
   const encryptedRemotePassphrase = typeof raw.encryptedRemotePassphrase === 'string' ? raw.encryptedRemotePassphrase : undefined;
   const isShared = raw.isShared === true ? true : undefined;
-  const sharePolicy = (raw.sharePolicy && typeof raw.sharePolicy === 'object') ? raw.sharePolicy as import('../types').SyncSharePolicy : undefined;
+  const sharePolicy = (raw.sharePolicy && typeof raw.sharePolicy === 'object') ? raw.sharePolicy as SyncSharePolicy : undefined;
   if (!provider) return null;
 
   let remotePassphrase: string | undefined;
@@ -281,7 +281,7 @@ export async function writeSyncConfig(
     encryptRemote?: boolean;
     remotePassphrase?: string;
     isShared?: boolean;
-    sharePolicy?: import('../types').SyncSharePolicy;
+    sharePolicy?: SyncSharePolicy;
   },
 ): Promise<void> {
   const api = eAPI();
