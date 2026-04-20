@@ -481,6 +481,34 @@ export interface SyncPullResult {
   remoteState: SyncRemoteState;
 }
 
+/**
+ * Wraps an encrypted WorkspaceData payload stored on a remote provider.
+ * The adapters treat this as an opaque object; syncEngine handles en/decryption.
+ */
+export interface EncryptedDataEnvelope {
+  /** Sentinel — guards against accidentally decrypting unencrypted payloads. */
+  _apilixEncrypted: true;
+  /** Base64-encoded AES-256-GCM ciphertext of the JSON-serialised WorkspaceData. */
+  ciphertext: string;
+  /** Base64-encoded 16-byte PBKDF2 salt. */
+  salt: string;
+}
+
+/**
+ * Sharing policy embedded in a SyncExportPackage.
+ * Integrity-protected by HMAC when the package is passphrase-encrypted.
+ */
+export interface SyncSharePolicy {
+  /** If true, the importing workspace's readOnly is permanently forced to true. */
+  forceReadOnly: boolean;
+  /**
+   * If false, the Export panel is hidden on imported workspaces and re-sharing
+   * is disabled. If true and the source workspace used remote encryption, the
+   * re-export passphrase and policy are inherited and locked.
+   */
+  sharingEnabled: boolean;
+}
+
 export interface SyncConfig {
   workspaceId: string;
   provider: SyncProvider;
@@ -490,6 +518,14 @@ export interface SyncConfig {
   lastSynced?: string;
   /** When true, push operations are blocked — workspace syncs in pull-only mode */
   readOnly?: boolean;
+  /** When true, workspace data is encrypted before being pushed to the remote. */
+  encryptRemote?: boolean;
+  /** In-memory only — decrypted from storage, never serialised directly. */
+  remotePassphrase?: string;
+  /** True when this workspace was created by importing a shared sync export. */
+  isShared?: boolean;
+  /** Sharing policy set by the exporter. Present only when isShared is true. */
+  sharePolicy?: SyncSharePolicy;
 }
 
 /** Format version identifier for sync export files. */
@@ -534,6 +570,16 @@ export interface SyncExportPackage {
   encryptedFields: string[];
   /** Base64-encoded 16-byte PBKDF2 salt. Present only when `encrypted === true`. */
   salt?: string;
+  /** Present when the source workspace had remote-data encryption enabled. */
+  remoteEncryption?: { enabled: boolean };
+  /** Sharing restrictions set by the exporter. */
+  sharePolicy?: SyncSharePolicy;
+  /**
+   * HMAC-SHA-256 of JSON.stringify({sharePolicy, remoteWorkspaceId}) keyed on a
+   * PBKDF2-derived key from the export passphrase. Present only when the package
+   * is passphrase-encrypted and sharePolicy is provided.
+   */
+  integrityHash?: string;
 }
 
 export type SyncActivityLevel = 'info' | 'success' | 'warning' | 'error';

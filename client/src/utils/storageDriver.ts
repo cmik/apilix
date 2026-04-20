@@ -207,6 +207,19 @@ export interface StoredSyncConfig {
   lastSynced?: string;
   /** When true, push operations are blocked — workspace syncs in pull-only mode */
   readOnly?: boolean;
+  /** When true, workspace data is encrypted before being pushed to the remote. */
+  encryptRemote?: boolean;
+  /** Remote passphrase encrypted with Electron safeStorage (base64). Never plaintext. */
+  encryptedRemotePassphrase?: string;
+  /**
+   * Transient field: populated by readSyncConfig after decrypting
+   * encryptedRemotePassphrase — never written to disk.
+   */
+  remotePassphrase?: string;
+  /** True when workspace was created by importing a shared sync export file. */
+  isShared?: boolean;
+  /** Sharing policy from the export package. Present only when isShared is true. */
+  sharePolicy?: import('../types').SyncSharePolicy;
 }
 
 export type SyncConfigStore = Record<string, StoredSyncConfig>;
@@ -243,8 +256,18 @@ export async function readSyncConfig(workspaceId: string): Promise<StoredSyncCon
   const metadata = (raw.metadata && typeof raw.metadata === 'object') ? raw.metadata as SyncMetadata : undefined;
   const lastSynced = typeof raw.lastSynced === 'string' ? raw.lastSynced : undefined;
   const readOnly = raw.readOnly === true ? true : undefined;
+  const encryptRemote = raw.encryptRemote === true ? true : undefined;
+  const encryptedRemotePassphrase = typeof raw.encryptedRemotePassphrase === 'string' ? raw.encryptedRemotePassphrase : undefined;
+  const isShared = raw.isShared === true ? true : undefined;
+  const sharePolicy = (raw.sharePolicy && typeof raw.sharePolicy === 'object') ? raw.sharePolicy as import('../types').SyncSharePolicy : undefined;
   if (!provider) return null;
-  return { provider, config, metadata, lastSynced, readOnly };
+
+  let remotePassphrase: string | undefined;
+  if (encryptedRemotePassphrase) {
+    remotePassphrase = await decryptValue(encryptedRemotePassphrase);
+  }
+
+  return { provider, config, metadata, lastSynced, readOnly, encryptRemote, encryptedRemotePassphrase, remotePassphrase, isShared, sharePolicy };
 }
 
 /** Write the sync config for a specific workspace (merges into the store file). */
@@ -254,15 +277,32 @@ export async function writeSyncConfig(
   config: Record<string, string>,
   metadata?: SyncMetadata,
   readOnly?: boolean,
+  opts?: {
+    encryptRemote?: boolean;
+    remotePassphrase?: string;
+    isShared?: boolean;
+    sharePolicy?: import('../types').SyncSharePolicy;
+  },
 ): Promise<void> {
   const api = eAPI();
   let store: SyncConfigStore = {};
+
+  // Encrypt the remote passphrase before storing
+  let encryptedRemotePassphrase: string | undefined;
+  if (opts?.encryptRemote && opts?.remotePassphrase) {
+    encryptedRemotePassphrase = await encryptValue(opts.remotePassphrase);
+  }
+
   const entry: StoredSyncConfig = {
     provider,
     config,
     metadata,
     lastSynced: metadata?.lastSyncedAt,
     ...(readOnly ? { readOnly: true } : {}),
+    ...(opts?.encryptRemote ? { encryptRemote: true } : {}),
+    ...(encryptedRemotePassphrase ? { encryptedRemotePassphrase } : {}),
+    ...(opts?.isShared ? { isShared: true } : {}),
+    ...(opts?.sharePolicy ? { sharePolicy: opts.sharePolicy } : {}),
   };
   if (api) {
     try {

@@ -7,7 +7,7 @@
  * user-supplied passphrase using AES-GCM 256 + PBKDF2.
  */
 
-import type { SyncExportPackage, SyncProvider } from '../types';
+import type { SyncExportPackage, SyncProvider, SyncSharePolicy, WorkspaceData, EncryptedDataEnvelope } from '../types';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -17,11 +17,11 @@ const IV_BYTES = 12;
 
 /** Fields that are treated as secrets per provider and will be encrypted. */
 const SECRET_FIELDS: Partial<Record<SyncProvider, string[]>> = {
-  s3: ['accessKeyId', 'secretAccessKey'],
-  minio: ['accessKeyId', 'secretAccessKey'],
-  git: ['token'],
-  http: ['token'],
-  team: ['token'],
+  s3: ['accessKeyId', 'secretAccessKey', '_remotePassphrase'],
+  minio: ['accessKeyId', 'secretAccessKey', '_remotePassphrase'],
+  git: ['token', '_remotePassphrase'],
+  http: ['token', '_remotePassphrase'],
+  team: ['token', '_remotePassphrase'],
 };
 
 // ─── Web Crypto helpers ────────────────────────────────────────────────────────
@@ -84,6 +84,116 @@ export async function decryptField(encoded: string, key: CryptoKey): Promise<str
   return new TextDecoder().decode(plaintext);
 }
 
+// ─── Remote workspace data encryption ─────────────────────────────────────────
+
+/**
+ * Type-guard to detect an encrypted-data envelope stored on a remote provider.
+ * Used in syncEngine to decide whether to decrypt after pull.
+ */
+export function isEncryptedEnvelope(data: unknown): data is EncryptedDataEnvelope {
+  return (
+    !!data &&
+    typeof data === 'object' &&
+    (data as Record<string, unknown>)._apilixEncrypted === true
+  );
+}
+
+/**
+ * Encrypt a WorkspaceData object with a passphrase. The resulting
+ * EncryptedDataEnvelope is stored on the remote provider instead of the
+ * raw JSON so the data is protected at rest.
+ */
+export async function encryptWorkspaceData(
+  data: WorkspaceData,
+  passphrase: string,
+): Promise<EncryptedDataEnvelope> {
+  const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
+  const key = await deriveKey(passphrase, salt);
+  const ciphertext = await encryptField(JSON.stringify(data), key);
+  return {
+    _apilixEncrypted: true,
+    ciphertext,
+    salt: btoa(String.fromCharCode(...salt)),
+  };
+}
+
+/**
+ * Decrypt an EncryptedDataEnvelope back to WorkspaceData.
+ * Throws "Wrong passphrase" if the passphrase is incorrect.
+ */
+export async function decryptWorkspaceData(
+  envelope: EncryptedDataEnvelope,
+  passphrase: string,
+): Promise<WorkspaceData> {
+  const salt = Uint8Array.from(atob(envelope.salt), c => c.charCodeAt(0));
+  const key = await deriveKey(passphrase, salt);
+  const plaintext = await decryptField(envelope.ciphertext, key);
+  return JSON.parse(plaintext) as WorkspaceData;
+}
+
+// ─── Integrity hash (for export sharePolicy tamper-detection) ─────────────────
+
+/**
+ * Derive raw PBKDF2 key bytes (used as an HMAC key).
+ * Re-uses the same passphrase+salt input as deriveKey but exports 32 raw bytes.
+ */
+async function deriveRawBytes(passphrase: string, salt: Uint8Array): Promise<ArrayBuffer> {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveBits']);
+  return crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' } as Pbkdf2Params,
+    keyMaterial,
+    256,
+  );
+}
+
+/**
+ * Compute an HMAC-SHA-256 over JSON.stringify({sharePolicy, remoteWorkspaceId})
+ * using a key derived from the export passphrase + salt.
+ * Returns the MAC as a base64 string.
+ */
+export async function computeIntegrityHash(
+  sharePolicy: SyncSharePolicy,
+  remoteWorkspaceId: string,
+  passphrase: string,
+  salt: Uint8Array,
+): Promise<string> {
+  const rawBytes = await deriveRawBytes(passphrase, salt);
+  const hmacKey = await crypto.subtle.importKey(
+    'raw',
+    rawBytes,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const payload = new TextEncoder().encode(JSON.stringify({ sharePolicy, remoteWorkspaceId }));
+  const mac = await crypto.subtle.sign('HMAC', hmacKey, payload);
+  let binary = '';
+  const bytes = new Uint8Array(mac);
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+/**
+ * Verify an HMAC-SHA-256 integrity hash previously computed by computeIntegrityHash.
+ * Returns false if the passphrase is wrong or the data has been tampered with.
+ */
+export async function verifyIntegrityHash(
+  sharePolicy: SyncSharePolicy,
+  remoteWorkspaceId: string,
+  passphrase: string,
+  saltBase64: string,
+  expectedHash: string,
+): Promise<boolean> {
+  try {
+    const salt = Uint8Array.from(atob(saltBase64), c => c.charCodeAt(0));
+    const computed = await computeIntegrityHash(sharePolicy, remoteWorkspaceId, passphrase, salt);
+    return computed === expectedHash;
+  } catch {
+    return false;
+  }
+}
+
 // ─── Package builder ──────────────────────────────────────────────────────────
 
 /**
@@ -95,19 +205,30 @@ export async function decryptField(encoded: string, key: CryptoKey): Promise<str
  *                      `remoteWorkspaceId` for S3/MinIO so teammates resolve the
  *                      same object key without needing the local workspace ID.
  * @param passphrase    When provided, encrypts all secret fields for this provider.
+ * @param options       Optional sharing policy and remote passphrase embedding.
  */
 export async function buildSyncExportPackage(
   workspaceName: string,
   provider: SyncProvider,
   config: Record<string, string>,
   passphrase?: string,
+  options?: {
+    sharePolicy?: SyncSharePolicy;
+    remotePassphrase?: string;
+  },
 ): Promise<SyncExportPackage> {
   const secretKeys = SECRET_FIELDS[provider] ?? [];
+
+  // Embed remote passphrase into config so it gets encrypted with the other secrets
+  const workingConfig: Record<string, string> = { ...config };
+  if (options?.remotePassphrase) {
+    workingConfig['_remotePassphrase'] = options.remotePassphrase;
+  }
 
   if (passphrase && passphrase.length > 0 && secretKeys.length > 0) {
     const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
     const key = await deriveKey(passphrase, salt);
-    const encryptedConfig: Record<string, string> = { ...config };
+    const encryptedConfig: Record<string, string> = { ...workingConfig };
     const encryptedFields: string[] = [];
     for (const k of secretKeys) {
       if (encryptedConfig[k]) {
@@ -116,27 +237,42 @@ export async function buildSyncExportPackage(
       }
     }
     if (encryptedFields.length > 0) {
+      const saltBase64 = btoa(String.fromCharCode(...salt));
+      let integrityHash: string | undefined;
+      if (options?.sharePolicy) {
+        integrityHash = await computeIntegrityHash(
+          options.sharePolicy,
+          workingConfig.remoteWorkspaceId ?? '',
+          passphrase,
+          salt,
+        );
+      }
       return {
         apilixSyncExport: '1',
-        remoteWorkspaceId: config.remoteWorkspaceId ?? '',
+        remoteWorkspaceId: workingConfig.remoteWorkspaceId ?? '',
         workspaceName,
         provider,
         config: encryptedConfig,
         encrypted: true,
         encryptedFields,
-        salt: btoa(String.fromCharCode(...salt)),
+        salt: saltBase64,
+        ...(options?.remotePassphrase ? { remoteEncryption: { enabled: true } } : {}),
+        ...(options?.sharePolicy ? { sharePolicy: options.sharePolicy } : {}),
+        ...(integrityHash ? { integrityHash } : {}),
       };
     }
   }
 
   return {
     apilixSyncExport: '1',
-    remoteWorkspaceId: config.remoteWorkspaceId ?? '',
+    remoteWorkspaceId: workingConfig.remoteWorkspaceId ?? '',
     workspaceName,
     provider,
-    config: { ...config },
+    config: { ...workingConfig },
     encrypted: false,
     encryptedFields: [],
+    ...(options?.remotePassphrase ? { remoteEncryption: { enabled: true } } : {}),
+    ...(options?.sharePolicy ? { sharePolicy: options.sharePolicy } : {}),
   };
 }
 
@@ -221,6 +357,13 @@ export function parseSyncExportPackage(raw: unknown): SyncExportPackage {
     encrypted: obj.encrypted as boolean,
     encryptedFields: obj.encryptedFields as string[],
     salt: typeof obj.salt === 'string' ? obj.salt : undefined,
+    remoteEncryption: (obj.remoteEncryption && typeof obj.remoteEncryption === 'object' && typeof (obj.remoteEncryption as Record<string, unknown>).enabled === 'boolean')
+      ? { enabled: (obj.remoteEncryption as Record<string, unknown>).enabled as boolean }
+      : undefined,
+    sharePolicy: (obj.sharePolicy && typeof obj.sharePolicy === 'object' && typeof (obj.sharePolicy as Record<string, unknown>).forceReadOnly === 'boolean' && typeof (obj.sharePolicy as Record<string, unknown>).sharingEnabled === 'boolean')
+      ? { forceReadOnly: (obj.sharePolicy as Record<string, unknown>).forceReadOnly as boolean, sharingEnabled: (obj.sharePolicy as Record<string, unknown>).sharingEnabled as boolean }
+      : undefined,
+    integrityHash: typeof obj.integrityHash === 'string' ? obj.integrityHash : undefined,
   };
 }
 

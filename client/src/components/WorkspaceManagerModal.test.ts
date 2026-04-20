@@ -88,6 +88,7 @@ describe('cloneWorkspaceSyncConfig', () => {
       { remote: 'https://github.com/org/repo.git', branch: 'main', token: 'secret' },
       undefined,
       true,
+      expect.objectContaining({}),
     );
   });
 

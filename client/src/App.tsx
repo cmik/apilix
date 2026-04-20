@@ -683,6 +683,10 @@ export default function App() {
       config: stored.config,
       metadata: stored.metadata ?? (stored.lastSynced ? { lastSyncedAt: stored.lastSynced } : undefined),
       readOnly: stored.readOnly === true ? true : undefined,
+      encryptRemote: stored.encryptRemote,
+      remotePassphrase: stored.remotePassphrase,
+      isShared: stored.isShared,
+      sharePolicy: stored.sharePolicy,
     };
   }
 
@@ -694,7 +698,12 @@ export default function App() {
       lastSyncedVersion: version ?? cfg.metadata?.lastSyncedVersion,
       lastMergeBaseSnapshotId: baseSnapshotId,
     };
-    await StorageDriver.writeSyncConfig(cfg.workspaceId, cfg.provider, cfg.config, nextMetadata, cfg.readOnly);
+    await StorageDriver.writeSyncConfig(cfg.workspaceId, cfg.provider, cfg.config, nextMetadata, cfg.readOnly, {
+      encryptRemote: cfg.encryptRemote,
+      remotePassphrase: cfg.remotePassphrase,
+      isShared: cfg.isShared,
+      sharePolicy: cfg.sharePolicy,
+    });
     return nextMetadata;
   }
 

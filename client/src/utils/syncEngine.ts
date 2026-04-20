@@ -16,6 +16,11 @@ import { loadSnapshot, listHistory } from './snapshotEngine';
 import { mergeWorkspaces } from './merge/workspaceMerge';
 import { deepEqual } from './merge/workspaceDiffer';
 import { StaleVersionError } from './sync/errors';
+import {
+  encryptWorkspaceData,
+  decryptWorkspaceData,
+  isEncryptedEnvelope,
+} from './syncExportUtils';
 
 export type ConflictResolution = 'keep-local' | 'keep-remote';
 
@@ -52,11 +57,15 @@ export interface SyncAdapter {
 
 /**
  * Push the active workspace data to the configured provider.
+ * If remote encryption is configured, the data is encrypted before upload.
  * Throws on provider error; caller should dispatch SET_SYNC_STATUS accordingly.
  */
 export async function push(syncConfig: SyncConfig, data: WorkspaceData): Promise<void> {
   const adapter = getAdapter(syncConfig.provider as string);
-  await adapter.push(syncConfig.workspaceId, data, syncConfig.config);
+  const payload = syncConfig.encryptRemote && syncConfig.remotePassphrase
+    ? await encryptWorkspaceData(data, syncConfig.remotePassphrase) as unknown as WorkspaceData
+    : data;
+  await adapter.push(syncConfig.workspaceId, payload, syncConfig.config);
 }
 
 export async function applyMerged(
@@ -65,12 +74,15 @@ export async function applyMerged(
   expectedVersion: string,
 ): Promise<void> {
   const adapter = getAdapter(syncConfig.provider as string);
+  const payload = syncConfig.encryptRemote && syncConfig.remotePassphrase
+    ? await encryptWorkspaceData(mergedData, syncConfig.remotePassphrase) as unknown as WorkspaceData
+    : mergedData;
   if (adapter.applyMerged) {
-    await adapter.applyMerged(syncConfig.workspaceId, mergedData, syncConfig.config, expectedVersion);
+    await adapter.applyMerged(syncConfig.workspaceId, payload, syncConfig.config, expectedVersion);
     return;
   }
   // Fallback for providers that don't support optimistic conditional writes yet.
-  await adapter.push(syncConfig.workspaceId, mergedData, syncConfig.config, { expectedVersion });
+  await adapter.push(syncConfig.workspaceId, payload, syncConfig.config, { expectedVersion });
 }
 
 /**
@@ -110,15 +122,28 @@ export async function pullWithMeta(
     return { data: null, remoteState: await getAdapterRemoteState(adapter, syncConfig.workspaceId, syncConfig.config) };
   }
 
+  let result: SyncPullResult;
   if (adapter.pullWithMeta) {
-    return adapter.pullWithMeta(syncConfig.workspaceId, syncConfig.config);
+    result = await adapter.pullWithMeta(syncConfig.workspaceId, syncConfig.config);
+  } else {
+    const [data, remoteState] = await Promise.all([
+      adapter.pull(syncConfig.workspaceId, syncConfig.config),
+      getAdapterRemoteState(adapter, syncConfig.workspaceId, syncConfig.config),
+    ]);
+    result = { data, remoteState };
   }
 
-  const [data, remoteState] = await Promise.all([
-    adapter.pull(syncConfig.workspaceId, syncConfig.config),
-    getAdapterRemoteState(adapter, syncConfig.workspaceId, syncConfig.config),
-  ]);
-  return { data, remoteState };
+  // Transparent decryption — detect an encrypted envelope and unwrap it
+  if (result.data && isEncryptedEnvelope(result.data)) {
+    if (!syncConfig.remotePassphrase) {
+      throw new Error(
+        'Remote data is encrypted — enter the workspace passphrase in Sync settings to pull.',
+      );
+    }
+    result = { ...result, data: await decryptWorkspaceData(result.data, syncConfig.remotePassphrase) };
+  }
+
+  return result;
 }
 
 /**
@@ -175,6 +200,16 @@ export async function pullForMerge(
       getAdapterRemoteState(adapter, syncConfig.workspaceId, syncConfig.config),
     ]);
     remoteResult = { data, remoteState };
+  }
+
+  // Transparent decryption
+  if (remoteResult.data && isEncryptedEnvelope(remoteResult.data)) {
+    if (!syncConfig.remotePassphrase) {
+      throw new Error(
+        'Remote data is encrypted — enter the workspace passphrase in Sync settings to pull.',
+      );
+    }
+    remoteResult = { ...remoteResult, data: await decryptWorkspaceData(remoteResult.data, syncConfig.remotePassphrase) };
   }
 
   const remoteData = remoteResult.data ?? localData;
@@ -254,6 +289,16 @@ export async function rebaseAfterStale(
       getAdapterRemoteState(adapter, syncConfig.workspaceId, syncConfig.config),
     ]);
     remoteResult = { data, remoteState };
+  }
+
+  // Transparent decryption
+  if (remoteResult.data && isEncryptedEnvelope(remoteResult.data)) {
+    if (!syncConfig.remotePassphrase) {
+      throw new Error(
+        'Remote data is encrypted — enter the workspace passphrase in Sync settings to pull.',
+      );
+    }
+    remoteResult = { ...remoteResult, data: await decryptWorkspaceData(remoteResult.data, syncConfig.remotePassphrase) };
   }
 
   const remoteData = remoteResult.data ?? localData;
