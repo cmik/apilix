@@ -170,6 +170,7 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [confirmClear, setConfirmClear] = useState<string | null>(null);
   const [syncedIds, setSyncedIds] = useState<Set<string>>(new Set());
+  const [sharingLockedExportIds, setSharingLockedExportIds] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [exportError, setExportError] = useState('');
@@ -179,7 +180,17 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     StorageDriver.readSyncConfigStore().then(store => {
-      setSyncedIds(new Set(Object.keys(store).filter(id => !!store[id]?.provider)));
+      const nextSyncedIds = new Set<string>();
+      const nextSharingLockedExportIds = new Set<string>();
+      Object.keys(store).forEach(id => {
+        const cfg = store[id];
+        if (cfg?.provider) nextSyncedIds.add(id);
+        if (cfg?.isShared === true && cfg?.sharePolicy?.sharingEnabled === false) {
+          nextSharingLockedExportIds.add(id);
+        }
+      });
+      setSyncedIds(nextSyncedIds);
+      setSharingLockedExportIds(nextSharingLockedExportIds);
     });
   }, [state.workspaces, state.syncConfigVersion]);
 
@@ -519,14 +530,16 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
                   Duplicate
                 </button>
 
-                <button
-                  role="menuitem"
-                  onClick={() => { setOpenMenuId(null); handleExportWorkspace(w); }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-slate-300 hover:bg-slate-700/60 hover:text-slate-100 transition-colors"
-                >
-                  <span className="w-4 shrink-0 text-center">⬇</span>
-                  Export workspace data
-                </button>
+                {!sharingLockedExportIds.has(w.id) && (
+                  <button
+                    role="menuitem"
+                    onClick={() => { setOpenMenuId(null); handleExportWorkspace(w); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-slate-300 hover:bg-slate-700/60 hover:text-slate-100 transition-colors"
+                  >
+                    <span className="w-4 shrink-0 text-center">⬇</span>
+                    Export workspace data
+                  </button>
+                )}
 
                 <div className="border-t border-slate-700 my-1" />
 
