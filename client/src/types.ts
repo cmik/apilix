@@ -114,6 +114,8 @@ export interface BaseEnvironment {
     value: string;
     type?: string;
     enabled: boolean;
+    /** When true the value is encrypted at rest on disk (Electron: OS keychain via safeStorage). */
+    secret?: boolean;
   }>;
 }
 

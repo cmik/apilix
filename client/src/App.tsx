@@ -67,11 +67,14 @@ function EnvQuickPanel({ env, onClose }: { env: AppEnvironment; onClose: () => v
   function toggle(i: number) {
     setRows(r => r.map((row, idx) => idx === i ? { ...row, enabled: !row.enabled } : row));
   }
+  function toggleSecret(i: number) {
+    setRows(r => r.map((row, idx) => idx === i ? { ...row, secret: !row.secret } : row));
+  }
   function remove(i: number) {
     setRows(r => r.filter((_, idx) => idx !== i));
   }
   function addRow() {
-    setRows(r => [...r, { key: '', value: '', enabled: true }]);
+    setRows(r => [...r, { key: '', value: '', enabled: true, secret: false }]);
   }
   function save() {
     dispatch({ type: 'UPDATE_ENVIRONMENT', payload: { ...env, values: rows.filter(r => r.key) } });
@@ -126,11 +129,34 @@ function EnvQuickPanel({ env, onClose }: { env: AppEnvironment; onClose: () => v
                 className={`flex-1 min-w-0 bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none ${!row.enabled ? 'opacity-40' : ''}`}
               />
               <input
+                type={row.secret ? 'password' : 'text'}
                 value={row.value}
                 onChange={e => update(i, 'value', e.target.value)}
                 placeholder="value"
                 className={`flex-1 min-w-0 bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none ${!row.enabled ? 'opacity-40' : ''}`}
               />
+              <button
+                onClick={() => toggleSecret(i)}
+                title={row.secret ? 'Secret — encrypted on disk. Click to make plain.' : 'Make secret — will be encrypted on disk.'}
+                className={`shrink-0 p-0.5 rounded transition-colors ${
+                  row.secret ? 'text-orange-400 hover:text-orange-300' : 'text-slate-600 hover:text-slate-400'
+                }`}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  {row.secret ? (
+                    <>
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                    </>
+                  ) : (
+                    <>
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                      <path d="M7 11V7a5 5 0 0 1 9.9-1" />
+                      <line x1="2" y1="2" x2="22" y2="22" />
+                    </>
+                  )}
+                </svg>
+              </button>
               <button
                 onClick={() => remove(i)}
                 className="text-slate-600 hover:text-red-400 text-base leading-none opacity-0 group-hover:opacity-100 transition-opacity shrink-0"

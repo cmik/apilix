@@ -24,7 +24,10 @@ function EnvEditor({ env, onSave, onCancel }: EnvEditorProps) {
     setRows(r => r.filter((_, idx) => idx !== i));
   }
   function addRow() {
-    setRows(r => [...r, { key: '', value: '', enabled: true }]);
+    setRows(r => [...r, { key: '', value: '', enabled: true, secret: false }]);
+  }
+  function toggleSecret(i: number) {
+    setRows(r => r.map((row, idx) => (idx === i ? { ...row, secret: !row.secret } : row)));
   }
 
   return (
@@ -57,6 +60,7 @@ function EnvEditor({ env, onSave, onCancel }: EnvEditorProps) {
               <th className="py-1.5 text-left w-8"></th>
               <th className="py-1.5 text-left pr-2">Variable</th>
               <th className="py-1.5 text-left">Current Value</th>
+              <th className="py-1.5 w-6" title="Secret"></th>
               <th className="w-6"></th>
             </tr>
           </thead>
@@ -83,6 +87,7 @@ function EnvEditor({ env, onSave, onCancel }: EnvEditorProps) {
                 </td>
                 <td className="py-1 pr-2">
                   <input
+                    type={row.secret ? 'password' : 'text'}
                     value={row.value}
                     onChange={e => updateRow(i, 'value', e.target.value)}
                     placeholder="value"
@@ -90,6 +95,32 @@ function EnvEditor({ env, onSave, onCancel }: EnvEditorProps) {
                       !row.enabled ? 'opacity-40' : ''
                     }`}
                   />
+                </td>
+                <td className="py-1 pr-1">
+                  <button
+                    onClick={() => toggleSecret(i)}
+                    title={row.secret ? 'Secret — value is encrypted on disk. Click to make plain.' : 'Make secret — value will be encrypted on disk.'}
+                    className={`p-0.5 rounded transition-colors ${
+                      row.secret
+                        ? 'text-orange-400 hover:text-orange-300'
+                        : 'text-slate-600 hover:text-slate-400'
+                    }`}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      {row.secret ? (
+                        <>
+                          <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                        </>
+                      ) : (
+                        <>
+                          <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                          <path d="M7 11V7a5 5 0 0 1 9.9-1" />
+                          <line x1="2" y1="2" x2="22" y2="22" />
+                        </>
+                      )}
+                    </svg>
+                  </button>
                 </td>
                 <td className="py-1">
                   <button onClick={() => removeRow(i)} className="text-slate-600 hover:text-red-400 text-lg leading-none">×</button>

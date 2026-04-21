@@ -103,20 +103,23 @@ export async function readWorkspace(id: string): Promise<WorkspaceData | null> {
     try {
       const dir = await api.getDataDir();
       const data = await api.readJsonFile(`${dir}/workspaces/${id}.json`);
-      if (data) return data as WorkspaceData;
+      if (data) return decryptWorkspaceSecrets(data as WorkspaceData);
     } catch {
       // fall through to localStorage
     }
   }
-  return lsRead<WorkspaceData>(LS_WORKSPACE(id));
+  const ls = lsRead<WorkspaceData>(LS_WORKSPACE(id));
+  if (ls) return decryptWorkspaceSecrets(ls);
+  return null;
 }
 
 export async function writeWorkspace(id: string, data: WorkspaceData): Promise<void> {
-  lsWrite(LS_WORKSPACE(id), data);
+  const encrypted = await encryptWorkspaceSecrets(data);
+  lsWrite(LS_WORKSPACE(id), encrypted);
   const api = eAPI();
   if (api) {
     const dir = await api.getDataDir();
-    await api.writeJsonFile(`${dir}/workspaces/${id}.json`, data);
+    await api.writeJsonFile(`${dir}/workspaces/${id}.json`, encrypted);
   }
 }
 
@@ -373,6 +376,42 @@ export async function decryptValue(encrypted: string): Promise<string> {
     if (decrypted !== null) return decrypted;
   }
   return encrypted;
+}
+
+/**
+ * Encrypt secret environment variable values before writing to disk.
+ * Returns a deep copy — does not mutate the input.
+ */
+export async function encryptWorkspaceSecrets(data: WorkspaceData): Promise<WorkspaceData> {
+  const environments = await Promise.all(
+    data.environments.map(async env => ({
+      ...env,
+      values: await Promise.all(
+        env.values.map(async v =>
+          v.secret ? { ...v, value: await encryptValue(v.value) } : v
+        )
+      ),
+    }))
+  );
+  return { ...data, environments };
+}
+
+/**
+ * Decrypt secret environment variable values after reading from disk.
+ * Returns a deep copy — does not mutate the input.
+ */
+export async function decryptWorkspaceSecrets(data: WorkspaceData): Promise<WorkspaceData> {
+  const environments = await Promise.all(
+    data.environments.map(async env => ({
+      ...env,
+      values: await Promise.all(
+        env.values.map(async v =>
+          v.secret ? { ...v, value: await decryptValue(v.value) } : v
+        )
+      ),
+    }))
+  );
+  return { ...data, environments };
 }
 
 // ─── Snapshot helpers ─────────────────────────────────────────────────────────
