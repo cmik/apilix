@@ -141,6 +141,7 @@ The Apilix UI is divided into five main zones:
 ### Reference
 - [Settings & Configuration](Settings-and-Configuration) — Theme, proxy, SSL, timeouts, CORS
 - [Keyboard Shortcuts](Keyboard-Shortcuts) — Full shortcut reference table
+- [Security & Encrypted Data](Security-and-Encrypted-Data) — OS keychain, secret variables, remote encryption, TLS, sandbox
 
 ---
 

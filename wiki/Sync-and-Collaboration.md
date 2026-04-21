@@ -14,6 +14,7 @@ Apilix workspaces can be synced to a remote provider so that your collections, e
   - [Opening Sync Settings](#opening-sync-settings)
   - [Sync Operations](#sync-operations)
     - [Network Timeouts](#network-timeouts)
+    - [Push Safety Checks](#push-safety-checks)
   - [Conflict Detection \& Resolution](#conflict-detection--resolution)
     - [Three-way Merge Modal](#three-way-merge-modal)
     - [Bulk Actions](#bulk-actions)
@@ -121,6 +122,23 @@ Every outbound sync request is subject to a client-side timeout. If the remote s
 The timeout applies to every operation: push, pull, timestamp check, state check, and connection test. If a sync operation times out, no data is modified — the local workspace remains unchanged.
 
 > **If pushes or pulls time out consistently**, check that the remote host is reachable from your machine and that any reverse proxy (nginx, Caddy) has a `proxy_read_timeout` / `read_timeout` that is at least as long as the values above.
+
+### Push Safety Checks
+
+Before executing a push, Apilix runs the following safety checks to prevent accidental data loss:
+
+#### Empty workspace guard
+
+If the workspace has **no collections**, clicking **Push ↑** (or the toolbar **Sync** button) pauses and shows a confirmation dialog:
+
+> *"You are about to push an empty workspace. This will overwrite the remote workspace and may cause data loss. Are you sure you want to continue?"*
+
+| Action | Result |
+|---|---|
+| **Push anyway** | Push proceeds and the remote is overwritten with the empty workspace |
+| **Cancel** | Push is aborted; the local workspace and remote are unchanged |
+
+This guard applies to both the **Push ↑** button in the Sync tab and the toolbar **Sync** button (quick-sync path). It does **not** apply to the **Apply Merged** path — the merged result is always derived from existing remote + local data and is never empty.
 
 ---
 
@@ -840,3 +858,4 @@ This cycle repeats until the apply succeeds. Because the pipeline always default
 - [Workspaces](Workspaces) — workspace contents, local storage layout, and snapshot history
 - [Variables & Environments](Variables-and-Environments) — what's included in a sync snapshot
 - [Import & Export](Import-and-Export) — moving data without a sync provider
+- [Security & Encrypted Data](Security-and-Encrypted-Data) — OS keychain encryption, remote data encryption, sync credential storage
