@@ -192,6 +192,12 @@ function RequestsTab({ s, u }: { s: AppSettings; u: (p: Partial<AppSettings>) =>
           <Toggle checked={s.sslVerification === true} onChange={v => u({ sslVerification: v })} />
         </Row>
       </Section>
+
+      <Section title="Security">
+        <Row label="Mask secret variable values in console, logs, and history">
+          <Toggle checked={s.maskSecrets !== false} onChange={v => u({ maskSecrets: v })} />
+        </Row>
+      </Section>
     </div>
   );
 }

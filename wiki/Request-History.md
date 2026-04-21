@@ -73,6 +73,8 @@ Each entry shows:
 - **Timestamp** — exact time in HH:MM:SS
 - **Error message** — shown in red below the timestamp if the request errored
 
+When **Settings → Requests → Mask secret variable values in console, logs, and history** is enabled (default), matching secret values are redacted in the URL display as `••••••••`.
+
 ---
 
 ## Re-opening a Past Request

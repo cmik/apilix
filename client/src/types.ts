@@ -308,6 +308,9 @@ export interface AppSettings {
   // Workspace Behavior
   /** When true, open tabs are saved per workspace and restored on switch / restart. */
   restoreTabsOnSwitch?: boolean;
+  // Security
+  /** When true (default), redact known secret variable values in console, logs, and history. */
+  maskSecrets?: boolean;
   // CDP Browser Capture
   cdpChromePath?: string;
   cdpPort?: number;

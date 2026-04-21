@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useApp } from '../store';
 import type { ConsoleEntry } from '../types';
+import { maskSecrets } from '../utils/secretMask';
 
 const MIN_HEIGHT = 120;
 const MAX_HEIGHT = 600;
@@ -54,7 +55,7 @@ const LOG_LEVEL_COLOR: Record<string, string> = {
   error: 'text-red-400',
 };
 
-function EntryDetail({ entry }: { entry: ConsoleEntry }) {
+function EntryDetail({ entry, mask }: { entry: ConsoleEntry; mask: (v: string) => string }) {
   const logCount = entry.scriptLogs?.length ?? 0;
   const testResults = entry.response?.testResults ?? [];
   const skippedCount = testResults.filter(t => t.skipped).length;
@@ -121,7 +122,7 @@ function EntryDetail({ entry }: { entry: ConsoleEntry }) {
           <div className="space-y-2.5">
             <div>
               <span className="text-slate-500">URL  </span>
-              <span className="text-slate-300 break-all">{entry.url}</span>
+              <span className="text-slate-300 break-all">{mask(entry.url)}</span>
             </div>
             {entry.requestHeaders.length > 0 && (
               <div>
@@ -129,7 +130,7 @@ function EntryDetail({ entry }: { entry: ConsoleEntry }) {
                 {entry.requestHeaders.map((h, i) => (
                   <div key={i} className="flex gap-2">
                     <span className="text-slate-500 shrink-0">{h.key}:</span>
-                    <span className="text-slate-300 break-all">{h.value}</span>
+                    <span className="text-slate-300 break-all">{mask(h.value)}</span>
                   </div>
                 ))}
               </div>
@@ -138,7 +139,7 @@ function EntryDetail({ entry }: { entry: ConsoleEntry }) {
               <div>
                 <p className="text-slate-500 mb-1">Body</p>
                 <pre className="bg-slate-800/60 rounded p-2 text-slate-300 whitespace-pre-wrap break-all">
-                  {tryFormat(entry.requestBody)}
+                  {mask(tryFormat(entry.requestBody))}
                 </pre>
               </div>
             )}
@@ -226,7 +227,7 @@ function EntryDetail({ entry }: { entry: ConsoleEntry }) {
                     {log.level}
                   </span>
                   <span className={`break-all ${LOG_LEVEL_COLOR[log.level]}`}>
-                    {log.args.join(' ')}
+                    {mask(log.args.join(' '))}
                   </span>
                 </div>
               ))
@@ -593,16 +594,28 @@ interface ConsolePanelProps {
 }
 
 export default function ConsolePanel({ height, onHeightChange, onClose, theme }: ConsolePanelProps) {
-  const { state, dispatch } = useApp();
+  const { state, dispatch, secretSet } = useApp();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const logs = state.consoleLogs;
+
+  const shouldMask = state.settings?.maskSecrets !== false;
+  const mask = (v: string) => shouldMask ? maskSecrets(v, secretSet) : v;
+
+  const maskedLogs = shouldMask && secretSet.size > 0
+    ? logs.map(e => ({
+        ...e,
+        url: mask(e.url),
+        requestHeaders: e.requestHeaders.map(h => ({ ...h, value: mask(h.value) })),
+        requestBody: e.requestBody ? mask(e.requestBody) : e.requestBody,
+        scriptLogs: e.scriptLogs?.map(l => ({ ...l, args: l.args.map(a => mask(a)) })),
+      }))
+    : logs;
 
   const dragging = useRef(false);
   const startY = useRef(0);
   const startH = useRef(0);
   const winRef = useRef<Window | null>(null);
   const channelRef = useRef<BroadcastChannel | null>(null);
-
-  const logs = state.consoleLogs;
 
   // Deselect if cleared
   useEffect(() => {
@@ -614,9 +627,9 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme }:
     const ch = channelRef.current;
     if (!ch) return;
     if (winRef.current && !winRef.current.closed) {
-      ch.postMessage({ type: 'LOGS_UPDATE', logs });
+      ch.postMessage({ type: 'LOGS_UPDATE', logs: maskedLogs });
     }
-  }, [logs]);
+  }, [maskedLogs]);
 
   // Apply theme changes directly to the detached window's DOM
   useEffect(() => {
@@ -689,7 +702,7 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme }:
       channelRef.current = new BroadcastChannel(BROADCAST_CHANNEL);
     }
     win.document.open();
-    win.document.write(buildHtml(logs, theme));
+    win.document.write(buildHtml(maskedLogs, theme));
     win.document.close();
     onClose();
   }
@@ -786,7 +799,7 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme }:
                 )}
 
                 <span className={`flex-1 truncate font-mono min-w-0 ${selectedId === entry.id ? 'text-slate-200' : 'text-slate-300'}`}>
-                  {entry.url}
+                  {mask(entry.url)}
                 </span>
 
                 {entry.response && (
@@ -808,7 +821,7 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme }:
               </div>
 
               {/* Expanded detail */}
-              {selectedId === entry.id && <EntryDetail entry={entry} />}
+              {selectedId === entry.id && <EntryDetail entry={entry} mask={mask} />}
             </div>
           ))
         )}

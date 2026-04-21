@@ -7,6 +7,7 @@ Apilix is designed to keep your credentials, tokens, and secrets safe at rest an
 ## Table of Contents
 
 - [Secret Environment Variables](#secret-environment-variables)
+- [UI Secret Masking](#ui-secret-masking)
 - [OS Keychain Encryption (Electron)](#os-keychain-encryption-electron)
 - [Browser Mode Limitations](#browser-mode-limitations)
 - [Sync Credential Encryption](#sync-credential-encryption)
@@ -49,7 +50,39 @@ Any environment variable value can be marked as **secret**. Secret variables are
 | Value in memory (Redux state) at runtime | ❌ Plain — required for request execution |
 | Value written to localStorage in browser mode | ❌ No encryption available |
 | Value transmitted during remote sync | ⚠️ Only if **Encrypt remote data** is enabled — see [Remote Data Encryption](#remote-data-encryption) |
-| Value visible in request history / console | ❌ Not automatically redacted |
+| Value visible in request history / console | ✅ Redacted by default when **Mask secret variable values** is enabled |
+
+---
+
+## UI Secret Masking
+
+Apilix can redact known secret values in user-facing logs to reduce accidental exposure during demos, screenshots, and screen sharing.
+
+### What gets masked
+
+When **Mask secret variable values in console, logs, and history** is enabled (default), Apilix replaces matching secret values with `••••••••` in:
+
+- Console row URL
+- Console request details (URL, request headers, request body)
+- Console script log lines
+- Request History URL rows
+- Console pop-out window (including live updates)
+
+### Which values are considered secrets
+
+Redaction values are built from the **active environment** only, using rows that are:
+
+- Marked secret (lock enabled)
+- Enabled
+- At least 4 characters long
+
+### Important scope note
+
+Masking is a UI redaction layer. It does not change the underlying request/response data used by execution, scripts, exports, or sync.
+
+### Turning masking off
+
+Open **Settings → Requests** and disable **Mask secret variable values in console, logs, and history**.
 
 ---
 

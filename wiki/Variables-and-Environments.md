@@ -148,6 +148,16 @@ The checkbox in the first column controls whether a variable participates in res
 
 This is useful when you need to temporarily bypass a variable (e.g. to test a default fallback value) without deleting it.
 
+### Marking Variables as Secret
+
+In the Environment editor, use the **lock** control on a row to mark a value as secret.
+
+- Secret values are visually hidden in the editor.
+- In the desktop app (Electron), secret values are encrypted at rest using the OS keychain.
+- Secret values are used by the optional UI redaction layer in Console and Request History when **Mask secret variable values in console, logs, and history** is enabled.
+
+> The secret flag does not remove the value from runtime request execution. It is still resolved and sent normally where referenced.
+
 ---
 
 ## Global Variables

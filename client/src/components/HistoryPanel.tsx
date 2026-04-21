@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useApp } from '../store';
 import type { HistoryRequest } from '../types';
 import { formatDayLabel, groupByDay } from '../utils/historyUtils';
+import { maskSecrets } from '../utils/secretMask';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -36,7 +37,9 @@ function statusBadgeClass(code: number | null, hasError: boolean): string {
 // ─── HistoryPanel ─────────────────────────────────────────────────────────────
 
 export default function HistoryPanel() {
-  const { state, dispatch } = useApp();
+  const { state, dispatch, secretSet } = useApp();
+  const shouldMask = state.settings?.maskSecrets !== false;
+  const mask = (v: string) => shouldMask ? maskSecrets(v, secretSet) : v;
 
   const [search, setSearch] = useState('');
   const [methodFilter, setMethodFilter] = useState('ALL');
@@ -178,7 +181,7 @@ export default function HistoryPanel() {
                   </div>
                   {/* Row 2: full URL */}
                   <p className="font-mono text-xs text-slate-300 break-all leading-snug">
-                    {entry.url}
+                    {mask(entry.url)}
                   </p>
                   {/* Row 3: time + error */}
                   <div className="flex items-center gap-2 mt-1">

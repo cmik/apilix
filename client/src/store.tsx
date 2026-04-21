@@ -1,10 +1,11 @@
-import React, { createContext, useContext, useEffect, useReducer, useRef, useState, type ReactNode } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
 import apilixLogo from './assets/apilix2.svg';
 import type { AppState, AppAction, AppSettings, AppCollection, AppEnvironment, CollectionItem, RequestTab, CookieJar, Cookie, MockRoute, MockCollection, Workspace, WorkspaceData, HistoryRequest, SavedRunnerRun } from './types';
 import * as StorageDriver from './utils/storageDriver';
 import * as SnapshotEngine from './utils/snapshotEngine';
 import { API_BASE } from './api';
 import type { PostmanVersion } from './utils/postmanValidator';
+import { buildSecretSet } from './utils/secretMask';
 
 const STORAGE_KEY = 'apilix_persist'; // legacy key — kept for migration only
 
@@ -769,6 +770,7 @@ interface AppContextValue {
   getActiveEnvironment: () => AppEnvironment | null;
   getEnvironmentVars: () => Record<string, string>;
   getCollectionVars: (collectionId: string) => Record<string, string>;
+  secretSet: Set<string>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -1108,6 +1110,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return state.collectionVariables[collectionId] || {};
   }
 
+  const secretSet = useMemo(
+    () => buildSecretSet(state.environments, state.activeEnvironmentId),
+    [state.environments, state.activeEnvironmentId],
+  );
+
   // Show a simple loading screen until storage has been read from disk
   if (!state.storageReady) {
     return (
@@ -1130,7 +1137,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AppContext.Provider value={{ state, dispatch, getActiveEnvironment, getEnvironmentVars, getCollectionVars }}>
+    <AppContext.Provider value={{ state, dispatch, getActiveEnvironment, getEnvironmentVars, getCollectionVars, secretSet }}>
       {children}
     </AppContext.Provider>
   );
