@@ -84,7 +84,7 @@ function EnvQuickPanel({ env, onClose }: { env: AppEnvironment; onClose: () => v
   return (
     <>
       {/* backdrop */}
-      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div className="fixed inset-0 z-40" onClick={save} />
       {/* panel */}
       <div className="fixed inset-y-0 right-0 z-50 w-96 bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col">
         {/* header */}

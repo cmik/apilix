@@ -105,7 +105,7 @@ export default function WorkspaceManagerModal({ onClose }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
       <div
         className="relative bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-[640px] max-h-[80vh] flex flex-col overflow-hidden"
         onDragOver={handleModalDragOver}
@@ -927,6 +927,8 @@ interface ExportPanelProps {
   encryptRemote: boolean;
   inheritedPassphrase: string;
   isShared: boolean;
+  /** Sharing policy from the original import. forceReadOnly is locked when present and true. */
+  inheritedSharePolicy?: SyncSharePolicy;
   /** True when this workspace was imported from a passphrase-encrypted share package. */
   importedEncrypted: boolean;
 }
@@ -936,7 +938,7 @@ function ExportPanel({
   exportEncrypt, setExportEncrypt,
   exportPassphrase, setExportPassphrase,
   exportStatus, setExportStatus,
-  encryptRemote, inheritedPassphrase, isShared, importedEncrypted,
+  encryptRemote, inheritedPassphrase, isShared, inheritedSharePolicy, importedEncrypted,
 }: ExportPanelProps) {
   const [forceReadOnly, setForceReadOnly] = useState(false);
   const [sharingEnabled, setSharingEnabled] = useState(true);
@@ -944,6 +946,9 @@ function ExportPanel({
   // Package encryption is mandatory when the original import was encrypted.
   const requiresEncryption = importedEncrypted;
   const effectiveEncrypt = requiresEncryption || exportEncrypt;
+
+  // forceReadOnly is locked when the inherited policy requires it.
+  const forcedReadOnly = isShared && inheritedSharePolicy?.forceReadOnly === true;
 
   async function handleDownload() {
     setExportStatus('');
@@ -955,7 +960,7 @@ function ExportPanel({
       return;
     }
 
-    const sharePolicy: SyncSharePolicy | undefined = { forceReadOnly, sharingEnabled };
+    const sharePolicy: SyncSharePolicy | undefined = { forceReadOnly: forcedReadOnly ? true : forceReadOnly, sharingEnabled };
 
     // Always embed the remote passphrase when remote encryption is configured
     const remotePassphrase = (encryptRemote && inheritedPassphrase) ? inheritedPassphrase : undefined;
@@ -1016,12 +1021,16 @@ function ExportPanel({
           <input
             id={`export-readonly-${workspaceId}`}
             type="checkbox"
-            checked={forceReadOnly}
-            onChange={e => setForceReadOnly(e.target.checked)}
-            className="accent-orange-500 cursor-pointer"
+            checked={forcedReadOnly ? true : forceReadOnly}
+            onChange={e => { if (!forcedReadOnly) setForceReadOnly(e.target.checked); }}
+            disabled={forcedReadOnly}
+            className="accent-orange-500 cursor-pointer disabled:cursor-not-allowed"
           />
           <label htmlFor={`export-readonly-${workspaceId}`} className="text-xs text-slate-300 cursor-pointer">
-            Force read-only <span className="text-slate-500">(recipient can only pull)</span>
+            Force read-only{' '}
+            {forcedReadOnly
+              ? <span className="text-orange-400">(required — inherited from original owner)</span>
+              : <span className="text-slate-500">(recipient can only pull)</span>}
           </label>
         </div>
         <div className="flex items-center gap-2">
@@ -1722,6 +1731,7 @@ function SyncTab() {
               encryptRemote={encryptRemote}
               inheritedPassphrase={remotePassphrase}
               isShared={isShared}
+              inheritedSharePolicy={sharePolicy}
               importedEncrypted={importedEncrypted}
             />
           )}
