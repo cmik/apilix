@@ -305,6 +305,9 @@ export interface AppSettings {
   corsAllowedOrigins?: string;
   // Layout
   requestLayout?: 'stacked' | 'split';
+  // CDP Browser Capture
+  cdpChromePath?: string;
+  cdpPort?: number;
   [key: string]: unknown;
 }
 
@@ -528,6 +531,8 @@ export interface SyncConfig {
   isShared?: boolean;
   /** Sharing policy set by the exporter. Present only when isShared is true. */
   sharePolicy?: SyncSharePolicy;
+  /** True when this workspace was imported from a passphrase-encrypted share package. */
+  importedEncrypted?: boolean;
 }
 
 /** Format version identifier for sync export files. */

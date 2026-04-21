@@ -173,6 +173,7 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [exportError, setExportError] = useState('');
+  const [confirmExportSecrets, setConfirmExportSecrets] = useState<Workspace | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [menuRect, setMenuRect] = useState<DOMRect | null>(null);
 
@@ -312,7 +313,7 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
     StorageDriver.writeManifest({ workspaces: updated, activeWorkspaceId: state.activeWorkspaceId });
   }
 
-  async function handleExportWorkspace(w: Workspace) {
+  async function doExportWorkspace(w: Workspace) {
     let data: WorkspaceData;
     if (w.id === state.activeWorkspaceId) {
       data = {
@@ -341,6 +342,28 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
     const pkg = buildWorkspaceExportPackage(w.name, w.id, data);
     const safeName = w.name.replace(/[^a-z0-9]/gi, '-').toLowerCase();
     downloadJsonFile(`apilix-workspace-${safeName}.json`, pkg);
+  }
+
+  async function handleExportWorkspace(w: Workspace) {
+    // Check whether this workspace contains any secret-flagged env variables.
+    // If so, ask the user to confirm — the exported file will contain plaintext values.
+    let envs: WorkspaceData['environments'];
+    if (w.id === state.activeWorkspaceId) {
+      envs = state.environments;
+    } else {
+      try {
+        const data = await StorageDriver.readWorkspace(w.id);
+        envs = data?.environments ?? [];
+      } catch {
+        envs = [];
+      }
+    }
+    const hasSecrets = envs.some(env => env.values.some(v => v.secret));
+    if (hasSecrets) {
+      setConfirmExportSecrets(w);
+      return;
+    }
+    await doExportWorkspace(w);
   }
 
   async function handleCreate() {
@@ -554,6 +577,30 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
+      {/* Export secret-variables confirmation */}
+      {confirmExportSecrets && (
+        <div className="mt-3 p-3 bg-yellow-950/40 border border-yellow-700/50 rounded-lg text-xs text-slate-300">
+          <p className="mb-1 font-medium text-yellow-400">⚠ Export contains secret variables</p>
+          <p className="mb-2 text-slate-400">
+            This workspace has environment variables marked as secret. The exported file will contain their values in <strong>plain text</strong> — anyone with the file can read them.
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => { const w = confirmExportSecrets; setConfirmExportSecrets(null); doExportWorkspace(w); }}
+              className="px-3 py-1 bg-yellow-600 hover:bg-yellow-500 text-white rounded transition-colors"
+            >
+              Export anyway
+            </button>
+            <button
+              onClick={() => setConfirmExportSecrets(null)}
+              className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Export error */}
       {exportError && (
         <div className="mt-2 flex items-start gap-2 px-3 py-2 bg-red-950/40 border border-red-800/50 rounded-lg text-xs text-red-400">
@@ -727,6 +774,7 @@ function ImportPanel({ droppedFile, onDropConsumed }: ImportPanelProps) {
       remotePassphrase,
       isShared,
       sharePolicy,
+      importedEncrypted: pkg.encrypted || undefined,
     });
     dispatch({ type: 'CREATE_WORKSPACE', payload: newWorkspace });
     await StorageDriver.writeManifest({ workspaces: [...state.workspaces, newWorkspace], activeWorkspaceId: state.activeWorkspaceId });
@@ -856,6 +904,7 @@ export async function cloneWorkspaceSyncConfig(sourceWorkspaceId: string, target
       remotePassphrase: srcSync.remotePassphrase,
       isShared: srcSync.isShared,
       sharePolicy: srcSync.sharePolicy,
+      importedEncrypted: srcSync.importedEncrypted,
     },
   );
   return true;
@@ -878,6 +927,8 @@ interface ExportPanelProps {
   encryptRemote: boolean;
   inheritedPassphrase: string;
   isShared: boolean;
+  /** True when this workspace was imported from a passphrase-encrypted share package. */
+  importedEncrypted: boolean;
 }
 
 function ExportPanel({
@@ -885,16 +936,22 @@ function ExportPanel({
   exportEncrypt, setExportEncrypt,
   exportPassphrase, setExportPassphrase,
   exportStatus, setExportStatus,
-  encryptRemote, inheritedPassphrase, isShared,
+  encryptRemote, inheritedPassphrase, isShared, importedEncrypted,
 }: ExportPanelProps) {
   const [forceReadOnly, setForceReadOnly] = useState(false);
   const [sharingEnabled, setSharingEnabled] = useState(true);
 
+  // Package encryption is mandatory when the original import was encrypted.
+  const requiresEncryption = importedEncrypted;
+  const effectiveEncrypt = requiresEncryption || exportEncrypt;
+
   async function handleDownload() {
     setExportStatus('');
-    const passphrase = exportEncrypt ? exportPassphrase.trim() : undefined;
-    if (exportEncrypt && !passphrase) {
-      setExportStatus('Enter a passphrase, or uncheck the encryption option.');
+    const passphrase = effectiveEncrypt ? exportPassphrase.trim() : undefined;
+    if (effectiveEncrypt && !passphrase) {
+      setExportStatus(requiresEncryption
+        ? 'A passphrase is required — credentials were encrypted when imported.'
+        : 'Enter a passphrase, or uncheck the encryption option.');
       return;
     }
 
@@ -915,20 +972,25 @@ function ExportPanel({
   }
 
   return (
-    <div className="space-y-2.5 p-3 bg-slate-800/40 border border-slate-700 rounded-lg">
+    <div className="space-y-3">
       <div className="flex items-center gap-2">
         <input
           id={`export-encrypt-${workspaceId}`}
           type="checkbox"
-          checked={exportEncrypt}
-          onChange={e => setExportEncrypt(e.target.checked)}
-          className="accent-orange-500 cursor-pointer"
+          checked={requiresEncryption ? true : exportEncrypt}
+          onChange={e => { if (!requiresEncryption) setExportEncrypt(e.target.checked); }}
+          disabled={requiresEncryption}
+          className="accent-orange-500 cursor-pointer disabled:cursor-not-allowed"
         />
         <label htmlFor={`export-encrypt-${workspaceId}`} className="text-xs text-slate-300 cursor-pointer">
-          Encrypt credentials with a passphrase <span className="text-slate-500">(recommended)</span>
+          Encrypt credentials with a passphrase{' '}
+          {requiresEncryption
+            ? <span className="text-orange-400">(required — credentials were encrypted when imported)</span>
+            : <span className="text-slate-500">(recommended)</span>}
         </label>
       </div>
-      {exportEncrypt && (
+
+      {effectiveEncrypt && (
         <div>
           <label className="block text-[11px] text-slate-500 mb-1">Passphrase</label>
           <input
@@ -941,7 +1003,7 @@ function ExportPanel({
           />
         </div>
       )}
-      {!exportEncrypt && (
+      {!effectiveEncrypt && (
         <p className="text-[10px] text-yellow-400 bg-yellow-950/30 border border-yellow-800/40 rounded px-2 py-1.5">
           ⚠ Credentials will be stored in plaintext in the exported file.
         </p>
@@ -1001,7 +1063,8 @@ function ExportPanel({
       )}
       <button
         onClick={handleDownload}
-        className="w-full py-1.5 text-xs font-medium bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors"
+        disabled={effectiveEncrypt && !exportPassphrase.trim()}
+        className="w-full py-1.5 text-xs font-medium bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-slate-200 rounded transition-colors"
       >
         Download JSON ↓
       </button>
@@ -1081,6 +1144,7 @@ function SyncTab() {
   const [showRemotePassphrase, setShowRemotePassphrase] = useState(false);
   const [isShared, setIsShared] = useState(false);
   const [sharePolicy, setSharePolicy] = useState<SyncSharePolicy | undefined>(undefined);
+  const [importedEncrypted, setImportedEncrypted] = useState(false);
   const [conflict, setConflict] = useState<null | { remoteTimestamp: string; localTimestamp: string | null }>(null);
   const [conflictPackage, setConflictPackage] = useState<ConflictPackage | null>(null);
   const [activity, setActivity] = useState<SyncActivityEntry[]>([]);
@@ -1118,6 +1182,7 @@ function SyncTab() {
         setRemotePassphrase(cfg.remotePassphrase ?? '');
         setIsShared(cfg.isShared === true);
         setSharePolicy(cfg.sharePolicy);
+        setImportedEncrypted(cfg.importedEncrypted === true);
       } else {
         setFields({});
         setSyncMetadata(undefined);
@@ -1126,6 +1191,7 @@ function SyncTab() {
         setRemotePassphrase('');
         setIsShared(false);
         setSharePolicy(undefined);
+        setImportedEncrypted(false);
       }
       setActivity(entries);
       setLoaded(true);
@@ -1153,6 +1219,7 @@ function SyncTab() {
       remotePassphrase: remotePassphrase || undefined,
       isShared,
       sharePolicy,
+      importedEncrypted: importedEncrypted || undefined,
     });
     await logActivity('save-config', 'info', 'Sync configuration saved');
     dispatch({ type: 'BUMP_SYNC_CONFIG_VERSION' });
@@ -1655,6 +1722,7 @@ function SyncTab() {
               encryptRemote={encryptRemote}
               inheritedPassphrase={remotePassphrase}
               isShared={isShared}
+              importedEncrypted={importedEncrypted}
             />
           )}
         </div>

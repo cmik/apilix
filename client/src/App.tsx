@@ -137,7 +137,7 @@ function EnvQuickPanel({ env, onClose }: { env: AppEnvironment; onClose: () => v
               />
               <button
                 onClick={() => toggleSecret(i)}
-                title={row.secret ? 'Secret — encrypted on disk. Click to make plain.' : 'Make secret — will be encrypted on disk.'}
+                title={row.secret ? 'Secret — encrypted on disk (local only). Remote sync sends plaintext unless \"Encrypt remote data\" is enabled. Click to make plain.' : 'Make secret — will be encrypted on disk (local only). Enable \"Encrypt remote data\" in sync settings to protect it remotely.'}
                 className={`shrink-0 p-0.5 rounded transition-colors ${
                   row.secret ? 'text-orange-400 hover:text-orange-300' : 'text-slate-600 hover:text-slate-400'
                 }`}
@@ -729,6 +729,7 @@ export default function App() {
       remotePassphrase: cfg.remotePassphrase,
       isShared: cfg.isShared,
       sharePolicy: cfg.sharePolicy,
+      importedEncrypted: cfg.importedEncrypted,
     });
     return nextMetadata;
   }

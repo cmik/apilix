@@ -416,6 +416,11 @@ function mergeEnvironments(
     }
 
     // Values: merge by key name
+    // Use full row objects so metadata (enabled, secret, type) is preserved.
+    const bRows = Object.fromEntries((b?.values ?? []).map(v => [v.key, v]));
+    const lRows = Object.fromEntries(l.values.map(v => [v.key, v]));
+    const rRows = Object.fromEntries(r.values.map(v => [v.key, v]));
+
     const bVals = Object.fromEntries((b?.values ?? []).map(v => [v.key, v.value]));
     const lVals = Object.fromEntries(l.values.map(v => [v.key, v.value]));
     const rVals = Object.fromEntries(r.values.map(v => [v.key, v.value]));
@@ -431,23 +436,31 @@ function mergeEnvironments(
       const lChanged = lv !== bv;
       const rChanged = rv !== bv;
 
+      // Base row used to carry non-value metadata (enabled, secret, type) when
+      // neither side modified the row, or as a fallback for new rows.
+      const lRow = lRows[key];
+      const rRow = rRows[key];
+      const bRow = bRows[key];
+
       if (!lChanged && !rChanged) {
-        if (lv !== undefined) mergedValues.push({ key, value: lv, enabled: true });
+        if (lv !== undefined) mergedValues.push({ ...(bRow ?? lRow!), value: lv });
       } else if (lChanged && !rChanged) {
-        if (lv !== undefined) mergedValues.push({ key, value: lv, enabled: true });
+        if (lv !== undefined) mergedValues.push({ ...(bRow ?? lRow!), ...lRow!, value: lv });
         else { /* deleted by local */ }
         onAuto();
       } else if (!lChanged && rChanged) {
-        if (rv !== undefined) mergedValues.push({ key, value: rv, enabled: true });
+        if (rv !== undefined) mergedValues.push({ ...(bRow ?? lRow ?? rRow!), ...rRow!, value: rv });
         else { /* deleted by remote */ }
         onAuto();
       } else {
         // Both changed
         if (lv === rv) {
-          if (lv !== undefined) mergedValues.push({ key, value: lv, enabled: true });
+          // Values converged — prefer local metadata
+          if (lv !== undefined) mergedValues.push({ ...(bRow ?? lRow!), ...lRow!, value: lv });
           onAuto();
         } else {
-          mergedValues.push({ key, value: lv ?? '', enabled: true }); // default local
+          // Conflict — default to local value and metadata
+          mergedValues.push({ ...(bRow ?? lRow!), ...lRow!, value: lv ?? '' });
           conflicts.push({
             id: `${id}#${key}`,
             domain: 'environment',

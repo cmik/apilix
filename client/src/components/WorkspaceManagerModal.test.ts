@@ -173,6 +173,41 @@ describe('cloneWorkspaceSyncConfig', () => {
       }),
     );
   });
+
+  it('carries importedEncrypted from source to target', async () => {
+    const sharePolicy = { forceReadOnly: true, sharingEnabled: true };
+    mockedReadSyncConfig.mockResolvedValue({
+      provider: 's3',
+      config: { bucket: 'b', remoteWorkspaceId: 'rws-3' },
+      isShared: true,
+      sharePolicy,
+      importedEncrypted: true,
+    });
+
+    await cloneWorkspaceSyncConfig('ws-src', 'ws-dst');
+
+    expect(mockedWriteSyncConfig).toHaveBeenCalledWith(
+      'ws-dst',
+      's3',
+      { bucket: 'b', remoteWorkspaceId: 'rws-3' },
+      undefined,
+      undefined,
+      expect.objectContaining({ importedEncrypted: true }),
+    );
+  });
+
+  it('does not set importedEncrypted when source was not imported encrypted', async () => {
+    mockedReadSyncConfig.mockResolvedValue({
+      provider: 's3',
+      config: { bucket: 'b', remoteWorkspaceId: 'rws-4' },
+    });
+
+    await cloneWorkspaceSyncConfig('ws-src', 'ws-dst');
+
+    const call = mockedWriteSyncConfig.mock.calls[0];
+    const opts = call[5] as Record<string, unknown>;
+    expect(opts?.importedEncrypted).toBeFalsy();
+  });
 });
 
 // ─── ImportPanel file detection routing ──────────────────────────────────────

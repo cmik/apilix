@@ -100,6 +100,8 @@ export const initialState: AppState = {
     noProxy: '',
     corsAllowedOrigins: '',
     requestLayout: 'stacked' as const,
+    cdpChromePath: undefined,
+    cdpPort: 9222,
   },
 };
 

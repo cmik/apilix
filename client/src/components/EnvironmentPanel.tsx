@@ -99,7 +99,7 @@ function EnvEditor({ env, onSave, onCancel }: EnvEditorProps) {
                 <td className="py-1 pr-1">
                   <button
                     onClick={() => toggleSecret(i)}
-                    title={row.secret ? 'Secret — value is encrypted on disk. Click to make plain.' : 'Make secret — value will be encrypted on disk.'}
+                    title={row.secret ? 'Secret — value is encrypted on disk (local only). Remote sync sends plaintext unless \"Encrypt remote data\" is enabled. Click to make plain.' : 'Make secret — value will be encrypted on disk (local only). Enable \"Encrypt remote data\" in sync settings to protect it remotely.'}
                     className={`p-0.5 rounded transition-colors ${
                       row.secret
                         ? 'text-orange-400 hover:text-orange-300'

@@ -223,6 +223,8 @@ export interface StoredSyncConfig {
   isShared?: boolean;
   /** Sharing policy from the export package. Present only when isShared is true. */
   sharePolicy?: SyncSharePolicy;
+  /** True when this workspace was imported from a passphrase-encrypted share package. */
+  importedEncrypted?: boolean;
 }
 
 export type SyncConfigStore = Record<string, StoredSyncConfig>;
@@ -268,6 +270,7 @@ export async function readSyncConfig(workspaceId: string): Promise<StoredSyncCon
     typeof (raw.sharePolicy as Record<string, unknown>).forceReadOnly === 'boolean' &&
     typeof (raw.sharePolicy as Record<string, unknown>).sharingEnabled === 'boolean'
   ) ? raw.sharePolicy as SyncSharePolicy : undefined;
+  const importedEncrypted = raw.importedEncrypted === true ? true : undefined;
   if (!provider) return null;
 
   let remotePassphrase: string | undefined;
@@ -275,7 +278,7 @@ export async function readSyncConfig(workspaceId: string): Promise<StoredSyncCon
     remotePassphrase = await decryptValue(encryptedRemotePassphrase);
   }
 
-  return { provider, config, metadata, lastSynced, readOnly, encryptRemote, encryptedRemotePassphrase, remotePassphrase, isShared, sharePolicy };
+  return { provider, config, metadata, lastSynced, readOnly, encryptRemote, encryptedRemotePassphrase, remotePassphrase, isShared, sharePolicy, importedEncrypted };
 }
 
 /** Write the sync config for a specific workspace (merges into the store file). */
@@ -290,6 +293,7 @@ export async function writeSyncConfig(
     remotePassphrase?: string;
     isShared?: boolean;
     sharePolicy?: SyncSharePolicy;
+    importedEncrypted?: boolean;
   },
 ): Promise<void> {
   const api = eAPI();
@@ -311,6 +315,7 @@ export async function writeSyncConfig(
     ...(encryptedRemotePassphrase ? { encryptedRemotePassphrase } : {}),
     ...(opts?.isShared ? { isShared: true } : {}),
     ...(opts?.sharePolicy ? { sharePolicy: opts.sharePolicy } : {}),
+    ...(opts?.importedEncrypted ? { importedEncrypted: true } : {}),
   };
   if (api) {
     try {
@@ -374,6 +379,11 @@ export async function decryptValue(encrypted: string): Promise<string> {
   if (api) {
     const decrypted = await api.decryptString(encrypted);
     if (decrypted !== null) return decrypted;
+    // safeStorage decryption failed — this typically means the encrypted value
+    // was written on a different machine, by a different OS user, or after an
+    // app reinstall that rotated the keychain key. The raw ciphertext is
+    // returned as a best-effort fallback; callers should surface a warning.
+    console.warn('[storageDriver] decryptValue: safeStorage decryption failed. The value may have been encrypted on a different machine or installation.');
   }
   return encrypted;
 }
@@ -381,6 +391,10 @@ export async function decryptValue(encrypted: string): Promise<string> {
 /**
  * Encrypt secret environment variable values before writing to disk.
  * Returns a deep copy — does not mutate the input.
+ *
+ * IMPORTANT: Must only be called with Redux-state (plaintext) data. Never pass
+ * data that was already returned by encryptWorkspaceSecrets — double-encrypting
+ * will produce unrecoverable ciphertext.
  */
 export async function encryptWorkspaceSecrets(data: WorkspaceData): Promise<WorkspaceData> {
   const environments = await Promise.all(
