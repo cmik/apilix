@@ -1033,9 +1033,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Show a simple loading screen until storage has been read from disk
   if (!state.storageReady) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, height: '100vh', background: '#020617', color: '#94a3b8', fontFamily: 'sans-serif', fontSize: 13 }}>
-        <img src={apilixLogo} alt="Apilix" style={{ width: 64, height: 64, opacity: 0.9 }} />
-        Loading…
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#020617', userSelect: 'none' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24 }}>
+          <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: '-0.5px', color: '#f1f5f9', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
+            API<span style={{ color: '#f97316' }}>LIX</span>
+          </div>
+          <div style={{
+            width: 32, height: 32,
+            border: '2px solid #1e293b',
+            borderTopColor: '#f97316',
+            borderRadius: '50%',
+            animation: 'apilix-spin 0.8s linear infinite',
+          }} />
+        </div>
+        <style>{`@keyframes apilix-spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
