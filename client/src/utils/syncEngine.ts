@@ -7,6 +7,7 @@
 
 import type {
   WorkspaceData,
+  EncryptedDataEnvelope,
   SyncConfig,
   SyncRemoteState,
   SyncPullResult,
@@ -24,6 +25,9 @@ import {
 
 export type ConflictResolution = 'keep-local' | 'keep-remote';
 
+/** Payload that may be pushed to a remote provider: plain or encrypted. */
+export type SyncPushPayload = WorkspaceData | EncryptedDataEnvelope;
+
 export interface SyncConflict {
   workspaceId: string;
   localLastSaved: string;
@@ -33,7 +37,7 @@ export interface SyncConflict {
 export interface SyncAdapter {
   push(
     workspaceId: string,
-    data: WorkspaceData,
+    data: SyncPushPayload,
     config: Record<string, string>,
     options?: { expectedVersion?: string },
   ): Promise<void>;
@@ -43,7 +47,7 @@ export interface SyncAdapter {
   pullWithMeta?(workspaceId: string, config: Record<string, string>): Promise<SyncPullResult>;
   applyMerged?(
     workspaceId: string,
-    mergedData: WorkspaceData,
+    mergedData: SyncPushPayload,
     config: Record<string, string>,
     expectedVersion: string,
   ): Promise<void>;
@@ -62,8 +66,8 @@ export interface SyncAdapter {
  */
 export async function push(syncConfig: SyncConfig, data: WorkspaceData): Promise<void> {
   const adapter = getAdapter(syncConfig.provider as string);
-  const payload = syncConfig.encryptRemote && syncConfig.remotePassphrase
-    ? await encryptWorkspaceData(data, syncConfig.remotePassphrase) as unknown as WorkspaceData
+  const payload: SyncPushPayload = syncConfig.encryptRemote && syncConfig.remotePassphrase
+    ? await encryptWorkspaceData(data, syncConfig.remotePassphrase)
     : data;
   await adapter.push(syncConfig.workspaceId, payload, syncConfig.config);
 }
@@ -74,8 +78,8 @@ export async function applyMerged(
   expectedVersion: string,
 ): Promise<void> {
   const adapter = getAdapter(syncConfig.provider as string);
-  const payload = syncConfig.encryptRemote && syncConfig.remotePassphrase
-    ? await encryptWorkspaceData(mergedData, syncConfig.remotePassphrase) as unknown as WorkspaceData
+  const payload: SyncPushPayload = syncConfig.encryptRemote && syncConfig.remotePassphrase
+    ? await encryptWorkspaceData(mergedData, syncConfig.remotePassphrase)
     : mergedData;
   if (adapter.applyMerged) {
     await adapter.applyMerged(syncConfig.workspaceId, payload, syncConfig.config, expectedVersion);

@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useReducer, useRef, useState, type ReactNode } from 'react';
+import apilixLogo from './assets/apilix2.svg';
 import type { AppState, AppAction, AppSettings, AppCollection, AppEnvironment, CollectionItem, RequestTab, CookieJar, Cookie, MockRoute, MockCollection, Workspace, WorkspaceData, HistoryRequest, SavedRunnerRun } from './types';
 import * as StorageDriver from './utils/storageDriver';
 import * as SnapshotEngine from './utils/snapshotEngine';
@@ -1030,7 +1031,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Show a simple loading screen until storage has been read from disk
   if (!state.storageReady) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#1a1a2e', color: '#ccc', fontFamily: 'sans-serif', fontSize: 14 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, height: '100vh', background: '#020617', color: '#94a3b8', fontFamily: 'sans-serif', fontSize: 13 }}>
+        <img src={apilixLogo} alt="Apilix" style={{ width: 64, height: 64, opacity: 0.9 }} />
         Loading…
       </div>
     );

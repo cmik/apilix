@@ -259,7 +259,12 @@ export async function readSyncConfig(workspaceId: string): Promise<StoredSyncCon
   const encryptRemote = raw.encryptRemote === true ? true : undefined;
   const encryptedRemotePassphrase = typeof raw.encryptedRemotePassphrase === 'string' ? raw.encryptedRemotePassphrase : undefined;
   const isShared = raw.isShared === true ? true : undefined;
-  const sharePolicy = (raw.sharePolicy && typeof raw.sharePolicy === 'object') ? raw.sharePolicy as SyncSharePolicy : undefined;
+  const sharePolicy = (
+    raw.sharePolicy &&
+    typeof raw.sharePolicy === 'object' &&
+    typeof (raw.sharePolicy as Record<string, unknown>).forceReadOnly === 'boolean' &&
+    typeof (raw.sharePolicy as Record<string, unknown>).sharingEnabled === 'boolean'
+  ) ? raw.sharePolicy as SyncSharePolicy : undefined;
   if (!provider) return null;
 
   let remotePassphrase: string | undefined;
