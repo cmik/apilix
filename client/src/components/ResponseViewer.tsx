@@ -663,6 +663,24 @@ export default function ResponseViewer() {
     if (!availableTabs.includes(tab)) setTab('Body');
   }, [availableTabs]);
 
+  // Dismiss the response context menu when navigating away from the request view,
+  // so its fixed inset-0 backdrop does not block inputs in other panels.
+  useEffect(() => {
+    if (state.view !== 'request' && state.view !== 'history') {
+      setCtxMenu(null);
+    }
+  }, [state.view]);
+
+  // Escape key dismisses the response context menu (defence-in-depth)
+  useEffect(() => {
+    if (!ctxMenu) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setCtxMenu(null);
+    }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [ctxMenu]);
+
   const jsonPathResult = useMemo(() => {
     if (!jsonPathExpr.trim() || !response) return null;
     try {

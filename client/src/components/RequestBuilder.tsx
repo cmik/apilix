@@ -703,6 +703,24 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
   const [showSendMenu, setShowSendMenu] = useState(false);
   const sendMenuRef = useRef<HTMLDivElement>(null);
 
+  // Dismiss the send-options dropdown when navigating away from the request view,
+  // so its fixed inset-0 backdrop does not block inputs in other panels.
+  useEffect(() => {
+    if (state.view !== 'request' && state.view !== 'history') {
+      setShowSendMenu(false);
+    }
+  }, [state.view]);
+
+  // Escape key dismisses the send-options dropdown (defence-in-depth)
+  useEffect(() => {
+    if (!showSendMenu) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setShowSendMenu(false);
+    }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [showSendMenu]);
+
   // Swap edit state when active tab changes
   useEffect(() => {
     if (!activeTab) {
