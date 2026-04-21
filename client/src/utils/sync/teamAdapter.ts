@@ -13,6 +13,7 @@
 import type { WorkspaceData } from '../../types';
 import type { SyncAdapter } from '../syncEngine';
 import { throwSyncRequestError } from './errors';
+import { syncSignal, handleSyncFetchError } from './syncTimeout';
 
 function readVersionHeader(headers: Headers): string | null {
   const raw = headers.get('ETag') ?? headers.get('X-Version') ?? headers.get('X-Workspace-Version');
@@ -35,7 +36,8 @@ export const teamAdapter: SyncAdapter = {
         ...(options?.expectedVersion ? { 'If-Match': options.expectedVersion } : {}),
       },
       body: JSON.stringify({ data, expectedVersion: options?.expectedVersion }),
-    });
+      signal: syncSignal(),
+    }).catch(err => handleSyncFetchError(err, 'Team'));
     if (!res.ok) {
       await throwSyncRequestError(res, 'Team push');
     }
@@ -51,7 +53,8 @@ export const teamAdapter: SyncAdapter = {
         'If-Match': expectedVersion,
       },
       body: JSON.stringify({ data: mergedData, expectedVersion }),
-    });
+      signal: syncSignal(),
+    }).catch(err => handleSyncFetchError(err, 'Team'));
     if (!res.ok) {
       await throwSyncRequestError(res, 'Team apply merged');
     }
@@ -62,7 +65,8 @@ export const teamAdapter: SyncAdapter = {
     const res = await fetch(url, {
       method: 'GET',
       headers: { Authorization: `Bearer ${config.token}` },
-    });
+      signal: syncSignal(),
+    }).catch(err => handleSyncFetchError(err, 'Team'));
     if (res.status === 404) return null;
     if (!res.ok) {
       await throwSyncRequestError(res, 'Team pull');
@@ -76,7 +80,8 @@ export const teamAdapter: SyncAdapter = {
     const res = await fetch(url, {
       method: 'GET',
       headers: { Authorization: `Bearer ${config.token}` },
-    });
+      signal: syncSignal(),
+    }).catch(err => handleSyncFetchError(err, 'Team'));
     if (res.status === 404) {
       return { data: null, remoteState: { timestamp: null, version: null } };
     }
@@ -99,6 +104,7 @@ export const teamAdapter: SyncAdapter = {
       const res = await fetch(url, {
         method: 'HEAD',
         headers: { Authorization: `Bearer ${config.token}` },
+        signal: syncSignal(),
       });
       if (!res.ok) return null;
       return readTimestampHeader(res.headers);
@@ -113,6 +119,7 @@ export const teamAdapter: SyncAdapter = {
       const res = await fetch(url, {
         method: 'HEAD',
         headers: { Authorization: `Bearer ${config.token}` },
+        signal: syncSignal(),
       });
       if (!res.ok) return { timestamp: null, version: null };
       return {
@@ -133,6 +140,7 @@ export const teamAdapter: SyncAdapter = {
       const res = await fetch(url, {
         method: 'HEAD',
         headers: { Authorization: `Bearer ${config.token}` },
+        signal: syncSignal(),
       });
       if (res.ok || res.status === 404) {
         const detail = res.status === 404 ? 'workspace not yet created on server' : 'workspace accessible';

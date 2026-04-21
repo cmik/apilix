@@ -13,6 +13,7 @@ Apilix workspaces can be synced to a remote provider so that your collections, e
   - [Overview](#overview)
   - [Opening Sync Settings](#opening-sync-settings)
   - [Sync Operations](#sync-operations)
+    - [Network Timeouts](#network-timeouts)
   - [Conflict Detection \& Resolution](#conflict-detection--resolution)
     - [Three-way Merge Modal](#three-way-merge-modal)
     - [Bulk Actions](#bulk-actions)
@@ -106,6 +107,21 @@ All four providers expose the same four actions:
 
 > **Tip:** Use **Import once ↓** when you want to copy a colleague's workspace to your machine for a single session, or when the remote already has existing commits and you need to pull before your first push.
 
+### Network Timeouts
+
+Every outbound sync request is subject to a client-side timeout. If the remote server does not respond within the limit, the operation is aborted and an error message is shown in the Sync tab.
+
+| Provider | Timeout |
+|---|---|
+| Git Repository | **30 seconds** — the extra time accounts for server-side git network I/O |
+| S3 / S3-compatible | **15 seconds** |
+| HTTP Endpoint | **15 seconds** |
+| Team Server | **15 seconds** |
+
+The timeout applies to every operation: push, pull, timestamp check, state check, and connection test. If a sync operation times out, no data is modified — the local workspace remains unchanged.
+
+> **If pushes or pulls time out consistently**, check that the remote host is reachable from your machine and that any reverse proxy (nginx, Caddy) has a `proxy_read_timeout` / `read_timeout` that is at least as long as the values above.
+
 ---
 
 ## Conflict Detection & Resolution
@@ -159,6 +175,8 @@ A **Filter: Unresolved only** toggle hides already-resolved conflicts to focus o
 | **Keep All Local** | Resolve every conflict with the local value and close |
 | **Keep All Remote** | Resolve every conflict with the remote value and close |
 | **Apply Merged** | Apply the current mix of resolutions. Only enabled when all conflicts are resolved. |
+
+> **Read-only workspaces:** In a workspace with the `readOnly` flag set (e.g. imported from a share package with **Force read-only**), clicking **Apply Merged** applies the merged result to the local workspace only — the push step is skipped. The local workspace is updated but the remote is not modified. This applies to both the full merge modal and the quick-sync merge path.
 
 ### Stale Apply Recovery
 
@@ -647,6 +665,7 @@ Behavior differences in a shared workspace:
 | Remote data encryption toggle | Locked |
 | Push ↑ | Disabled when the export had **Force read-only** set |
 | Pull ↓ | Always available |
+| Conflict resolution (Apply Merged) | Merged result is applied locally only — remote is not written |
 | Save config | Preserves the original sharing policy; does not unlock fields |
 
 ---
@@ -687,7 +706,11 @@ Pull ↓
      → MergeResult { merged, conflicts[], autoMergedCount }
   6. autoMergedCount > 0 and conflicts === 0 → apply silently
      conflicts > 0                           → open ConflictMergeModal
-  7. On Apply: write merged, push to remote, update lastMergeBaseSnapshotId
+  7. On Apply:
+     - Write merged result to local workspace
+     - Update lastMergeBaseSnapshotId
+     - If readOnly → stop here (remote is not written)
+     - Else → push merged result to remote
 ```
 
 The **base** is the last snapshot written after a successful push or pull (stored in a ring buffer of up to 50 snapshots per workspace). If no base is available, the pipeline falls back to binary "Use Remote / Keep Local".

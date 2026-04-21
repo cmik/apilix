@@ -448,6 +448,7 @@ export default function App() {
   const [closeGuardOpen, setCloseGuardOpen] = useState(false);
   const closeGuardDirtyCountRef = useRef(0);
   const [pendingSyncConfirm, setPendingSyncConfirm] = useState<{ message: string; resolve: (v: boolean) => void } | null>(null);
+  const [pendingEmptyPushConfirm, setPendingEmptyPushConfirm] = useState<{ resolve: (v: boolean) => void } | null>(null);
   const dragging = useRef(false);
   const startX = useRef(0);
   const startWidth = useRef(0);
@@ -807,6 +808,17 @@ export default function App() {
           setQuickSyncFeedback('Remote has newer changes — review merge before pushing', 'warning');
           return;
         }
+
+        if (localData.collections.length === 0) {
+          const confirmed = await new Promise<boolean>(resolve =>
+            setPendingEmptyPushConfirm({ resolve })
+          );
+          if (!confirmed) {
+            setQuickSyncFeedback('Sync canceled', 'info');
+            return;
+          }
+        }
+
         await syncPush(currentCfg, localData);
         const pushedState = await getRemoteSyncState(currentCfg);
         const meta = await persistSyncBase(currentCfg, localData, pushedState.timestamp, pushedState.version, 'sync base after quick-sync push');
@@ -831,10 +843,12 @@ export default function App() {
           if (pkg.mergeResult.conflicts.length === 0) {
             const mergedData = pkg.mergeResult.merged;
             await SnapshotEngine.createSnapshot(state.activeWorkspaceId, localData, 'pre-merge backup');
-            if (pkg.remoteVersion) {
-              await syncApplyMerged(currentCfg, mergedData, pkg.remoteVersion);
-            } else {
-              await syncPush(currentCfg, mergedData);
+            if (!currentCfg.readOnly) {
+              if (pkg.remoteVersion) {
+                await syncApplyMerged(currentCfg, mergedData, pkg.remoteVersion);
+              } else {
+                await syncPush(currentCfg, mergedData);
+              }
             }
             const remoteState = await getRemoteSyncState(currentCfg);
             const meta = await persistSyncBase(currentCfg, mergedData, remoteState.timestamp, remoteState.version, 'sync base after auto-merge');
@@ -842,7 +856,7 @@ export default function App() {
             dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...mergedData, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
             await StorageDriver.writeWorkspace(currentCfg.workspaceId, mergedData);
             setLastSuccessfulSyncAt(meta.lastSyncedAt ?? null);
-            setQuickSyncFeedback('Synced (auto-merged)', 'ok');
+            setQuickSyncFeedback(currentCfg.readOnly ? 'Synced (auto-merged locally)' : 'Synced (auto-merged)', 'ok');
           } else {
             setQuickSyncConflictPackage(pkg);
             setQuickSyncFeedback('Conflict detected — review merge', 'warning');
@@ -869,10 +883,12 @@ export default function App() {
       const preMergeLocal = getCurrentWorkspaceData();
       await SnapshotEngine.createSnapshot(state.activeWorkspaceId, preMergeLocal, 'pre-quick-sync-merge backup');
 
-      if (currentPackage.remoteVersion) {
-        await syncApplyMerged(currentCfg, mergedData, currentPackage.remoteVersion);
-      } else {
-        await syncPush(currentCfg, mergedData);
+      if (!currentCfg.readOnly) {
+        if (currentPackage.remoteVersion) {
+          await syncApplyMerged(currentCfg, mergedData, currentPackage.remoteVersion);
+        } else {
+          await syncPush(currentCfg, mergedData);
+        }
       }
 
       const remoteState = await getRemoteSyncState(currentCfg);
@@ -883,7 +899,7 @@ export default function App() {
 
       dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...mergedData, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
       await StorageDriver.writeWorkspace(state.activeWorkspaceId, mergedData);
-      setQuickSyncFeedback('Sync merge applied successfully', 'ok');
+      setQuickSyncFeedback(currentCfg.readOnly ? 'Merge applied locally (read-only — remote not updated)' : 'Sync merge applied successfully', 'ok');
     } catch (err: unknown) {
       if (err instanceof StaleVersionError) {
         setQuickSyncFeedback('Remote changed during apply. Rebuilding merge…', 'warning');
@@ -1272,6 +1288,18 @@ export default function App() {
           danger={false}
           onConfirm={() => { setPendingSyncConfirm(null); pendingSyncConfirm.resolve(true); }}
           onCancel={() => { setPendingSyncConfirm(null); pendingSyncConfirm.resolve(false); }}
+          zIndex="z-[65]"
+        />
+      )}
+
+      {pendingEmptyPushConfirm && (
+        <ConfirmModal
+          title="Push empty workspace"
+          message="You are about to push an empty workspace. This will overwrite the remote workspace and may cause data loss. Are you sure you want to continue?"
+          confirmLabel="Push anyway"
+          danger={true}
+          onConfirm={() => { setPendingEmptyPushConfirm(null); pendingEmptyPushConfirm.resolve(true); }}
+          onCancel={() => { setPendingEmptyPushConfirm(null); pendingEmptyPushConfirm.resolve(false); }}
           zIndex="z-[65]"
         />
       )}

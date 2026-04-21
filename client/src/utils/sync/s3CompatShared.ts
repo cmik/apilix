@@ -6,6 +6,8 @@
  * generation, and connection testing.
  */
 
+import { syncSignal } from './syncTimeout';
+
 export function readVersionHeader(headers: Headers): string | null {
   const raw = headers.get('ETag') ?? headers.get('X-Version') ?? headers.get('X-Workspace-Version');
   if (!raw) return null;
@@ -26,8 +28,22 @@ export async function s3CompatFetch(
   providerLabel = 'S3',
 ): Promise<Response> {
   try {
-    return await fetch(url, init);
+    const callerSignal = init?.signal;
+    const timeoutSignal = syncSignal();
+    const signal = callerSignal
+      ? AbortSignal.any([timeoutSignal, callerSignal])
+      : timeoutSignal;
+    const { signal: _omit, ...restInit } = init ?? {};
+    return await fetch(url, { signal, ...restInit });
   } catch (err: unknown) {
+    if (
+      err instanceof DOMException &&
+      (err.name === 'TimeoutError' || err.name === 'AbortError')
+    ) {
+      throw new Error(
+        `${providerLabel} sync request timed out — server did not respond in time`,
+      );
+    }
     const isNetworkError =
       err instanceof TypeError &&
       /failed to fetch|network request failed|load failed/i.test((err as TypeError).message);

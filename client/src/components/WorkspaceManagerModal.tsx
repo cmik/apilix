@@ -1158,6 +1158,7 @@ function SyncTab() {
   const [conflictPackage, setConflictPackage] = useState<ConflictPackage | null>(null);
   const [activity, setActivity] = useState<SyncActivityEntry[]>([]);
   const [pendingPushConfirm, setPendingPushConfirm] = useState<{ message: string; resolve: (v: boolean) => void } | null>(null);
+  const [pendingEmptyPushConfirm, setPendingEmptyPushConfirm] = useState<{ resolve: (v: boolean) => void } | null>(null);
   const [showExport, setShowExport] = useState(false);
   const [exportEncrypt, setExportEncrypt] = useState(true);
   const [exportPassphrase, setExportPassphrase] = useState('');
@@ -1298,11 +1299,28 @@ function SyncTab() {
     setStatus('busy'); setMsg('Pushing…'); setConflict(null);
     try {
       const syncedCollections = await prepareCollectionsForPush();
-      if (!syncedCollections) return;
+      if (!syncedCollections) {
+        dispatch({ type: 'SET_SYNC_STATUS', payload: { workspaceId, status: 'idle' } });
+        setStatus('idle');
+        return;
+      }
 
       await saveConfig();
       const data = { ...getCurrentWorkspaceData(), collections: syncedCollections };
       const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata, encryptRemote, remotePassphrase: remotePassphrase || undefined, isShared: isShared || undefined, sharePolicy };
+
+      if (data.collections.length === 0) {
+        const confirmed = await new Promise<boolean>(resolve =>
+          setPendingEmptyPushConfirm({ resolve })
+        );
+        if (!confirmed) {
+          dispatch({ type: 'SET_SYNC_STATUS', payload: { workspaceId, status: 'idle' } });
+          setStatus('idle');
+          setMsg('Push canceled');
+          return;
+        }
+      }
+
       await syncPush(cfg, data);
       const remoteState = await getRemoteSyncState(cfg);
       const mergeBaseSnapshotId = await SnapshotEngine.createSnapshot(workspaceId, data, 'sync base after push');
@@ -1414,10 +1432,12 @@ function SyncTab() {
       const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata, encryptRemote, remotePassphrase: remotePassphrase || undefined, isShared: isShared || undefined, sharePolicy };
       const localData = getCurrentWorkspaceData();
       if (localData) await SnapshotEngine.createSnapshot(workspaceId, localData, 'pre-merge backup');
-      if (currentConflictPackage.remoteVersion) {
-        await syncApplyMerged(cfg, mergedData, currentConflictPackage.remoteVersion);
-      } else {
-        await syncPush(cfg, mergedData);
+      if (!readOnly) {
+        if (currentConflictPackage.remoteVersion) {
+          await syncApplyMerged(cfg, mergedData, currentConflictPackage.remoteVersion);
+        } else {
+          await syncPush(cfg, mergedData);
+        }
       }
       const remoteState = await getRemoteSyncState(cfg);
       const mergeBaseSnapshotId = await SnapshotEngine.createSnapshot(workspaceId, mergedData, 'sync base after merge apply');
@@ -1431,8 +1451,8 @@ function SyncTab() {
       await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata, readOnly, { encryptRemote, remotePassphrase: remotePassphrase || undefined, isShared, sharePolicy });
       dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...mergedData, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
       await StorageDriver.writeWorkspace(workspaceId, mergedData);
-      await logActivity('merge-applied', 'success', 'Merged workspace applied', remoteState.version ? `Version ${remoteState.version.slice(0, 8)}` : undefined);
-      setStatus('ok'); setMsg('Merge applied successfully');
+      await logActivity('merge-applied', 'success', 'Merged workspace applied', readOnly ? 'local only (read-only)' : remoteState.version ? `Version ${remoteState.version.slice(0, 8)}` : undefined);
+      setStatus('ok'); setMsg(readOnly ? 'Merge applied locally (read-only — remote not updated)' : 'Merge applied successfully');
     } catch (err: unknown) {
       if (err instanceof StaleVersionError) {
         setStatus('busy'); setMsg('Remote changed during apply. Rebuilding merge…');
@@ -1789,6 +1809,17 @@ function SyncTab() {
           danger={false}
           onConfirm={() => { setPendingPushConfirm(null); pendingPushConfirm.resolve(true); }}
           onCancel={() => { setPendingPushConfirm(null); pendingPushConfirm.resolve(false); }}
+        />
+      )}
+
+      {pendingEmptyPushConfirm && (
+        <ConfirmModal
+          title="Push empty workspace"
+          message="You are about to push an empty workspace. This will overwrite the remote workspace and may cause data loss. Are you sure you want to continue?"
+          confirmLabel="Push anyway"
+          danger={true}
+          onConfirm={() => { setPendingEmptyPushConfirm(null); pendingEmptyPushConfirm.resolve(true); }}
+          onCancel={() => { setPendingEmptyPushConfirm(null); pendingEmptyPushConfirm.resolve(false); }}
         />
       )}
     </>
