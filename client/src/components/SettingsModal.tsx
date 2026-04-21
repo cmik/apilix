@@ -162,6 +162,12 @@ function AppearanceTab({ s, u }: { s: AppSettings; u: (p: Partial<AppSettings>) 
         </div>
       </Section>
 
+      <Section title="Workspace Behavior">
+        <Row label="Restore tabs on workspace switch / restart">
+          <Toggle checked={s.restoreTabsOnSwitch === true} onChange={v => u({ restoreTabsOnSwitch: v })} />
+        </Row>
+      </Section>
+
     </div>
   );
 }

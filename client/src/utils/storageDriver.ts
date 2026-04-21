@@ -129,6 +129,7 @@ export async function deleteWorkspace(id: string): Promise<void> {
   lsDelete(LS_REQUEST_HISTORY(id));
   lsDelete(LS_RUNNER_RECENT(id));
   lsDelete(LS_RUNNER_SAVED(id));
+  lsDelete(LS_TAB_SESSION(id));
 
   // Remove entry from sync-config store
   const lsSyncConfig = lsRead<SyncConfigStore>(LS_SYNC_CONFIG);
@@ -151,6 +152,9 @@ export async function deleteWorkspace(id: string): Promise<void> {
 
   // Workspace data file
   await api.deleteFile(`${dir}/workspaces/${id}.json`).catch(() => {});
+
+  // Tab session file
+  await api.deleteFile(`${dir}/workspaces/${id}/tab-session.json`).catch(() => {});
 
   // Snapshot / history directory: workspaces/{id}/
   await api.deleteDirectory(`${dir}/workspaces/${id}`).catch(() => {});
@@ -552,5 +556,43 @@ export async function writeSavedRuns(workspaceId: string, runs: SavedRunnerRun[]
   if (api) {
     const dir = await api.getDataDir();
     await api.writeJsonFile(`${dir}/workspaces/${workspaceId}/runner-saved.json`, runs);
+  }
+}
+
+// ─── Tab session (open tabs per workspace) ────────────────────────────────────
+
+export interface PersistedTabSession {
+  tabs: Array<{ id: string; collectionId: string; itemId: string }>;
+  activeTabId: string | null;
+}
+
+const LS_TAB_SESSION = (id: string) => `apilix_tab_session_${id}`;
+
+export async function readTabSession(workspaceId: string): Promise<PersistedTabSession | null> {
+  const api = eAPI();
+  if (api) {
+    try {
+      const dir = await api.getDataDir();
+      const data = await api.readJsonFile(`${dir}/workspaces/${workspaceId}/tab-session.json`);
+      if (data) return data as PersistedTabSession;
+    } catch { /* fall through */ }
+  }
+  return lsRead<PersistedTabSession>(LS_TAB_SESSION(workspaceId));
+}
+
+export async function writeTabSession(workspaceId: string, session: PersistedTabSession): Promise<void> {
+  lsWrite(LS_TAB_SESSION(workspaceId), session);
+  const api = eAPI();
+  if (api) {
+    const dir = await api.getDataDir();
+    await api.writeJsonFile(`${dir}/workspaces/${workspaceId}/tab-session.json`, session);
+  }
+}
+
+export async function deleteTabSession(workspaceId: string): Promise<void> {
+  lsDelete(LS_TAB_SESSION(workspaceId));
+  const api = eAPI();
+  if (api) {
+    await api.deleteFile(`${(await api.getDataDir())}/workspaces/${workspaceId}/tab-session.json`).catch(() => {});
   }
 }

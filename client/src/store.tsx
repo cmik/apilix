@@ -227,6 +227,28 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+    case 'RESTORE_TAB_SESSION': {
+      const restoredTabs: RequestTab[] = [];
+      for (const ref of action.payload.tabs) {
+        const col = state.collections.find(c => c._id === ref.collectionId);
+        if (!col) continue;
+        const item = findItemInTree(col.item, ref.itemId);
+        if (!item) continue;
+        restoredTabs.push({ id: ref.id, collectionId: ref.collectionId, item, response: null, isLoading: false });
+      }
+      if (restoredTabs.length === 0) return state;
+      const activeTab =
+        restoredTabs.find(t => t.id === action.payload.activeTabId) ?? restoredTabs[0];
+      return {
+        ...state,
+        tabs: restoredTabs,
+        activeTabId: activeTab.id,
+        activeRequest: { collectionId: activeTab.collectionId, item: activeTab.item },
+        response: null,
+        isLoading: false,
+      };
+    }
+
     case 'CLOSE_TAB': {
       const tabId = action.payload;
       const idx = state.tabs.findIndex(t => t.id === tabId);
@@ -978,6 +1000,62 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.savedRuns, state.activeWorkspaceId, state.storageReady]);
+
+  // ── Tab session: restore on workspace change ──────────────────────────────
+  const tabSessionLoadedWorkspaceRef = useRef<string | null>(null);
+  const skipNextTabSessionSaveRef = useRef(false);
+  useEffect(() => {
+    if (!state.storageReady || !state.activeWorkspaceId) return;
+    const workspaceId = state.activeWorkspaceId;
+    let cancelled = false;
+    // Capture setting value synchronously before the async boundary to avoid
+    // reading a stale closure snapshot inside the .then() callback.
+    const shouldRestore = state.settings.restoreTabsOnSwitch;
+    tabSessionLoadedWorkspaceRef.current = null;
+    skipNextTabSessionSaveRef.current = true;
+
+    StorageDriver.readTabSession(workspaceId)
+      .then(session => {
+        if (cancelled || state.activeWorkspaceId !== workspaceId) return;
+        if (session && session.tabs.length > 0 && shouldRestore) {
+          dispatch({ type: 'RESTORE_TAB_SESSION', payload: session });
+        }
+        tabSessionLoadedWorkspaceRef.current = workspaceId;
+      })
+      .catch(() => {
+        if (cancelled || state.activeWorkspaceId !== workspaceId) return;
+        tabSessionLoadedWorkspaceRef.current = workspaceId;
+      });
+
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.activeWorkspaceId, state.storageReady]);
+
+  // ── Tab session: debounced persistence ────────────────────────────────────
+  const tabSessionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!state.storageReady || !state.activeWorkspaceId) return;
+    if (tabSessionLoadedWorkspaceRef.current !== state.activeWorkspaceId) return;
+    if (skipNextTabSessionSaveRef.current) {
+      skipNextTabSessionSaveRef.current = false;
+      return;
+    }
+    const session: StorageDriver.PersistedTabSession = {
+      tabs: state.tabs
+        .filter(t => !!t.collectionId && !t.fromHistory && !!t.item.id)
+        .map(t => ({ id: t.id, collectionId: t.collectionId, itemId: t.item.id as string })),
+      activeTabId: state.activeTabId,
+    };
+    if (tabSessionTimerRef.current) clearTimeout(tabSessionTimerRef.current);
+    tabSessionTimerRef.current = setTimeout(() => {
+      void StorageDriver.writeTabSession(state.activeWorkspaceId, session).catch(() => {});
+    }, 500);
+    return () => {
+      if (tabSessionTimerRef.current) clearTimeout(tabSessionTimerRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.tabs, state.activeTabId, state.activeWorkspaceId, state.storageReady]);
+
   // ── Debounced settings persistence ───────────────────────────────────────
   const settingsSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {

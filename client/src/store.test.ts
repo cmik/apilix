@@ -856,6 +856,162 @@ describe('workspace data import — action choice determines persisted content',
   });
 });
 
+// ─── RESTORE_TAB_SESSION ────────────────────────────────────────────────────
+
+describe('RESTORE_TAB_SESSION', () => {
+  /** Minimal state that has one collection containing the given items. */
+  function stateWithCollection(...items: CollectionItem[]): AppState {
+    return {
+      ...initialState,
+      collections: [{
+        _id: 'col1',
+        info: { name: 'My API', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
+        item: items,
+      }],
+    };
+  }
+
+  it('restores tabs from valid collection/item refs', () => {
+    const item = makeItem('req1');
+    const s = stateWithCollection(item);
+    const next = appReducer(s, {
+      type: 'RESTORE_TAB_SESSION',
+      payload: { tabs: [{ id: 'tab-a', collectionId: 'col1', itemId: 'req1' }], activeTabId: 'tab-a' },
+    });
+    expect(next.tabs).toHaveLength(1);
+    expect(next.tabs[0].id).toBe('tab-a');
+    expect(next.tabs[0].collectionId).toBe('col1');
+  });
+
+  it('sets activeTabId and activeRequest to the specified active tab', () => {
+    const item = makeItem('req1');
+    const s = stateWithCollection(item);
+    const next = appReducer(s, {
+      type: 'RESTORE_TAB_SESSION',
+      payload: { tabs: [{ id: 'tab-a', collectionId: 'col1', itemId: 'req1' }], activeTabId: 'tab-a' },
+    });
+    expect(next.activeTabId).toBe('tab-a');
+    expect(next.activeRequest).toEqual({ collectionId: 'col1', item });
+  });
+
+  it('restores multiple tabs preserving payload order', () => {
+    const item1 = makeItem('req1');
+    const item2 = makeItem('req2');
+    const s = stateWithCollection(item1, item2);
+    const next = appReducer(s, {
+      type: 'RESTORE_TAB_SESSION',
+      payload: {
+        tabs: [
+          { id: 'tab-a', collectionId: 'col1', itemId: 'req1' },
+          { id: 'tab-b', collectionId: 'col1', itemId: 'req2' },
+        ],
+        activeTabId: 'tab-b',
+      },
+    });
+    expect(next.tabs).toHaveLength(2);
+    expect(next.tabs[0].id).toBe('tab-a');
+    expect(next.tabs[1].id).toBe('tab-b');
+    expect(next.activeTabId).toBe('tab-b');
+  });
+
+  it('skips refs whose collectionId is not present in state', () => {
+    const item = makeItem('req1');
+    const s = stateWithCollection(item);
+    const next = appReducer(s, {
+      type: 'RESTORE_TAB_SESSION',
+      payload: {
+        tabs: [
+          { id: 'tab-a', collectionId: 'col1', itemId: 'req1' },
+          { id: 'tab-b', collectionId: 'col-ghost', itemId: 'req1' },
+        ],
+        activeTabId: 'tab-a',
+      },
+    });
+    expect(next.tabs).toHaveLength(1);
+    expect(next.tabs[0].id).toBe('tab-a');
+  });
+
+  it('skips refs whose itemId is not found in the collection tree', () => {
+    const item = makeItem('req1');
+    const s = stateWithCollection(item);
+    const next = appReducer(s, {
+      type: 'RESTORE_TAB_SESSION',
+      payload: {
+        tabs: [{ id: 'tab-a', collectionId: 'col1', itemId: 'req-missing' }],
+        activeTabId: 'tab-a',
+      },
+    });
+    // All refs invalid — reducer returns same state reference unchanged
+    expect(next).toBe(s);
+  });
+
+  it('returns the same state reference when payload.tabs is empty', () => {
+    const s = stateWithCollection(makeItem('req1'));
+    const next = appReducer(s, {
+      type: 'RESTORE_TAB_SESSION',
+      payload: { tabs: [], activeTabId: null },
+    });
+    expect(next).toBe(s);
+  });
+
+  it('falls back to first restored tab when activeTabId is null', () => {
+    const item1 = makeItem('req1');
+    const item2 = makeItem('req2');
+    const s = stateWithCollection(item1, item2);
+    const next = appReducer(s, {
+      type: 'RESTORE_TAB_SESSION',
+      payload: {
+        tabs: [
+          { id: 'tab-a', collectionId: 'col1', itemId: 'req1' },
+          { id: 'tab-b', collectionId: 'col1', itemId: 'req2' },
+        ],
+        activeTabId: null,
+      },
+    });
+    expect(next.activeTabId).toBe('tab-a');
+    expect(next.activeRequest?.item.id).toBe('req1');
+  });
+
+  it('falls back to first restored tab when activeTabId does not match any restored tab', () => {
+    const item = makeItem('req1');
+    const s = stateWithCollection(item);
+    const next = appReducer(s, {
+      type: 'RESTORE_TAB_SESSION',
+      payload: {
+        tabs: [{ id: 'tab-a', collectionId: 'col1', itemId: 'req1' }],
+        activeTabId: 'tab-does-not-exist',
+      },
+    });
+    expect(next.activeTabId).toBe('tab-a');
+  });
+
+  it('initialises each restored tab with null response and isLoading false', () => {
+    const item = makeItem('req1');
+    const s = stateWithCollection(item);
+    const next = appReducer(s, {
+      type: 'RESTORE_TAB_SESSION',
+      payload: { tabs: [{ id: 'tab-a', collectionId: 'col1', itemId: 'req1' }], activeTabId: 'tab-a' },
+    });
+    expect(next.tabs[0].response).toBeNull();
+    expect(next.tabs[0].isLoading).toBe(false);
+  });
+
+  it('replaces previously open tabs entirely (does not merge)', () => {
+    const item = makeItem('req1');
+    const s: AppState = {
+      ...stateWithCollection(item),
+      tabs: [{ id: 'old-tab', collectionId: 'col1', item, response: null, isLoading: false }],
+      activeTabId: 'old-tab',
+    };
+    const next = appReducer(s, {
+      type: 'RESTORE_TAB_SESSION',
+      payload: { tabs: [{ id: 'tab-a', collectionId: 'col1', itemId: 'req1' }], activeTabId: 'tab-a' },
+    });
+    expect(next.tabs).toHaveLength(1);
+    expect(next.tabs[0].id).toBe('tab-a');
+  });
+});
+
 // ─── Workspace data import: duplicate-ID guard ────────────────────────────────
 
 describe('workspace data import — duplicate workspace ID', () => {

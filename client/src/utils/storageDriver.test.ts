@@ -15,6 +15,9 @@ import {
   decryptWorkspaceSecrets,
   encryptValue,
   decryptValue,
+  readTabSession,
+  writeTabSession,
+  deleteTabSession,
 } from './storageDriver';
 
 // ─── Factories ────────────────────────────────────────────────────────────────
@@ -357,5 +360,169 @@ describe('decryptWorkspaceSecrets — Electron mode', () => {
 
     expect(decrypted.environments[0].values[0].value).toBe('super-secret');
     expect(decrypted.environments[0].values[1].value).toBe('https://api.example.com');
+  });
+});
+
+// ─── Tab session helpers ──────────────────────────────────────────────────────
+// lsRead / lsWrite / lsDelete access the bare `localStorage` global.
+// In the Vitest node environment that global does not exist, so each describe
+// block below stubs it (and restores it afterwards).
+
+function makeFakeLocalStorage(): Storage & { _store: Map<string, string> } {
+  const store = new Map<string, string>();
+  return {
+    _store: store,
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => { store.set(k, v); },
+    removeItem: (k: string) => { store.delete(k); },
+    clear: () => store.clear(),
+    key: (i: number) => [...store.keys()][i] ?? null,
+    get length() { return store.size; },
+  } as Storage & { _store: Map<string, string> };
+}
+
+// ─── Tab session — browser mode (no electronAPI) ──────────────────────────────
+
+describe('readTabSession / writeTabSession / deleteTabSession — browser mode', () => {
+  beforeEach(() => {
+    (window as unknown as Record<string, unknown>).electronAPI = undefined;
+    // Provide a fresh in-memory localStorage for every test (not available in node env)
+    vi.stubGlobal('localStorage', makeFakeLocalStorage());
+  });
+
+  it('readTabSession returns null when no session has been stored', async () => {
+    const result = await readTabSession('ws1');
+    expect(result).toBeNull();
+  });
+
+  it('writeTabSession + readTabSession round-trips the session object', async () => {
+    const session = { tabs: [{ id: 't1', collectionId: 'c1', itemId: 'i1' }], activeTabId: 't1' };
+    await writeTabSession('ws1', session);
+    const result = await readTabSession('ws1');
+    expect(result).toEqual(session);
+  });
+
+  it('sessions are scoped per workspaceId (different ids are isolated)', async () => {
+    const session = { tabs: [{ id: 't1', collectionId: 'c1', itemId: 'i1' }], activeTabId: 't1' };
+    await writeTabSession('ws1', session);
+    const other = await readTabSession('ws2');
+    expect(other).toBeNull();
+  });
+
+  it('deleteTabSession removes a previously written session', async () => {
+    const session = { tabs: [{ id: 't1', collectionId: 'c1', itemId: 'i1' }], activeTabId: 't1' };
+    await writeTabSession('ws1', session);
+    await deleteTabSession('ws1');
+    const result = await readTabSession('ws1');
+    expect(result).toBeNull();
+  });
+
+  it('deleteTabSession on a non-existent key does not throw', async () => {
+    await expect(deleteTabSession('ws-missing')).resolves.toBeUndefined();
+  });
+});
+
+// ─── Tab session — Electron mode ─────────────────────────────────────────────
+
+describe('readTabSession — Electron mode', () => {
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', makeFakeLocalStorage());
+  });
+
+  afterEach(() => {
+    (window as unknown as Record<string, unknown>).electronAPI = undefined;
+  });
+
+  it('returns data from the disk file when electronAPI succeeds', async () => {
+    const session = { tabs: [{ id: 't1', collectionId: 'c1', itemId: 'i1' }], activeTabId: 't1' };
+    (window as unknown as Record<string, unknown>).electronAPI = {
+      getDataDir: vi.fn().mockResolvedValue('/data'),
+      readJsonFile: vi.fn().mockResolvedValue(session),
+    };
+    const result = await readTabSession('ws1');
+    expect(result).toEqual(session);
+  });
+
+  it('falls back to localStorage when readJsonFile throws', async () => {
+    const session = { tabs: [{ id: 't2', collectionId: 'c2', itemId: 'i2' }], activeTabId: 't2' };
+    // Pre-populate localStorage fallback
+    localStorage.setItem('apilix_tab_session_ws1', JSON.stringify(session));
+    (window as unknown as Record<string, unknown>).electronAPI = {
+      getDataDir: vi.fn().mockResolvedValue('/data'),
+      readJsonFile: vi.fn().mockRejectedValue(new Error('ENOENT')),
+    };
+    const result = await readTabSession('ws1');
+    expect(result).toEqual(session);
+  });
+});
+
+describe('writeTabSession — Electron mode', () => {
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', makeFakeLocalStorage());
+  });
+
+  afterEach(() => {
+    (window as unknown as Record<string, unknown>).electronAPI = undefined;
+  });
+
+  it('calls writeJsonFile with the correct workspace path', async () => {
+    const mockWrite = vi.fn().mockResolvedValue(undefined);
+    (window as unknown as Record<string, unknown>).electronAPI = {
+      getDataDir: vi.fn().mockResolvedValue('/data'),
+      writeJsonFile: mockWrite,
+    };
+    const session = { tabs: [{ id: 't1', collectionId: 'c1', itemId: 'i1' }], activeTabId: 't1' };
+    await writeTabSession('ws1', session);
+    expect(mockWrite).toHaveBeenCalledWith('/data/workspaces/ws1/tab-session.json', session);
+  });
+
+  it('also mirrors the session to localStorage in Electron mode', async () => {
+    (window as unknown as Record<string, unknown>).electronAPI = {
+      getDataDir: vi.fn().mockResolvedValue('/data'),
+      writeJsonFile: vi.fn().mockResolvedValue(undefined),
+    };
+    const session = { tabs: [{ id: 't1', collectionId: 'c1', itemId: 'i1' }], activeTabId: 't1' };
+    await writeTabSession('ws1', session);
+    const stored = localStorage.getItem('apilix_tab_session_ws1');
+    expect(stored).not.toBeNull();
+    expect(JSON.parse(stored!)).toEqual(session);
+  });
+});
+
+describe('deleteTabSession — Electron mode', () => {
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', makeFakeLocalStorage());
+  });
+
+  afterEach(() => {
+    (window as unknown as Record<string, unknown>).electronAPI = undefined;
+  });
+
+  it('calls deleteFile with the correct workspace path', async () => {
+    const mockDelete = vi.fn().mockResolvedValue(undefined);
+    (window as unknown as Record<string, unknown>).electronAPI = {
+      getDataDir: vi.fn().mockResolvedValue('/data'),
+      deleteFile: mockDelete,
+    };
+    await deleteTabSession('ws1');
+    expect(mockDelete).toHaveBeenCalledWith('/data/workspaces/ws1/tab-session.json');
+  });
+
+  it('does not throw when deleteFile rejects (graceful no-op)', async () => {
+    (window as unknown as Record<string, unknown>).electronAPI = {
+      getDataDir: vi.fn().mockResolvedValue('/data'),
+      deleteFile: vi.fn().mockRejectedValue(new Error('Permission denied')),
+    };
+    await expect(deleteTabSession('ws1')).resolves.toBeUndefined();
+  });
+
+  it('also removes the localStorage mirror when in Electron mode', async () => {
+    localStorage.setItem('apilix_tab_session_ws1', '{"tabs":[],"activeTabId":null}');
+    (window as unknown as Record<string, unknown>).electronAPI = {
+      getDataDir: vi.fn().mockResolvedValue('/data'),
+      deleteFile: vi.fn().mockResolvedValue(undefined),
+    };
+    await deleteTabSession('ws1');
+    expect(localStorage.getItem('apilix_tab_session_ws1')).toBeNull();
   });
 });

@@ -305,6 +305,9 @@ export interface AppSettings {
   corsAllowedOrigins?: string;
   // Layout
   requestLayout?: 'stacked' | 'split';
+  // Workspace Behavior
+  /** When true, open tabs are saved per workspace and restored on switch / restart. */
+  restoreTabsOnSwitch?: boolean;
   // CDP Browser Capture
   cdpChromePath?: string;
   cdpPort?: number;
@@ -815,4 +818,6 @@ export type AppAction =
   | { type: 'DELETE_SAVED_RUN'; payload: string }
   | { type: 'SET_SAVED_RUNS'; payload: SavedRunnerRun[] }
   | { type: 'LOAD_RUNNER_RUN'; payload: SavedRunnerRun }
-  | { type: 'CLEAR_LOADED_RUNNER_RUN' };
+  | { type: 'CLEAR_LOADED_RUNNER_RUN' }
+  // ── Tab session actions ──────────────────────────────────────────────────
+  | { type: 'RESTORE_TAB_SESSION'; payload: { tabs: Array<{ id: string; collectionId: string; itemId: string }>; activeTabId: string | null } };
