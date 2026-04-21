@@ -405,7 +405,7 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
                 value={editName}
                 onChange={e => setEditName(e.target.value)}
                 onBlur={() => commitRename(w.id)}
-                onKeyDown={e => { if (e.key === 'Enter') commitRename(w.id); if (e.key === 'Escape') setEditingId(null); }}
+                onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') commitRename(w.id); if (e.key === 'Escape') setEditingId(null); }}
                 className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-0.5 text-sm text-slate-200 outline-none focus:border-orange-500"
               />
             ) : (
