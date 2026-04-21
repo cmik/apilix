@@ -889,7 +889,6 @@ function ExportPanel({
 }: ExportPanelProps) {
   const [forceReadOnly, setForceReadOnly] = useState(false);
   const [sharingEnabled, setSharingEnabled] = useState(true);
-  const [embedPassphrase, setEmbedPassphrase] = useState(false);
 
   async function handleDownload() {
     setExportStatus('');
@@ -901,10 +900,8 @@ function ExportPanel({
 
     const sharePolicy: SyncSharePolicy | undefined = { forceReadOnly, sharingEnabled };
 
-    // Embed the remote passphrase when explicitly requested
-    const remotePassphrase = (embedPassphrase && encryptRemote && inheritedPassphrase)
-      ? inheritedPassphrase
-      : undefined;
+    // Always embed the remote passphrase when remote encryption is configured
+    const remotePassphrase = (encryptRemote && inheritedPassphrase) ? inheritedPassphrase : undefined;
 
     const configWithId = { ...fields, remoteWorkspaceId: workspaceId };
     const pkg = await buildSyncExportPackage(workspaceName, provider, configWithId, passphrase, {
@@ -979,24 +976,15 @@ function ExportPanel({
         </div>
       </div>
 
-      {/* Embed remote passphrase (only when remote encryption is configured) */}
+      {/* Remote passphrase is always embedded when remote encryption is configured */}
       {encryptRemote && inheritedPassphrase && (
-        <div className="border-t border-slate-700 pt-2.5 space-y-1.5">
-          <div className="flex items-center gap-2">
-            <input
-              id={`export-embed-pass-${workspaceId}`}
-              type="checkbox"
-              checked={embedPassphrase}
-              onChange={e => setEmbedPassphrase(e.target.checked)}
-              className="accent-orange-500 cursor-pointer"
-            />
-            <label htmlFor={`export-embed-pass-${workspaceId}`} className="text-xs text-slate-300 cursor-pointer">
-              Embed remote encryption passphrase <span className="text-slate-500">(encrypted inside the package)</span>
-            </label>
-          </div>
-          {embedPassphrase && !exportEncrypt && (
-            <p className="text-[10px] text-red-400 bg-red-950/30 border border-red-800/40 rounded px-2 py-1.5">
-              ⚠ You must also encrypt the package — otherwise the remote passphrase will be stored in plaintext.
+        <div className="border-t border-slate-700 pt-2.5">
+          <p className="text-[10px] text-slate-400 bg-slate-800/60 border border-slate-700 rounded px-2 py-1.5">
+            Remote encryption passphrase will be embedded in this package.
+          </p>
+          {!exportEncrypt && (
+            <p className="text-[10px] text-red-400 bg-red-950/30 border border-red-800/40 rounded px-2 py-1.5 mt-1.5">
+              ⚠ Enable package encryption — otherwise the remote passphrase will be stored in plaintext.
             </p>
           )}
         </div>
@@ -1438,41 +1426,45 @@ function SyncTab() {
   return (
     <>
       <div className="space-y-4">
-      {/* Provider selector */}
-      <div>
-        <label className="block text-xs font-medium text-slate-400 mb-1.5">Provider</label>
-        <div className="flex gap-2 flex-wrap">
-          {VISIBLE_PROVIDERS.filter(p => !isBrowserMode || !ELECTRON_ONLY_PROVIDERS.includes(p)).map(p => (
-            <button
-              key={p}
-              onClick={() => switchProvider(p)}
-              className={`px-3 py-1.5 rounded text-xs font-medium border transition-colors ${
-                provider === p
-                  ? 'bg-orange-500/20 border-orange-500/50 text-orange-300'
-                  : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'
-              }`}
-            >
-              {PROVIDER_LABELS[p]}
-            </button>
+      {/* Provider selector — hidden for shared workspaces */}
+      {!isShared && (
+        <div>
+          <label className="block text-xs font-medium text-slate-400 mb-1.5">Provider</label>
+          <div className="flex gap-2 flex-wrap">
+            {VISIBLE_PROVIDERS.filter(p => !isBrowserMode || !ELECTRON_ONLY_PROVIDERS.includes(p)).map(p => (
+              <button
+                key={p}
+                onClick={() => switchProvider(p)}
+                className={`px-3 py-1.5 rounded text-xs font-medium border transition-colors ${
+                  provider === p
+                    ? 'bg-orange-500/20 border-orange-500/50 text-orange-300'
+                    : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'
+                }`}
+              >
+                {PROVIDER_LABELS[p]}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Provider-specific fields — hidden for shared workspaces */}
+      {!isShared && (
+        <div className="space-y-2.5">
+          {PROVIDER_FIELDS[provider].map(f => (
+            <div key={f.key}>
+              <label className="block text-[11px] text-slate-500 mb-1">{f.label}</label>
+              <input
+                type={f.secret ? 'password' : 'text'}
+                value={fields[f.key] ?? ''}
+                onChange={e => setField(f.key, e.target.value)}
+                placeholder={f.placeholder}
+                className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-orange-500 placeholder:text-slate-600"
+              />
+            </div>
           ))}
         </div>
-      </div>
-
-      {/* Provider-specific fields */}
-      <div className="space-y-2.5">
-        {PROVIDER_FIELDS[provider].map(f => (
-          <div key={f.key}>
-            <label className="block text-[11px] text-slate-500 mb-1">{f.label}</label>
-            <input
-              type={f.secret ? 'password' : 'text'}
-              value={fields[f.key] ?? ''}
-              onChange={e => setField(f.key, e.target.value)}
-              placeholder={f.placeholder}
-              className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-orange-500 placeholder:text-slate-600"
-            />
-          </div>
-        ))}
-      </div>
+      )}
 
       <button
         onClick={handleTestConnection}
@@ -1540,7 +1532,7 @@ function SyncTab() {
           type="button"
           onClick={() => !isShared && setReadOnly(v => !v)}
           disabled={isShared}
-          className={`relative shrink-0 ml-4 w-9 h-5 rounded-full transition-colors ${readOnly ? 'bg-orange-500' : 'bg-slate-700'} ${isShared ? 'opacity-50 cursor-not-allowed' : ''}`}
+          className={`relative shrink-0 ml-4 w-9 h-5 rounded-full transition-colors ${readOnly ? 'bg-orange-500' : 'bg-slate-700'}`}
           role="switch"
           aria-checked={readOnly}
           aria-labelledby="read-only-mode-label"
@@ -1560,7 +1552,7 @@ function SyncTab() {
             type="button"
             onClick={() => !isShared && setEncryptRemote(v => !v)}
             disabled={isShared}
-            className={`relative shrink-0 ml-4 w-9 h-5 rounded-full transition-colors ${encryptRemote ? 'bg-orange-500' : 'bg-slate-700'} ${isShared ? 'opacity-50 cursor-not-allowed' : ''}`}
+            className={`relative shrink-0 ml-4 w-9 h-5 rounded-full transition-colors ${encryptRemote ? 'bg-orange-500' : 'bg-slate-700'}`}
             role="switch"
             aria-checked={encryptRemote}
             aria-labelledby="encrypt-remote-label"
@@ -1573,7 +1565,7 @@ function SyncTab() {
           Remote data encryption requires the desktop app (Electron).
         </p>
       )}
-      {encryptRemote && !isShared && (
+      {!isShared && encryptRemote && (
         <div>
           <label className="block text-[11px] text-slate-500 mb-1">Remote encryption passphrase</label>
           <div className="flex gap-2">
@@ -1618,25 +1610,29 @@ function SyncTab() {
         >
           Pull ↓
         </button>
-        <button
-          onClick={saveConfig}
-          disabled={status === 'busy'}
-          className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 border border-slate-700 rounded transition-colors"
-        >
-          Save config
-        </button>
+        {!isShared && (
+          <button
+            onClick={saveConfig}
+            disabled={status === 'busy'}
+            className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 border border-slate-700 rounded transition-colors"
+          >
+            Save config
+          </button>
+        )}
       </div>
-      {/* One-time import without persisting sync config */}
-      <button
-        onClick={handleCloneOnce}
-        disabled={status === 'busy'}
-        className="w-full py-1.5 text-xs text-slate-500 hover:text-slate-300 border border-dashed border-slate-700 hover:border-slate-600 rounded transition-colors disabled:opacity-50"
-      >
-        Import once (don't save config) ↓
-      </button>
+      {/* One-time import — hidden for shared workspaces */}
+      {!isShared && (
+        <button
+          onClick={handleCloneOnce}
+          disabled={status === 'busy'}
+          className="w-full py-1.5 text-xs text-slate-500 hover:text-slate-300 border border-dashed border-slate-700 hover:border-slate-600 rounded transition-colors disabled:opacity-50"
+        >
+          Import once (don't save config) ↓
+        </button>
+      )}
 
-      {/* Export sync config — S3 / MinIO only */}
-      {(provider === 's3' || provider === 'minio') && (
+      {/* Export sync config — S3 / MinIO only, hidden when sharing is disabled */}
+      {(provider === 's3' || provider === 'minio') && sharePolicy?.sharingEnabled !== false && (
         <div className="space-y-2 pt-1 border-t border-slate-800">
           <button
             onClick={() => { setShowExport(v => !v); setExportStatus(''); }}
