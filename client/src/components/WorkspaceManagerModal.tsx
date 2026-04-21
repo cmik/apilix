@@ -170,7 +170,7 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [confirmClear, setConfirmClear] = useState<string | null>(null);
   const [syncedIds, setSyncedIds] = useState<Set<string>>(new Set());
-  const [sharingLockedExportIds, setSharingLockedExportIds] = useState<Set<string>>(new Set());
+  const [exportDisabledWorkspaceIds, setExportDisabledWorkspaceIds] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [exportError, setExportError] = useState('');
@@ -181,16 +181,16 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     StorageDriver.readSyncConfigStore().then(store => {
       const nextSyncedIds = new Set<string>();
-      const nextSharingLockedExportIds = new Set<string>();
+      const nextExportDisabledWorkspaceIds = new Set<string>();
       Object.keys(store).forEach(id => {
         const cfg = store[id];
         if (cfg?.provider) nextSyncedIds.add(id);
-        if (cfg?.isShared === true && cfg?.sharePolicy?.sharingEnabled === false) {
-          nextSharingLockedExportIds.add(id);
+        if (cfg?.sharePolicy?.sharingEnabled === false) {
+          nextExportDisabledWorkspaceIds.add(id);
         }
       });
       setSyncedIds(nextSyncedIds);
-      setSharingLockedExportIds(nextSharingLockedExportIds);
+      setExportDisabledWorkspaceIds(nextExportDisabledWorkspaceIds);
     });
   }, [state.workspaces, state.syncConfigVersion]);
 
@@ -530,7 +530,7 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
                   Duplicate
                 </button>
 
-                {!sharingLockedExportIds.has(w.id) && (
+                {!exportDisabledWorkspaceIds.has(w.id) && (
                   <button
                     role="menuitem"
                     onClick={() => { setOpenMenuId(null); handleExportWorkspace(w); }}
