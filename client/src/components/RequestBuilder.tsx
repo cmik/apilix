@@ -692,6 +692,15 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
   const [showHistorySaveModal, setShowHistorySaveModal] = useState(false);
   const [historySaveMode, setHistorySaveMode] = useState<'overwrite' | 'new'>('overwrite');
   const [historySaveCollectionId, setHistorySaveCollectionId] = useState<string>('');
+  // Save As modal
+  const [showSaveAsModal, setShowSaveAsModal] = useState(false);
+  const [saveAsTabId, setSaveAsTabId] = useState<string | null>(null);
+  const [saveAsName, setSaveAsName] = useState('');
+  const [saveAsCollectionId, setSaveAsCollectionId] = useState('');
+  // Save All orphan modal
+  const [showSaveAllOrphanModal, setShowSaveAllOrphanModal] = useState(false);
+  const [saveAllOrphanTabIds, setSaveAllOrphanTabIds] = useState<string[]>([]);
+  const [saveAllOrphanCollectionId, setSaveAllOrphanCollectionId] = useState('');
   const [importText, setImportText] = useState('');
   const [importMode, setImportMode] = useState<'curl' | 'raw' | 'hurl'>('curl');
   const [importError, setImportError] = useState('');
@@ -880,6 +889,28 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     document.addEventListener('apilix:request-tab-sync-save-existing', onSyncSaveExisting as EventListener);
     document.addEventListener('apilix:focusUrl', onFocusUrl);
     document.addEventListener(INJECT_TEST_SNIPPET, onInjectSnippet as EventListener);
+    const onSaveAs = (event: Event) => {
+      const { tabId } = (event as CustomEvent<{ tabId: string }>).detail;
+      const tab = state.tabs.find(t => t.id === tabId);
+      if (!tab) return;
+      setSaveAsTabId(tabId);
+      setSaveAsName(tab.item.name ?? 'Copy of Request');
+      setSaveAsCollectionId(state.collections[0]?._id ?? '');
+      setShowSaveAsModal(true);
+    };
+    const onSaveAll = () => {
+      // 1. Save all existing linked dirty tabs silently
+      saveExistingDirtyTabs();
+      // 2. Check for remaining orphaned / draft dirty tabs
+      const summary = getUnsavedSummary();
+      if (summary.draftDirtyTabIds.length > 0) {
+        setSaveAllOrphanTabIds(summary.draftDirtyTabIds);
+        setSaveAllOrphanCollectionId(state.collections[0]?._id ?? '');
+        setShowSaveAllOrphanModal(true);
+      }
+    };
+    document.addEventListener('apilix:save-as', onSaveAs as EventListener);
+    document.addEventListener('apilix:save-all', onSaveAll);
     return () => {
       document.removeEventListener('apilix:send', onSend);
       document.removeEventListener('apilix:save', onSave);
@@ -888,6 +919,8 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
       document.removeEventListener('apilix:request-tab-sync-save-existing', onSyncSaveExisting as EventListener);
       document.removeEventListener('apilix:focusUrl', onFocusUrl);
       document.removeEventListener(INJECT_TEST_SNIPPET, onInjectSnippet as EventListener);
+      document.removeEventListener('apilix:save-as', onSaveAs as EventListener);
+      document.removeEventListener('apilix:save-all', onSaveAll);
     };
   }, [activeTab, onDirtyChange, state.collections, state.tabs]);
 
@@ -1507,6 +1540,57 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     emitDirtyChange();
   }
   _saveRef.current = handleSave;
+
+  function handleSaveAs(tabId: string, newName: string, targetCollectionId: string) {
+    const tab = state.tabs.find(t => t.id === tabId);
+    if (!tab) return;
+    const targetCol = state.collections.find(c => c._id === targetCollectionId);
+    if (!targetCol) return;
+
+    // Use cached draft edit if available, otherwise fall back to tab.item
+    const cached = cacheRef.current.get(tabId);
+    const baseItem = cached?.edit
+      ? buildUpdatedRequestItem(tab.item, cached.edit)
+      : tab.item;
+
+    const newItem: CollectionItem = {
+      ...baseItem,
+      id: generateId(),
+      name: newName.trim() || baseItem.name,
+    };
+
+    dispatch({ type: 'UPDATE_COLLECTION', payload: { ...targetCol, item: [...targetCol.item, newItem] } });
+    dispatch({ type: 'UPDATE_TAB', payload: { tabId, collectionId: targetCollectionId, item: newItem } });
+
+    if (cached) {
+      cacheRef.current.set(tabId, { ...cached, dirty: false });
+    }
+    if (tabId === activeTab?.id) {
+      setDirty(false);
+    }
+    emitDirtyChange();
+  }
+
+  function handleSaveAllOrphans(tabIds: string[], targetCollectionId: string) {
+    const targetCol = state.collections.find(c => c._id === targetCollectionId);
+    if (!targetCol) return;
+
+    let updatedItems = [...targetCol.item];
+    for (const tabId of tabIds) {
+      const tab = state.tabs.find(t => t.id === tabId);
+      if (!tab) continue;
+      const cached = cacheRef.current.get(tabId);
+      const baseItem = cached?.edit
+        ? buildUpdatedRequestItem(tab.item, cached.edit)
+        : tab.item;
+      const newItem: CollectionItem = { ...baseItem, id: generateId() };
+      updatedItems = [...updatedItems, newItem];
+      dispatch({ type: 'UPDATE_TAB', payload: { tabId, collectionId: targetCollectionId, item: newItem } });
+      if (cached) cacheRef.current.set(tabId, { ...cached, dirty: false });
+    }
+    dispatch({ type: 'UPDATE_COLLECTION', payload: { ...targetCol, item: updatedItems } });
+    emitDirtyChange();
+  }
 
   function handleImport() {
     if (importMode === 'hurl') {
@@ -2473,6 +2557,132 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
                   className="px-4 py-1.5 bg-orange-500 hover:bg-orange-600 text-white text-xs rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Save
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Save As modal */}
+      {showSaveAsModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          onClick={e => { if (e.target === e.currentTarget) setShowSaveAsModal(false); }}
+        >
+          <div className="bg-slate-800 border border-slate-600 rounded-lg shadow-2xl w-full max-w-sm mx-4">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
+              <h3 className="text-sm font-semibold text-slate-200">Save As New Request</h3>
+              <button onClick={() => setShowSaveAsModal(false)} className="text-slate-500 hover:text-slate-300 text-xl leading-none">×</button>
+            </div>
+            <div className="px-4 py-4 flex flex-col gap-3">
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Request name</label>
+                <input
+                  autoFocus
+                  value={saveAsName}
+                  onChange={e => setSaveAsName(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && saveAsName.trim() && saveAsCollectionId) {
+                      handleSaveAs(saveAsTabId!, saveAsName, saveAsCollectionId);
+                      setShowSaveAsModal(false);
+                    }
+                    if (e.key === 'Escape') setShowSaveAsModal(false);
+                  }}
+                  className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-orange-500"
+                />
+              </div>
+              {state.collections.length === 0 ? (
+                <p className="text-xs text-orange-400">No collections available. Please create a collection first.</p>
+              ) : (
+                <>
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1 block">Target collection</label>
+                    <select
+                      value={saveAsCollectionId}
+                      onChange={e => setSaveAsCollectionId(e.target.value)}
+                      className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-orange-500"
+                    >
+                      {state.collections.map(c => (
+                        <option key={c._id} value={c._id}>{c.info.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              )}
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  onClick={() => setShowSaveAsModal(false)}
+                  className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  disabled={!saveAsName.trim() || !saveAsCollectionId}
+                  onClick={() => {
+                    if (saveAsTabId) handleSaveAs(saveAsTabId, saveAsName, saveAsCollectionId);
+                    setShowSaveAsModal(false);
+                  }}
+                  className="px-4 py-1.5 bg-orange-500 hover:bg-orange-600 text-white text-xs rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Save As
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Save All — orphaned tabs modal */}
+      {showSaveAllOrphanModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          onClick={e => { if (e.target === e.currentTarget) setShowSaveAllOrphanModal(false); }}
+        >
+          <div className="bg-slate-800 border border-slate-600 rounded-lg shadow-2xl w-full max-w-sm mx-4">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
+              <h3 className="text-sm font-semibold text-slate-200">Save Unsaved Requests</h3>
+              <button onClick={() => setShowSaveAllOrphanModal(false)} className="text-slate-500 hover:text-slate-300 text-xl leading-none">×</button>
+            </div>
+            <div className="px-4 py-4 flex flex-col gap-3">
+              <p className="text-xs text-slate-400">
+                {saveAllOrphanTabIds.length} request{saveAllOrphanTabIds.length !== 1 ? 's are' : ' is'} not linked to a collection. Choose where to save them:
+              </p>
+              <ul className="text-xs text-slate-300 list-disc list-inside space-y-0.5 max-h-28 overflow-y-auto">
+                {saveAllOrphanTabIds.map(id => {
+                  const name = state.tabs.find(t => t.id === id)?.item.name ?? id;
+                  return <li key={id}>{name}</li>;
+                })}
+              </ul>
+              {state.collections.length === 0 ? (
+                <p className="text-xs text-orange-400">No collections available. Please create a collection first.</p>
+              ) : (
+                <select
+                  value={saveAllOrphanCollectionId}
+                  onChange={e => setSaveAllOrphanCollectionId(e.target.value)}
+                  className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-orange-500"
+                >
+                  {state.collections.map(c => (
+                    <option key={c._id} value={c._id}>{c.info.name}</option>
+                  ))}
+                </select>
+              )}
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  onClick={() => setShowSaveAllOrphanModal(false)}
+                  className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+                >
+                  Skip
+                </button>
+                <button
+                  disabled={!saveAllOrphanCollectionId}
+                  onClick={() => {
+                    handleSaveAllOrphans(saveAllOrphanTabIds, saveAllOrphanCollectionId);
+                    setShowSaveAllOrphanModal(false);
+                  }}
+                  className="px-4 py-1.5 bg-orange-500 hover:bg-orange-600 text-white text-xs rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Save All
                 </button>
               </div>
             </div>

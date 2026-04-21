@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../store';
 import type { RequestTab } from '../types';
-import { renameItemById } from '../utils/treeHelpers';
+import { renameItemById, findItemInTree } from '../utils/treeHelpers';
 import ConfirmModal from './ConfirmModal';
 
 const METHOD_COLORS: Record<string, string> = {
@@ -60,8 +60,12 @@ interface TabContextMenuProps {
   isDirty: boolean;
   isActive: boolean;
   totalTabs: number;
+  hasDirtyTabs: boolean;
   pos: { x: number; y: number };
   onClose: () => void;
+  onSave: () => void;
+  onSaveAs: () => void;
+  onSaveAll: () => void;
   onRename: () => void;
   onDuplicate: () => void;
   onCloseSaved: () => void;
@@ -74,8 +78,12 @@ function TabContextMenu({
   isDirty,
   isActive,
   totalTabs,
+  hasDirtyTabs,
   pos,
   onClose,
+  onSave,
+  onSaveAs,
+  onSaveAll,
   onRename,
   onDuplicate,
   onCloseSaved,
@@ -84,7 +92,7 @@ function TabContextMenu({
 }: TabContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const menuWidth = 224;
-  const menuHeight = 172; // approximate: 2 items + divider + 3 items at ~32px each
+  const menuHeight = 280; // approximate: 3 save items + divider + 2 items + divider + 3 close items at ~32px each
   const adjustedX = Math.min(pos.x, window.innerWidth - menuWidth - 8);
   const adjustedY = Math.min(pos.y, window.innerHeight - menuHeight - 8);
 
@@ -113,6 +121,36 @@ function TabContextMenu({
       style={{ position: 'fixed', top: adjustedY, left: adjustedX, zIndex: 9999 }}
       className="animate-menu-enter w-56 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl overflow-hidden py-1"
     >
+      <MenuItem
+        icon={
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+          </svg>
+        }
+        label="Save"
+        onClick={onSave}
+        disabled={!isDirty}
+      />
+      <MenuItem
+        icon={
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 13.5l3 3m0 0 3-3m-3 3v-6m1.06-4.19-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44z" />
+          </svg>
+        }
+        label="Save As…"
+        onClick={onSaveAs}
+      />
+      <MenuItem
+        icon={
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 3.75H6.912a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H15M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859M12 3v8.25m0 0-3-3m3 3 3-3" />
+          </svg>
+        }
+        label="Save All"
+        onClick={onSaveAll}
+        disabled={!hasDirtyTabs}
+      />
+      <div className="my-1 border-t border-slate-700" />
       <MenuItem
         icon={
           <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -320,6 +358,8 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
 
   // Scroll navigation state
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const wheelVelocityRef = useRef(0);
+  const wheelRafRef = useRef<number | null>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
   const [showScrollButtons, setShowScrollButtons] = useState(false);
@@ -355,6 +395,46 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
     observer.observe(el);
     return () => observer.disconnect();
   }, [updateScrollState]);
+
+  // Mouse-wheel horizontal scroll with inertia
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    function onWheel(e: WheelEvent) {
+      e.preventDefault();
+      // Prefer horizontal delta (trackpad swipe); fall back to vertical
+      const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+      wheelVelocityRef.current += delta * 0.8;
+
+      if (wheelRafRef.current !== null) return; // loop already running
+
+      function step() {
+        const container = scrollContainerRef.current;
+        if (!container) { wheelRafRef.current = null; return; }
+        const v = wheelVelocityRef.current;
+        if (Math.abs(v) < 0.5) {
+          wheelVelocityRef.current = 0;
+          wheelRafRef.current = null;
+          return;
+        }
+        container.scrollLeft += v;
+        wheelVelocityRef.current *= 0.85; // friction coefficient
+        updateScrollState();
+        wheelRafRef.current = requestAnimationFrame(step);
+      }
+      wheelRafRef.current = requestAnimationFrame(step);
+    }
+
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      if (wheelRafRef.current !== null) {
+        cancelAnimationFrame(wheelRafRef.current);
+        wheelRafRef.current = null;
+      }
+    };
+  }, [updateScrollState]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleScrollLeft() {
     scrollContainerRef.current?.scrollBy({ left: -200, behavior: 'smooth' });
@@ -422,6 +502,44 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
       .forEach(t => dispatch({ type: 'CLOSE_TAB', payload: t.id }));
   }
 
+  function handleMenuSave(tabId: string) {
+    setMenuState(null);
+    const tab = tabs.find(t => t.id === tabId);
+    if (!tab) return;
+    const col = state.collections.find(c => c._id === tab.collectionId);
+    const itemStillExists = col && tab.item.id
+      ? findItemInTree(col.item, tab.item.id) !== null
+      : false;
+    const isLinked = !tab.fromHistory && col && itemStillExists;
+    if (isLinked) {
+      // Fast path: save without activating the tab
+      document.dispatchEvent(
+        new CustomEvent('apilix:request-tab-sync-save-existing', { detail: { tabIds: [tabId] } })
+      );
+    } else {
+      // Orphaned or history tab — activate first, then let RequestBuilder handle the modal flow
+      if (tabId !== activeTabId) {
+        dispatch({ type: 'SET_ACTIVE_TAB', payload: tabId });
+        dispatch({ type: 'SET_VIEW', payload: 'request' });
+      }
+      requestAnimationFrame(() =>
+        document.dispatchEvent(new CustomEvent('apilix:save'))
+      );
+    }
+  }
+
+  function handleMenuSaveAs(tabId: string) {
+    setMenuState(null);
+    document.dispatchEvent(
+      new CustomEvent('apilix:save-as', { detail: { tabId } })
+    );
+  }
+
+  function handleMenuSaveAll() {
+    setMenuState(null);
+    document.dispatchEvent(new CustomEvent('apilix:save-all'));
+  }
+
   // ── Rename helpers ────────────────────────────────────────────────────────
 
   function commitRenameForTab(tabId: string, newName: string) {
@@ -478,6 +596,7 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
 
   const menuTab = menuState ? tabs.find(t => t.id === menuState.tabId) ?? null : null;
   const menuTabIndex = menuState ? tabs.findIndex(t => t.id === menuState.tabId) : -1;
+  const hasDirtyTabs = dirtyIds.size > 0;
 
   return (
     <div className="relative h-8 bg-slate-900 border-b border-slate-800 shrink-0">
@@ -586,6 +705,10 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
           totalTabs={tabs.length}
           pos={menuState.pos}
           onClose={() => setMenuState(null)}
+          onSave={() => handleMenuSave(menuState.tabId)}
+          onSaveAs={() => handleMenuSaveAs(menuState.tabId)}
+          onSaveAll={handleMenuSaveAll}
+          hasDirtyTabs={hasDirtyTabs}
           onRename={() => handleMenuRename(menuState.tabId)}
           onDuplicate={() => handleMenuDuplicate(menuState.tabId)}
           onCloseSaved={() => handleMenuCloseSaved(menuState.tabId)}
