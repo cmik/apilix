@@ -185,7 +185,7 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
       Object.keys(store).forEach(id => {
         const cfg = store[id];
         if (cfg?.provider) nextSyncedIds.add(id);
-        if (cfg?.sharePolicy?.sharingEnabled === false) {
+        if (cfg?.isShared === true && cfg?.sharePolicy?.sharingEnabled === false) {
           nextExportDisabledWorkspaceIds.add(id);
         }
       });
@@ -356,6 +356,9 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
   }
 
   async function handleExportWorkspace(w: Workspace) {
+    if (exportDisabledWorkspaceIds.has(w.id)) {
+      return;
+    }
     // Check whether this workspace contains any secret-flagged env variables.
     // If so, ask the user to confirm — the exported file will contain plaintext values.
     let envs: WorkspaceData['environments'];
