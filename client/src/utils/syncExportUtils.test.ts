@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import type { SyncProvider } from '../types';
 import {
   deriveKey,
   encryptField,
@@ -6,6 +7,11 @@ import {
   buildSyncExportPackage,
   parseSyncExportPackage,
   decryptSyncExportConfig,
+  isEncryptedEnvelope,
+  encryptWorkspaceData,
+  decryptWorkspaceData,
+  computeIntegrityHash,
+  verifyIntegrityHash,
 } from './syncExportUtils';
 
 // ─── deriveKey ────────────────────────────────────────────────────────────────
@@ -283,5 +289,283 @@ describe('parseSyncExportPackage', () => {
     // These checks only apply to encrypted packages; unencrypted packages with
     // an empty encryptedFields array are fine.
     expect(() => parseSyncExportPackage(valid)).not.toThrow();
+  });
+});
+
+// ─── isEncryptedEnvelope ─────────────────────────────────────────────────────
+
+describe('isEncryptedEnvelope', () => {
+  it('returns true for a valid envelope object', () => {
+    const envelope = { _apilixEncrypted: true, ciphertext: btoa('ctext'), salt: btoa('salt') };
+    expect(isEncryptedEnvelope(envelope)).toBe(true);
+  });
+
+  it('returns false when _apilixEncrypted is not true', () => {
+    expect(isEncryptedEnvelope({ _apilixEncrypted: false, ciphertext: 'a', salt: 'b' })).toBe(false);
+    expect(isEncryptedEnvelope({ ciphertext: 'a', salt: 'b' })).toBe(false);
+    expect(isEncryptedEnvelope(null)).toBe(false);
+    expect(isEncryptedEnvelope(42)).toBe(false);
+    expect(isEncryptedEnvelope('string')).toBe(false);
+    expect(isEncryptedEnvelope({})).toBe(false);
+  });
+
+  it('returns false when ciphertext or salt are missing (malformed envelope)', () => {
+    expect(isEncryptedEnvelope({ _apilixEncrypted: true })).toBe(false);
+    expect(isEncryptedEnvelope({ _apilixEncrypted: true, ciphertext: 'abc' })).toBe(false);
+    expect(isEncryptedEnvelope({ _apilixEncrypted: true, salt: 'xyz' })).toBe(false);
+    expect(isEncryptedEnvelope({ _apilixEncrypted: true, ciphertext: 42, salt: 'xyz' })).toBe(false);
+  });
+});
+
+// ─── encryptWorkspaceData / decryptWorkspaceData ──────────────────────────────
+
+describe('encryptWorkspaceData / decryptWorkspaceData round-trip', () => {
+  const sampleData = {
+    collections: [],
+    environments: [],
+    activeEnvironmentId: null,
+    collectionVariables: {},
+    globalVariables: {},
+    cookieJar: {},
+    mockCollections: [],
+    mockRoutes: [],
+    mockPort: 3002,
+  };
+
+  it('round-trips workspace data', async () => {
+    const envelope = await encryptWorkspaceData(sampleData, 'my-passphrase');
+    expect(isEncryptedEnvelope(envelope)).toBe(true);
+    const decrypted = await decryptWorkspaceData(envelope, 'my-passphrase');
+    expect(decrypted).toEqual(sampleData);
+  });
+
+  it('produces different ciphertext each call (random salt)', async () => {
+    const a = await encryptWorkspaceData(sampleData, 'pass');
+    const b = await encryptWorkspaceData(sampleData, 'pass');
+    expect(a.ciphertext).not.toBe(b.ciphertext);
+    expect(a.salt).not.toBe(b.salt);
+  });
+
+  it('throws on wrong passphrase', async () => {
+    const envelope = await encryptWorkspaceData(sampleData, 'correct');
+    await expect(decryptWorkspaceData(envelope, 'wrong')).rejects.toThrow();
+  });
+});
+
+// ─── computeIntegrityHash / verifyIntegrityHash ───────────────────────────────
+
+describe('computeIntegrityHash / verifyIntegrityHash', () => {
+  const policy = { forceReadOnly: true, sharingEnabled: true };
+  const remoteId = 'remote-ws-abc';
+  const passphrase = 'shared-passphrase';
+
+  it('verifies correctly with the same inputs', async () => {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const hash = await computeIntegrityHash(policy, remoteId, passphrase, salt);
+    expect(typeof hash).toBe('string');
+    const saltB64 = btoa(String.fromCharCode(...salt));
+    const valid = await verifyIntegrityHash(policy, remoteId, passphrase, saltB64, hash);
+    expect(valid).toBe(true);
+  });
+
+  it('returns false for a tampered sharePolicy', async () => {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const hash = await computeIntegrityHash(policy, remoteId, passphrase, salt);
+    const saltB64 = btoa(String.fromCharCode(...salt));
+    const tampered = { ...policy, forceReadOnly: false };
+    const valid = await verifyIntegrityHash(tampered, remoteId, passphrase, saltB64, hash);
+    expect(valid).toBe(false);
+  });
+
+  it('returns false for a tampered remoteWorkspaceId', async () => {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const hash = await computeIntegrityHash(policy, remoteId, passphrase, salt);
+    const saltB64 = btoa(String.fromCharCode(...salt));
+    const valid = await verifyIntegrityHash(policy, 'different-id', passphrase, saltB64, hash);
+    expect(valid).toBe(false);
+  });
+
+  it('returns false for wrong passphrase', async () => {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const hash = await computeIntegrityHash(policy, remoteId, passphrase, salt);
+    const saltB64 = btoa(String.fromCharCode(...salt));
+    const valid = await verifyIntegrityHash(policy, remoteId, 'wrong-passphrase', saltB64, hash);
+    expect(valid).toBe(false);
+  });
+
+  it('returns false for a corrupted (non-base64) salt without throwing', async () => {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const hash = await computeIntegrityHash(policy, remoteId, passphrase, salt);
+    const valid = await verifyIntegrityHash(policy, remoteId, passphrase, '!!!invalid-base64!!!', hash);
+    expect(valid).toBe(false);
+  });
+
+  it('returns false for a truncated/malformed hash without throwing', async () => {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const saltB64 = btoa(String.fromCharCode(...salt));
+    const valid = await verifyIntegrityHash(policy, remoteId, passphrase, saltB64, 'AAAA');
+    expect(valid).toBe(false);
+  });
+
+  // ─── Key separation — domain-prefix proof ────────────────────────────────────
+
+  it('HMAC key uses apilix-hmac: domain prefix (output matches manual derivation with prefix)', async () => {
+    // Manually replicate deriveHmacKey using the same domain prefix the function uses.
+    // If the result matches, the function definitely uses the prefix.
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const hash = await computeIntegrityHash(policy, remoteId, passphrase, salt);
+
+    const enc = new TextEncoder();
+    const domainPassphrase = 'apilix-hmac:' + passphrase;
+    const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(domainPassphrase), 'PBKDF2', false, ['deriveBits']);
+    const rawBytes = await crypto.subtle.deriveBits(
+      { name: 'PBKDF2', salt, iterations: 200_000, hash: 'SHA-256' },
+      keyMaterial,
+      256,
+    );
+    const hmacKey = await crypto.subtle.importKey('raw', rawBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const payload = enc.encode(JSON.stringify({ sharePolicy: policy, remoteWorkspaceId: remoteId }));
+    const mac = await crypto.subtle.sign('HMAC', hmacKey, payload);
+    let binary = '';
+    const bytes = new Uint8Array(mac);
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    const manualHash = btoa(binary);
+
+    expect(hash).toBe(manualHash);
+  });
+
+  it('HMAC key is distinct from the AES-GCM key (different output when passphrase has no prefix)', async () => {
+    // Manually compute HMAC using the bare passphrase (no domain prefix).
+    // This simulates the old, non-domain-separated behaviour.
+    // The result must differ from computeIntegrityHash to prove separation.
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const hash = await computeIntegrityHash(policy, remoteId, passphrase, salt);
+
+    const enc = new TextEncoder();
+    const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveBits']);
+    const rawBytes = await crypto.subtle.deriveBits(
+      { name: 'PBKDF2', salt, iterations: 200_000, hash: 'SHA-256' },
+      keyMaterial,
+      256,
+    );
+    const hmacKey = await crypto.subtle.importKey('raw', rawBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const payload = enc.encode(JSON.stringify({ sharePolicy: policy, remoteWorkspaceId: remoteId }));
+    const mac = await crypto.subtle.sign('HMAC', hmacKey, payload);
+    let binary = '';
+    const bytes = new Uint8Array(mac);
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    const unprefixedHash = btoa(binary);
+
+    // Domain-separated hash MUST differ from the unprefixed hash
+    expect(hash).not.toBe(unprefixedHash);
+  });
+});
+
+// ─── buildSyncExportPackage — with sharePolicy and remotePassphrase ────────────
+
+describe('buildSyncExportPackage — sharing options', () => {
+  const config = { bucket: 'b', accessKeyId: 'AKID', secretAccessKey: 'SECRET', remoteWorkspaceId: 'r-id' };
+  const passphrase = 'share-pass';
+  const sharePolicy = { forceReadOnly: true, sharingEnabled: true };
+
+  it('embeds sharePolicy in returned package', async () => {
+    const pkg = await buildSyncExportPackage('WS', 's3', config, passphrase, { sharePolicy });
+    expect(pkg.sharePolicy).toEqual(sharePolicy);
+  });
+
+  it('includes integrityHash when sharePolicy and passphrase are present', async () => {
+    const pkg = await buildSyncExportPackage('WS', 's3', config, passphrase, { sharePolicy });
+    expect(pkg.integrityHash).toBeDefined();
+    expect(typeof pkg.integrityHash).toBe('string');
+  });
+
+  it('integrityHash verifies successfully after round-trip', async () => {
+    const pkg = await buildSyncExportPackage('WS', 's3', config, passphrase, { sharePolicy });
+    expect(pkg.salt).toBeDefined();
+    const valid = await verifyIntegrityHash(
+      pkg.sharePolicy!,
+      pkg.remoteWorkspaceId,
+      passphrase,
+      pkg.salt!,
+      pkg.integrityHash!,
+    );
+    expect(valid).toBe(true);
+  });
+
+  it('embeds remotePassphrase into encrypted config when provided', async () => {
+    const pkg = await buildSyncExportPackage('WS', 's3', config, passphrase, { remotePassphrase: 'enc-pass' });
+    expect(pkg.encrypted).toBe(true);
+    expect(pkg.encryptedFields).toContain('_remotePassphrase');
+    expect(pkg.remoteEncryption).toEqual({ enabled: true });
+
+    // Decrypt and confirm the passphrase is recoverable
+    const decrypted = await decryptSyncExportConfig(pkg, passphrase);
+    expect(decrypted._remotePassphrase).toBe('enc-pass');
+  });
+
+  it('does not include integrityHash when no passphrase is provided', async () => {
+    const pkg = await buildSyncExportPackage('WS', 's3', config, undefined, { sharePolicy });
+    expect(pkg.integrityHash).toBeUndefined();
+  });
+
+  it('never includes _remotePassphrase in plaintext when export is unencrypted', async () => {
+    // No passphrase → unencrypted path; _remotePassphrase must be stripped
+    const pkg = await buildSyncExportPackage('WS', 's3', config, undefined, { remotePassphrase: 'secret' });
+    expect(pkg.encrypted).toBe(false);
+    expect('_remotePassphrase' in pkg.config).toBe(false);
+  });
+
+  it('never includes _remotePassphrase in plaintext when no secrets match', async () => {
+    // Provider with no secret fields matching → also falls through to unencrypted
+    const minimalConfig = { remoteWorkspaceId: 'rid' };
+    const pkg = await buildSyncExportPackage('WS', 'http' as SyncProvider, minimalConfig, 'pass', { remotePassphrase: 'secret' });
+    // _remotePassphrase is in SECRET_FIELDS for http, so it will be encrypted;
+    // but if config has no other fields and _remotePassphrase is the only secret,
+    // it should still be encrypted (not leak). Confirm config does not have it plaintext.
+    if (!pkg.encrypted) {
+      expect('_remotePassphrase' in pkg.config).toBe(false);
+    } else {
+      // encrypted path — value must not equal plaintext 'secret'
+      expect(pkg.config['_remotePassphrase']).not.toBe('secret');
+    }
+  });
+});
+
+// ─── parseSyncExportPackage — new optional fields ────────────────────────────
+
+describe('parseSyncExportPackage — new optional fields', () => {
+  const base = {
+    apilixSyncExport: '1',
+    remoteWorkspaceId: 'rws-new',
+    workspaceName: 'New WS',
+    provider: 's3',
+    config: { bucket: 'b' },
+    encrypted: false,
+    encryptedFields: [],
+  };
+
+  it('parses sharePolicy when present', () => {
+    const pkg = parseSyncExportPackage({ ...base, sharePolicy: { forceReadOnly: true, sharingEnabled: false } });
+    expect(pkg.sharePolicy).toEqual({ forceReadOnly: true, sharingEnabled: false });
+  });
+
+  it('leaves sharePolicy undefined when absent', () => {
+    const pkg = parseSyncExportPackage(base);
+    expect(pkg.sharePolicy).toBeUndefined();
+  });
+
+  it('ignores malformed sharePolicy', () => {
+    const pkg = parseSyncExportPackage({ ...base, sharePolicy: { forceReadOnly: 'yes', sharingEnabled: 1 } });
+    expect(pkg.sharePolicy).toBeUndefined();
+  });
+
+  it('parses remoteEncryption when present', () => {
+    const pkg = parseSyncExportPackage({ ...base, remoteEncryption: { enabled: true } });
+    expect(pkg.remoteEncryption).toEqual({ enabled: true });
+  });
+
+  it('parses integrityHash when present', () => {
+    const pkg = parseSyncExportPackage({ ...base, integrityHash: 'abc123' });
+    expect(pkg.integrityHash).toBe('abc123');
   });
 });

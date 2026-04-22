@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { API_BASE } from '../api';
 import { useApp, generateId } from '../store';
+import * as StorageDriver from '../utils/storageDriver';
 import { useToast } from './Toast';
 import type {
   CaptureCookie,
@@ -486,10 +487,20 @@ export default function BrowserCapturePanel() {
   const [importTargetId, setImportTargetId] = useState('');
 
   const esRef = useRef<EventSource | null>(null);
+  const cdpSettingsAppliedRef = useRef(false);
 
   useEffect(() => {
     captureGenerationRef.current = state.captureGeneration;
   }, [state.captureGeneration]);
+
+  // ── Restore saved Chrome path and port from settings ──────────────────────
+  useEffect(() => {
+    if (!state.storageReady || cdpSettingsAppliedRef.current) return;
+    cdpSettingsAppliedRef.current = true;
+    if (state.settings.cdpChromePath) setChromePath(state.settings.cdpChromePath);
+    if (state.settings.cdpPort)       setPort(state.settings.cdpPort);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.storageReady]);
 
   // ── SSE wiring ────────────────────────────────────────────────────────────
 
@@ -731,18 +742,40 @@ export default function BrowserCapturePanel() {
         <span className="text-slate-400 text-xs font-medium mr-1">📡 Browser Capture</span>
 
         {isElectron && (
-          <input
-            value={chromePath}
-            onChange={e => setChromePath(e.target.value)}
-            placeholder="Chrome executable path"
-            className="flex-1 min-w-48 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-orange-500"
-          />
+          <div className="flex items-center gap-1 flex-1 min-w-48">
+            <input
+              value={chromePath}
+              onChange={e => {
+                setChromePath(e.target.value);
+                dispatch({ type: 'UPDATE_SETTINGS', payload: { cdpChromePath: e.target.value } });
+              }}
+              placeholder="Chrome executable path"
+              className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-orange-500"
+            />
+            <button
+              onClick={async () => {
+                const picked = await StorageDriver.pickFile([{ name: 'Executable', extensions: ['*'] }]);
+                if (picked) {
+                  setChromePath(picked);
+                  dispatch({ type: 'UPDATE_SETTINGS', payload: { cdpChromePath: picked } });
+                }
+              }}
+              title="Browse for Chrome executable"
+              className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded transition-colors shrink-0"
+            >
+              …
+            </button>
+          </div>
         )}
 
         <input
           type="number"
           value={port}
-          onChange={e => setPort(Number(e.target.value))}
+          onChange={e => {
+            const v = Number(e.target.value);
+            setPort(v);
+            dispatch({ type: 'UPDATE_SETTINGS', payload: { cdpPort: v } });
+          }}
           className="w-20 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-orange-500"
           min={1024}
           max={65535}

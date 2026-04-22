@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, createContext, useContext } from 'react';
 import { useApp } from '../store';
 import type { TestResult, TlsCertInfo, NetworkTimings, RedirectHop } from '../types';
 import SaveToVarModal from './SaveToVarModal';
@@ -210,6 +210,12 @@ function highlightText(text: string, query: string): React.ReactNode {
   );
 }
 
+const LARGE_BODY_THRESHOLD = 512 * 1024; // 512 KB
+const INITIAL_CHILD_LIMIT = 200;
+
+// Signals for expand-all / collapse-all without prop drilling
+const TreeSignalContext = createContext({ expandSignal: 0, collapseSignal: 0 });
+
 type JsonNodeProps = {
   data: unknown;
   name?: string;
@@ -222,6 +228,11 @@ type JsonNodeProps = {
 
 function JsonNode({ data, name, depth, isLast, searchQuery, path, onSaveToVar }: JsonNodeProps) {
   const [open, setOpen] = useState(true);
+  const [visibleCount, setVisibleCount] = useState(INITIAL_CHILD_LIMIT);
+  const { expandSignal, collapseSignal } = useContext(TreeSignalContext);
+  // Expand all: open node AND reveal all paginated children.
+  useEffect(() => { if (expandSignal > 0) { setOpen(true); setVisibleCount(Infinity); } }, [expandSignal]);
+  useEffect(() => { if (collapseSignal > 0) setOpen(false); }, [collapseSignal]);
   const paddingLeft = depth * 16;
   const comma = !isLast ? <span className="text-slate-500">,</span> : null;
   const keyEl = name !== undefined
@@ -279,9 +290,16 @@ function JsonNode({ data, name, depth, isLast, searchQuery, path, onSaveToVar }:
         </div>
         {open && (
           <>
-            {data.map((item, i) => (
-              <JsonNode key={i} data={item} depth={depth + 1} isLast={i === data.length - 1} searchQuery={searchQuery} path={[...(path ?? []), i]} onSaveToVar={onSaveToVar} />
+            {data.slice(0, visibleCount).map((item, i) => (
+              <JsonNode key={i} data={item} depth={depth + 1} isLast={i === data.length - 1 && data.length <= visibleCount} searchQuery={searchQuery} path={[...(path ?? []), i]} onSaveToVar={onSaveToVar} />
             ))}
+            {data.length > visibleCount && (
+              <div style={{ paddingLeft: paddingLeft + 14 }} className="leading-5">
+                <button onClick={() => setVisibleCount(c => c + INITIAL_CHILD_LIMIT)} className="text-xs text-slate-500 hover:text-orange-400 italic py-0.5">
+                  … {data.length - visibleCount} more items
+                </button>
+              </div>
+            )}
             <div style={{ paddingLeft: paddingLeft + 14 }} className="leading-5">
               <span className="text-slate-300">]</span>{comma}
             </div>
@@ -314,9 +332,16 @@ function JsonNode({ data, name, depth, isLast, searchQuery, path, onSaveToVar }:
         </div>
         {open && (
           <>
-            {entries.map(([k, v], i) => (
-              <JsonNode key={k} data={v} name={k} depth={depth + 1} isLast={i === entries.length - 1} searchQuery={searchQuery} path={[...(path ?? []), k]} onSaveToVar={onSaveToVar} />
+            {entries.slice(0, visibleCount).map(([k, v], i) => (
+              <JsonNode key={k} data={v} name={k} depth={depth + 1} isLast={i === entries.length - 1 && entries.length <= visibleCount} searchQuery={searchQuery} path={[...(path ?? []), k]} onSaveToVar={onSaveToVar} />
             ))}
+            {entries.length > visibleCount && (
+              <div style={{ paddingLeft: paddingLeft + 14 }} className="leading-5">
+                <button onClick={() => setVisibleCount(c => c + INITIAL_CHILD_LIMIT)} className="text-xs text-slate-500 hover:text-orange-400 italic py-0.5">
+                  … {entries.length - visibleCount} more keys
+                </button>
+              </div>
+            )}
             <div style={{ paddingLeft: paddingLeft + 14 }} className="leading-5">
               <span className="text-slate-300">{'}'}</span>{comma}
             </div>
@@ -338,6 +363,9 @@ interface XmlNodeProps {
 
 function XmlNode({ node, depth }: XmlNodeProps) {
   const [open, setOpen] = useState(true);
+  const { expandSignal, collapseSignal } = useContext(TreeSignalContext);
+  useEffect(() => { if (expandSignal > 0) setOpen(true); }, [expandSignal]);
+  useEffect(() => { if (collapseSignal > 0) setOpen(false); }, [collapseSignal]);
   const paddingLeft = depth * 16;
 
   if (node.nodeType === Node.TEXT_NODE) {
@@ -440,9 +468,35 @@ function XmlNode({ node, depth }: XmlNodeProps) {
   );
 }
 
-function XmlTreeView({ body }: { body: string }) {
-  const doc = new DOMParser().parseFromString(body, 'text/xml');
-  const parseErr = doc.querySelector('parsererror');
+function XmlTreeView({ body, expandSignal = 0, collapseSignal = 0 }: { body: string; expandSignal?: number; collapseSignal?: number }) {
+  const [forceRender, setForceRender] = useState(false);
+  const [prevBody, setPrevBody] = useState(body);
+  if (prevBody !== body) {
+    setPrevBody(body);
+    if (forceRender) setForceRender(false);
+  }
+  const isLarge = !forceRender && body.length > LARGE_BODY_THRESHOLD;
+  const doc = useMemo(
+    () => isLarge ? null : new DOMParser().parseFromString(body, 'text/xml'),
+    [body, isLarge],
+  );
+
+  if (isLarge) {
+    return (
+      <div className="p-6 flex flex-col items-center gap-3 text-center">
+        <p className="text-slate-400 text-sm">Response is large ({formatSize(body.length)}) — rendering the full tree may be slow.</p>
+        <button
+          onClick={() => setForceRender(true)}
+          className="px-3 py-1.5 text-xs rounded bg-orange-600 hover:bg-orange-500 text-white font-medium"
+        >
+          Render tree anyway
+        </button>
+        <p className="text-slate-600 text-xs">Tip: enable Raw mode for instant display.</p>
+      </div>
+    );
+  }
+
+  const parseErr = doc!.querySelector('parsererror');
   if (parseErr) {
     return (
       <pre className="p-3 text-sm font-mono text-slate-200 whitespace-pre-wrap break-all">
@@ -451,21 +505,52 @@ function XmlTreeView({ body }: { body: string }) {
     );
   }
   return (
-    <div className="p-3 text-sm font-mono text-slate-200">
-      <XmlNode node={doc.documentElement} depth={0} />
-    </div>
+    <TreeSignalContext.Provider value={{ expandSignal, collapseSignal }}>
+      <div className="p-3 text-sm font-mono text-slate-200">
+        <XmlNode node={doc!.documentElement} depth={0} />
+      </div>
+    </TreeSignalContext.Provider>
   );
 }
 
-function JsonTreeView({ body, searchQuery, onSaveToVar }: {
+function JsonTreeView({ body, searchQuery, onSaveToVar, expandSignal = 0, collapseSignal = 0 }: {
   body: string;
   searchQuery?: string;
   onSaveToVar?: (path: (string | number)[], value: unknown, x: number, y: number) => void;
+  expandSignal?: number;
+  collapseSignal?: number;
 }) {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body);
-  } catch {
+  const [forceRender, setForceRender] = useState(false);
+  const [prevBody, setPrevBody] = useState(body);
+  if (prevBody !== body) {
+    setPrevBody(body);
+    if (forceRender) setForceRender(false);
+  }
+  const isLarge = !forceRender && body.length > LARGE_BODY_THRESHOLD;
+  const parsed = useMemo(() => {
+    if (isLarge) return null;
+    try { return { ok: true as const, value: JSON.parse(body) }; }
+    catch { return { ok: false as const }; }
+  }, [body, isLarge]);
+
+  if (isLarge) {
+    return (
+      <div className="p-6 flex flex-col items-center gap-3 text-center">
+        <p className="text-slate-400 text-sm">Response is large ({formatSize(body.length)}) — rendering the full tree may be slow.</p>
+        <button
+          onClick={() => setForceRender(true)}
+          className="px-3 py-1.5 text-xs rounded bg-orange-600 hover:bg-orange-500 text-white font-medium"
+        >
+          Render tree anyway
+        </button>
+        <p className="text-slate-600 text-xs">Tip: enable Raw mode for instant display.</p>
+      </div>
+    );
+  }
+
+  // parsed is non-null here: isLarge is false so useMemo ran JSON.parse
+  const result = parsed!;
+  if (!result.ok) {
     return (
       <pre className="p-3 text-sm font-mono text-slate-200 whitespace-pre-wrap break-all">
         {searchQuery ? highlightText(body, searchQuery) : body}
@@ -473,9 +558,11 @@ function JsonTreeView({ body, searchQuery, onSaveToVar }: {
     );
   }
   return (
-    <div className="p-3 text-sm font-mono text-slate-200">
-      <JsonNode data={parsed} depth={0} isLast={true} searchQuery={searchQuery} path={[]} onSaveToVar={onSaveToVar} />
-    </div>
+    <TreeSignalContext.Provider value={{ expandSignal, collapseSignal }}>
+      <div className="p-3 text-sm font-mono text-slate-200">
+        <JsonNode data={result.value} depth={0} isLast={true} searchQuery={searchQuery} path={[]} onSaveToVar={onSaveToVar} />
+      </div>
+    </TreeSignalContext.Provider>
   );
 }
 
@@ -624,6 +711,8 @@ export default function ResponseViewer() {
   const [searchQuery, setSearchQuery] = useState('');
   const [matchIndex, setMatchIndex] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [expandSignal, setExpandSignal] = useState(0);
+  const [collapseSignal, setCollapseSignal] = useState(0);
   const [jsonPathExpr, setJsonPathExpr] = useState('');
   const [jsonPathOpen, setJsonPathOpen] = useState(false);
   const jsonPathInputRef = useRef<HTMLInputElement>(null);
@@ -701,6 +790,10 @@ export default function ResponseViewer() {
 
   // Reset match index when query changes
   useEffect(() => { setMatchIndex(0); }, [searchQuery]);
+
+  // Reset expand/collapse signals when a new response arrives so newly-mounted
+  // nodes inherit the default open state instead of the stale signal value.
+  useEffect(() => { setExpandSignal(0); setCollapseSignal(0); }, [response?.body]);
 
   // Global hotkey: Cmd+F / Ctrl+F
   useEffect(() => {
@@ -868,6 +961,20 @@ export default function ResponseViewer() {
             >
               {copied ? '✓' : '⧉'}
             </button>
+            {!rawMode && (isJson || isXml) && (
+              <>
+                <button
+                  onClick={() => setExpandSignal(n => n + 1)}
+                  className="text-xs px-1.5 py-0.5 rounded transition-colors text-slate-500 hover:text-slate-300"
+                  title="Expand all"
+                >⊞</button>
+                <button
+                  onClick={() => setCollapseSignal(n => n + 1)}
+                  className="text-xs px-1.5 py-0.5 rounded transition-colors text-slate-500 hover:text-slate-300"
+                  title="Collapse all"
+                >⊟</button>
+              </>
+            )}
             {isJson && (
               <button
                 onClick={() => { setJsonPathOpen(o => !o); if (!jsonPathOpen) setTimeout(() => jsonPathInputRef.current?.focus(), 50); }}
@@ -984,7 +1091,7 @@ export default function ResponseViewer() {
                 {searchQuery.trim() ? highlightText(serialized, searchQuery) : serialized}
               </pre>
             ) : (
-              <JsonTreeView body={serialized} searchQuery={searchQuery.trim() ? searchQuery : undefined} />
+              <JsonTreeView body={serialized} searchQuery={searchQuery.trim() ? searchQuery : undefined} expandSignal={expandSignal} collapseSignal={collapseSignal} />
             );
           }
           return rawMode ? (
@@ -992,9 +1099,9 @@ export default function ResponseViewer() {
               {searchQuery.trim() ? highlightText(response.body, searchQuery) : response.body}
             </pre>
           ) : isXml ? (
-            <XmlTreeView body={response.body} />
+            <XmlTreeView body={response.body} expandSignal={expandSignal} collapseSignal={collapseSignal} />
           ) : (
-            <JsonTreeView body={response.body} searchQuery={searchQuery.trim() ? searchQuery : undefined} onSaveToVar={handleSaveToVar} />
+            <JsonTreeView body={response.body} searchQuery={searchQuery.trim() ? searchQuery : undefined} onSaveToVar={handleSaveToVar} expandSignal={expandSignal} collapseSignal={collapseSignal} />
           );
         })()}
 

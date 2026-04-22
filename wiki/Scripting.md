@@ -679,6 +679,8 @@ console.error('Unexpected status:', apx.response.code);
 
 The Console panel supports pop-out mode and preserves the full log history for the session.
 
+If **Settings → Requests → Mask secret variable values in console, logs, and history** is enabled (default), known secret values are redacted as `••••••••` in console URLs, request details, and script log lines (including the pop-out console window).
+
 ![Console panel with script output](images/scripting-console.png)
 
 ---

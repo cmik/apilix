@@ -13,6 +13,7 @@
 import type { WorkspaceData } from '../../types';
 import type { SyncAdapter } from '../syncEngine';
 import { throwSyncRequestError } from './errors';
+import { syncSignal, handleSyncFetchError } from './syncTimeout';
 
 function readVersionHeader(headers: Headers): string | null {
   const raw = headers.get('ETag') ?? headers.get('X-Version') ?? headers.get('X-Workspace-Version');
@@ -38,7 +39,8 @@ export const httpAdapter: SyncAdapter = {
         lastModified: new Date().toISOString(),
         expectedVersion: options?.expectedVersion,
       }),
-    });
+      signal: syncSignal(),
+    }).catch(err => handleSyncFetchError(err, 'HTTP'));
     if (!res.ok) {
       await throwSyncRequestError(res, 'HTTP push');
     }
@@ -57,7 +59,8 @@ export const httpAdapter: SyncAdapter = {
         lastModified: new Date().toISOString(),
         expectedVersion,
       }),
-    });
+      signal: syncSignal(),
+    }).catch(err => handleSyncFetchError(err, 'HTTP'));
     if (!res.ok) {
       await throwSyncRequestError(res, 'HTTP apply merged');
     }
@@ -69,7 +72,8 @@ export const httpAdapter: SyncAdapter = {
       headers: {
         ...(config.token ? { Authorization: `Bearer ${config.token}` } : {}),
       },
-    });
+      signal: syncSignal(),
+    }).catch(err => handleSyncFetchError(err, 'HTTP'));
     if (res.status === 404) return null;
     if (!res.ok) {
       await throwSyncRequestError(res, 'HTTP pull');
@@ -84,7 +88,8 @@ export const httpAdapter: SyncAdapter = {
       headers: {
         ...(config.token ? { Authorization: `Bearer ${config.token}` } : {}),
       },
-    });
+      signal: syncSignal(),
+    }).catch(err => handleSyncFetchError(err, 'HTTP'));
     if (res.status === 404) {
       return { data: null, remoteState: { timestamp: null, version: null } };
     }
@@ -108,6 +113,7 @@ export const httpAdapter: SyncAdapter = {
         headers: {
           ...(config.token ? { Authorization: `Bearer ${config.token}` } : {}),
         },
+        signal: syncSignal(),
       });
       if (!res.ok) return null;
       return readTimestampHeader(res.headers);
@@ -123,6 +129,7 @@ export const httpAdapter: SyncAdapter = {
         headers: {
           ...(config.token ? { Authorization: `Bearer ${config.token}` } : {}),
         },
+        signal: syncSignal(),
       });
       if (!res.ok) return { timestamp: null, version: null };
       return {
@@ -144,6 +151,7 @@ export const httpAdapter: SyncAdapter = {
         headers: {
           ...(config.token ? { Authorization: `Bearer ${config.token}` } : {}),
         },
+        signal: syncSignal(),
       });
       if (res.ok || res.status === 404) {
         const detail = res.status === 404 ? 'endpoint reachable (no data yet)' : 'endpoint reachable';

@@ -142,6 +142,86 @@ describe('mergeWorkspaces — conflicts', () => {
   });
 });
 
+// ─── Environment variable metadata preservation ───────────────────────────────
+//
+// The merge engine must carry per-row metadata (secret, enabled, type) through
+// all merge branches.  Previously only `value` was extracted and the row was
+// reconstructed bare ({ key, value, enabled: true }), silently dropping
+// `secret` and resetting `enabled`.
+
+describe('mergeWorkspaces — environment value metadata (secret, enabled)', () => {
+  it('preserves secret:true when neither side changed the value', () => {
+    const env = { _id: 'e1', name: 'Prod', values: [{ key: 'TOKEN', value: 'abc', enabled: true, secret: true }] };
+    const ws = makeWorkspace({ environments: [env] });
+    const result = mergeWorkspaces(ws, ws, ws);
+    const row = result.merged.environments[0].values.find(v => v.key === 'TOKEN');
+    expect(row?.secret).toBe(true);
+  });
+
+  it('preserves secret:true when only local changed the value', () => {
+    const base = makeWorkspace({ environments: [{ _id: 'e1', name: 'Prod', values: [{ key: 'TOKEN', value: 'old', enabled: true, secret: true }] }] });
+    const local = makeWorkspace({ environments: [{ _id: 'e1', name: 'Prod', values: [{ key: 'TOKEN', value: 'new-local', enabled: true, secret: true }] }] });
+    const remote = makeWorkspace({ environments: [{ _id: 'e1', name: 'Prod', values: [{ key: 'TOKEN', value: 'old', enabled: true, secret: true }] }] });
+
+    const result = mergeWorkspaces(base, local, remote);
+    const row = result.merged.environments[0].values.find(v => v.key === 'TOKEN');
+    expect(row?.secret).toBe(true);
+    expect(row?.value).toBe('new-local');
+  });
+
+  it('preserves secret:true when only remote changed the value', () => {
+    const base = makeWorkspace({ environments: [{ _id: 'e1', name: 'Prod', values: [{ key: 'TOKEN', value: 'old', enabled: true, secret: true }] }] });
+    const local = makeWorkspace({ environments: [{ _id: 'e1', name: 'Prod', values: [{ key: 'TOKEN', value: 'old', enabled: true, secret: true }] }] });
+    const remote = makeWorkspace({ environments: [{ _id: 'e1', name: 'Prod', values: [{ key: 'TOKEN', value: 'new-remote', enabled: true, secret: true }] }] });
+
+    const result = mergeWorkspaces(base, local, remote);
+    const row = result.merged.environments[0].values.find(v => v.key === 'TOKEN');
+    expect(row?.secret).toBe(true);
+    expect(row?.value).toBe('new-remote');
+  });
+
+  it('uses local row metadata (secret, enabled) on conflict', () => {
+    const base = makeWorkspace({ environments: [{ _id: 'e1', name: 'Prod', values: [{ key: 'TOKEN', value: 'old', enabled: true, secret: false }] }] });
+    const local = makeWorkspace({ environments: [{ _id: 'e1', name: 'Prod', values: [{ key: 'TOKEN', value: 'local-val', enabled: true, secret: true }] }] });
+    const remote = makeWorkspace({ environments: [{ _id: 'e1', name: 'Prod', values: [{ key: 'TOKEN', value: 'remote-val', enabled: true, secret: false }] }] });
+
+    const result = mergeWorkspaces(base, local, remote);
+    const row = result.merged.environments[0].values.find(v => v.key === 'TOKEN');
+    // Local wins on conflict: local set secret:true
+    expect(row?.secret).toBe(true);
+    expect(row?.value).toBe('local-val');
+    expect(result.conflicts.some(c => c.id === 'e1#TOKEN')).toBe(true);
+  });
+
+  it('preserves enabled:false when neither side changed the value', () => {
+    const env = { _id: 'e1', name: 'Prod', values: [{ key: 'DISABLED', value: 'x', enabled: false }] };
+    const ws = makeWorkspace({ environments: [env] });
+    const result = mergeWorkspaces(ws, ws, ws);
+    const row = result.merged.environments[0].values.find(v => v.key === 'DISABLED');
+    expect(row?.enabled).toBe(false);
+  });
+
+  it('preserves enabled:false when only local changed the value', () => {
+    const base = makeWorkspace({ environments: [{ _id: 'e1', name: 'Prod', values: [{ key: 'K', value: 'old', enabled: false }] }] });
+    const local = makeWorkspace({ environments: [{ _id: 'e1', name: 'Prod', values: [{ key: 'K', value: 'new', enabled: false }] }] });
+    const remote = makeWorkspace({ environments: [{ _id: 'e1', name: 'Prod', values: [{ key: 'K', value: 'old', enabled: false }] }] });
+
+    const result = mergeWorkspaces(base, local, remote);
+    const row = result.merged.environments[0].values.find(v => v.key === 'K');
+    expect(row?.enabled).toBe(false);
+    expect(row?.value).toBe('new');
+  });
+
+  it('does not strip secret:false (explicit false is preserved)', () => {
+    const env = { _id: 'e1', name: 'Prod', values: [{ key: 'HOST', value: 'https://example.com', enabled: true, secret: false }] };
+    const ws = makeWorkspace({ environments: [env] });
+    const result = mergeWorkspaces(ws, ws, ws);
+    const row = result.merged.environments[0].values.find(v => v.key === 'HOST');
+    // false is preserved (not dropped to undefined)
+    expect(row?.secret).toBe(false);
+  });
+});
+
 // ─── mockPort ─────────────────────────────────────────────────────────────────
 
 describe('mergeWorkspaces — mockPort', () => {
@@ -159,5 +239,140 @@ describe('mergeWorkspaces — mockPort', () => {
     const remote = makeWorkspace({ mockPort: 3200 });
     const result = mergeWorkspaces(base, local, remote);
     expect(result.merged.mockPort).toBe(3200);
+  });
+});
+
+// ─── Environment variable metadata preservation ───────────────────────────────
+//
+// After the secret-flag fix, mergeWorkspaces must carry all per-row metadata
+// (secret, enabled, type) through every merge path so that `secret: true`
+// rows are not silently downgraded to plain-text on the next disk write.
+
+describe('mergeWorkspaces — env value metadata (secret, enabled) preservation', () => {
+  function makeEnvWithVars(id: string, name: string, values: AppEnvironment['values']): AppEnvironment {
+    return { _id: id, name, values };
+  }
+
+  // Helper: find the merged env value by key
+  function findVal(result: ReturnType<typeof mergeWorkspaces>, envId: string, key: string) {
+    const env = result.merged.environments.find(e => e._id === envId);
+    return env?.values.find(v => v.key === key);
+  }
+
+  it('preserves secret:true on an unchanged row (no-change path)', () => {
+    const env: AppEnvironment = makeEnvWithVars('e1', 'Prod', [
+      { key: 'TOKEN', value: 'abc', enabled: true, secret: true },
+    ]);
+    const ws = makeWorkspace({ environments: [env] });
+    const result = mergeWorkspaces(ws, ws, ws);
+    expect(findVal(result, 'e1', 'TOKEN')?.secret).toBe(true);
+  });
+
+  it('preserves secret:true when only local changed the value', () => {
+    const base = makeWorkspace({
+      environments: [makeEnvWithVars('e1', 'Prod', [{ key: 'TOKEN', value: 'old', enabled: true, secret: true }])],
+    });
+    const local = makeWorkspace({
+      environments: [makeEnvWithVars('e1', 'Prod', [{ key: 'TOKEN', value: 'new', enabled: true, secret: true }])],
+    });
+    const remote = makeWorkspace({
+      environments: [makeEnvWithVars('e1', 'Prod', [{ key: 'TOKEN', value: 'old', enabled: true, secret: true }])],
+    });
+    const result = mergeWorkspaces(base, local, remote);
+    const val = findVal(result, 'e1', 'TOKEN');
+    expect(val?.value).toBe('new');
+    expect(val?.secret).toBe(true);
+  });
+
+  it('preserves secret:true when only remote changed the value', () => {
+    const base = makeWorkspace({
+      environments: [makeEnvWithVars('e1', 'Prod', [{ key: 'TOKEN', value: 'old', enabled: true, secret: true }])],
+    });
+    const local = makeWorkspace({
+      environments: [makeEnvWithVars('e1', 'Prod', [{ key: 'TOKEN', value: 'old', enabled: true, secret: true }])],
+    });
+    const remote = makeWorkspace({
+      environments: [makeEnvWithVars('e1', 'Prod', [{ key: 'TOKEN', value: 'remote-new', enabled: true, secret: true }])],
+    });
+    const result = mergeWorkspaces(base, local, remote);
+    const val = findVal(result, 'e1', 'TOKEN');
+    expect(val?.value).toBe('remote-new');
+    expect(val?.secret).toBe(true);
+  });
+
+  it('preserves secret:true when both sides converged on the same new value', () => {
+    const base = makeWorkspace({
+      environments: [makeEnvWithVars('e1', 'Prod', [{ key: 'TOKEN', value: 'old', enabled: true, secret: true }])],
+    });
+    const local = makeWorkspace({
+      environments: [makeEnvWithVars('e1', 'Prod', [{ key: 'TOKEN', value: 'same-new', enabled: true, secret: true }])],
+    });
+    const remote = makeWorkspace({
+      environments: [makeEnvWithVars('e1', 'Prod', [{ key: 'TOKEN', value: 'same-new', enabled: true, secret: true }])],
+    });
+    const result = mergeWorkspaces(base, local, remote);
+    const val = findVal(result, 'e1', 'TOKEN');
+    expect(val?.value).toBe('same-new');
+    expect(val?.secret).toBe(true);
+    expect(result.conflicts.filter(c => c.domain === 'environment')).toHaveLength(0);
+  });
+
+  it('preserves secret:true (local metadata) in a field-overlap conflict', () => {
+    const base = makeWorkspace({
+      environments: [makeEnvWithVars('e1', 'Prod', [{ key: 'TOKEN', value: 'old', enabled: true, secret: true }])],
+    });
+    const local = makeWorkspace({
+      environments: [makeEnvWithVars('e1', 'Prod', [{ key: 'TOKEN', value: 'local-val', enabled: true, secret: true }])],
+    });
+    const remote = makeWorkspace({
+      environments: [makeEnvWithVars('e1', 'Prod', [{ key: 'TOKEN', value: 'remote-val', enabled: true, secret: false }])],
+    });
+    const result = mergeWorkspaces(base, local, remote);
+    const val = findVal(result, 'e1', 'TOKEN');
+    // Local wins by default in conflicts
+    expect(val?.value).toBe('local-val');
+    expect(val?.secret).toBe(true);
+    expect(result.conflicts.some(c => c.id === 'e1#TOKEN')).toBe(true);
+  });
+
+  it('preserves enabled:false on an unchanged row', () => {
+    const env: AppEnvironment = makeEnvWithVars('e1', 'Prod', [
+      { key: 'DISABLED', value: 'x', enabled: false, secret: false },
+    ]);
+    const ws = makeWorkspace({ environments: [env] });
+    const result = mergeWorkspaces(ws, ws, ws);
+    expect(findVal(result, 'e1', 'DISABLED')?.enabled).toBe(false);
+  });
+
+  it('preserves enabled:false when only local changed the value', () => {
+    const base = makeWorkspace({
+      environments: [makeEnvWithVars('e1', 'Prod', [{ key: 'HOST', value: 'old', enabled: false }])],
+    });
+    const local = makeWorkspace({
+      environments: [makeEnvWithVars('e1', 'Prod', [{ key: 'HOST', value: 'new', enabled: false }])],
+    });
+    const remote = makeWorkspace({
+      environments: [makeEnvWithVars('e1', 'Prod', [{ key: 'HOST', value: 'old', enabled: false }])],
+    });
+    const result = mergeWorkspaces(base, local, remote);
+    const val = findVal(result, 'e1', 'HOST');
+    expect(val?.value).toBe('new');
+    expect(val?.enabled).toBe(false);
+  });
+
+  it('does not affect plain (non-secret) rows', () => {
+    const base = makeWorkspace({
+      environments: [makeEnvWithVars('e1', 'Prod', [{ key: 'HOST', value: 'old', enabled: true }])],
+    });
+    const local = makeWorkspace({
+      environments: [makeEnvWithVars('e1', 'Prod', [{ key: 'HOST', value: 'new', enabled: true }])],
+    });
+    const remote = makeWorkspace({
+      environments: [makeEnvWithVars('e1', 'Prod', [{ key: 'HOST', value: 'old', enabled: true }])],
+    });
+    const result = mergeWorkspaces(base, local, remote);
+    const val = findVal(result, 'e1', 'HOST');
+    expect(val?.value).toBe('new');
+    expect(val?.secret).toBeFalsy();
   });
 });

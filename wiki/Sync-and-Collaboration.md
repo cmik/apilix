@@ -13,6 +13,8 @@ Apilix workspaces can be synced to a remote provider so that your collections, e
   - [Overview](#overview)
   - [Opening Sync Settings](#opening-sync-settings)
   - [Sync Operations](#sync-operations)
+    - [Network Timeouts](#network-timeouts)
+    - [Push Safety Checks](#push-safety-checks)
   - [Conflict Detection \& Resolution](#conflict-detection--resolution)
     - [Three-way Merge Modal](#three-way-merge-modal)
     - [Bulk Actions](#bulk-actions)
@@ -44,9 +46,13 @@ Apilix workspaces can be synced to a remote provider so that your collections, e
     - [Team Server Administration](#team-server-administration)
     - [Roles](#roles)
     - [Self-hosting the Team Server](#self-hosting-the-team-server)
+  - [Remote Data Encryption](#remote-data-encryption)
   - [Sharing Sync Configuration](#sharing-sync-configuration)
     - [Exporting a sync config](#exporting-a-sync-config)
+    - [Sharing policies](#sharing-policies)
+    - [Embedding the remote passphrase](#embedding-the-remote-passphrase)
     - [Importing a sync config](#importing-a-sync-config)
+    - [Shared workspace behavior](#shared-workspace-behavior)
   - [Provider Comparison](#provider-comparison)
   - [Three-Way Merge — Technical Reference](#three-way-merge--technical-reference)
     - [Pipeline Overview](#pipeline-overview)
@@ -102,6 +108,38 @@ All four providers expose the same four actions:
 
 > **Tip:** Use **Import once ↓** when you want to copy a colleague's workspace to your machine for a single session, or when the remote already has existing commits and you need to pull before your first push.
 
+### Network Timeouts
+
+Every outbound sync request is subject to a client-side timeout. If the remote server does not respond within the limit, the operation is aborted and an error message is shown in the Sync tab.
+
+| Provider | Timeout |
+|---|---|
+| Git Repository | **30 seconds** — the extra time accounts for server-side git network I/O |
+| S3 / S3-compatible | **15 seconds** |
+| HTTP Endpoint | **15 seconds** |
+| Team Server | **15 seconds** |
+
+The timeout applies to every operation: push, pull, timestamp check, state check, and connection test. If a sync operation times out, no data is modified — the local workspace remains unchanged.
+
+> **If pushes or pulls time out consistently**, check that the remote host is reachable from your machine and that any reverse proxy (nginx, Caddy) has a `proxy_read_timeout` / `read_timeout` that is at least as long as the values above.
+
+### Push Safety Checks
+
+Before executing a push, Apilix runs the following safety checks to prevent accidental data loss:
+
+#### Empty workspace guard
+
+If the workspace has **no collections**, clicking **Push ↑** (or the toolbar **Sync** button) pauses and shows a confirmation dialog:
+
+> *"You are about to push an empty workspace. This will overwrite the remote workspace and may cause data loss. Are you sure you want to continue?"*
+
+| Action | Result |
+|---|---|
+| **Push anyway** | Push proceeds and the remote is overwritten with the empty workspace |
+| **Cancel** | Push is aborted; the local workspace and remote are unchanged |
+
+This guard applies to both the **Push ↑** button in the Sync tab and the toolbar **Sync** button (quick-sync path). It does **not** apply to the **Apply Merged** path — the merged result is always derived from existing remote + local data and is never empty.
+
 ---
 
 ## Conflict Detection & Resolution
@@ -155,6 +193,8 @@ A **Filter: Unresolved only** toggle hides already-resolved conflicts to focus o
 | **Keep All Local** | Resolve every conflict with the local value and close |
 | **Keep All Remote** | Resolve every conflict with the remote value and close |
 | **Apply Merged** | Apply the current mix of resolutions. Only enabled when all conflicts are resolved. |
+
+> **Read-only workspaces:** In a workspace with the `readOnly` flag set (e.g. imported from a share package with **Force read-only**), clicking **Apply Merged** applies the merged result to the local workspace only — the push step is skipped. The local workspace is updated but the remote is not modified. This applies to both the full merge modal and the quick-sync merge path.
 
 ### Stale Apply Recovery
 
@@ -520,17 +560,61 @@ WantedBy=multi-user.target
 
 ---
 
+## Remote Data Encryption
+
+Remote data encryption protects the workspace data stored on your sync provider. When enabled, Apilix encrypts the entire workspace JSON with AES-256-GCM before every push and decrypts it transparently after every pull. Even if your S3 bucket, git repository, or HTTP endpoint is compromised, the workspace contents remain unreadable without the passphrase.
+
+> **Desktop (Electron) only.** Remote data encryption requires Electron's `safeStorage` API to protect the passphrase at rest. The toggle is not available in browser mode.
+
+### Enabling remote data encryption
+
+1. Open **Manage Workspaces → Sync** and configure your provider.
+2. Toggle **Encrypt remote data** to on.
+3. Enter a **Remote passphrase**. This passphrase is required for every push and pull — store it somewhere safe.
+4. Click **Save config**.
+
+The passphrase is immediately encrypted with `safeStorage` and stored in `sync-config.json`. It is never written to disk in plaintext.
+
+### How it works
+
+On every **Push ↑** or auto-merge write, the workspace JSON is encrypted with:
+
+- **Algorithm:** AES-256-GCM (authenticated encryption — tampering is detectable)
+- **Key derivation:** PBKDF2 — 200 000 iterations, SHA-256, 16-byte random salt
+- **Salt storage:** the salt is stored alongside the ciphertext in the remote object
+
+On every **Pull ↓**, Apilix detects the encrypted envelope (a JSON object with `_apilixEncrypted: true`) and decrypts it automatically using the stored passphrase. If the passphrase is missing or incorrect, the pull is blocked with an error.
+
+### Rotating the passphrase
+
+1. Push with the current passphrase to ensure the remote is up to date.
+2. Update the **Remote passphrase** field in the Sync tab and click **Save config**.
+3. Push again — the workspace is re-encrypted with the new key.
+
+> Any teammates using a sync config export that embedded the old passphrase will need a new export after rotation.
+
+### Encryption scope
+
+| Protected by remote encryption | Not protected |
+|---|---|
+| Collections, environments, variables | Provider credentials (protected separately by `safeStorage`) |
+| Requests, headers, body, scripts | Workspace metadata on the remote (object key / path) |
+| Mock routes, cookie jar | |
+
+---
+
 ## Sharing Sync Configuration
 
-You can export a workspace's sync configuration to a portable `.json` file and import it on another machine. This is the fastest way to set up the same sync provider on a second computer — especially for encrypted configurations where re-entering every field manually would be tedious.
+You can export a workspace's sync configuration to a portable `.json` file and import it on another machine or share it with a teammate. This is the fastest way to onboard someone to the same remote without manually re-entering every field.
 
 ### Exporting a sync config
 
 1. Open **Manage Workspaces → Sync**.
 2. Configure and save your sync provider settings for the workspace.
-3. Scroll to the bottom of the Sync tab and click **Export config**.
-4. Choose whether to **encrypt** the export. Encryption requires a passphrase of your choice; the config cannot be imported without it.
-5. A file named `apilix-sync-{name}.json` is downloaded.
+3. Scroll to the bottom of the Sync tab and click **Share sync config with a teammate**.
+4. Choose whether to **encrypt** the export. Encryption requires a passphrase; the file cannot be imported without it.
+5. Optionally configure a [sharing policy](#sharing-policies) (see below).
+6. Click **Export**. A file named `apilix-sync-{name}.json` is downloaded.
 
 **What is included:**
 
@@ -540,10 +624,36 @@ You can export a workspace's sync configuration to a portable `.json` file and i
 | All credential fields (token, secret key, URL, etc.) | Snapshot history |
 | Workspace ID (used to resolve the remote object) | Sync activity log |
 | `readOnly` flag | |
+| Sharing policy (when set) | |
+| Remote passphrase (when embedded, encrypted) | |
 
-**Encryption note:** When the export is encrypted, all credential fields are encrypted with AES-256-GCM using a key derived from your passphrase (PBKDF2, 100 000 iterations, SHA-256). The provider name, workspace ID, and workspace name remain in plaintext so the recipient can see what they are importing before decryption.
+**Encryption:** All credential fields are encrypted with AES-256-GCM using a key derived from the export passphrase (PBKDF2, 200 000 iterations, SHA-256). The provider name, workspace ID, and workspace name remain in plaintext so the recipient can confirm what they are importing before decryption.
 
-> **Encrypted exports include a salt** that is stored in the file. The passphrase must match exactly — there is no recovery if the passphrase is lost.
+> **Encrypted exports include a per-file salt.** The passphrase must match exactly — there is no recovery if it is lost.
+
+### Sharing policies
+
+When exporting a sync config to share with a teammate, you can attach a **sharing policy** to govern how the recipient uses the workspace:
+
+| Policy option | Effect when imported |
+|---|---|
+| **Force read-only** | The recipient's workspace is permanently set to read-only. Push is disabled — they can only pull. Useful for distributing a workspace snapshot you don't want overwritten. |
+
+Sharing policies are integrity-protected when the export is passphrase-encrypted: an HMAC-SHA-256 over the policy and workspace ID is embedded in the file. On import, Apilix verifies the MAC before applying the policy. If the file was tampered with (e.g. `forceReadOnly` changed to `false`), the import is blocked.
+
+> **HMAC protection only applies to encrypted exports.** Unencrypted exports do not carry an integrity hash — the policy fields are present but are not tamper-evident.
+
+### Embedding the remote passphrase
+
+If you have [remote data encryption](#remote-data-encryption) enabled, teammates who import your sync config also need the remote passphrase to decrypt workspace data after pulling. Rather than sharing the passphrase through a separate channel, you can embed it directly in the encrypted export:
+
+1. Enable **Encrypt this export** and enter an export passphrase.
+2. Enable **Embed remote decryption passphrase**.
+3. Export the file.
+
+When the recipient imports the file and enters the correct export passphrase, Apilix automatically extracts and stores the remote passphrase so their subsequent pulls decrypt transparently.
+
+> **The export must be encrypted to embed the remote passphrase.** Embedding in an unencrypted file would expose the passphrase in plaintext — Apilix strips it from unencrypted exports.
 
 ### Importing a sync config
 
@@ -559,6 +669,23 @@ A new workspace is created with the sync configuration applied. It starts empty 
 
 > **After importing a sync config, the workspace is empty until you Pull.** The export contains credentials, not workspace data. If you need both, export the workspace data separately using the **⬇** button in the workspace row, or just Pull after configuring sync.
 
+### Shared workspace behavior
+
+Workspaces created by importing a share package are marked as **shared workspaces** and display an informational banner in the Sync tab:
+
+> *"This workspace was imported from a share package. Sync settings are managed by the original owner and cannot be changed here."*
+
+Behavior differences in a shared workspace:
+
+| Aspect | Shared workspace |
+|---|---|
+| Provider settings | Locked — fields cannot be edited |
+| Remote data encryption toggle | Locked |
+| Push ↑ | Disabled when the export had **Force read-only** set |
+| Pull ↓ | Always available |
+| Conflict resolution (Apply Merged) | Merged result is applied locally only — remote is not written |
+| Save config | Preserves the original sharing policy; does not unlock fields |
+
 ---
 
 ## Provider Comparison
@@ -570,6 +697,8 @@ A new workspace is created with the sync configuration applied. It starts empty 
 | Role-based access | ❌ (via github permissions) | ❌ (via IAM) | Custom | ✅ built-in |
 | Real-time change notifications | ❌ | ❌ | Custom | ✅ |
 | Optimistic conflict locking | ✅ | ❌ | Optional | ✅ |
+| Remote data encryption | ✅ | ✅ | ✅ | ✅ |
+| Share config with policy | ✅ | ✅ | ✅ | ✅ |
 | Setup complexity | Medium | Medium | High | Medium |
 | Best for | Developers, open-source teams | Personal backup, simple sharing | Custom infra | Company teams |
 
@@ -595,7 +724,11 @@ Pull ↓
      → MergeResult { merged, conflicts[], autoMergedCount }
   6. autoMergedCount > 0 and conflicts === 0 → apply silently
      conflicts > 0                           → open ConflictMergeModal
-  7. On Apply: write merged, push to remote, update lastMergeBaseSnapshotId
+  7. On Apply:
+     - Write merged result to local workspace
+     - Update lastMergeBaseSnapshotId
+     - If readOnly → stop here (remote is not written)
+     - Else → push merged result to remote
 ```
 
 The **base** is the last snapshot written after a successful push or pull (stored in a ring buffer of up to 50 snapshots per workspace). If no base is available, the pipeline falls back to binary "Use Remote / Keep Local".
@@ -725,3 +858,4 @@ This cycle repeats until the apply succeeds. Because the pipeline always default
 - [Workspaces](Workspaces) — workspace contents, local storage layout, and snapshot history
 - [Variables & Environments](Variables-and-Environments) — what's included in a sync snapshot
 - [Import & Export](Import-and-Export) — moving data without a sync provider
+- [Security & Encrypted Data](Security-and-Encrypted-Data) — OS keychain encryption, remote data encryption, sync credential storage

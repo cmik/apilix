@@ -46,6 +46,7 @@ Controls applied to every request Apilix sends through its local proxy server.
 | **Request timeout (ms)** | `30000` | Maximum time (milliseconds) to wait for a response. Set to `0` to disable the timeout entirely and wait indefinitely. |
 | **Follow redirects** | On | When enabled, Apilix automatically follows HTTP 3xx redirects. Disable to inspect the raw redirect response. |
 | **SSL certificate verification** | Off | When enabled, the server validates the SSL certificate of the target host. Disable for self-signed certificates in development environments. |
+| **Mask secret variable values in console, logs, and history** | On | Redacts known secret values (from enabled secret rows in the active environment) in Console and Request History UI surfaces. |
 
 ---
 
@@ -116,6 +117,7 @@ Click **Check for update** to query the [GitHub Releases API](https://api.github
 | `requestTimeout` | `number` (ms) | `30000` | Requests tab; applied by the executor for every request |
 | `followRedirects` | `boolean` | `true` | Requests tab; executor redirect behaviour |
 | `sslVerification` | `boolean` | `false` | Requests tab; executor TLS check |
+| `maskSecrets` | `boolean` | `true` | Requests tab; redacts known secret values in Console and Request History |
 | `proxyEnabled` | `boolean` | `false` | Proxy tab; whether proxy settings are applied |
 | `httpProxy` | `string` | `''` | Proxy tab; proxy URL for HTTP targets |
 | `httpsProxy` | `string` | `''` | Proxy tab; proxy URL for HTTPS targets |

@@ -88,6 +88,7 @@ describe('cloneWorkspaceSyncConfig', () => {
       { remote: 'https://github.com/org/repo.git', branch: 'main', token: 'secret' },
       undefined,
       true,
+      expect.objectContaining({}),
     );
   });
 
@@ -99,6 +100,113 @@ describe('cloneWorkspaceSyncConfig', () => {
     expect(copied).toBe(false);
     expect(mockedReadSyncConfig).toHaveBeenCalledWith('ws-source');
     expect(mockedWriteSyncConfig).not.toHaveBeenCalled();
+  });
+
+  it('carries isShared and sharePolicy from source to target', async () => {
+    const sharePolicy = { forceReadOnly: true, sharingEnabled: true };
+    mockedReadSyncConfig.mockResolvedValue({
+      provider: 's3',
+      config: { bucket: 'my-bucket', remoteWorkspaceId: 'rws-1' },
+      isShared: true,
+      sharePolicy,
+    });
+
+    const copied = await cloneWorkspaceSyncConfig('ws-owner', 'ws-member');
+
+    expect(copied).toBe(true);
+    expect(mockedWriteSyncConfig).toHaveBeenCalledWith(
+      'ws-member',
+      's3',
+      { bucket: 'my-bucket', remoteWorkspaceId: 'rws-1' },
+      undefined,
+      undefined,
+      expect.objectContaining({ isShared: true, sharePolicy }),
+    );
+  });
+
+  it('carries encryptRemote and remotePassphrase from source to target', async () => {
+    mockedReadSyncConfig.mockResolvedValue({
+      provider: 's3',
+      config: { bucket: 'secure-bucket', remoteWorkspaceId: 'rws-2' },
+      encryptRemote: true,
+      remotePassphrase: 'super-secret',
+    });
+
+    const copied = await cloneWorkspaceSyncConfig('ws-src', 'ws-dst');
+
+    expect(copied).toBe(true);
+    expect(mockedWriteSyncConfig).toHaveBeenCalledWith(
+      'ws-dst',
+      's3',
+      { bucket: 'secure-bucket', remoteWorkspaceId: 'rws-2' },
+      undefined,
+      undefined,
+      expect.objectContaining({ encryptRemote: true, remotePassphrase: 'super-secret' }),
+    );
+  });
+
+  it('carries all new fields together — isShared, sharePolicy, encryptRemote, remotePassphrase', async () => {
+    const sharePolicy = { forceReadOnly: false, sharingEnabled: true };
+    mockedReadSyncConfig.mockResolvedValue({
+      provider: 'git',
+      config: { remote: 'https://git.example.com/org/repo.git', token: 't' },
+      readOnly: true,
+      isShared: true,
+      sharePolicy,
+      encryptRemote: true,
+      remotePassphrase: 'enc-pass',
+    });
+
+    await cloneWorkspaceSyncConfig('src', 'dst');
+
+    expect(mockedWriteSyncConfig).toHaveBeenCalledWith(
+      'dst',
+      'git',
+      { remote: 'https://git.example.com/org/repo.git', token: 't' },
+      undefined,
+      true,
+      expect.objectContaining({
+        isShared: true,
+        sharePolicy,
+        encryptRemote: true,
+        remotePassphrase: 'enc-pass',
+      }),
+    );
+  });
+
+  it('carries importedEncrypted from source to target', async () => {
+    const sharePolicy = { forceReadOnly: true, sharingEnabled: true };
+    mockedReadSyncConfig.mockResolvedValue({
+      provider: 's3',
+      config: { bucket: 'b', remoteWorkspaceId: 'rws-3' },
+      isShared: true,
+      sharePolicy,
+      importedEncrypted: true,
+    });
+
+    await cloneWorkspaceSyncConfig('ws-src', 'ws-dst');
+
+    expect(mockedWriteSyncConfig).toHaveBeenCalledWith(
+      'ws-dst',
+      's3',
+      { bucket: 'b', remoteWorkspaceId: 'rws-3' },
+      undefined,
+      undefined,
+      expect.objectContaining({ importedEncrypted: true }),
+    );
+  });
+
+  it('does not set importedEncrypted when source was not imported encrypted', async () => {
+    mockedReadSyncConfig.mockResolvedValue({
+      provider: 's3',
+      config: { bucket: 'b', remoteWorkspaceId: 'rws-4' },
+    });
+
+    await cloneWorkspaceSyncConfig('ws-src', 'ws-dst');
+
+    const call = mockedWriteSyncConfig.mock.calls[0];
+    const opts = call[5] as Record<string, unknown>;
+    expect(opts?.importedEncrypted).toBeFalsy();
   });
 });
 

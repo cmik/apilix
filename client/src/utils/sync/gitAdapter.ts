@@ -20,6 +20,7 @@ import type { WorkspaceData } from '../../types';
 import type { SyncAdapter } from '../syncEngine';
 import { getDataDir } from '../storageDriver';
 import { throwSyncRequestError } from './errors';
+import { syncSignal, handleSyncFetchError, GIT_SYNC_TIMEOUT_MS } from './syncTimeout';
 
 function serverUrl(): string {
   const port = (window as any).electronAPI?.serverPort ?? 3001;
@@ -33,7 +34,8 @@ export const gitAdapter: SyncAdapter = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workspaceId, data, config, dataDir, expectedVersion: options?.expectedVersion }),
-    });
+      signal: syncSignal(GIT_SYNC_TIMEOUT_MS),
+    }).catch(err => handleSyncFetchError(err, 'Git'));
     if (!res.ok) {
       await throwSyncRequestError(res, 'Git push');
     }
@@ -45,7 +47,8 @@ export const gitAdapter: SyncAdapter = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workspaceId, data: mergedData, config, dataDir, expectedVersion }),
-    });
+      signal: syncSignal(GIT_SYNC_TIMEOUT_MS),
+    }).catch(err => handleSyncFetchError(err, 'Git'));
     if (!res.ok) {
       await throwSyncRequestError(res, 'Git apply merged');
     }
@@ -57,7 +60,8 @@ export const gitAdapter: SyncAdapter = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workspaceId, config, dataDir }),
-    });
+      signal: syncSignal(GIT_SYNC_TIMEOUT_MS),
+    }).catch(err => handleSyncFetchError(err, 'Git'));
     if (res.status === 404) return null;
     if (!res.ok) {
       await throwSyncRequestError(res, 'Git pull');
@@ -72,7 +76,8 @@ export const gitAdapter: SyncAdapter = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workspaceId, config, dataDir }),
-    });
+      signal: syncSignal(GIT_SYNC_TIMEOUT_MS),
+    }).catch(err => handleSyncFetchError(err, 'Git'));
     if (res.status === 404) {
       return { data: null, remoteState: { timestamp: null, version: null } };
     }
@@ -100,6 +105,7 @@ export const gitAdapter: SyncAdapter = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workspaceId, config, dataDir }),
+        signal: syncSignal(GIT_SYNC_TIMEOUT_MS),
       });
       if (!res.ok) return null;
       const body = await res.json() as { timestamp: string | null };
@@ -116,6 +122,7 @@ export const gitAdapter: SyncAdapter = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workspaceId, config, dataDir }),
+        signal: syncSignal(GIT_SYNC_TIMEOUT_MS),
       });
       if (!res.ok) return { timestamp: null, version: null };
       const body = await res.json() as { timestamp: string | null; version?: string | null };
@@ -134,6 +141,7 @@ export const gitAdapter: SyncAdapter = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ config }),
+        signal: syncSignal(GIT_SYNC_TIMEOUT_MS),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as Record<string, unknown>;

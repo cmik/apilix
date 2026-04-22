@@ -673,6 +673,25 @@ apx.test("At least one item returned", () => {
 // Store the first item id
 apx.environment.set('firstItemId', items[0]);`,
       },
+      {
+        id: 'xml-attribute',
+        name: 'Extract XML element attribute',
+        description: 'Read the value of an attribute from an XML element using XPath @attr syntax',
+        code: `// XPath: use @attributeName to target an attribute
+// Example XML: <user id="42" status="active"><name>Alice</name></user>
+
+const doc = apx.response.xml();
+
+// Extract attribute via xmlPath shorthand
+const userId = apx.response.xmlPath('//user/@id');
+apx.expect(userId).to.not.be.null;
+apx.environment.set('userId', userId);
+
+// Or via full XPath on the DOM document
+const statusNode = xpath.select1('//user/@status', doc);
+const status = statusNode ? statusNode.value : null;
+apx.expect(status).to.equal('active');`,
+      },
     ],
   },
 ];

@@ -1,9 +1,11 @@
-import React, { createContext, useContext, useEffect, useReducer, useRef, useState, type ReactNode } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
+import apilixLogo from './assets/apilix2.svg';
 import type { AppState, AppAction, AppSettings, AppCollection, AppEnvironment, CollectionItem, RequestTab, CookieJar, Cookie, MockRoute, MockCollection, Workspace, WorkspaceData, HistoryRequest, SavedRunnerRun } from './types';
 import * as StorageDriver from './utils/storageDriver';
 import * as SnapshotEngine from './utils/snapshotEngine';
 import { API_BASE } from './api';
 import type { PostmanVersion } from './utils/postmanValidator';
+import { buildSecretSet } from './utils/secretMask';
 
 const STORAGE_KEY = 'apilix_persist'; // legacy key — kept for migration only
 
@@ -99,6 +101,8 @@ export const initialState: AppState = {
     noProxy: '',
     corsAllowedOrigins: '',
     requestLayout: 'stacked' as const,
+    cdpChromePath: undefined,
+    cdpPort: 9222,
   },
 };
 
@@ -219,6 +223,28 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         tabs: [...state.tabs, newTab],
         activeTabId: newTab.id,
         activeRequest: { collectionId, item },
+        response: null,
+        isLoading: false,
+      };
+    }
+
+    case 'RESTORE_TAB_SESSION': {
+      const restoredTabs: RequestTab[] = [];
+      for (const ref of action.payload.tabs) {
+        const col = state.collections.find(c => c._id === ref.collectionId);
+        if (!col) continue;
+        const item = findItemInTree(col.item, ref.itemId);
+        if (!item) continue;
+        restoredTabs.push({ id: ref.id, collectionId: ref.collectionId, item, response: null, isLoading: false });
+      }
+      if (restoredTabs.length === 0) return state;
+      const activeTab =
+        restoredTabs.find(t => t.id === action.payload.activeTabId) ?? restoredTabs[0];
+      return {
+        ...state,
+        tabs: restoredTabs,
+        activeTabId: activeTab.id,
+        activeRequest: { collectionId: activeTab.collectionId, item: activeTab.item },
         response: null,
         isLoading: false,
       };
@@ -744,6 +770,7 @@ interface AppContextValue {
   getActiveEnvironment: () => AppEnvironment | null;
   getEnvironmentVars: () => Record<string, string>;
   getCollectionVars: (collectionId: string) => Record<string, string>;
+  secretSet: Set<string>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -975,6 +1002,62 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.savedRuns, state.activeWorkspaceId, state.storageReady]);
+
+  // ── Tab session: restore on workspace change ──────────────────────────────
+  const tabSessionLoadedWorkspaceRef = useRef<string | null>(null);
+  const skipNextTabSessionSaveRef = useRef(false);
+  useEffect(() => {
+    if (!state.storageReady || !state.activeWorkspaceId) return;
+    const workspaceId = state.activeWorkspaceId;
+    let cancelled = false;
+    // Capture setting value synchronously before the async boundary to avoid
+    // reading a stale closure snapshot inside the .then() callback.
+    const shouldRestore = state.settings.restoreTabsOnSwitch;
+    tabSessionLoadedWorkspaceRef.current = null;
+    skipNextTabSessionSaveRef.current = true;
+
+    StorageDriver.readTabSession(workspaceId)
+      .then(session => {
+        if (cancelled || state.activeWorkspaceId !== workspaceId) return;
+        if (session && session.tabs.length > 0 && shouldRestore) {
+          dispatch({ type: 'RESTORE_TAB_SESSION', payload: session });
+        }
+        tabSessionLoadedWorkspaceRef.current = workspaceId;
+      })
+      .catch(() => {
+        if (cancelled || state.activeWorkspaceId !== workspaceId) return;
+        tabSessionLoadedWorkspaceRef.current = workspaceId;
+      });
+
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.activeWorkspaceId, state.storageReady]);
+
+  // ── Tab session: debounced persistence ────────────────────────────────────
+  const tabSessionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!state.storageReady || !state.activeWorkspaceId) return;
+    if (tabSessionLoadedWorkspaceRef.current !== state.activeWorkspaceId) return;
+    if (skipNextTabSessionSaveRef.current) {
+      skipNextTabSessionSaveRef.current = false;
+      return;
+    }
+    const session: StorageDriver.PersistedTabSession = {
+      tabs: state.tabs
+        .filter(t => !!t.collectionId && !t.fromHistory && !!t.item.id)
+        .map(t => ({ id: t.id, collectionId: t.collectionId, itemId: t.item.id as string })),
+      activeTabId: state.activeTabId,
+    };
+    if (tabSessionTimerRef.current) clearTimeout(tabSessionTimerRef.current);
+    tabSessionTimerRef.current = setTimeout(() => {
+      void StorageDriver.writeTabSession(state.activeWorkspaceId, session).catch(() => {});
+    }, 500);
+    return () => {
+      if (tabSessionTimerRef.current) clearTimeout(tabSessionTimerRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.tabs, state.activeTabId, state.activeWorkspaceId, state.storageReady]);
+
   // ── Debounced settings persistence ───────────────────────────────────────
   const settingsSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -1027,17 +1110,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return state.collectionVariables[collectionId] || {};
   }
 
+  const secretSet = useMemo(
+    () => buildSecretSet(state.environments, state.activeEnvironmentId),
+    [state.environments, state.activeEnvironmentId],
+  );
+
   // Show a simple loading screen until storage has been read from disk
   if (!state.storageReady) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#1a1a2e', color: '#ccc', fontFamily: 'sans-serif', fontSize: 14 }}>
-        Loading…
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#020617', userSelect: 'none' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24 }}>
+          <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: '-0.5px', color: '#f1f5f9', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
+            API<span style={{ color: '#f97316' }}>LIX</span>
+          </div>
+          <div style={{
+            width: 32, height: 32,
+            border: '2px solid #1e293b',
+            borderTopColor: '#f97316',
+            borderRadius: '50%',
+            animation: 'apilix-spin 0.8s linear infinite',
+          }} />
+        </div>
+        <style>{`@keyframes apilix-spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
 
   return (
-    <AppContext.Provider value={{ state, dispatch, getActiveEnvironment, getEnvironmentVars, getCollectionVars }}>
+    <AppContext.Provider value={{ state, dispatch, getActiveEnvironment, getEnvironmentVars, getCollectionVars, secretSet }}>
       {children}
     </AppContext.Provider>
   );

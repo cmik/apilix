@@ -67,11 +67,14 @@ function EnvQuickPanel({ env, onClose }: { env: AppEnvironment; onClose: () => v
   function toggle(i: number) {
     setRows(r => r.map((row, idx) => idx === i ? { ...row, enabled: !row.enabled } : row));
   }
+  function toggleSecret(i: number) {
+    setRows(r => r.map((row, idx) => idx === i ? { ...row, secret: !row.secret } : row));
+  }
   function remove(i: number) {
     setRows(r => r.filter((_, idx) => idx !== i));
   }
   function addRow() {
-    setRows(r => [...r, { key: '', value: '', enabled: true }]);
+    setRows(r => [...r, { key: '', value: '', enabled: true, secret: false }]);
   }
   function save() {
     dispatch({ type: 'UPDATE_ENVIRONMENT', payload: { ...env, values: rows.filter(r => r.key) } });
@@ -81,7 +84,7 @@ function EnvQuickPanel({ env, onClose }: { env: AppEnvironment; onClose: () => v
   return (
     <>
       {/* backdrop */}
-      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div className="fixed inset-0 z-40" onClick={save} />
       {/* panel */}
       <div className="fixed inset-y-0 right-0 z-50 w-96 bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col">
         {/* header */}
@@ -126,11 +129,34 @@ function EnvQuickPanel({ env, onClose }: { env: AppEnvironment; onClose: () => v
                 className={`flex-1 min-w-0 bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none ${!row.enabled ? 'opacity-40' : ''}`}
               />
               <input
+                type={row.secret ? 'password' : 'text'}
                 value={row.value}
                 onChange={e => update(i, 'value', e.target.value)}
                 placeholder="value"
                 className={`flex-1 min-w-0 bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none ${!row.enabled ? 'opacity-40' : ''}`}
               />
+              <button
+                onClick={() => toggleSecret(i)}
+                title={row.secret ? 'Secret — encrypted on disk (local only). Remote sync sends plaintext unless \"Encrypt remote data\" is enabled. Click to make plain.' : 'Make secret — will be encrypted on disk (local only). Enable \"Encrypt remote data\" in sync settings to protect it remotely.'}
+                className={`shrink-0 p-0.5 rounded transition-colors ${
+                  row.secret ? 'text-orange-400 hover:text-orange-300' : 'text-slate-600 hover:text-slate-400'
+                }`}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  {row.secret ? (
+                    <>
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                    </>
+                  ) : (
+                    <>
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                      <path d="M7 11V7a5 5 0 0 1 9.9-1" />
+                      <line x1="2" y1="2" x2="22" y2="22" />
+                    </>
+                  )}
+                </svg>
+              </button>
               <button
                 onClick={() => remove(i)}
                 className="text-slate-600 hover:text-red-400 text-base leading-none opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
@@ -422,6 +448,7 @@ export default function App() {
   const [closeGuardOpen, setCloseGuardOpen] = useState(false);
   const closeGuardDirtyCountRef = useRef(0);
   const [pendingSyncConfirm, setPendingSyncConfirm] = useState<{ message: string; resolve: (v: boolean) => void } | null>(null);
+  const [pendingEmptyPushConfirm, setPendingEmptyPushConfirm] = useState<{ resolve: (v: boolean) => void } | null>(null);
   const dragging = useRef(false);
   const startX = useRef(0);
   const startWidth = useRef(0);
@@ -683,6 +710,10 @@ export default function App() {
       config: stored.config,
       metadata: stored.metadata ?? (stored.lastSynced ? { lastSyncedAt: stored.lastSynced } : undefined),
       readOnly: stored.readOnly === true ? true : undefined,
+      encryptRemote: stored.encryptRemote,
+      remotePassphrase: stored.remotePassphrase,
+      isShared: stored.isShared,
+      sharePolicy: stored.sharePolicy,
     };
   }
 
@@ -694,7 +725,13 @@ export default function App() {
       lastSyncedVersion: version ?? cfg.metadata?.lastSyncedVersion,
       lastMergeBaseSnapshotId: baseSnapshotId,
     };
-    await StorageDriver.writeSyncConfig(cfg.workspaceId, cfg.provider, cfg.config, nextMetadata, cfg.readOnly);
+    await StorageDriver.writeSyncConfig(cfg.workspaceId, cfg.provider, cfg.config, nextMetadata, cfg.readOnly, {
+      encryptRemote: cfg.encryptRemote,
+      remotePassphrase: cfg.remotePassphrase,
+      isShared: cfg.isShared,
+      sharePolicy: cfg.sharePolicy,
+      importedEncrypted: cfg.importedEncrypted,
+    });
     return nextMetadata;
   }
 
@@ -771,6 +808,17 @@ export default function App() {
           setQuickSyncFeedback('Remote has newer changes — review merge before pushing', 'warning');
           return;
         }
+
+        if (localData.collections.length === 0) {
+          const confirmed = await new Promise<boolean>(resolve =>
+            setPendingEmptyPushConfirm({ resolve })
+          );
+          if (!confirmed) {
+            setQuickSyncFeedback('Sync canceled', 'info');
+            return;
+          }
+        }
+
         await syncPush(currentCfg, localData);
         const pushedState = await getRemoteSyncState(currentCfg);
         const meta = await persistSyncBase(currentCfg, localData, pushedState.timestamp, pushedState.version, 'sync base after quick-sync push');
@@ -795,10 +843,12 @@ export default function App() {
           if (pkg.mergeResult.conflicts.length === 0) {
             const mergedData = pkg.mergeResult.merged;
             await SnapshotEngine.createSnapshot(state.activeWorkspaceId, localData, 'pre-merge backup');
-            if (pkg.remoteVersion) {
-              await syncApplyMerged(currentCfg, mergedData, pkg.remoteVersion);
-            } else {
-              await syncPush(currentCfg, mergedData);
+            if (!currentCfg.readOnly) {
+              if (pkg.remoteVersion) {
+                await syncApplyMerged(currentCfg, mergedData, pkg.remoteVersion);
+              } else {
+                await syncPush(currentCfg, mergedData);
+              }
             }
             const remoteState = await getRemoteSyncState(currentCfg);
             const meta = await persistSyncBase(currentCfg, mergedData, remoteState.timestamp, remoteState.version, 'sync base after auto-merge');
@@ -806,7 +856,7 @@ export default function App() {
             dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...mergedData, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
             await StorageDriver.writeWorkspace(currentCfg.workspaceId, mergedData);
             setLastSuccessfulSyncAt(meta.lastSyncedAt ?? null);
-            setQuickSyncFeedback('Synced (auto-merged)', 'ok');
+            setQuickSyncFeedback(currentCfg.readOnly ? 'Synced (auto-merged locally)' : 'Synced (auto-merged)', 'ok');
           } else {
             setQuickSyncConflictPackage(pkg);
             setQuickSyncFeedback('Conflict detected — review merge', 'warning');
@@ -833,10 +883,12 @@ export default function App() {
       const preMergeLocal = getCurrentWorkspaceData();
       await SnapshotEngine.createSnapshot(state.activeWorkspaceId, preMergeLocal, 'pre-quick-sync-merge backup');
 
-      if (currentPackage.remoteVersion) {
-        await syncApplyMerged(currentCfg, mergedData, currentPackage.remoteVersion);
-      } else {
-        await syncPush(currentCfg, mergedData);
+      if (!currentCfg.readOnly) {
+        if (currentPackage.remoteVersion) {
+          await syncApplyMerged(currentCfg, mergedData, currentPackage.remoteVersion);
+        } else {
+          await syncPush(currentCfg, mergedData);
+        }
       }
 
       const remoteState = await getRemoteSyncState(currentCfg);
@@ -847,7 +899,7 @@ export default function App() {
 
       dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...mergedData, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
       await StorageDriver.writeWorkspace(state.activeWorkspaceId, mergedData);
-      setQuickSyncFeedback('Sync merge applied successfully', 'ok');
+      setQuickSyncFeedback(currentCfg.readOnly ? 'Merge applied locally (read-only — remote not updated)' : 'Sync merge applied successfully', 'ok');
     } catch (err: unknown) {
       if (err instanceof StaleVersionError) {
         setQuickSyncFeedback('Remote changed during apply. Rebuilding merge…', 'warning');
@@ -1236,6 +1288,18 @@ export default function App() {
           danger={false}
           onConfirm={() => { setPendingSyncConfirm(null); pendingSyncConfirm.resolve(true); }}
           onCancel={() => { setPendingSyncConfirm(null); pendingSyncConfirm.resolve(false); }}
+          zIndex="z-[65]"
+        />
+      )}
+
+      {pendingEmptyPushConfirm && (
+        <ConfirmModal
+          title="Push empty workspace"
+          message="You are about to push an empty workspace. This will overwrite the remote workspace and may cause data loss. Are you sure you want to continue?"
+          confirmLabel="Push anyway"
+          danger={true}
+          onConfirm={() => { setPendingEmptyPushConfirm(null); pendingEmptyPushConfirm.resolve(true); }}
+          onCancel={() => { setPendingEmptyPushConfirm(null); pendingEmptyPushConfirm.resolve(false); }}
           zIndex="z-[65]"
         />
       )}

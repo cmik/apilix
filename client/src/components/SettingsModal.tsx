@@ -162,6 +162,12 @@ function AppearanceTab({ s, u }: { s: AppSettings; u: (p: Partial<AppSettings>) 
         </div>
       </Section>
 
+      <Section title="Workspace Behavior">
+        <Row label="Restore tabs on workspace switch / restart">
+          <Toggle checked={s.restoreTabsOnSwitch === true} onChange={v => u({ restoreTabsOnSwitch: v })} />
+        </Row>
+      </Section>
+
     </div>
   );
 }
@@ -184,6 +190,12 @@ function RequestsTab({ s, u }: { s: AppSettings; u: (p: Partial<AppSettings>) =>
         </Row>
         <Row label="SSL certificate verification">
           <Toggle checked={s.sslVerification === true} onChange={v => u({ sslVerification: v })} />
+        </Row>
+      </Section>
+
+      <Section title="Security">
+        <Row label="Mask secret variable values in console, logs, and history">
+          <Toggle checked={s.maskSecrets !== false} onChange={v => u({ maskSecrets: v })} />
         </Row>
       </Section>
     </div>

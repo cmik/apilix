@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import type { Workspace, WorkspaceData, SyncConfig, SyncProvider, HistoryEntry, SyncMetadata, ConflictPackage, SyncActivityEntry, SyncActivityLevel, SyncExportPackage, WorkspaceExportPackage } from '../types';
+import type { Workspace, WorkspaceData, SyncConfig, SyncProvider, HistoryEntry, SyncMetadata, ConflictPackage, SyncActivityEntry, SyncActivityLevel, SyncExportPackage, SyncSharePolicy, WorkspaceExportPackage } from '../types';
 import {
   buildSyncExportPackage,
   parseSyncExportPackage,
   decryptSyncExportConfig,
   downloadJsonFile,
+  verifyIntegrityHash as verifySyncIntegrityHash,
 } from '../utils/syncExportUtils';
 import {
   buildWorkspaceExportPackage,
@@ -104,7 +105,7 @@ export default function WorkspaceManagerModal({ onClose }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
       <div
         className="relative bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-[640px] max-h-[80vh] flex flex-col overflow-hidden"
         onDragOver={handleModalDragOver}
@@ -169,15 +170,27 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [confirmClear, setConfirmClear] = useState<string | null>(null);
   const [syncedIds, setSyncedIds] = useState<Set<string>>(new Set());
+  const [exportDisabledWorkspaceIds, setExportDisabledWorkspaceIds] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [exportError, setExportError] = useState('');
+  const [confirmExportSecrets, setConfirmExportSecrets] = useState<Workspace | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [menuRect, setMenuRect] = useState<DOMRect | null>(null);
 
   useEffect(() => {
     StorageDriver.readSyncConfigStore().then(store => {
-      setSyncedIds(new Set(Object.keys(store).filter(id => !!store[id]?.provider)));
+      const nextSyncedIds = new Set<string>();
+      const nextExportDisabledWorkspaceIds = new Set<string>();
+      Object.keys(store).forEach(id => {
+        const cfg = store[id];
+        if (cfg?.provider) nextSyncedIds.add(id);
+        if (cfg?.isShared === true && cfg?.sharePolicy?.sharingEnabled === false) {
+          nextExportDisabledWorkspaceIds.add(id);
+        }
+      });
+      setSyncedIds(nextSyncedIds);
+      setExportDisabledWorkspaceIds(nextExportDisabledWorkspaceIds);
     });
   }, [state.workspaces, state.syncConfigVersion]);
 
@@ -311,7 +324,7 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
     StorageDriver.writeManifest({ workspaces: updated, activeWorkspaceId: state.activeWorkspaceId });
   }
 
-  async function handleExportWorkspace(w: Workspace) {
+  async function doExportWorkspace(w: Workspace) {
     let data: WorkspaceData;
     if (w.id === state.activeWorkspaceId) {
       data = {
@@ -340,6 +353,31 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
     const pkg = buildWorkspaceExportPackage(w.name, w.id, data);
     const safeName = w.name.replace(/[^a-z0-9]/gi, '-').toLowerCase();
     downloadJsonFile(`apilix-workspace-${safeName}.json`, pkg);
+  }
+
+  async function handleExportWorkspace(w: Workspace) {
+    if (exportDisabledWorkspaceIds.has(w.id)) {
+      return;
+    }
+    // Check whether this workspace contains any secret-flagged env variables.
+    // If so, ask the user to confirm — the exported file will contain plaintext values.
+    let envs: WorkspaceData['environments'];
+    if (w.id === state.activeWorkspaceId) {
+      envs = state.environments;
+    } else {
+      try {
+        const data = await StorageDriver.readWorkspace(w.id);
+        envs = data?.environments ?? [];
+      } catch {
+        envs = [];
+      }
+    }
+    const hasSecrets = envs.some(env => env.values.some(v => v.secret));
+    if (hasSecrets) {
+      setConfirmExportSecrets(w);
+      return;
+    }
+    await doExportWorkspace(w);
   }
 
   async function handleCreate() {
@@ -385,11 +423,11 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
           }`}
         >
           {/* Color picker */}
-          <div className="flex gap-0.5" onClick={e => e.stopPropagation()}>
+          <div className="flex gap-0.5">
             {PRESET_COLORS.map(c => (
               <button
                 key={c}
-                onClick={e => { e.stopPropagation(); setColor(w.id, c); }}
+                onClick={() => setColor(w.id, c)}
                 className={`w-3 h-3 rounded-full border transition-transform hover:scale-125 ${(w.color ?? '#f97316') === c ? 'border-white scale-110' : 'border-transparent'}`}
                 style={{ background: c }}
               />
@@ -397,19 +435,19 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
           </div>
 
           {/* Name / rename input */}
-          <div className="flex-1 min-w-0" onClick={e => e.stopPropagation()}>
+          <div className="flex-1 min-w-0">
             {editingId === w.id ? (
               <input
                 autoFocus
                 value={editName}
                 onChange={e => setEditName(e.target.value)}
                 onBlur={() => commitRename(w.id)}
-                onKeyDown={e => { if (e.key === 'Enter') commitRename(w.id); if (e.key === 'Escape') setEditingId(null); }}
+                onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') commitRename(w.id); if (e.key === 'Escape') setEditingId(null); }}
                 className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-0.5 text-sm text-slate-200 outline-none focus:border-orange-500"
               />
             ) : (
               <button
-                onClick={e => { e.stopPropagation(); handleSwitch(w); }}
+                onClick={() => handleSwitch(w)}
                 className="text-sm font-medium text-slate-200 truncate text-left w-full hover:text-orange-400 transition-colors flex items-center gap-1.5"
               >
                 <span className="truncate">{w.name}</span>
@@ -495,14 +533,16 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
                   Duplicate
                 </button>
 
-                <button
-                  role="menuitem"
-                  onClick={() => { setOpenMenuId(null); handleExportWorkspace(w); }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-slate-300 hover:bg-slate-700/60 hover:text-slate-100 transition-colors"
-                >
-                  <span className="w-4 shrink-0 text-center">⬇</span>
-                  Export workspace data
-                </button>
+                {!exportDisabledWorkspaceIds.has(w.id) && (
+                  <button
+                    role="menuitem"
+                    onClick={() => { setOpenMenuId(null); handleExportWorkspace(w); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-slate-300 hover:bg-slate-700/60 hover:text-slate-100 transition-colors"
+                  >
+                    <span className="w-4 shrink-0 text-center">⬇</span>
+                    Export workspace data
+                  </button>
+                )}
 
                 <div className="border-t border-slate-700 my-1" />
 
@@ -553,6 +593,30 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
+      {/* Export secret-variables confirmation */}
+      {confirmExportSecrets && (
+        <div className="mt-3 p-3 bg-yellow-950/40 border border-yellow-700/50 rounded-lg text-xs text-slate-300">
+          <p className="mb-1 font-medium text-yellow-400">⚠ Export contains secret variables</p>
+          <p className="mb-2 text-slate-400">
+            This workspace has environment variables marked as secret. The exported file will contain their values in <strong>plain text</strong> — anyone with the file can read them.
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => { const w = confirmExportSecrets; setConfirmExportSecrets(null); doExportWorkspace(w); }}
+              className="px-3 py-1 bg-yellow-600 hover:bg-yellow-500 text-white rounded transition-colors"
+            >
+              Export anyway
+            </button>
+            <button
+              onClick={() => setConfirmExportSecrets(null)}
+              className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Export error */}
       {exportError && (
         <div className="mt-2 flex items-start gap-2 px-3 py-2 bg-red-950/40 border border-red-800/50 rounded-lg text-xs text-red-400">
@@ -589,7 +653,6 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
           </button>
         )}
       </div>
-
     </div>
   );
 }
@@ -672,6 +735,8 @@ function ImportPanel({ droppedFile, onDropConsumed }: ImportPanelProps) {
     if (!candidate || candidate.kind !== 'sync') return;
     const pkg = candidate.pkg;
     setError('');
+
+    // Verify HMAC integrity of the sharing policy (if present)
     let config: Record<string, string>;
     try {
       config = pkg.encrypted
@@ -681,6 +746,36 @@ function ImportPanel({ droppedFile, onDropConsumed }: ImportPanelProps) {
       setError((err as Error).message);
       return;
     }
+
+    if (pkg.integrityHash && pkg.sharePolicy && pkg.salt) {
+      const passphrase = importPassphrase || config._remotePassphrase || '';
+      try {
+        const valid = await verifySyncIntegrityHash(
+          pkg.sharePolicy,
+          pkg.remoteWorkspaceId,
+          passphrase,
+          pkg.salt,
+          pkg.integrityHash,
+        );
+        if (!valid) {
+          setError('Integrity check failed — the sharing policy may have been tampered with.');
+          return;
+        }
+      } catch {
+        setError('Integrity check failed — could not verify the package.');
+        return;
+      }
+    }
+
+    // Extract the embedded remote passphrase (if any)
+    const remotePassphrase = config._remotePassphrase;
+    delete config._remotePassphrase;
+
+    // Enforce forceReadOnly from the package's sharing policy
+    const isShared = !!(pkg.sharePolicy);
+    const sharePolicy = pkg.sharePolicy;
+    const forceReadOnly = sharePolicy?.forceReadOnly === true;
+
     const newWorkspace: Workspace = {
       id: generateId(),
       name: pkg.workspaceName,
@@ -690,7 +785,13 @@ function ImportPanel({ droppedFile, onDropConsumed }: ImportPanelProps) {
     };
     const emptyData = emptyWorkspaceData();
     await StorageDriver.writeWorkspace(newWorkspace.id, emptyData);
-    await StorageDriver.writeSyncConfig(newWorkspace.id, pkg.provider, config, undefined, false);
+    await StorageDriver.writeSyncConfig(newWorkspace.id, pkg.provider, config, undefined, forceReadOnly, {
+      encryptRemote: pkg.remoteEncryption?.enabled,
+      remotePassphrase,
+      isShared,
+      sharePolicy,
+      importedEncrypted: pkg.encrypted || undefined,
+    });
     dispatch({ type: 'CREATE_WORKSPACE', payload: newWorkspace });
     await StorageDriver.writeManifest({ workspaces: [...state.workspaces, newWorkspace], activeWorkspaceId: state.activeWorkspaceId });
     dispatch({ type: 'BUMP_SYNC_CONFIG_VERSION' });
@@ -700,100 +801,94 @@ function ImportPanel({ droppedFile, onDropConsumed }: ImportPanelProps) {
   }
 
   return (
-    <div className="border-t border-slate-700 px-4 pb-4 pt-3 shrink-0">
+    <div className="px-4 pb-4 border-t border-slate-800 bg-slate-900">
       <input
         ref={fileRef}
         type="file"
         accept=".json,application/json"
         className="hidden"
-        onChange={e => {
-          const file = e.target.files?.[0];
-          if (fileRef.current) fileRef.current.value = '';
-          if (file) handleFile(file);
-        }}
+        onChange={e => { const f = e.target.files?.[0]; if (fileRef.current) fileRef.current.value = ''; if (f) handleFile(f); }}
       />
 
-      {candidate ? (
-        <div className="p-3 bg-slate-800/60 border border-slate-700 rounded-lg space-y-3">
-          {candidate.kind === 'workspace' ? (
-            <>
-              <div className="space-y-1">
-                <p className="text-xs font-medium text-slate-200">{candidate.pkg.workspaceName}</p>
-                <p className="text-[10px] text-slate-500">
-                  Exported: <span className="text-slate-300">{new Date(candidate.pkg.exportedAt).toLocaleString()}</span>
-                  {' · '}{candidate.pkg.data.collections.length} collection(s)
-                  {' · '}{candidate.pkg.data.environments.length} environment(s)
-                </p>
-              </div>
-              {error && <p className="text-xs text-red-400 bg-red-950/30 border border-red-800/40 rounded px-2 py-1.5">{error}</p>}
-              <div className="flex gap-2">
-                <button
-                  onClick={handleWorkspaceImportConfirm}
-                  className="flex-1 py-1.5 text-xs font-medium bg-orange-600 hover:bg-orange-500 text-white rounded transition-colors"
-                >
-                  Import workspace
-                </button>
-                <button
-                  onClick={() => { setCandidate(null); setError(''); }}
-                  className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 rounded transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="space-y-1">
-                <p className="text-xs font-medium text-slate-200">{candidate.pkg.workspaceName}</p>
-                <p className="text-[10px] text-slate-500">
-                  Provider: <span className="text-slate-300">{candidate.pkg.provider.toUpperCase()}</span>
-                  {' · '}Remote ID: <span className="font-mono text-slate-400">{candidate.pkg.remoteWorkspaceId.slice(0, 12)}…</span>
-                  {candidate.pkg.encrypted && <span className="ml-1 text-yellow-400"> 🔒 encrypted</span>}
-                </p>
-              </div>
-              {candidate.pkg.encrypted && (
-                <div>
-                  <label className="block text-[11px] text-slate-500 mb-1">Passphrase</label>
-                  <input
-                    type="password"
-                    autoFocus
-                    value={importPassphrase}
-                    onChange={e => setImportPassphrase(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') handleSyncImportConfirm(); }}
-                    placeholder="Enter the passphrase used during export"
-                    className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-orange-500 placeholder:text-slate-600"
-                  />
-                </div>
-              )}
-              {error && <p className="text-xs text-red-400 bg-red-950/30 border border-red-800/40 rounded px-2 py-1.5">{error}</p>}
-              <div className="flex gap-2">
-                <button
-                  onClick={handleSyncImportConfirm}
-                  className="flex-1 py-1.5 text-xs font-medium bg-orange-600 hover:bg-orange-500 text-white rounded transition-colors"
-                >
-                  Create workspace
-                </button>
-                <button
-                  onClick={() => { setCandidate(null); setImportPassphrase(''); setError(''); }}
-                  className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 rounded transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      ) : (
+      {!candidate ? (
         <div
           role="button"
           tabIndex={0}
           aria-label="Import workspace file — click to browse or drag a file here"
           onClick={() => { setError(''); fileRef.current?.click(); }}
           onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileRef.current?.click(); } }}
-          className="flex items-center justify-center gap-2 px-3 py-3 rounded-lg border border-dashed border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-500 transition-colors cursor-pointer select-none"
+          className="mt-3 flex items-center justify-center gap-2 px-3 py-3 rounded-lg border border-dashed border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-500 transition-colors cursor-pointer select-none"
         >
           <span className="text-base leading-none">↑</span>
           <span className="text-sm">Import workspace file</span>
+        </div>
+      ) : candidate.kind === 'workspace' ? (
+        <div className="mt-3 p-3 bg-slate-800/60 border border-slate-700 rounded-lg space-y-3">
+          <div className="space-y-1">
+            <p className="text-xs font-medium text-slate-200">{candidate.pkg.workspaceName}</p>
+            <p className="text-[10px] text-slate-500">
+              Exported: <span className="text-slate-300">{new Date(candidate.pkg.exportedAt).toLocaleString()}</span>
+              {' · '}
+              <span className="text-slate-300">{candidate.pkg.data.collections.length}</span> collections
+              {' · '}
+              <span className="text-slate-300">{candidate.pkg.data.environments.length}</span> environments
+            </p>
+          </div>
+          {error && <p className="text-xs text-red-400 bg-red-950/30 border border-red-800/40 rounded px-2 py-1.5">{error}</p>}
+          <div className="flex gap-2">
+            <button
+              onClick={handleWorkspaceImportConfirm}
+              className="flex-1 py-1.5 text-xs font-medium bg-orange-600 hover:bg-orange-500 text-white rounded transition-colors"
+            >
+              Import workspace
+            </button>
+            <button
+              onClick={() => { setCandidate(null); setError(''); }}
+              className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 rounded transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-3 p-3 bg-slate-800/60 border border-slate-700 rounded-lg space-y-3">
+          <div className="space-y-1">
+            <p className="text-xs font-medium text-slate-200">{candidate.pkg.workspaceName}</p>
+            <p className="text-[10px] text-slate-500">
+              Provider: <span className="text-slate-300">{candidate.pkg.provider.toUpperCase()}</span>
+              {' · '}Remote ID: <span className="font-mono text-slate-400">{candidate.pkg.remoteWorkspaceId.slice(0, 12)}…</span>
+              {candidate.pkg.encrypted && <span className="ml-1 text-yellow-400"> 🔒 encrypted</span>}
+            </p>
+          </div>
+          {candidate.pkg.encrypted && (
+            <div>
+              <label className="block text-[11px] text-slate-500 mb-1">Passphrase</label>
+              <input
+                type="password"
+                autoFocus
+                value={importPassphrase}
+                onChange={e => setImportPassphrase(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleSyncImportConfirm(); }}
+                placeholder="Enter the passphrase used during export"
+                className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-orange-500 placeholder:text-slate-600"
+              />
+            </div>
+          )}
+          {error && <p className="text-xs text-red-400 bg-red-950/30 border border-red-800/40 rounded px-2 py-1.5">{error}</p>}
+          <div className="flex gap-2">
+            <button
+              onClick={handleSyncImportConfirm}
+              className="flex-1 py-1.5 text-xs font-medium bg-orange-600 hover:bg-orange-500 text-white rounded transition-colors"
+            >
+              Create workspace
+            </button>
+            <button
+              onClick={() => { setCandidate(null); setImportPassphrase(''); setError(''); }}
+              className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 rounded transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 
@@ -820,6 +915,13 @@ export async function cloneWorkspaceSyncConfig(sourceWorkspaceId: string, target
     srcSync.config,
     undefined,
     srcSync.readOnly,
+    {
+      encryptRemote: srcSync.encryptRemote,
+      remotePassphrase: srcSync.remotePassphrase,
+      isShared: srcSync.isShared,
+      sharePolicy: srcSync.sharePolicy,
+      importedEncrypted: srcSync.importedEncrypted,
+    },
   );
   return true;
 }
@@ -837,6 +939,14 @@ interface ExportPanelProps {
   setExportPassphrase: (v: string) => void;
   exportStatus: string;
   setExportStatus: (v: string) => void;
+  // Sharing policy options
+  encryptRemote: boolean;
+  inheritedPassphrase: string;
+  isShared: boolean;
+  /** Sharing policy from the original import. forceReadOnly is locked when present and true. */
+  inheritedSharePolicy?: SyncSharePolicy;
+  /** True when this workspace was imported from a passphrase-encrypted share package. */
+  importedEncrypted: boolean;
 }
 
 function ExportPanel({
@@ -844,15 +954,38 @@ function ExportPanel({
   exportEncrypt, setExportEncrypt,
   exportPassphrase, setExportPassphrase,
   exportStatus, setExportStatus,
+  encryptRemote, inheritedPassphrase, isShared, inheritedSharePolicy, importedEncrypted,
 }: ExportPanelProps) {
+  const [forceReadOnly, setForceReadOnly] = useState(false);
+  const [sharingEnabled, setSharingEnabled] = useState(true);
+
+  // Package encryption is mandatory when the original import was encrypted.
+  const requiresEncryption = importedEncrypted;
+  const effectiveEncrypt = requiresEncryption || exportEncrypt;
+
+  // forceReadOnly is locked when the inherited policy requires it.
+  const forcedReadOnly = isShared && inheritedSharePolicy?.forceReadOnly === true;
+
   async function handleDownload() {
     setExportStatus('');
-    const passphrase = exportEncrypt ? exportPassphrase.trim() : undefined;
-    if (exportEncrypt && !passphrase) {
-      setExportStatus('Enter a passphrase, or uncheck the encryption option.');
+    const passphrase = effectiveEncrypt ? exportPassphrase.trim() : undefined;
+    if (effectiveEncrypt && !passphrase) {
+      setExportStatus(requiresEncryption
+        ? 'A passphrase is required — credentials were encrypted when imported.'
+        : 'Enter a passphrase, or uncheck the encryption option.');
       return;
     }
-    const pkg = await buildSyncExportPackage(workspaceName, provider, fields, passphrase);
+
+    const sharePolicy: SyncSharePolicy | undefined = { forceReadOnly: forcedReadOnly ? true : forceReadOnly, sharingEnabled };
+
+    // Always embed the remote passphrase when remote encryption is configured
+    const remotePassphrase = (encryptRemote && inheritedPassphrase) ? inheritedPassphrase : undefined;
+
+    const configWithId = { ...fields, remoteWorkspaceId: workspaceId };
+    const pkg = await buildSyncExportPackage(workspaceName, provider, configWithId, passphrase, {
+      sharePolicy,
+      remotePassphrase,
+    });
     const safeName = workspaceName.replace(/[^a-z0-9]/gi, '-').toLowerCase();
     downloadJsonFile(`apilix-sync-${safeName}.json`, pkg);
     setExportPassphrase('');
@@ -860,20 +993,25 @@ function ExportPanel({
   }
 
   return (
-    <div className="space-y-2.5 p-3 bg-slate-800/40 border border-slate-700 rounded-lg">
+    <div className="space-y-3">
       <div className="flex items-center gap-2">
         <input
           id={`export-encrypt-${workspaceId}`}
           type="checkbox"
-          checked={exportEncrypt}
-          onChange={e => setExportEncrypt(e.target.checked)}
-          className="accent-orange-500 cursor-pointer"
+          checked={requiresEncryption ? true : exportEncrypt}
+          onChange={e => { if (!requiresEncryption) setExportEncrypt(e.target.checked); }}
+          disabled={requiresEncryption}
+          className="accent-orange-500 cursor-pointer disabled:cursor-not-allowed"
         />
         <label htmlFor={`export-encrypt-${workspaceId}`} className="text-xs text-slate-300 cursor-pointer">
-          Encrypt credentials with a passphrase <span className="text-slate-500">(recommended)</span>
+          Encrypt credentials with a passphrase{' '}
+          {requiresEncryption
+            ? <span className="text-orange-400">(required — credentials were encrypted when imported)</span>
+            : <span className="text-slate-500">(recommended)</span>}
         </label>
       </div>
-      {exportEncrypt && (
+
+      {effectiveEncrypt && (
         <div>
           <label className="block text-[11px] text-slate-500 mb-1">Passphrase</label>
           <input
@@ -886,17 +1024,72 @@ function ExportPanel({
           />
         </div>
       )}
-      {!exportEncrypt && (
+      {!effectiveEncrypt && (
         <p className="text-[10px] text-yellow-400 bg-yellow-950/30 border border-yellow-800/40 rounded px-2 py-1.5">
           ⚠ Credentials will be stored in plaintext in the exported file.
         </p>
       )}
+
+      {/* Sharing policy */}
+      <div className="border-t border-slate-700 pt-2.5 space-y-2">
+        <p className="text-[11px] text-slate-400 font-medium">Sharing policy</p>
+        <div className="flex items-center gap-2">
+          <input
+            id={`export-readonly-${workspaceId}`}
+            type="checkbox"
+            checked={forcedReadOnly ? true : forceReadOnly}
+            onChange={e => { if (!forcedReadOnly) setForceReadOnly(e.target.checked); }}
+            disabled={forcedReadOnly}
+            className="accent-orange-500 cursor-pointer disabled:cursor-not-allowed"
+          />
+          <label htmlFor={`export-readonly-${workspaceId}`} className="text-xs text-slate-300 cursor-pointer">
+            Force read-only{' '}
+            {forcedReadOnly
+              ? <span className="text-orange-400">(required — inherited from original owner)</span>
+              : <span className="text-slate-500">(recipient can only pull)</span>}
+          </label>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            id={`export-sharing-${workspaceId}`}
+            type="checkbox"
+            checked={sharingEnabled}
+            onChange={e => setSharingEnabled(e.target.checked)}
+            className="accent-orange-500 cursor-pointer"
+          />
+          <label htmlFor={`export-sharing-${workspaceId}`} className="text-xs text-slate-300 cursor-pointer">
+            Sharing enabled <span className="text-slate-500">(un-check to revoke future shares)</span>
+          </label>
+        </div>
+      </div>
+
+      {/* Remote passphrase is always embedded when remote encryption is configured */}
+      {encryptRemote && inheritedPassphrase && (
+        <div className="border-t border-slate-700 pt-2.5">
+          <p className="text-[10px] text-slate-400 bg-slate-800/60 border border-slate-700 rounded px-2 py-1.5">
+            Remote encryption passphrase will be embedded in this package.
+          </p>
+          {!exportEncrypt && (
+            <p className="text-[10px] text-red-400 bg-red-950/30 border border-red-800/40 rounded px-2 py-1.5 mt-1.5">
+              ⚠ Enable package encryption — otherwise the remote passphrase will be stored in plaintext.
+            </p>
+          )}
+        </div>
+      )}
+
+      {isShared && (
+        <p className="text-[10px] text-sky-400 bg-sky-950/20 border border-sky-800/30 rounded px-2 py-1">
+          This workspace was imported from a share package. Settings are managed by the original owner.
+        </p>
+      )}
+
       {exportStatus && (
         <p className="text-[10px] text-green-400">{exportStatus}</p>
       )}
       <button
         onClick={handleDownload}
-        className="w-full py-1.5 text-xs font-medium bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors"
+        disabled={effectiveEncrypt && !exportPassphrase.trim()}
+        className="w-full py-1.5 text-xs font-medium bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-slate-200 rounded transition-colors"
       >
         Download JSON ↓
       </button>
@@ -971,10 +1164,17 @@ function SyncTab() {
   const [status, setStatus] = useState<'idle' | 'busy' | 'ok' | 'error'>('idle');
   const [msg, setMsg] = useState('');
   const [readOnly, setReadOnly] = useState(false);
+  const [encryptRemote, setEncryptRemote] = useState(false);
+  const [remotePassphrase, setRemotePassphrase] = useState('');
+  const [showRemotePassphrase, setShowRemotePassphrase] = useState(false);
+  const [isShared, setIsShared] = useState(false);
+  const [sharePolicy, setSharePolicy] = useState<SyncSharePolicy | undefined>(undefined);
+  const [importedEncrypted, setImportedEncrypted] = useState(false);
   const [conflict, setConflict] = useState<null | { remoteTimestamp: string; localTimestamp: string | null }>(null);
   const [conflictPackage, setConflictPackage] = useState<ConflictPackage | null>(null);
   const [activity, setActivity] = useState<SyncActivityEntry[]>([]);
   const [pendingPushConfirm, setPendingPushConfirm] = useState<{ message: string; resolve: (v: boolean) => void } | null>(null);
+  const [pendingEmptyPushConfirm, setPendingEmptyPushConfirm] = useState<{ resolve: (v: boolean) => void } | null>(null);
   const [showExport, setShowExport] = useState(false);
   const [exportEncrypt, setExportEncrypt] = useState(true);
   const [exportPassphrase, setExportPassphrase] = useState('');
@@ -995,12 +1195,7 @@ function SyncTab() {
         // Migrate legacy 'minio' provider to 's3' — the unified adapter accepts
         // the 'endpoint' field for S3-compatible services.
         const loadedProvider: SyncProvider = cfg.provider === 'minio' ? 's3' : cfg.provider as SyncProvider;
-        const rawConfig = cfg.config;
-        // Backward compat: inject remoteWorkspaceId for existing S3/MinIO configs that predate the feature
-        const loadedConfig =
-          (loadedProvider === 's3' || loadedProvider === 'minio') && !rawConfig.remoteWorkspaceId
-            ? { ...rawConfig, remoteWorkspaceId: workspaceId }
-            : rawConfig;
+        const loadedConfig = cfg.config;
         setProvider(loadedProvider);
         setFields(loadedConfig);
         setProviderDrafts(prev => ({
@@ -1009,15 +1204,20 @@ function SyncTab() {
         }));
         setSyncMetadata(cfg.metadata ?? (cfg.lastSynced ? { lastSyncedAt: cfg.lastSynced } : undefined));
         setReadOnly(cfg.readOnly === true);
+        setEncryptRemote(cfg.encryptRemote === true);
+        setRemotePassphrase(cfg.remotePassphrase ?? '');
+        setIsShared(cfg.isShared === true);
+        setSharePolicy(cfg.sharePolicy);
+        setImportedEncrypted(cfg.importedEncrypted === true);
       } else {
-        // No saved config — seed remoteWorkspaceId for S3/MinIO so the export
-        // button always has a valid ID ready before the user saves config.
-        const initialFields: Record<string, string> =
-          !isBrowserMode ? { remoteWorkspaceId: generateId() } : {};
-        setFields(initialFields);
-        setProviderDrafts(prev => ({ ...prev, s3: initialFields, minio: initialFields }));
+        setFields({});
         setSyncMetadata(undefined);
         setReadOnly(false);
+        setEncryptRemote(false);
+        setRemotePassphrase('');
+        setIsShared(false);
+        setSharePolicy(undefined);
+        setImportedEncrypted(false);
       }
       setActivity(entries);
       setLoaded(true);
@@ -1040,7 +1240,13 @@ function SyncTab() {
   }
 
   async function saveConfig() {
-    await StorageDriver.writeSyncConfig(workspaceId, provider, fields, syncMetadata, readOnly);
+    await StorageDriver.writeSyncConfig(workspaceId, provider, fields, syncMetadata, readOnly, {
+      encryptRemote,
+      remotePassphrase: remotePassphrase || undefined,
+      isShared,
+      sharePolicy,
+      importedEncrypted: importedEncrypted || undefined,
+    });
     await logActivity('save-config', 'info', 'Sync configuration saved');
     dispatch({ type: 'BUMP_SYNC_CONFIG_VERSION' });
   }
@@ -1089,15 +1295,12 @@ function SyncTab() {
     setProvider(prevProvider => {
       if (prevProvider === nextProvider) return prevProvider;
       setProviderDrafts(drafts => {
-        const saved = { ...drafts, [prevProvider]: fields };
-        let nextFields = saved[nextProvider] ?? {};
-        // Auto-generate remoteWorkspaceId for new S3/MinIO configurations
-        if ((nextProvider === 's3' || nextProvider === 'minio') && !nextFields.remoteWorkspaceId) {
-          nextFields = { ...nextFields, remoteWorkspaceId: generateId() };
-          saved[nextProvider] = nextFields;
-        }
-        setFields(nextFields);
-        return saved;
+        const nextDrafts = {
+          ...drafts,
+          [prevProvider]: fields,
+        };
+        setFields(nextDrafts[nextProvider] ?? {});
+        return nextDrafts;
       });
       setConflict(null);
       setConflictPackage(null);
@@ -1112,11 +1315,28 @@ function SyncTab() {
     setStatus('busy'); setMsg('Pushing…'); setConflict(null);
     try {
       const syncedCollections = await prepareCollectionsForPush();
-      if (!syncedCollections) return;
+      if (!syncedCollections) {
+        dispatch({ type: 'SET_SYNC_STATUS', payload: { workspaceId, status: 'idle' } });
+        setStatus('idle');
+        return;
+      }
 
       await saveConfig();
       const data = { ...getCurrentWorkspaceData(), collections: syncedCollections };
-      const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
+      const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata, encryptRemote, remotePassphrase: remotePassphrase || undefined, isShared: isShared || undefined, sharePolicy };
+
+      if (data.collections.length === 0) {
+        const confirmed = await new Promise<boolean>(resolve =>
+          setPendingEmptyPushConfirm({ resolve })
+        );
+        if (!confirmed) {
+          dispatch({ type: 'SET_SYNC_STATUS', payload: { workspaceId, status: 'idle' } });
+          setStatus('idle');
+          setMsg('Push canceled');
+          return;
+        }
+      }
+
       await syncPush(cfg, data);
       const remoteState = await getRemoteSyncState(cfg);
       const mergeBaseSnapshotId = await SnapshotEngine.createSnapshot(workspaceId, data, 'sync base after push');
@@ -1127,7 +1347,12 @@ function SyncTab() {
         lastMergeBaseSnapshotId: mergeBaseSnapshotId,
       };
       setSyncMetadata(nextMetadata);
-      await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata, readOnly);
+      await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata, readOnly, {
+        encryptRemote,
+        remotePassphrase: remotePassphrase || undefined,
+        isShared,
+        sharePolicy,
+      });
       await StorageDriver.writeWorkspace(workspaceId, data);
       dispatch({ type: 'SET_SYNC_STATUS', payload: { workspaceId, status: 'idle' } });
       await logActivity('push', 'success', 'Push completed', remoteState.version ? `Version ${remoteState.version.slice(0, 8)}` : undefined);
@@ -1143,7 +1368,7 @@ function SyncTab() {
     setStatus('busy'); setMsg('Pulling…'); setConflict(null); setConflictPackage(null);
     try {
       await saveConfig();
-      const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
+      const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata, encryptRemote, remotePassphrase: remotePassphrase || undefined, isShared: isShared || undefined, sharePolicy };
       const result = await syncPullWithMeta(cfg, resolution);
       const data = result.data;
       if (data) {
@@ -1157,7 +1382,7 @@ function SyncTab() {
           lastMergeBaseSnapshotId: mergeBaseSnapshotId,
         };
         setSyncMetadata(nextMetadata);
-        await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata, readOnly);
+        await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata, readOnly, { encryptRemote, remotePassphrase: remotePassphrase || undefined, isShared, sharePolicy });
         await logActivity('pull', 'success', 'Pull completed', result.remoteState.version ? `Version ${result.remoteState.version.slice(0, 8)}` : undefined);
         setStatus('ok'); setMsg('Pulled successfully');
       } else {
@@ -1170,7 +1395,7 @@ function SyncTab() {
         setStatus('busy'); setMsg('Loading merge data…');
         try {
           const localData = getCurrentWorkspaceData();
-          const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
+          const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata, encryptRemote, remotePassphrase: remotePassphrase || undefined, isShared: isShared || undefined, sharePolicy };
           const pkg = await pullForMerge(cfg, localData);
           await logActivity('merge-opened', 'warning', 'Opened merge review', `${pkg.mergeResult.conflicts.length} conflict(s)`);
           if (pkg.mergeResult.conflicts.length === 0) {
@@ -1193,7 +1418,7 @@ function SyncTab() {
               lastMergeBaseSnapshotId: mergeBaseSnapshotId,
             };
             setSyncMetadata(nextMetadata);
-            await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata, readOnly);
+            await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata, readOnly, { encryptRemote, remotePassphrase: remotePassphrase || undefined, isShared, sharePolicy });
             dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...mergedData, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
             await StorageDriver.writeWorkspace(workspaceId, mergedData);
             await logActivity('merge-applied', 'success', 'Auto-merge applied (no manual conflicts)');
@@ -1220,13 +1445,15 @@ function SyncTab() {
     setConflictPackage(null);
     setStatus('busy'); setMsg('Applying merge…');
     try {
-      const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
+      const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata, encryptRemote, remotePassphrase: remotePassphrase || undefined, isShared: isShared || undefined, sharePolicy };
       const localData = getCurrentWorkspaceData();
       if (localData) await SnapshotEngine.createSnapshot(workspaceId, localData, 'pre-merge backup');
-      if (currentConflictPackage.remoteVersion) {
-        await syncApplyMerged(cfg, mergedData, currentConflictPackage.remoteVersion);
-      } else {
-        await syncPush(cfg, mergedData);
+      if (!readOnly) {
+        if (currentConflictPackage.remoteVersion) {
+          await syncApplyMerged(cfg, mergedData, currentConflictPackage.remoteVersion);
+        } else {
+          await syncPush(cfg, mergedData);
+        }
       }
       const remoteState = await getRemoteSyncState(cfg);
       const mergeBaseSnapshotId = await SnapshotEngine.createSnapshot(workspaceId, mergedData, 'sync base after merge apply');
@@ -1237,16 +1464,16 @@ function SyncTab() {
         lastMergeBaseSnapshotId: mergeBaseSnapshotId,
       };
       setSyncMetadata(nextMetadata);
-      await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata, readOnly);
+      await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata, readOnly, { encryptRemote, remotePassphrase: remotePassphrase || undefined, isShared, sharePolicy });
       dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...mergedData, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
       await StorageDriver.writeWorkspace(workspaceId, mergedData);
-      await logActivity('merge-applied', 'success', 'Merged workspace applied', remoteState.version ? `Version ${remoteState.version.slice(0, 8)}` : undefined);
-      setStatus('ok'); setMsg('Merge applied successfully');
+      await logActivity('merge-applied', 'success', 'Merged workspace applied', readOnly ? 'local only (read-only)' : remoteState.version ? `Version ${remoteState.version.slice(0, 8)}` : undefined);
+      setStatus('ok'); setMsg(readOnly ? 'Merge applied locally (read-only — remote not updated)' : 'Merge applied successfully');
     } catch (err: unknown) {
       if (err instanceof StaleVersionError) {
         setStatus('busy'); setMsg('Remote changed during apply. Rebuilding merge…');
         try {
-          const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
+          const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata, encryptRemote, remotePassphrase: remotePassphrase || undefined, isShared: isShared || undefined, sharePolicy };
           const nextPackage = await rebaseAfterStale(cfg, mergedData, currentConflictPackage.remoteData);
           setConflictPackage(nextPackage);
           await logActivity('merge-stale-rebase', 'warning', 'Remote changed during merge apply', `${nextPackage.mergeResult.conflicts.length} conflict(s) after rebase`);
@@ -1267,7 +1494,7 @@ function SyncTab() {
   async function handleCloneOnce() {
     setStatus('busy'); setMsg('Importing…'); setConflict(null); setConflictPackage(null);
     try {
-      const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
+      const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata, encryptRemote, remotePassphrase: remotePassphrase || undefined, isShared: isShared || undefined, sharePolicy };
       const result = await syncPullWithMeta(cfg);
       const data = result.data;
       if (data) {
@@ -1294,7 +1521,7 @@ function SyncTab() {
   async function handleTestConnection() {
     setStatus('busy'); setMsg('Testing connection…');
     try {
-      const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata };
+      const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata, encryptRemote, remotePassphrase: remotePassphrase || undefined, isShared: isShared || undefined, sharePolicy };
       const result = await syncTestConnection(cfg);
       if (result.ok) {
         setStatus('ok'); setMsg(result.message);
@@ -1311,63 +1538,45 @@ function SyncTab() {
   return (
     <>
       <div className="space-y-4">
-      {/* Provider selector */}
-      <div>
-        <label className="block text-xs font-medium text-slate-400 mb-1.5">Provider</label>
-        <div className="flex gap-2 flex-wrap">
-          {VISIBLE_PROVIDERS.filter(p => !isBrowserMode || !ELECTRON_ONLY_PROVIDERS.includes(p)).map(p => (
-            <button
-              key={p}
-              onClick={() => switchProvider(p)}
-              className={`px-3 py-1.5 rounded text-xs font-medium border transition-colors ${
-                provider === p
-                  ? 'bg-orange-500/20 border-orange-500/50 text-orange-300'
-                  : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'
-              }`}
-            >
-              {PROVIDER_LABELS[p]}
-            </button>
+      {/* Provider selector — hidden for shared workspaces */}
+      {!isShared && (
+        <div>
+          <label className="block text-xs font-medium text-slate-400 mb-1.5">Provider</label>
+          <div className="flex gap-2 flex-wrap">
+            {VISIBLE_PROVIDERS.filter(p => !isBrowserMode || !ELECTRON_ONLY_PROVIDERS.includes(p)).map(p => (
+              <button
+                key={p}
+                onClick={() => switchProvider(p)}
+                className={`px-3 py-1.5 rounded text-xs font-medium border transition-colors ${
+                  provider === p
+                    ? 'bg-orange-500/20 border-orange-500/50 text-orange-300'
+                    : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'
+                }`}
+              >
+                {PROVIDER_LABELS[p]}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Provider-specific fields — hidden for shared workspaces */}
+      {!isShared && (
+        <div className="space-y-2.5">
+          {PROVIDER_FIELDS[provider].map(f => (
+            <div key={f.key}>
+              <label className="block text-[11px] text-slate-500 mb-1">{f.label}</label>
+              <input
+                type={f.secret ? 'password' : 'text'}
+                value={fields[f.key] ?? ''}
+                onChange={e => setField(f.key, e.target.value)}
+                placeholder={f.placeholder}
+                className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-orange-500 placeholder:text-slate-600"
+              />
+            </div>
           ))}
         </div>
-      </div>
-
-      {/* Provider-specific fields */}
-      <div className="space-y-2.5">
-        {PROVIDER_FIELDS[provider].map(f => (
-          <div key={f.key}>
-            <label className="block text-[11px] text-slate-500 mb-1">{f.label}</label>
-            <input
-              type={f.secret ? 'password' : 'text'}
-              value={fields[f.key] ?? ''}
-              onChange={e => setField(f.key, e.target.value)}
-              placeholder={f.placeholder}
-              className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-orange-500 placeholder:text-slate-600"
-            />
-          </div>
-        ))}
-        {/* Remote Workspace ID — S3/MinIO only, read-only, used as S3 object key */}
-        {(provider === 's3' || provider === 'minio') && fields.remoteWorkspaceId && (
-          <div>
-            <label className="block text-[11px] text-slate-500 mb-1">
-              Remote Workspace ID <span className="text-slate-600">(read‑only · used as S3 object key)</span>
-            </label>
-            <div className="flex items-center gap-2">
-              <input
-                readOnly
-                value={fields.remoteWorkspaceId}
-                className="flex-1 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-xs font-mono text-slate-400 outline-none cursor-default select-all"
-              />
-              <button
-                type="button"
-                onClick={() => navigator.clipboard.writeText(fields.remoteWorkspaceId)}
-                className="px-2 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 rounded transition-colors"
-              >
-                Copy
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
+      )}
 
       <button
         onClick={handleTestConnection}
@@ -1433,7 +1642,8 @@ function SyncTab() {
         </div>
         <button
           type="button"
-          onClick={() => setReadOnly(v => !v)}
+          onClick={() => !isShared && setReadOnly(v => !v)}
+          disabled={isShared}
           className={`relative shrink-0 ml-4 w-9 h-5 rounded-full transition-colors ${readOnly ? 'bg-orange-500' : 'bg-slate-700'}`}
           role="switch"
           aria-checked={readOnly}
@@ -1442,6 +1652,58 @@ function SyncTab() {
           <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${readOnly ? 'translate-x-4' : 'translate-x-0'}`} />
         </button>
       </div>
+
+      {/* Remote data encryption */}
+      {!isBrowserMode ? (
+        <div className="flex items-center justify-between py-2 px-3 rounded-lg bg-slate-800/40 border border-slate-800">
+          <div className="min-w-0 flex-1">
+            <p id="encrypt-remote-label" className="text-xs font-medium text-slate-300">Encrypt remote data</p>
+            <p className="text-[10px] text-slate-500 mt-0.5">Data is encrypted before upload and decrypted after download</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => !isShared && setEncryptRemote(v => !v)}
+            disabled={isShared}
+            className={`relative shrink-0 ml-4 w-9 h-5 rounded-full transition-colors ${encryptRemote ? 'bg-orange-500' : 'bg-slate-700'}`}
+            role="switch"
+            aria-checked={encryptRemote}
+            aria-labelledby="encrypt-remote-label"
+          >
+            <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${encryptRemote ? 'translate-x-4' : 'translate-x-0'}`} />
+          </button>
+        </div>
+      ) : (
+        <p className="text-[10px] text-slate-500 bg-slate-800/40 border border-slate-800 rounded px-3 py-2">
+          Remote data encryption requires the desktop app (Electron).
+        </p>
+      )}
+      {!isShared && encryptRemote && (
+        <div>
+          <label className="block text-[11px] text-slate-500 mb-1">Remote encryption passphrase</label>
+          <div className="flex gap-2">
+            <input
+              type={showRemotePassphrase ? 'text' : 'password'}
+              value={remotePassphrase}
+              onChange={e => setRemotePassphrase(e.target.value)}
+              placeholder="Passphrase for remote data encryption"
+              className="flex-1 bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-orange-500 placeholder:text-slate-600"
+            />
+            <button
+              type="button"
+              onClick={() => setShowRemotePassphrase(v => !v)}
+              className="px-2 text-xs text-slate-400 hover:text-slate-200 border border-slate-700 rounded transition-colors"
+            >
+              {showRemotePassphrase ? 'Hide' : 'Show'}
+            </button>
+          </div>
+          <p className="text-[10px] text-slate-500 mt-1">Stored securely via Electron safeStorage.</p>
+        </div>
+      )}
+      {isShared && (
+        <div className="px-3 py-2 rounded-lg bg-sky-950/20 border border-sky-800/30 text-[10px] text-sky-400">
+          This workspace was imported from a share package. Sync settings are managed by the original owner and cannot be changed here.
+        </div>
+      )}
 
       {/* Action buttons */}
       <div className="flex gap-2 pt-1">
@@ -1460,25 +1722,29 @@ function SyncTab() {
         >
           Pull ↓
         </button>
-        <button
-          onClick={saveConfig}
-          disabled={status === 'busy'}
-          className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 border border-slate-700 rounded transition-colors"
-        >
-          Save config
-        </button>
+        {!isShared && (
+          <button
+            onClick={saveConfig}
+            disabled={status === 'busy'}
+            className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 border border-slate-700 rounded transition-colors"
+          >
+            Save config
+          </button>
+        )}
       </div>
-      {/* One-time import without persisting sync config */}
-      <button
-        onClick={handleCloneOnce}
-        disabled={status === 'busy'}
-        className="w-full py-1.5 text-xs text-slate-500 hover:text-slate-300 border border-dashed border-slate-700 hover:border-slate-600 rounded transition-colors disabled:opacity-50"
-      >
-        Import once (don't save config) ↓
-      </button>
+      {/* One-time import — hidden for shared workspaces */}
+      {!isShared && (
+        <button
+          onClick={handleCloneOnce}
+          disabled={status === 'busy'}
+          className="w-full py-1.5 text-xs text-slate-500 hover:text-slate-300 border border-dashed border-slate-700 hover:border-slate-600 rounded transition-colors disabled:opacity-50"
+        >
+          Import once (don't save config) ↓
+        </button>
+      )}
 
-      {/* Export sync config — S3 / MinIO only */}
-      {(provider === 's3' || provider === 'minio') && (
+      {/* Export sync config — S3 / MinIO only, hidden when sharing is disabled */}
+      {(provider === 's3' || provider === 'minio') && sharePolicy?.sharingEnabled !== false && (
         <div className="space-y-2 pt-1 border-t border-slate-800">
           <button
             onClick={() => { setShowExport(v => !v); setExportStatus(''); }}
@@ -1498,6 +1764,11 @@ function SyncTab() {
               setExportPassphrase={setExportPassphrase}
               exportStatus={exportStatus}
               setExportStatus={setExportStatus}
+              encryptRemote={encryptRemote}
+              inheritedPassphrase={remotePassphrase}
+              isShared={isShared}
+              inheritedSharePolicy={sharePolicy}
+              importedEncrypted={importedEncrypted}
             />
           )}
         </div>
@@ -1554,6 +1825,17 @@ function SyncTab() {
           danger={false}
           onConfirm={() => { setPendingPushConfirm(null); pendingPushConfirm.resolve(true); }}
           onCancel={() => { setPendingPushConfirm(null); pendingPushConfirm.resolve(false); }}
+        />
+      )}
+
+      {pendingEmptyPushConfirm && (
+        <ConfirmModal
+          title="Push empty workspace"
+          message="You are about to push an empty workspace. This will overwrite the remote workspace and may cause data loss. Are you sure you want to continue?"
+          confirmLabel="Push anyway"
+          danger={true}
+          onConfirm={() => { setPendingEmptyPushConfirm(null); pendingEmptyPushConfirm.resolve(true); }}
+          onCancel={() => { setPendingEmptyPushConfirm(null); pendingEmptyPushConfirm.resolve(false); }}
         />
       )}
     </>

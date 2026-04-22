@@ -9,12 +9,14 @@ Apilix supports `{{variable}}` substitution everywhere — in URLs, query parame
 - [Variables \& Environments](#variables--environments)
   - [Table of Contents](#table-of-contents)
   - [Variable Syntax](#variable-syntax)
+    - [Variable Autocomplete](#variable-autocomplete)
   - [Scope Hierarchy](#scope-hierarchy)
   - [Environments](#environments)
     - [Creating an Environment](#creating-an-environment)
     - [Switching the Active Environment](#switching-the-active-environment)
     - [Editing Variables](#editing-variables)
     - [Enabling and Disabling Variables](#enabling-and-disabling-variables)
+    - [Marking Variables as Secret](#marking-variables-as-secret)
   - [Global Variables](#global-variables)
   - [Collection Variables](#collection-variables)
   - [Data Row Variables (Runner)](#data-row-variables-runner)
@@ -147,6 +149,16 @@ Each row in the variable table has:
 The checkbox in the first column controls whether a variable participates in resolution. Disabled variables are greyed out and will not override variables from lower-priority scopes.
 
 This is useful when you need to temporarily bypass a variable (e.g. to test a default fallback value) without deleting it.
+
+### Marking Variables as Secret
+
+In the Environment editor, use the **lock** control on a row to mark a value as secret.
+
+- Secret values are visually hidden in the editor.
+- In the desktop app (Electron), secret values are encrypted at rest using the OS keychain.
+- Secret values are used by the optional UI redaction layer in Console and Request History when **Mask secret variable values in console, logs, and history** is enabled.
+
+> The secret flag does not remove the value from runtime request execution. It is still resolved and sent normally where referenced.
 
 ---
 

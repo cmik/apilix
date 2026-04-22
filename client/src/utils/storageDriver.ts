@@ -9,7 +9,7 @@
  * is used, and the module remains crash-free.
  */
 
-import type { WorkspaceData, Workspace, SyncMetadata, SyncActivityEntry, AppSettings, HistoryRequest, SavedRunnerRun } from '../types';
+import type { WorkspaceData, Workspace, SyncMetadata, SyncActivityEntry, AppSettings, HistoryRequest, SavedRunnerRun, SyncSharePolicy } from '../types';
 
 // ─── Electron API shim ────────────────────────────────────────────────────────
 
@@ -103,20 +103,23 @@ export async function readWorkspace(id: string): Promise<WorkspaceData | null> {
     try {
       const dir = await api.getDataDir();
       const data = await api.readJsonFile(`${dir}/workspaces/${id}.json`);
-      if (data) return data as WorkspaceData;
+      if (data) return decryptWorkspaceSecrets(data as WorkspaceData);
     } catch {
       // fall through to localStorage
     }
   }
-  return lsRead<WorkspaceData>(LS_WORKSPACE(id));
+  const ls = lsRead<WorkspaceData>(LS_WORKSPACE(id));
+  if (ls) return decryptWorkspaceSecrets(ls);
+  return null;
 }
 
 export async function writeWorkspace(id: string, data: WorkspaceData): Promise<void> {
-  lsWrite(LS_WORKSPACE(id), data);
+  const encrypted = await encryptWorkspaceSecrets(data);
+  lsWrite(LS_WORKSPACE(id), encrypted);
   const api = eAPI();
   if (api) {
     const dir = await api.getDataDir();
-    await api.writeJsonFile(`${dir}/workspaces/${id}.json`, data);
+    await api.writeJsonFile(`${dir}/workspaces/${id}.json`, encrypted);
   }
 }
 
@@ -126,6 +129,7 @@ export async function deleteWorkspace(id: string): Promise<void> {
   lsDelete(LS_REQUEST_HISTORY(id));
   lsDelete(LS_RUNNER_RECENT(id));
   lsDelete(LS_RUNNER_SAVED(id));
+  lsDelete(LS_TAB_SESSION(id));
 
   // Remove entry from sync-config store
   const lsSyncConfig = lsRead<SyncConfigStore>(LS_SYNC_CONFIG);
@@ -148,6 +152,9 @@ export async function deleteWorkspace(id: string): Promise<void> {
 
   // Workspace data file
   await api.deleteFile(`${dir}/workspaces/${id}.json`).catch(() => {});
+
+  // Tab session file
+  await api.deleteFile(`${dir}/workspaces/${id}/tab-session.json`).catch(() => {});
 
   // Snapshot / history directory: workspaces/{id}/
   await api.deleteDirectory(`${dir}/workspaces/${id}`).catch(() => {});
@@ -207,6 +214,21 @@ export interface StoredSyncConfig {
   lastSynced?: string;
   /** When true, push operations are blocked — workspace syncs in pull-only mode */
   readOnly?: boolean;
+  /** When true, workspace data is encrypted before being pushed to the remote. */
+  encryptRemote?: boolean;
+  /** Remote passphrase encrypted with Electron safeStorage (base64). Never plaintext. */
+  encryptedRemotePassphrase?: string;
+  /**
+   * Transient field: populated by readSyncConfig after decrypting
+   * encryptedRemotePassphrase — never written to disk.
+   */
+  remotePassphrase?: string;
+  /** True when workspace was created by importing a shared sync export file. */
+  isShared?: boolean;
+  /** Sharing policy from the export package. Present only when isShared is true. */
+  sharePolicy?: SyncSharePolicy;
+  /** True when this workspace was imported from a passphrase-encrypted share package. */
+  importedEncrypted?: boolean;
 }
 
 export type SyncConfigStore = Record<string, StoredSyncConfig>;
@@ -243,8 +265,24 @@ export async function readSyncConfig(workspaceId: string): Promise<StoredSyncCon
   const metadata = (raw.metadata && typeof raw.metadata === 'object') ? raw.metadata as SyncMetadata : undefined;
   const lastSynced = typeof raw.lastSynced === 'string' ? raw.lastSynced : undefined;
   const readOnly = raw.readOnly === true ? true : undefined;
+  const encryptRemote = raw.encryptRemote === true ? true : undefined;
+  const encryptedRemotePassphrase = typeof raw.encryptedRemotePassphrase === 'string' ? raw.encryptedRemotePassphrase : undefined;
+  const isShared = raw.isShared === true ? true : undefined;
+  const sharePolicy = (
+    raw.sharePolicy &&
+    typeof raw.sharePolicy === 'object' &&
+    typeof (raw.sharePolicy as Record<string, unknown>).forceReadOnly === 'boolean' &&
+    typeof (raw.sharePolicy as Record<string, unknown>).sharingEnabled === 'boolean'
+  ) ? raw.sharePolicy as SyncSharePolicy : undefined;
+  const importedEncrypted = raw.importedEncrypted === true ? true : undefined;
   if (!provider) return null;
-  return { provider, config, metadata, lastSynced, readOnly };
+
+  let remotePassphrase: string | undefined;
+  if (encryptedRemotePassphrase) {
+    remotePassphrase = await decryptValue(encryptedRemotePassphrase);
+  }
+
+  return { provider, config, metadata, lastSynced, readOnly, encryptRemote, encryptedRemotePassphrase, remotePassphrase, isShared, sharePolicy, importedEncrypted };
 }
 
 /** Write the sync config for a specific workspace (merges into the store file). */
@@ -254,15 +292,34 @@ export async function writeSyncConfig(
   config: Record<string, string>,
   metadata?: SyncMetadata,
   readOnly?: boolean,
+  opts?: {
+    encryptRemote?: boolean;
+    remotePassphrase?: string;
+    isShared?: boolean;
+    sharePolicy?: SyncSharePolicy;
+    importedEncrypted?: boolean;
+  },
 ): Promise<void> {
   const api = eAPI();
   let store: SyncConfigStore = {};
+
+  // Encrypt the remote passphrase before storing
+  let encryptedRemotePassphrase: string | undefined;
+  if (opts?.encryptRemote && opts?.remotePassphrase) {
+    encryptedRemotePassphrase = await encryptValue(opts.remotePassphrase);
+  }
+
   const entry: StoredSyncConfig = {
     provider,
     config,
     metadata,
     lastSynced: metadata?.lastSyncedAt,
     ...(readOnly ? { readOnly: true } : {}),
+    ...(opts?.encryptRemote ? { encryptRemote: true } : {}),
+    ...(encryptedRemotePassphrase ? { encryptedRemotePassphrase } : {}),
+    ...(opts?.isShared ? { isShared: true } : {}),
+    ...(opts?.sharePolicy ? { sharePolicy: opts.sharePolicy } : {}),
+    ...(opts?.importedEncrypted ? { importedEncrypted: true } : {}),
   };
   if (api) {
     try {
@@ -326,8 +383,53 @@ export async function decryptValue(encrypted: string): Promise<string> {
   if (api) {
     const decrypted = await api.decryptString(encrypted);
     if (decrypted !== null) return decrypted;
+    // safeStorage decryption failed — this typically means the encrypted value
+    // was written on a different machine, by a different OS user, or after an
+    // app reinstall that rotated the keychain key. The raw ciphertext is
+    // returned as a best-effort fallback; callers should surface a warning.
+    console.warn('[storageDriver] decryptValue: safeStorage decryption failed. The value may have been encrypted on a different machine or installation.');
   }
   return encrypted;
+}
+
+/**
+ * Encrypt secret environment variable values before writing to disk.
+ * Returns a deep copy — does not mutate the input.
+ *
+ * IMPORTANT: Must only be called with Redux-state (plaintext) data. Never pass
+ * data that was already returned by encryptWorkspaceSecrets — double-encrypting
+ * will produce unrecoverable ciphertext.
+ */
+export async function encryptWorkspaceSecrets(data: WorkspaceData): Promise<WorkspaceData> {
+  const environments = await Promise.all(
+    data.environments.map(async env => ({
+      ...env,
+      values: await Promise.all(
+        env.values.map(async v =>
+          v.secret ? { ...v, value: await encryptValue(v.value) } : v
+        )
+      ),
+    }))
+  );
+  return { ...data, environments };
+}
+
+/**
+ * Decrypt secret environment variable values after reading from disk.
+ * Returns a deep copy — does not mutate the input.
+ */
+export async function decryptWorkspaceSecrets(data: WorkspaceData): Promise<WorkspaceData> {
+  const environments = await Promise.all(
+    data.environments.map(async env => ({
+      ...env,
+      values: await Promise.all(
+        env.values.map(async v =>
+          v.secret ? { ...v, value: await decryptValue(v.value) } : v
+        )
+      ),
+    }))
+  );
+  return { ...data, environments };
 }
 
 // ─── Snapshot helpers ─────────────────────────────────────────────────────────
@@ -454,5 +556,43 @@ export async function writeSavedRuns(workspaceId: string, runs: SavedRunnerRun[]
   if (api) {
     const dir = await api.getDataDir();
     await api.writeJsonFile(`${dir}/workspaces/${workspaceId}/runner-saved.json`, runs);
+  }
+}
+
+// ─── Tab session (open tabs per workspace) ────────────────────────────────────
+
+export interface PersistedTabSession {
+  tabs: Array<{ id: string; collectionId: string; itemId: string }>;
+  activeTabId: string | null;
+}
+
+const LS_TAB_SESSION = (id: string) => `apilix_tab_session_${id}`;
+
+export async function readTabSession(workspaceId: string): Promise<PersistedTabSession | null> {
+  const api = eAPI();
+  if (api) {
+    try {
+      const dir = await api.getDataDir();
+      const data = await api.readJsonFile(`${dir}/workspaces/${workspaceId}/tab-session.json`);
+      if (data) return data as PersistedTabSession;
+    } catch { /* fall through */ }
+  }
+  return lsRead<PersistedTabSession>(LS_TAB_SESSION(workspaceId));
+}
+
+export async function writeTabSession(workspaceId: string, session: PersistedTabSession): Promise<void> {
+  lsWrite(LS_TAB_SESSION(workspaceId), session);
+  const api = eAPI();
+  if (api) {
+    const dir = await api.getDataDir();
+    await api.writeJsonFile(`${dir}/workspaces/${workspaceId}/tab-session.json`, session);
+  }
+}
+
+export async function deleteTabSession(workspaceId: string): Promise<void> {
+  lsDelete(LS_TAB_SESSION(workspaceId));
+  const api = eAPI();
+  if (api) {
+    await api.deleteFile(`${(await api.getDataDir())}/workspaces/${workspaceId}/tab-session.json`).catch(() => {});
   }
 }

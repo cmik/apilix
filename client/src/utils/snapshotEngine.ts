@@ -29,7 +29,8 @@ export async function createSnapshot(
   const timestamp = new Date().toISOString();
   const autoSummary = summary ?? `${data.collections.length} collection(s), auto-save`;
 
-  const snapshot: WorkspaceSnapshot = { snapshotId, timestamp, summary: autoSummary, data };
+  const encryptedData = await StorageDriver.encryptWorkspaceSecrets(data);
+  const snapshot: WorkspaceSnapshot = { snapshotId, timestamp, summary: autoSummary, data: encryptedData };
   await StorageDriver.writeSnapshot(workspaceId, snapshotId, snapshot);
 
   // Update history index
@@ -60,7 +61,12 @@ export async function loadSnapshot(
   workspaceId: string,
   snapshotId: string,
 ): Promise<WorkspaceSnapshot | null> {
-  return StorageDriver.readSnapshot(workspaceId, snapshotId) as Promise<WorkspaceSnapshot | null>;
+  const raw = await StorageDriver.readSnapshot(workspaceId, snapshotId) as WorkspaceSnapshot | null;
+  if (!raw) return null;
+  return {
+    ...raw,
+    data: await StorageDriver.decryptWorkspaceSecrets(raw.data),
+  };
 }
 
 /**
