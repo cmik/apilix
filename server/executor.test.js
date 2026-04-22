@@ -424,6 +424,35 @@ test('applyAuth apikey header mode sets custom header', async () => {
   assert.equal(headers['X-API-Key'], 'abc123');
 });
 
+test('applyAuth apikey query mode appends query parameter and does not set header', async () => {
+  const headers = {};
+  const nextUrl = await applyAuth({
+    type: 'apikey',
+    apikey: [
+      { key: 'key', value: 'api_key' },
+      { key: 'value', value: 'abc123' },
+      { key: 'in', value: 'query' },
+    ],
+  }, headers, {}, 'https://example.com/data?x=1');
+
+  assert.equal(headers['api_key'], undefined);
+  assert.equal(nextUrl, 'https://example.com/data?x=1&api_key=abc123');
+});
+
+test('applyAuth apikey query mode resolves variables in key and value', async () => {
+  const headers = {};
+  const nextUrl = await applyAuth({
+    type: 'apikey',
+    apikey: [
+      { key: 'key', value: '{{k}}' },
+      { key: 'value', value: '{{v}}' },
+      { key: 'in', value: 'query' },
+    ],
+  }, headers, { k: 'token', v: 'value-1' }, 'https://example.com/data');
+
+  assert.equal(nextUrl, 'https://example.com/data?token=value-1');
+});
+
 test('applyAuth noauth does not modify headers', async () => {
   const headers = {};
   await applyAuth({ type: 'noauth' }, headers, {});
@@ -434,6 +463,37 @@ test('applyAuth null auth does not modify headers', async () => {
   const headers = {};
   await applyAuth(null, headers, {});
   assert.deepEqual(headers, {});
+});
+
+test('executeRequest apikey query mode sends API key as URL parameter', async () => {
+  setExecutorConfig({ followRedirects: false, requestTimeout: 3000, sslVerification: false });
+
+  await withServer((req, res) => {
+    const fullUrl = new URL(req.url, 'http://127.0.0.1');
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ token: fullUrl.searchParams.get('token') || '' }));
+  }, async (url) => {
+    const item = {
+      name: 'API key in query',
+      request: {
+        method: 'GET',
+        url,
+        auth: {
+          type: 'apikey',
+          apikey: [
+            { key: 'key', value: 'token' },
+            { key: 'value', value: 'abc123' },
+            { key: 'in', value: 'query' },
+          ],
+        },
+      },
+    };
+
+    const result = await executeRequest(item, makeContext());
+    assert.equal(result.error, null);
+    const parsed = JSON.parse(result.body);
+    assert.equal(parsed.token, 'abc123');
+  });
 });
 
 // ─── apx.executeRequest child mutation propagation ───────────────────────────
