@@ -216,6 +216,7 @@ export async function pullForMerge(
     remoteResult = { ...remoteResult, data: await decryptWorkspaceData(remoteResult.data, syncConfig.remotePassphrase) };
   }
 
+  const remoteWasEmpty = remoteResult.data === null;
   const remoteData = remoteResult.data ?? localData;
 
   const baseData = await resolveMergeBaseData(syncConfig, localData);
@@ -226,6 +227,7 @@ export async function pullForMerge(
     baseData,
     localData,
     remoteData,
+    remoteWasEmpty,
     mergeResult,
     remoteVersion: remoteResult.remoteState.version,
     syncConfig,
@@ -305,6 +307,7 @@ export async function rebaseAfterStale(
     remoteResult = { ...remoteResult, data: await decryptWorkspaceData(remoteResult.data, syncConfig.remotePassphrase) };
   }
 
+  const remoteWasEmpty = remoteResult.data === null;
   const remoteData = remoteResult.data ?? localData;
   const mergeResult = mergeWorkspaces(previousRemoteData, localData, remoteData);
 
@@ -312,6 +315,7 @@ export async function rebaseAfterStale(
     baseData: previousRemoteData,
     localData,
     remoteData,
+    remoteWasEmpty,
     mergeResult,
     remoteVersion: remoteResult.remoteState.version,
     syncConfig,

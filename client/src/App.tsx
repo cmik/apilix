@@ -30,7 +30,6 @@ import {
   applyMerged as syncApplyMerged,
   rebaseAfterStale,
   getRemoteSyncState,
-  checkConflict,
   hasLocalUnpushedChanges,
   ConflictError,
   StaleVersionError,
@@ -43,6 +42,11 @@ import {
   type WorkspaceSwitchDecision,
   type UnsavedRequestTabSummary,
 } from './utils/requestTabSyncGuard';
+import {
+  getQuickSyncInitialPhase,
+  getQuickSyncMergeAction,
+  getQuickSyncSuccessMessage,
+} from './utils/quickSyncFlow';
 import { isVersionGreater, fetchLatestGitHubVersion } from './utils/versionUtils';
 
 // --- Env Quick Panel ---
@@ -782,33 +786,129 @@ export default function App() {
       const localData = { ...getCurrentWorkspaceData(), collections: syncedCollections };
 
       const hasUnpushed = await hasLocalUnpushedChanges(currentCfg, localData);
-      if (hasUnpushed && !currentCfg.readOnly) {
-        const remoteAhead = await checkConflict(currentCfg);
-        if (remoteAhead) {
-          const pkg = await pullForMerge(currentCfg, localData);
-          if (pkg.mergeResult.conflicts.length === 0) {
-            // No real conflicts — apply auto-merged result and continue.
-            const mergedData = pkg.mergeResult.merged;
-            await SnapshotEngine.createSnapshot(state.activeWorkspaceId, localData, 'pre-merge backup');
-            if (pkg.remoteVersion) {
-              await syncApplyMerged(currentCfg, mergedData, pkg.remoteVersion);
-            } else {
-              await syncPush(currentCfg, mergedData);
-            }
-            const pushedState = await getRemoteSyncState(currentCfg);
-            const meta = await persistSyncBase(currentCfg, mergedData, pushedState.timestamp, pushedState.version, 'sync base after auto-merge push');
-            currentCfg = { ...currentCfg, metadata: meta };
-            dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...mergedData, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
-            await StorageDriver.writeWorkspace(currentCfg.workspaceId, mergedData);
-            setLastSuccessfulSyncAt(meta.lastSyncedAt ?? null);
-            setQuickSyncFeedback('Synced (auto-merged)', 'ok');
-            return;
-          }
+      const initialPhase = getQuickSyncInitialPhase({
+        hasLocalUnpushed: hasUnpushed,
+        readOnly: currentCfg.readOnly === true,
+      });
+
+      if (initialPhase === 'merge-before-push') {
+        const pkg = await pullForMerge(currentCfg, localData);
+        const mergeAction = getQuickSyncMergeAction({
+          conflictCount: pkg.mergeResult.conflicts.length,
+          readOnly: currentCfg.readOnly === true,
+        });
+
+        if (mergeAction === 'open-merge-review') {
           setQuickSyncConflictPackage(pkg);
-          setQuickSyncFeedback('Remote has newer changes — review merge before pushing', 'warning');
+          setQuickSyncFeedback('Conflict detected — review merge', 'warning');
           return;
         }
 
+        const mergedData = pkg.mergeResult.merged;
+        await SnapshotEngine.createSnapshot(state.activeWorkspaceId, localData, 'pre-merge backup');
+
+        let pushed = false;
+        if (mergeAction === 'apply-merged-and-push') {
+          if (mergedData.collections.length === 0) {
+            const confirmed = await new Promise<boolean>(resolve =>
+              setPendingEmptyPushConfirm({ resolve })
+            );
+            if (!confirmed) {
+              setQuickSyncFeedback('Sync canceled', 'info');
+              return;
+            }
+          }
+
+          if (pkg.remoteVersion) {
+            await syncApplyMerged(currentCfg, mergedData, pkg.remoteVersion);
+          } else {
+            await syncPush(currentCfg, mergedData);
+          }
+          pushed = true;
+        }
+
+        const pushedState = await getRemoteSyncState(currentCfg);
+        const meta = await persistSyncBase(
+          currentCfg,
+          mergedData,
+          pushedState.timestamp,
+          pushedState.version,
+          pushed
+            ? 'sync base after quick-sync pull-then-push'
+            : 'sync base after quick-sync pull-merge-local'
+        );
+        currentCfg = { ...currentCfg, metadata: meta };
+        dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...mergedData, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
+        await StorageDriver.writeWorkspace(currentCfg.workspaceId, mergedData);
+        setLastSuccessfulSyncAt(meta.lastSyncedAt ?? null);
+        setQuickSyncFeedback(
+          getQuickSyncSuccessMessage({
+            readOnly: currentCfg.readOnly === true,
+            pulledData: !pkg.remoteWasEmpty,
+            pushed,
+            remoteEmpty: pkg.remoteWasEmpty,
+            usedMergePath: true,
+          }),
+          'ok'
+        );
+        return;
+      }
+
+      let result: Awaited<ReturnType<typeof syncPullWithMeta>>;
+      try {
+        result = await syncPullWithMeta(currentCfg);
+      } catch (err: unknown) {
+        if (err instanceof ConflictError) {
+          const pkg = await pullForMerge(currentCfg, localData);
+          if (pkg.mergeResult.conflicts.length > 0) {
+            setQuickSyncConflictPackage(pkg);
+            setQuickSyncFeedback('Conflict detected — review merge', 'warning');
+            return;
+          }
+
+          const mergedData = pkg.mergeResult.merged;
+          const remoteState = await getRemoteSyncState(currentCfg);
+          const meta = await persistSyncBase(
+            currentCfg,
+            mergedData,
+            remoteState.timestamp,
+            remoteState.version,
+            'sync base after quick-sync conflict auto-merge'
+          );
+          currentCfg = { ...currentCfg, metadata: meta };
+          dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...mergedData, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
+          await StorageDriver.writeWorkspace(currentCfg.workspaceId, mergedData);
+          setLastSuccessfulSyncAt(meta.lastSyncedAt ?? null);
+          setQuickSyncFeedback(
+            getQuickSyncSuccessMessage({
+              readOnly: currentCfg.readOnly === true,
+              pulledData: !pkg.remoteWasEmpty,
+              pushed: false,
+              remoteEmpty: pkg.remoteWasEmpty,
+              usedMergePath: true,
+            }),
+            'ok'
+          );
+          return;
+        }
+        throw err;
+      }
+
+      let pulledData = false;
+      let remoteEmpty = false;
+      let pushed = false;
+
+      if (result.data) {
+        pulledData = true;
+        dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...result.data, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
+        await StorageDriver.writeWorkspace(currentCfg.workspaceId, result.data);
+        const meta = await persistSyncBase(currentCfg, result.data, result.remoteState.timestamp, result.remoteState.version, 'sync base after quick-sync pull');
+        currentCfg = { ...currentCfg, metadata: meta };
+      } else {
+        remoteEmpty = true;
+      }
+
+      if (hasUnpushed && !currentCfg.readOnly && remoteEmpty) {
         if (localData.collections.length === 0) {
           const confirmed = await new Promise<boolean>(resolve =>
             setPendingEmptyPushConfirm({ resolve })
@@ -820,51 +920,23 @@ export default function App() {
         }
 
         await syncPush(currentCfg, localData);
+        pushed = true;
         const pushedState = await getRemoteSyncState(currentCfg);
-        const meta = await persistSyncBase(currentCfg, localData, pushedState.timestamp, pushedState.version, 'sync base after quick-sync push');
+        const meta = await persistSyncBase(currentCfg, localData, pushedState.timestamp, pushedState.version, 'sync base after quick-sync pull-empty-then-push');
         currentCfg = { ...currentCfg, metadata: meta };
       }
 
-      try {
-        const result = await syncPullWithMeta(currentCfg);
-        if (result.data) {
-          dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...result.data, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
-          await StorageDriver.writeWorkspace(currentCfg.workspaceId, result.data);
-          const meta = await persistSyncBase(currentCfg, result.data, result.remoteState.timestamp, result.remoteState.version, 'sync base after quick-sync pull');
-          currentCfg = { ...currentCfg, metadata: meta };
-          setLastSuccessfulSyncAt(meta.lastSyncedAt ?? null);
-          setQuickSyncFeedback(hasUnpushed && !currentCfg.readOnly ? 'Synced (pushed + pulled)' : 'Synced (pulled)', 'ok');
-        } else {
-          setQuickSyncFeedback(hasUnpushed && !currentCfg.readOnly ? 'Pushed local changes (remote empty)' : 'Remote is empty — nothing to pull', 'info');
-        }
-      } catch (err: unknown) {
-        if (err instanceof ConflictError) {
-          const pkg = await pullForMerge(currentCfg, localData);
-          if (pkg.mergeResult.conflicts.length === 0) {
-            const mergedData = pkg.mergeResult.merged;
-            await SnapshotEngine.createSnapshot(state.activeWorkspaceId, localData, 'pre-merge backup');
-            if (!currentCfg.readOnly) {
-              if (pkg.remoteVersion) {
-                await syncApplyMerged(currentCfg, mergedData, pkg.remoteVersion);
-              } else {
-                await syncPush(currentCfg, mergedData);
-              }
-            }
-            const remoteState = await getRemoteSyncState(currentCfg);
-            const meta = await persistSyncBase(currentCfg, mergedData, remoteState.timestamp, remoteState.version, 'sync base after auto-merge');
-            currentCfg = { ...currentCfg, metadata: meta };
-            dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...mergedData, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
-            await StorageDriver.writeWorkspace(currentCfg.workspaceId, mergedData);
-            setLastSuccessfulSyncAt(meta.lastSyncedAt ?? null);
-            setQuickSyncFeedback(currentCfg.readOnly ? 'Synced (auto-merged locally)' : 'Synced (auto-merged)', 'ok');
-          } else {
-            setQuickSyncConflictPackage(pkg);
-            setQuickSyncFeedback('Conflict detected — review merge', 'warning');
-          }
-        } else {
-          throw err;
-        }
-      }
+      setLastSuccessfulSyncAt(currentCfg.metadata?.lastSyncedAt ?? null);
+      setQuickSyncFeedback(
+        getQuickSyncSuccessMessage({
+          readOnly: currentCfg.readOnly === true,
+          pulledData,
+          pushed,
+          remoteEmpty,
+          usedMergePath: false,
+        }),
+        pulledData || pushed ? 'ok' : 'info'
+      );
     } catch (err: unknown) {
       setQuickSyncFeedback((err as Error).message, 'error');
     } finally {
