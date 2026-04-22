@@ -981,7 +981,7 @@ function ExportPanel({
     // Always embed the remote passphrase when remote encryption is configured
     const remotePassphrase = (encryptRemote && inheritedPassphrase) ? inheritedPassphrase : undefined;
 
-    const configWithId = { ...fields, remoteWorkspaceId: workspaceId };
+    const configWithId = { ...fields, remoteWorkspaceId: fields.remoteWorkspaceId ?? workspaceId };
     const pkg = await buildSyncExportPackage(workspaceName, provider, configWithId, passphrase, {
       sharePolicy,
       remotePassphrase,
@@ -1154,6 +1154,27 @@ function SyncTab() {
   const workspaceId = state.activeWorkspaceId;
   const isBrowserMode = !(window as { electronAPI?: unknown }).electronAPI;
 
+  const makeRemoteWorkspaceId = useCallback(() => {
+    let generated = generateId();
+    while (generated === workspaceId) {
+      generated = generateId();
+    }
+    return generated;
+  }, [workspaceId]);
+
+  const ensureDraftRemoteWorkspaceId = useCallback((
+    config: Record<string, string>,
+    fallbackRemoteId?: string,
+  ) => {
+    const current = config.remoteWorkspaceId?.trim();
+    if (current) return { ...config, remoteWorkspaceId: current };
+
+    const inherited = fallbackRemoteId?.trim();
+    if (inherited) return { ...config, remoteWorkspaceId: inherited };
+
+    return { ...config, remoteWorkspaceId: makeRemoteWorkspaceId() };
+  }, [makeRemoteWorkspaceId]);
+
   const [provider, setProvider] = useState<SyncProvider>(isBrowserMode ? 'http' : 's3');
   const [fields, setFields] = useState<Record<string, string>>({});
   const [providerDrafts, setProviderDrafts] = useState<Record<SyncProvider, Record<string, string>>>(
@@ -1210,7 +1231,12 @@ function SyncTab() {
         setSharePolicy(cfg.sharePolicy);
         setImportedEncrypted(cfg.importedEncrypted === true);
       } else {
-        setFields({});
+        const initialConfig = ensureDraftRemoteWorkspaceId({});
+        setFields(initialConfig);
+        setProviderDrafts(prev => ({
+          ...prev,
+          [provider]: initialConfig,
+        }));
         setSyncMetadata(undefined);
         setReadOnly(false);
         setEncryptRemote(false);
@@ -1223,7 +1249,7 @@ function SyncTab() {
       setLoaded(true);
     });
     return () => { active = false; };
-  }, [workspaceId]);
+  }, [workspaceId, provider, ensureDraftRemoteWorkspaceId]);
 
   async function logActivity(action: SyncActivityEntry['action'], level: SyncActivityLevel, message: string, detail?: string) {
     const entry: SyncActivityEntry = {
@@ -1295,11 +1321,16 @@ function SyncTab() {
     setProvider(prevProvider => {
       if (prevProvider === nextProvider) return prevProvider;
       setProviderDrafts(drafts => {
+        const nextProviderConfig = ensureDraftRemoteWorkspaceId(
+          drafts[nextProvider] ?? {},
+          fields.remoteWorkspaceId,
+        );
         const nextDrafts = {
           ...drafts,
           [prevProvider]: fields,
+          [nextProvider]: nextProviderConfig,
         };
-        setFields(nextDrafts[nextProvider] ?? {});
+        setFields(nextProviderConfig);
         return nextDrafts;
       });
       setConflict(null);
@@ -1577,6 +1608,17 @@ function SyncTab() {
           ))}
         </div>
       )}
+
+      <div>
+        <label className="block text-[11px] text-slate-500 mb-1">Remote Workspace ID</label>
+        <input
+          type="text"
+          value={fields.remoteWorkspaceId ?? workspaceId}
+          readOnly
+          className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-xs font-mono text-slate-300 outline-none opacity-80"
+        />
+        <p className="text-[10px] text-slate-500 mt-1">Stable remote identifier used by sync providers (for S3/MinIO this maps to the object key id).</p>
+      </div>
 
       <button
         onClick={handleTestConnection}
