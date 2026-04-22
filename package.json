@@ -3,12 +3,16 @@
   "version": "1.0.0-beta.20",
   "description": "APILIX - Alternative Platform for Instant Live API eXecution",
   "main": "electron/main.js",
+  "bin": {
+    "apilix": "bin/apilix.js"
+  },
   "engines": {
     "node": ">=20.19.0",
     "npm": ">=9"
   },
   "scripts": {
     "start": "concurrently -k -p \"[{name}]\" -n \"SERVER,CLIENT\" -c \"bgYellow.bold,bgCyan.bold\" \"npm run server\" \"npm run client\"",
+    "cli": "node bin/apilix.js",
     "server": "node server/index.js",
     "test:server": "cd server && npm test",
     "client": "cd client && npm run dev",

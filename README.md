@@ -73,6 +73,68 @@ npm start
 npm run electron:dev
 ```
 
+### Run Collections From CI
+
+Use the CLI runner when you want to execute a collection in a pipeline without launching the UI:
+
+```bash
+npm run cli -- run \
+  --collection ./collection.json \
+  --environment ./environment.json \
+  --reporter both \
+  --out-dir ./artifacts
+```
+
+This writes:
+
+- `./artifacts/apilix-run.json`
+- `./artifacts/apilix-run.junit.xml`
+
+Common patterns:
+
+```bash
+# Print the default JSON report to stdout
+npm run cli -- run \
+  --collection ./collection.json \
+  --environment ./environment.json
+
+# Write a single JUnit file for CI test publishing
+npm run cli -- run \
+  --collection ./collection.json \
+  --reporter junit \
+  --out ./artifacts/apilix.junit.xml
+
+# Drive one iteration per CSV row
+npm run cli -- run \
+  --collection ./collection.json \
+  --environment ./environment.json \
+  --csv ./data.csv \
+  --reporter both \
+  --out-dir ./artifacts
+```
+
+Useful flags:
+
+- `--csv ./data.csv` to run one iteration per CSV row
+- `--iterations 5` to repeat a run without a CSV file
+- `--execute-child-requests` to allow `apx.sendRequest()` inside scripts
+- `--no-conditional-execution` to ignore `setNextRequest()` flow overrides
+- `--timeout 10000` to override the default request timeout
+- `--ssl-verification` to enforce TLS verification in CI
+- `--no-follow-redirects` to surface redirect responses instead of following them automatically
+
+Exit codes:
+
+- `0` successful run with no failed assertions or request errors
+- `1` failed assertions, request errors, or runner flow errors
+- `2` invalid CLI usage or unreadable/invalid input files
+
+Notes:
+
+- `json` and `junit` reporters write to standard output unless you pass `--out` or `--out-dir`.
+- `--reporter both` always requires `--out-dir`.
+- Malformed CSV input fails fast with exit code `2` instead of silently falling back to iteration-only execution.
+
 ---
 
 ## Build Desktop Installers

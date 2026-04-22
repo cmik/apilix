@@ -9,6 +9,11 @@ The Collection Runner executes multiple requests from a collection in sequence, 
 - [Collection Runner](#collection-runner)
   - [Table of Contents](#table-of-contents)
   - [Overview](#overview)
+  - [Run Collections from the CLI](#run-collections-from-the-cli)
+    - [Before You Start](#before-you-start)
+    - [Basic Workflow](#basic-workflow)
+    - [Reporter Output](#reporter-output)
+    - [CLI Examples](#cli-examples)
   - [Opening the Runner](#opening-the-runner)
   - [Selecting Requests](#selecting-requests)
     - [Reordering Requests](#reordering-requests)
@@ -67,6 +72,118 @@ Key capabilities:
 | **Child requests** | Requests triggered by `apx.executeRequest()` inside scripts are shown nested under their parent |
 
 ![Collection Runner overview](images/runner-overview.png)
+
+## Run Collections from the CLI
+
+The same runner engine is also available from the command line for CI jobs, scheduled checks, and headless local validation. Use the CLI when you want Apilix to execute a collection, apply environments and CSV data, and emit machine-readable JSON or JUnit reports without opening the UI.
+
+### Before You Start
+
+- Export or save the collection you want to run as a Postman/Apilix collection JSON file.
+- Export the environment, globals, or collection variables you want to apply as JSON files when needed.
+- If you want data-driven iterations, prepare a CSV file with a header row.
+
+### Basic Workflow
+
+1. Open a terminal in your Apilix project checkout.
+2. Run the CLI with the `run` command and pass a collection file.
+3. Optionally add `--environment`, `--globals`, `--collection-vars`, or `--csv`.
+4. Choose a reporter: `json`, `junit`, or `both`.
+5. Write the report to standard output, a single file, or an output directory.
+
+Basic example:
+
+```bash
+npm run cli -- run \
+  --collection ./collection.json \
+  --environment ./environment.json
+```
+
+By default, the CLI writes a JSON report to standard output and prints a short completion summary to standard error.
+
+### Reporter Output
+
+| Reporter | Output | Best for |
+|---|---|---|
+| `json` | Apilix run report with summary, config, iterations, request results, and errors | Local debugging, custom scripts, artifact storage |
+| `junit` | JUnit XML with request, test, child-request, and run-error cases | CI systems that ingest test reports |
+| `both` | Writes both formats together | Pipelines that want machine-readable artifacts plus test dashboards |
+
+Output rules:
+
+- `--reporter json` writes JSON to standard output unless `--out` or `--out-dir` is set.
+- `--reporter junit` writes JUnit XML to standard output unless `--out` or `--out-dir` is set.
+- `--reporter both` requires `--out-dir` and writes `apilix-run.json` plus `apilix-run.junit.xml`.
+- Invalid collection files, unreadable files, malformed JSON, and malformed CSV input fail immediately with exit code `2`.
+
+### CLI Examples
+
+Run a collection once and print JSON to the terminal:
+
+```bash
+npm run cli -- run \
+  --collection ./collection.json \
+  --environment ./environment.json \
+  --reporter json
+```
+
+Write a JUnit report for CI test publishing:
+
+```bash
+npm run cli -- run \
+  --collection ./collection.json \
+  --environment ./environment.json \
+  --reporter junit \
+  --out ./artifacts/apilix.junit.xml
+```
+
+Run one iteration per CSV row and publish both report formats:
+
+```bash
+npm run cli -- run \
+  --collection ./collection.json \
+  --environment ./environment.json \
+  --csv ./users.csv \
+  --reporter both \
+  --out-dir ./artifacts
+```
+
+Enable child requests and keep `setNextRequest()` flow control active:
+
+```bash
+npm run cli -- run \
+  --collection ./workflow.json \
+  --environment ./environment.json \
+  --execute-child-requests \
+  --reporter json \
+  --out ./artifacts/workflow.json
+```
+
+Disable conditional jumps and force straight-line execution order:
+
+```bash
+npm run cli -- run \
+  --collection ./workflow.json \
+  --no-conditional-execution \
+  --reporter json
+```
+
+Adjust network behavior for CI:
+
+```bash
+npm run cli -- run \
+  --collection ./collection.json \
+  --timeout 10000 \
+  --ssl-verification \
+  --no-follow-redirects \
+  --reporter json
+```
+
+> **Tips**
+>
+> - Use `--csv` when each data row should become a separate iteration; `--iterations` is only used when no CSV file is supplied.
+> - Use `--reporter both --out-dir ...` when your CI system needs JUnit for test dashboards and JSON for later analysis.
+> - If the CLI reports an invalid CSV error, fix the file before retrying — Apilix stops before the run begins rather than silently falling back to iteration-only mode.
 
 ---
 
