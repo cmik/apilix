@@ -381,6 +381,16 @@ Upload the CSV in the Runner panel. Each row becomes one iteration and every col
 
 Without a CSV you can still set **Iterations** (1–100) to repeat a collection multiple times.
 
+### Runner Streaming Memory Behavior
+
+Runner executions started through the server streaming endpoint (`/api/run`) are processed in low-memory mode:
+
+- The server streams per-request events as they happen.
+- The server does **not** retain full per-request payload history in memory.
+- The server does **not** retain per-iteration history in memory.
+
+This keeps memory usage stable for large CSV runs and large response bodies.
+
 ---
 
 ## Tabs

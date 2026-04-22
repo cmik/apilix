@@ -203,6 +203,35 @@ Build standalone CLI binaries (macOS/Linux/Windows):
 npm run cli:build:binaries
 ```
 
+### Standalone Binary Examples
+
+After building binaries, run Apilix directly without `npm run`.
+
+macOS:
+
+```bash
+./dist/cli/apilix-macos run ./collection.json -e ./environment.json
+```
+
+Linux:
+
+```bash
+./dist/cli/apilix-linux run ./collection.json -e ./environment.json --reporter json
+```
+
+Windows (PowerShell):
+
+```powershell
+.\dist\cli\apilix-win.exe run .\collection.json -e .\environment.json --reporter both --out-dir .\artifacts
+```
+
+If you rename one binary to `apilix` and put it on your `PATH`, you can use shorter commands:
+
+```bash
+apilix run ./collection.json --reporter table
+apilix run ./collection.json --reporter junit --out ./artifacts/apilix.junit.xml
+```
+
 > **Tips**
 >
 > - Use `--csv` when each data row should become a separate iteration; `--iterations` is only used when no CSV file is supplied.
