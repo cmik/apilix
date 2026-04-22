@@ -5,8 +5,8 @@ const cors = require('cors');
 const multer = require('multer');
 const vm = require('vm');
 const axios = require('axios');
-const { executeRequest, setExecutorConfig } = require('./executor');
-const { prepareCollectionRun, executePreparedCollectionRun, InputError } = require('./collectionRunner');
+const { executeRequest, setExecutorConfig } = require('../src/core/request-engine');
+const { prepareCollectionRun, executePreparedCollectionRun, InputError } = require('../src/core/collection-runner');
 const { refreshOAuth2Token, exchangeAuthorizationCodeForToken } = require('./oauth');
 
 const app = express();
@@ -267,6 +267,8 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
     await executePreparedCollectionRun(prepared, {
       runState,
       onEvent: sendEvent,
+      collectIterations: false,
+      collectResults: false,
     });
 
     res.end();

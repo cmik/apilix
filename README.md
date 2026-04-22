@@ -79,11 +79,13 @@ Use the CLI runner when you want to execute a collection in a pipeline without l
 
 ```bash
 npm run cli -- run \
-  --collection ./collection.json \
-  --environment ./environment.json \
+  ./collection.json \
+  -e ./environment.json \
   --reporter both \
   --out-dir ./artifacts
 ```
+
+The collection file can be passed either as a positional argument (`run ./collection.json`) or with the legacy flag (`run --collection ./collection.json`).
 
 This writes:
 
@@ -93,24 +95,41 @@ This writes:
 Common patterns:
 
 ```bash
-# Print the default JSON report to stdout
+# Default run: terminal summary table (Newman-style)
 npm run cli -- run \
-  --collection ./collection.json \
-  --environment ./environment.json
+  ./collection.json \
+  -e ./environment.json
+
+# Print JSON report to stdout
+npm run cli -- run \
+  ./collection.json \
+  -e ./environment.json \
+  --reporter json
 
 # Write a single JUnit file for CI test publishing
 npm run cli -- run \
-  --collection ./collection.json \
+  ./collection.json \
   --reporter junit \
   --out ./artifacts/apilix.junit.xml
 
 # Drive one iteration per CSV row
 npm run cli -- run \
-  --collection ./collection.json \
-  --environment ./environment.json \
+  ./collection.json \
+  -e ./environment.json \
   --csv ./data.csv \
   --reporter both \
   --out-dir ./artifacts
+
+# Backward-compatible legacy syntax
+npm run cli -- run \
+  --collection ./collection.json \
+  --environment ./environment.json \
+  --reporter json
+
+# Disable ANSI colors for plain CI logs
+npm run cli -- run \
+  ./collection.json \
+  --no-color
 ```
 
 Useful flags:
@@ -122,6 +141,7 @@ Useful flags:
 - `--timeout 10000` to override the default request timeout
 - `--ssl-verification` to enforce TLS verification in CI
 - `--no-follow-redirects` to surface redirect responses instead of following them automatically
+- `--no-color` to output plain text without ANSI color sequences
 
 Exit codes:
 
@@ -131,9 +151,24 @@ Exit codes:
 
 Notes:
 
+- By default, the CLI prints a per-request summary table to the terminal.
 - `json` and `junit` reporters write to standard output unless you pass `--out` or `--out-dir`.
 - `--reporter both` always requires `--out-dir`.
 - Malformed CSV input fails fast with exit code `2` instead of silently falling back to iteration-only execution.
+
+---
+
+## Build Standalone CLI Binaries
+
+Build standalone `apilix` binaries for macOS, Linux, and Windows using `pkg`:
+
+```bash
+npm run cli:build:binaries
+```
+
+Output directory:
+
+- `dist/cli/`
 
 ---
 

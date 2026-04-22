@@ -87,11 +87,19 @@ The same runner engine is also available from the command line for CI jobs, sche
 
 1. Open a terminal in your Apilix project checkout.
 2. Run the CLI with the `run` command and pass a collection file.
-3. Optionally add `--environment`, `--globals`, `--collection-vars`, or `--csv`.
-4. Choose a reporter: `json`, `junit`, or `both`.
-5. Write the report to standard output, a single file, or an output directory.
+3. Optionally add `-e/--environment`, `--globals`, `--collection-vars`, or `--csv`.
+4. Choose a reporter: `table`, `json`, `junit`, or `both`.
+5. Write the report to terminal, standard output, a single file, or an output directory.
 
 Basic example:
+
+```bash
+npm run cli -- run \
+  ./collection.json \
+  -e ./environment.json
+```
+
+Legacy-compatible syntax (still supported):
 
 ```bash
 npm run cli -- run \
@@ -99,18 +107,20 @@ npm run cli -- run \
   --environment ./environment.json
 ```
 
-By default, the CLI writes a JSON report to standard output and prints a short completion summary to standard error.
+By default, the CLI writes a terminal summary table and prints a short completion summary to standard error.
 
 ### Reporter Output
 
 | Reporter | Output | Best for |
 |---|---|---|
+| `table` | Newman-like request table (request, status, time, assertions) | Quick local runs and troubleshooting |
 | `json` | Apilix run report with summary, config, iterations, request results, and errors | Local debugging, custom scripts, artifact storage |
 | `junit` | JUnit XML with request, test, child-request, and run-error cases | CI systems that ingest test reports |
 | `both` | Writes both formats together | Pipelines that want machine-readable artifacts plus test dashboards |
 
 Output rules:
 
+- `--reporter table` prints to terminal only.
 - `--reporter json` writes JSON to standard output unless `--out` or `--out-dir` is set.
 - `--reporter junit` writes JUnit XML to standard output unless `--out` or `--out-dir` is set.
 - `--reporter both` requires `--out-dir` and writes `apilix-run.json` plus `apilix-run.junit.xml`.
@@ -122,8 +132,8 @@ Run a collection once and print JSON to the terminal:
 
 ```bash
 npm run cli -- run \
-  --collection ./collection.json \
-  --environment ./environment.json \
+  ./collection.json \
+  -e ./environment.json \
   --reporter json
 ```
 
@@ -131,8 +141,8 @@ Write a JUnit report for CI test publishing:
 
 ```bash
 npm run cli -- run \
-  --collection ./collection.json \
-  --environment ./environment.json \
+  ./collection.json \
+  -e ./environment.json \
   --reporter junit \
   --out ./artifacts/apilix.junit.xml
 ```
@@ -141,8 +151,8 @@ Run one iteration per CSV row and publish both report formats:
 
 ```bash
 npm run cli -- run \
-  --collection ./collection.json \
-  --environment ./environment.json \
+  ./collection.json \
+  -e ./environment.json \
   --csv ./users.csv \
   --reporter both \
   --out-dir ./artifacts
@@ -152,8 +162,8 @@ Enable child requests and keep `setNextRequest()` flow control active:
 
 ```bash
 npm run cli -- run \
-  --collection ./workflow.json \
-  --environment ./environment.json \
+  ./workflow.json \
+  -e ./environment.json \
   --execute-child-requests \
   --reporter json \
   --out ./artifacts/workflow.json
@@ -163,7 +173,7 @@ Disable conditional jumps and force straight-line execution order:
 
 ```bash
 npm run cli -- run \
-  --collection ./workflow.json \
+  ./workflow.json \
   --no-conditional-execution \
   --reporter json
 ```
@@ -172,11 +182,25 @@ Adjust network behavior for CI:
 
 ```bash
 npm run cli -- run \
-  --collection ./collection.json \
+  ./collection.json \
   --timeout 10000 \
   --ssl-verification \
   --no-follow-redirects \
   --reporter json
+```
+
+Disable ANSI colors for plain CI logs:
+
+```bash
+npm run cli -- run \
+  ./collection.json \
+  --no-color
+```
+
+Build standalone CLI binaries (macOS/Linux/Windows):
+
+```bash
+npm run cli:build:binaries
 ```
 
 > **Tips**

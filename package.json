@@ -13,6 +13,8 @@
   "scripts": {
     "start": "concurrently -k -p \"[{name}]\" -n \"SERVER,CLIENT\" -c \"bgYellow.bold,bgCyan.bold\" \"npm run server\" \"npm run client\"",
     "cli": "node bin/apilix.js",
+    "cli:help": "node bin/apilix.js --help",
+    "cli:build:binaries": "pkg . --public --public-packages \"*\" --targets node20-macos-x64,node20-linux-x64,node20-win-x64 --out-path dist/cli",
     "server": "node server/index.js",
     "test:server": "cd server && npm test",
     "client": "cd client && npm run dev",
@@ -30,12 +32,34 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.908.0",
     "@aws-sdk/s3-request-presigner": "^3.908.0",
+    "chalk": "^4.1.2",
+    "commander": "^14.0.1",
     "concurrently": "^8.2.2"
   },
   "devDependencies": {
+    "@yao-pkg/pkg": "^6.18.2",
     "electron": "^41.1.1",
     "electron-builder": "^26.8.1",
     "wait-on": "^8.0.0"
+  },
+  "pkg": {
+    "scripts": [
+      "bin/**/*.js",
+      "src/**/*.js",
+      "server/collectionRunner.js",
+      "server/executor.js",
+      "server/sandbox.js",
+      "server/tlsUtils.js"
+    ],
+    "assets": [
+      "server/node_modules/**/*.cjs"
+    ],
+    "targets": [
+      "node20-macos-x64",
+      "node20-linux-x64",
+      "node20-win-x64"
+    ],
+    "outputPath": "dist/cli"
   },
   "build": {
     "appId": "com.apilix.app",

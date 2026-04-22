@@ -2,8 +2,9 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const http = require('node:http');
 
-const { InputError, prepareCollectionRun } = require('./collectionRunner');
+const { InputError, prepareCollectionRun, executePreparedCollectionRun } = require('./collectionRunner');
 
 // ─── Minimal valid collection fixture ─────────────────────────────────────────
 
@@ -27,6 +28,30 @@ function makeValidPayload(overrides = {}) {
     iterations: 1,
     ...overrides,
   };
+}
+
+async function withServer(handler, run) {
+  const server = http.createServer(handler);
+  await new Promise((resolve, reject) => {
+    server.listen(0, '127.0.0.1', err => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+
+  const address = server.address();
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    await run(baseUrl);
+  } finally {
+    await new Promise((resolve, reject) => {
+      server.close(err => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+  }
 }
 
 // ─── InputError ───────────────────────────────────────────────────────────────
@@ -146,5 +171,256 @@ describe('prepareCollectionRun — runId', () => {
   it('uses a provided runId', () => {
     const result = prepareCollectionRun(makeValidPayload(), { runId: 'my-fixed-id' });
     assert.equal(result.runId, 'my-fixed-id');
+  });
+});
+
+describe('executePreparedCollectionRun — result retention', () => {
+  it('collects full per-request result history by default', async () => {
+    await withServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    }, async (baseUrl) => {
+      const payload = makeValidPayload({
+        collection: {
+          info: { name: 'Test Collection' },
+          item: [
+            {
+              id: 'req-1',
+              name: 'Ping',
+              request: { method: 'GET', url: `${baseUrl}/ping` },
+            },
+          ],
+        },
+      });
+
+      const prepared = prepareCollectionRun(payload);
+      const run = await executePreparedCollectionRun(prepared);
+
+      assert.equal(run.iterations.length, 1);
+      assert.equal(run.iterations[0].results.length, 1);
+      assert.equal(run.iterations[0].results[0].name, 'Ping');
+      assert.equal(run.iterations[0].results[0].status, 200);
+    });
+  });
+
+  it('can skip in-memory result retention while still executing requests', async () => {
+    await withServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    }, async (baseUrl) => {
+      const payload = makeValidPayload({
+        collection: {
+          info: { name: 'Test Collection' },
+          item: [
+            {
+              id: 'req-1',
+              name: 'Ping',
+              request: { method: 'GET', url: `${baseUrl}/ping` },
+            },
+          ],
+        },
+      });
+
+      let resultEvents = 0;
+      const prepared = prepareCollectionRun(payload);
+      const run = await executePreparedCollectionRun(prepared, {
+        collectResults: false,
+        onEvent(event) {
+          if (event === 'result') resultEvents++;
+        },
+      });
+
+      assert.equal(resultEvents, 1);
+      assert.equal(run.iterations.length, 1);
+      assert.equal(run.iterations[0].results.length, 0);
+    });
+  });
+
+  it('can skip iteration history entirely while still streaming result events', async () => {
+    await withServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    }, async (baseUrl) => {
+      const payload = makeValidPayload({
+        collection: {
+          info: { name: 'Test Collection' },
+          item: [
+            {
+              id: 'req-1',
+              name: 'Ping',
+              request: { method: 'GET', url: `${baseUrl}/ping` },
+            },
+          ],
+        },
+      });
+
+      let resultEvents = 0;
+      const prepared = prepareCollectionRun(payload);
+      const run = await executePreparedCollectionRun(prepared, {
+        collectIterations: false,
+        collectResults: false,
+        onEvent(event) {
+          if (event === 'result') resultEvents++;
+        },
+      });
+
+      assert.equal(resultEvents, 1);
+      assert.equal(run.iterations.length, 0);
+    });
+  });
+
+  it('emits next-request by id without storing iterations when collectIterations is false', async () => {
+    await withServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    }, async (baseUrl) => {
+      const payload = makeValidPayload({
+        collection: {
+          info: { name: 'Test Collection' },
+          item: [
+            {
+              id: 'req-1',
+              name: 'First',
+              request: { method: 'GET', url: `${baseUrl}/first` },
+              event: [{
+                listen: 'test',
+                script: { exec: ["apx.execution.setNextRequestById('req-2');"] },
+              }],
+            },
+            {
+              id: 'req-2',
+              name: 'Second',
+              request: { method: 'GET', url: `${baseUrl}/second` },
+            },
+          ],
+        },
+      });
+
+      const events = [];
+      const prepared = prepareCollectionRun(payload);
+      const run = await executePreparedCollectionRun(prepared, {
+        collectIterations: false,
+        collectResults: false,
+        onEvent(event, data) {
+          events.push({ event, data });
+        },
+      });
+
+      const byIdJump = events.find(e => e.event === 'next-request' && e.data && e.data.via === 'id');
+      assert.ok(byIdJump, 'expected next-request event via id');
+      assert.equal(run.iterations.length, 0);
+    });
+  });
+
+  it('emits conditional-flow target-not-found by id without storing iterations', async () => {
+    await withServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    }, async (baseUrl) => {
+      const payload = makeValidPayload({
+        collection: {
+          info: { name: 'Test Collection' },
+          item: [
+            {
+              id: 'req-1',
+              name: 'First',
+              request: { method: 'GET', url: `${baseUrl}/first` },
+              event: [{
+                listen: 'test',
+                script: { exec: ["apx.execution.setNextRequestById('missing-id');"] },
+              }],
+            },
+          ],
+        },
+      });
+
+      const events = [];
+      const prepared = prepareCollectionRun(payload);
+      const run = await executePreparedCollectionRun(prepared, {
+        collectIterations: false,
+        collectResults: false,
+        onEvent(event, data) {
+          events.push({ event, data });
+        },
+      });
+
+      const missingFlow = events.find(e => e.event === 'conditional-flow' && e.data && e.data.via === 'id' && e.data.reason === 'target-not-found');
+      assert.ok(missingFlow, 'expected conditional-flow event for missing id target');
+      assert.equal(run.iterations.length, 0);
+    });
+  });
+
+  it('emits next-request by name and stopped-by-script by name without storing iterations', async () => {
+    await withServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    }, async (baseUrl) => {
+      const jumpPayload = makeValidPayload({
+        collection: {
+          info: { name: 'Test Collection' },
+          item: [
+            {
+              id: 'req-1',
+              name: 'First',
+              request: { method: 'GET', url: `${baseUrl}/first` },
+              event: [{
+                listen: 'test',
+                script: { exec: ["apx.execution.setNextRequest('Second');"] },
+              }],
+            },
+            {
+              id: 'req-2',
+              name: 'Second',
+              request: { method: 'GET', url: `${baseUrl}/second` },
+            },
+          ],
+        },
+      });
+
+      const jumpEvents = [];
+      const jumpPrepared = prepareCollectionRun(jumpPayload);
+      const jumpRun = await executePreparedCollectionRun(jumpPrepared, {
+        collectIterations: false,
+        collectResults: false,
+        onEvent(event, data) {
+          jumpEvents.push({ event, data });
+        },
+      });
+
+      const byNameJump = jumpEvents.find(e => e.event === 'next-request' && e.data && e.data.via === 'name');
+      assert.ok(byNameJump, 'expected next-request event via name');
+      assert.equal(jumpRun.iterations.length, 0);
+
+      const stopPayload = makeValidPayload({
+        collection: {
+          info: { name: 'Test Collection' },
+          item: [
+            {
+              id: 'req-1',
+              name: 'First',
+              request: { method: 'GET', url: `${baseUrl}/first` },
+              event: [{
+                listen: 'test',
+                script: { exec: ['apx.execution.setNextRequest(null);'] },
+              }],
+            },
+          ],
+        },
+      });
+
+      const stopEvents = [];
+      const stopPrepared = prepareCollectionRun(stopPayload);
+      const stopRun = await executePreparedCollectionRun(stopPrepared, {
+        collectIterations: false,
+        collectResults: false,
+        onEvent(event, data) {
+          stopEvents.push({ event, data });
+        },
+      });
+
+      const stoppedFlow = stopEvents.find(e => e.event === 'conditional-flow' && e.data && e.data.via === 'name' && e.data.reason === 'stopped-by-script');
+      assert.ok(stoppedFlow, 'expected conditional-flow stopped-by-script via name');
+      assert.equal(stopRun.iterations.length, 0);
+    });
   });
 });

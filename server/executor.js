@@ -1,6 +1,13 @@
 'use strict';
 
-const axios = require('axios');
+// pkg bundled binaries don't resolve package 'exports' subpaths; fall back to
+// the direct CJS dist file when the snapshot resolver can't find axios.
+let axios;
+try {
+  axios = require('axios');
+} catch (_) {
+  axios = require('./node_modules/axios/dist/node/axios.cjs');
+}
 const http = require('http');
 const https = require('https');
 const FormData = require('form-data');

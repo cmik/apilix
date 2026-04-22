@@ -1,6 +1,13 @@
 'use strict';
 
-const { parse: parseCsv } = require('csv-parse/sync');
+// pkg bundled binaries don't resolve package 'exports' subpaths; fall back to
+// the direct CJS dist file when the snapshot resolver can't find csv-parse/sync.
+let parseCsv;
+try {
+  parseCsv = require('csv-parse/sync').parse;
+} catch (_) {
+  parseCsv = require('./node_modules/csv-parse/dist/cjs/sync.cjs').parse;
+}
 const { executeRequest, flattenItemsWithScripts } = require('./executor');
 
 /**
@@ -111,6 +118,8 @@ async function executePreparedCollectionRun(prepared, options = {}) {
   } = payload;
   const onEvent = typeof options.onEvent === 'function' ? options.onEvent : null;
   const runState = options.runState || { paused: false, stopped: false };
+  const collectIterations = options.collectIterations !== false;
+  const collectResults = options.collectResults !== false;
   const sendEvent = (event, data) => {
     if (onEvent) onEvent(event, data);
   };
@@ -129,8 +138,10 @@ async function executePreparedCollectionRun(prepared, options = {}) {
     let currentCollVars = { ...(collectionVariables || {}) };
     let currentGlobals = { ...(globals || {}) };
     let currentCookies = { ...(cookies || {}) };
-    const iterationRecord = { iteration: i + 1, dataRow, results: [] };
-    iterations.push(iterationRecord);
+    const iterationRecord = collectIterations
+      ? { iteration: i + 1, dataRow, results: [] }
+      : null;
+    if (iterationRecord) iterations.push(iterationRecord);
 
     sendEvent('iteration-start', { iteration: i + 1, dataRow });
 
@@ -172,7 +183,7 @@ async function executePreparedCollectionRun(prepared, options = {}) {
       if (result.updatedCookies) currentCookies = result.updatedCookies;
 
       const resultData = toResultData(item, result, i + 1);
-      iterationRecord.results.push(resultData);
+      if (collectResults && iterationRecord) iterationRecord.results.push(resultData);
       sendEvent('result', resultData);
 
       if (conditionalExecution !== false && result.nextRequestById !== undefined) {
@@ -180,10 +191,12 @@ async function executePreparedCollectionRun(prepared, options = {}) {
           const targetIdx = requestIdToIndex.has(result.nextRequestById) ? requestIdToIndex.get(result.nextRequestById) : -1;
           if (targetIdx >= 0) {
             const targetName = requests[targetIdx].name;
-            iterationRecord.jumps = [
-              ...(iterationRecord.jumps || []),
-              { afterName: item.name, to: targetName, via: 'id', targetId: result.nextRequestById },
-            ];
+            if (iterationRecord) {
+              iterationRecord.jumps = [
+                ...(iterationRecord.jumps || []),
+                { afterName: item.name, to: targetName, via: 'id', targetId: result.nextRequestById },
+              ];
+            }
             sendEvent('next-request', { from: item.name, to: targetName, via: 'id', targetId: result.nextRequestById });
             if (delayMs > 0 && (await awaitDelay(runState, delayMs)) === 'stopped') {
               stopped = true;
@@ -194,18 +207,22 @@ async function executePreparedCollectionRun(prepared, options = {}) {
           }
 
           const flowRecord = { from: item.name, via: 'id', reason: 'target-not-found', attemptedTarget: result.nextRequestById };
-          iterationRecord.conditionalFlowRecords = [
-            ...(iterationRecord.conditionalFlowRecords || []),
-            { afterName: item.name, via: 'id', reason: 'target-not-found', attemptedTarget: result.nextRequestById },
-          ];
+          if (iterationRecord) {
+            iterationRecord.conditionalFlowRecords = [
+              ...(iterationRecord.conditionalFlowRecords || []),
+              { afterName: item.name, via: 'id', reason: 'target-not-found', attemptedTarget: result.nextRequestById },
+            ];
+          }
           sendEvent('conditional-flow', flowRecord);
           break;
         }
 
-        iterationRecord.conditionalFlowRecords = [
-          ...(iterationRecord.conditionalFlowRecords || []),
-          { afterName: item.name, via: 'id', reason: 'stopped-by-script' },
-        ];
+        if (iterationRecord) {
+          iterationRecord.conditionalFlowRecords = [
+            ...(iterationRecord.conditionalFlowRecords || []),
+            { afterName: item.name, via: 'id', reason: 'stopped-by-script' },
+          ];
+        }
         sendEvent('conditional-flow', { from: item.name, via: 'id', reason: 'stopped-by-script' });
         break;
       }
@@ -217,10 +234,12 @@ async function executePreparedCollectionRun(prepared, options = {}) {
             ? forwardIdx
             : requests.findIndex(request => request.name === result.nextRequest);
           if (targetIdx >= 0) {
-            iterationRecord.jumps = [
-              ...(iterationRecord.jumps || []),
-              { afterName: item.name, to: result.nextRequest, via: 'name' },
-            ];
+            if (iterationRecord) {
+              iterationRecord.jumps = [
+                ...(iterationRecord.jumps || []),
+                { afterName: item.name, to: result.nextRequest, via: 'name' },
+              ];
+            }
             sendEvent('next-request', { from: item.name, to: result.nextRequest, via: 'name' });
             if (delayMs > 0 && (await awaitDelay(runState, delayMs)) === 'stopped') {
               stopped = true;
@@ -230,18 +249,22 @@ async function executePreparedCollectionRun(prepared, options = {}) {
             continue;
           }
 
-          iterationRecord.conditionalFlowRecords = [
-            ...(iterationRecord.conditionalFlowRecords || []),
-            { afterName: item.name, via: 'name', reason: 'target-not-found', attemptedTarget: result.nextRequest },
-          ];
+          if (iterationRecord) {
+            iterationRecord.conditionalFlowRecords = [
+              ...(iterationRecord.conditionalFlowRecords || []),
+              { afterName: item.name, via: 'name', reason: 'target-not-found', attemptedTarget: result.nextRequest },
+            ];
+          }
           sendEvent('conditional-flow', { from: item.name, via: 'name', reason: 'target-not-found', attemptedTarget: result.nextRequest });
           break;
         }
 
-        iterationRecord.conditionalFlowRecords = [
-          ...(iterationRecord.conditionalFlowRecords || []),
-          { afterName: item.name, via: 'name', reason: 'stopped-by-script' },
-        ];
+        if (iterationRecord) {
+          iterationRecord.conditionalFlowRecords = [
+            ...(iterationRecord.conditionalFlowRecords || []),
+            { afterName: item.name, via: 'name', reason: 'stopped-by-script' },
+          ];
+        }
         sendEvent('conditional-flow', { from: item.name, via: 'name', reason: 'stopped-by-script' });
         break;
       }

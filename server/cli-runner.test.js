@@ -93,12 +93,13 @@ test('runCli outputs JSON report to stdout and exits 0 on success', async () => 
       const io = makeIo(dir);
       const exitCode = await runCli([
         'run',
-        '--collection', 'collection.json',
-        '--environment', 'environment.json',
+        'collection.json',
+        '-e', 'environment.json',
         '--reporter', 'json',
       ], io);
 
       assert.equal(exitCode, 0);
+      assert.match(io.readStderr(), /Request Name/);
       const report = JSON.parse(io.readStdout());
       assert.equal(report.collectionName, 'CLI Collection');
       assert.equal(report.summary.requests, 1);
@@ -124,8 +125,8 @@ test('runCli writes JUnit XML and exits 1 when an assertion fails', async () => 
       const io = makeIo(dir);
       const exitCode = await runCli([
         'run',
-        '--collection', 'collection.json',
-        '--environment', 'environment.json',
+        'collection.json',
+        '-e', 'environment.json',
         '--reporter', 'junit',
         '--out', 'report.xml',
       ], io);
@@ -155,8 +156,8 @@ test('runCli supports CSV-driven iterations and both reporters', async () => {
       const io = makeIo(dir);
       const exitCode = await runCli([
         'run',
-        '--collection', 'collection.json',
-        '--environment', 'environment.json',
+        'collection.json',
+        '-e', 'environment.json',
         '--csv', 'data.csv',
         '--reporter', 'both',
         '--out-dir', 'reports',
@@ -177,20 +178,76 @@ test('runCli returns usage error for missing collection flag', async () => {
     const io = makeIo(dir);
     const exitCode = await runCli(['run'], io);
     assert.equal(exitCode, 2);
-    assert.match(io.readStderr(), /--collection option is required/);
+    assert.match(io.readStderr(), /collection path is required/i);
+  });
+});
+
+test('runCli defaults to table reporter and writes summary to stderr', async () => {
+  await withServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  }, async (baseUrl) => {
+    await withTempDir(async (dir) => {
+      const collectionPath = path.join(dir, 'collection.json');
+      const environmentPath = path.join(dir, 'environment.json');
+      await fs.writeFile(collectionPath, JSON.stringify(makeCollection('{{baseUrl}}/ping', "apx.test('Status 200', () => { apx.expect(apx.response.code).to.equal(200); });")));
+      await fs.writeFile(environmentPath, JSON.stringify(makeEnvironment(baseUrl)));
+
+      const io = makeIo(dir);
+      const exitCode = await runCli([
+        'run',
+        'collection.json',
+        '-e', 'environment.json',
+      ], io);
+
+      assert.equal(exitCode, 0);
+      assert.equal(io.readStdout(), '');
+      assert.match(io.readStderr(), /Request Name/);
+    });
+  });
+});
+
+test('runCli supports legacy --collection flag and --no-color strips ANSI codes', async () => {
+  await withServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  }, async (baseUrl) => {
+    await withTempDir(async (dir) => {
+      const collectionPath = path.join(dir, 'collection.json');
+      const environmentPath = path.join(dir, 'environment.json');
+      await fs.writeFile(collectionPath, JSON.stringify(makeCollection('{{baseUrl}}/ping', "apx.test('Status 200', () => { apx.expect(apx.response.code).to.equal(200); });")));
+      await fs.writeFile(environmentPath, JSON.stringify(makeEnvironment(baseUrl)));
+
+      const io = makeIo(dir);
+      const exitCode = await runCli([
+        'run',
+        '--collection', 'collection.json',
+        '-e', 'environment.json',
+        '--no-color',
+      ], io);
+
+      assert.equal(exitCode, 0);
+      assert.match(io.readStderr(), /Request Name/);
+      assert.doesNotMatch(io.readStderr(), /\x1b\[[0-9;]*m/);
+    });
   });
 });
 
 // ─── parseArgs — timeout=0 fix ────────────────────────────────────────────────
 
 test('parseArgs preserves --timeout 0 as string "0" (not coerced to default)', () => {
-  const args = parseArgs(['run', '--collection', 'col.json', '--timeout', '0']);
+  const args = parseArgs(['run', 'col.json', '--timeout', '0']);
   assert.equal(args.timeout, '0');
 });
 
 test('parseArgs preserves --timeout with a positive value', () => {
-  const args = parseArgs(['run', '--collection', 'col.json', '--timeout', '5000']);
+  const args = parseArgs(['run', 'col.json', '--timeout', '5000']);
   assert.equal(args.timeout, '5000');
+});
+
+test('parseArgs supports -e short flag for environment file', () => {
+  const args = parseArgs(['run', 'col.json', '-e', 'env.json']);
+  assert.equal(args.environmentPath, 'env.json');
 });
 
 // ─── runCli — --timeout respected (slow server) ───────────────────────────────
@@ -224,7 +281,7 @@ test('runCli exits 1 with request error when --timeout 1 fires against a slow se
       const io = makeIo(dir);
       const exitCode = await runCli([
         'run',
-        '--collection', 'collection.json',
+        'collection.json',
         '--reporter', 'json',
         '--timeout', '1',
       ], io);
