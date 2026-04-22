@@ -108,6 +108,17 @@ All four providers expose the same four actions:
 
 > **Tip:** Use **Import once ↓** when you want to copy a colleague's workspace to your machine for a single session, or when the remote already has existing commits and you need to pull before your first push.
 
+### Quick Sync (Toolbar)
+
+The top-bar **Sync** button (`Cmd/Ctrl+Shift+S`) is a pull-first workflow:
+
+1. Pull remote state first.
+2. If local unsynced changes exist, run a three-way merge against the pulled remote snapshot.
+3. If merge conflicts remain, open the merge modal and stop (no push is attempted).
+4. If merge resolves cleanly, push the merged result (except read-only workspaces, which apply locally only).
+
+This ordering reduces accidental overwrite risk by always reconciling with remote before upload.
+
 ### Network Timeouts
 
 Every outbound sync request is subject to a client-side timeout. If the remote server does not respond within the limit, the operation is aborted and an error message is shown in the Sync tab.

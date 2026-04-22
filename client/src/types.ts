@@ -659,6 +659,8 @@ export interface ConflictPackage {
   baseData: WorkspaceData;
   localData: WorkspaceData;
   remoteData: WorkspaceData;
+  /** True when the provider returned no remote workspace payload (404/empty). */
+  remoteWasEmpty: boolean;
   mergeResult: MergeResult;
   /** Version tag to use for the optimistic push after resolution */
   remoteVersion: string | null;
