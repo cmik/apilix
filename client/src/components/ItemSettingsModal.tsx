@@ -55,6 +55,7 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
   const [authBasicPass, setAuthBasicPass] = useState((auth?.basic ?? []).find(b => b.key === 'password')?.value ?? '');
   const [authApiKeyName, setAuthApiKeyName] = useState((auth?.apikey ?? []).find(b => b.key === 'key')?.value ?? 'X-API-Key');
   const [authApiKeyValue, setAuthApiKeyValue] = useState((auth?.apikey ?? []).find(b => b.key === 'value')?.value ?? '');
+  const [authApiKeyIn, setAuthApiKeyIn] = useState(((auth?.apikey ?? []).find(b => b.key === 'in')?.value ?? 'header') === 'query' ? 'query' : 'header');
   const [authOAuth2Config, setAuthOAuth2Config] = useState<OAuth2Config>(auth?.oauth2 ?? {
     grantType: 'authorization_code',
     clientId: '',
@@ -123,6 +124,7 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
       apikey: [
         { key: 'key', value: authApiKeyName, type: 'string' },
         { key: 'value', value: authApiKeyValue, type: 'string' },
+        { key: 'in', value: authApiKeyIn, type: 'string' },
       ],
     };
     if (authType === 'oauth2') return {
@@ -316,6 +318,17 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
               )}
               {authType === 'apikey' && (
                 <div className="flex flex-col gap-2">
+                  <div>
+                    <label className="text-xs text-slate-400 block mb-1">Add to</label>
+                    <select
+                      value={authApiKeyIn}
+                      onChange={e => setAuthApiKeyIn(e.target.value === 'query' ? 'query' : 'header')}
+                      className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-orange-500"
+                    >
+                      <option value="header">Header</option>
+                      <option value="query">Query Params</option>
+                    </select>
+                  </div>
                   <div>
                     <label className="text-xs text-slate-400 block mb-1">Key name</label>
                     <VarInput value={authApiKeyName} onChange={v => setAuthApiKeyName(v)}

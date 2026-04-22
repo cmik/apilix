@@ -112,6 +112,7 @@ function itemToEditState(item: CollectionItem) {
     authBasicPass: authVal(req.auth?.basic, 'password'),
     authApiKeyName: authVal(req.auth?.apikey, 'key') || 'X-API-Key',
     authApiKeyValue: authVal(req.auth?.apikey, 'value'),
+    authApiKeyIn: authVal(req.auth?.apikey, 'in') === 'query' ? 'query' : 'header',
     authOAuth2Config: req.auth?.oauth2 ?? ({
       grantType: 'authorization_code',
       clientId: '',
@@ -2223,6 +2224,17 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             {edit.authType === 'apikey' && (
               <div className="flex flex-col gap-2">
                 <div>
+                  <label className="text-xs text-slate-400">Add to</label>
+                  <select
+                    value={edit.authApiKeyIn}
+                    onChange={e => setEdit(x => x ? { ...x, authApiKeyIn: e.target.value === 'query' ? 'query' : 'header' } : x)}
+                    className="mt-1 w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-orange-500"
+                  >
+                    <option value="header">Header</option>
+                    <option value="query">Query Params</option>
+                  </select>
+                </div>
+                <div>
                   <label className="text-xs text-slate-400">Key Name</label>
                   <VarInput
                     value={edit.authApiKeyName}
@@ -2834,7 +2846,7 @@ function buildAuth(edit: ReturnType<typeof itemToEditState>): CollectionRequest[
         apikey: [
           { key: 'key', value: edit.authApiKeyName },
           { key: 'value', value: edit.authApiKeyValue },
-          { key: 'in', value: 'header' },
+          { key: 'in', value: edit.authApiKeyIn },
         ],
       };
     case 'oauth2':

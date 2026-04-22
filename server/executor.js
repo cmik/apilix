@@ -98,8 +98,10 @@ function resolveUrl(urlObj, vars) {
 
 // ─── Auth handling ───────────────────────────────────────────────────────────
 
-async function applyAuth(auth, headers, vars) {
-  if (!auth || auth.type === 'noauth') return;
+async function applyAuth(auth, headers, vars, requestUrl) {
+  if (!auth || auth.type === 'noauth') return requestUrl;
+
+  let nextUrl = requestUrl;
 
   switch (auth.type) {
     case 'bearer': {
@@ -119,11 +121,18 @@ async function applyAuth(auth, headers, vars) {
       const keyValue = (auth.apikey || []).find(b => b.key === 'value')?.value || '';
       const location = (auth.apikey || []).find(b => b.key === 'in')?.value || 'header';
       if (location === 'query') {
-        // Query-param API keys are appended by the caller after URL resolution;
-        // we store them as a sentinel so resolveUrl can pick them up if needed.
-        // For now: best-effort append to the Authorization header is intentionally
-        // skipped since the URL is not available here. Callers relying on query-param
-        // API keys should embed the key directly in the URL via an environment variable.
+        const resolvedKey = resolveVariables(keyName, vars);
+        const resolvedValue = resolveVariables(keyValue, vars);
+        if (resolvedKey && nextUrl) {
+          try {
+            const parsed = new URL(nextUrl);
+            parsed.searchParams.append(resolvedKey, resolvedValue);
+            nextUrl = parsed.toString();
+          } catch {
+            const sep = nextUrl.includes('?') ? '&' : '?';
+            nextUrl = `${nextUrl}${sep}${encodeURIComponent(resolvedKey)}=${encodeURIComponent(resolvedValue)}`;
+          }
+        }
       } else {
         headers[resolveVariables(keyName, vars)] = resolveVariables(keyValue, vars);
       }
@@ -139,6 +148,8 @@ async function applyAuth(auth, headers, vars) {
       // Not implemented in this version
       break;
   }
+
+  return nextUrl;
 }
 
 /**
@@ -509,7 +520,7 @@ async function executeRequest(item, context) {
     }
   });
 
-  await applyAuth(req.auth, headers, vars);
+  url = await applyAuth(req.auth, headers, vars, url) || url;
 
   // Inject cookies from cookie jar
   const cookieHeader = getCookiesForRequest(cookies, url);
