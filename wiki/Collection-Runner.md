@@ -14,6 +14,7 @@ The Collection Runner executes multiple requests from a collection in sequence, 
     - [Basic Workflow](#basic-workflow)
     - [Reporter Output](#reporter-output)
     - [CLI Examples](#cli-examples)
+    - [Standalone Binary Examples](#standalone-binary-examples)
   - [Opening the Runner](#opening-the-runner)
   - [Selecting Requests](#selecting-requests)
     - [Reordering Requests](#reordering-requests)
