@@ -105,7 +105,7 @@ function resolveUrl(urlObj, vars) {
 
 // ─── Auth handling ───────────────────────────────────────────────────────────
 
-async function applyAuth(auth, headers, vars, currentUrl) {
+async function applyAuth(auth, headers, vars, currentUrl, authWarnings = []) {
   if (!auth || auth.type === 'noauth') return currentUrl;
 
   switch (auth.type) {
@@ -142,10 +142,18 @@ async function applyAuth(auth, headers, vars, currentUrl) {
       await handleOAuth2(auth, headers, vars);
       break;
     }
-    case 'digest':
-    case 'oauth1':
+    case 'digest': {
+      authWarnings.push('Unsupported auth type "digest". Request sent without authentication header.');
+      break;
+    }
+    case 'oauth1': {
+      authWarnings.push('Unsupported auth type "oauth1". Request sent without authentication header.');
+      break;
+    }
     default:
-      // Not implemented in this version
+      if (auth && auth.type) {
+        authWarnings.push(`Unsupported auth type "${auth.type}". Request sent without authentication header.`);
+      }
       break;
   }
 
@@ -201,7 +209,7 @@ async function handleOAuth2(auth, headers, vars) {
 
 // ─── Body handling ───────────────────────────────────────────────────────────
 
-function buildBody(body, headers, vars) {
+function buildBody(body, headers, vars, skipWarnings = []) {
   if (!body || body.mode === 'none') return undefined;
 
   switch (body.mode) {
@@ -239,7 +247,10 @@ function buildBody(body, headers, vars) {
     case 'formdata': {
       const form = new FormData();
       (body.formdata || []).forEach(p => {
-        if (!p.disabled && p.type !== 'file') {
+        if (p.disabled) return;
+        if (p.type === 'file') {
+          skipWarnings.push(`Skipped file field "${p.key}" in formdata — file attachments are not supported in CLI mode`);
+        } else {
           form.append(resolveVariables(p.key, vars), resolveVariables(p.value, vars));
         }
       });
@@ -411,6 +422,8 @@ async function executeRequest(item, context) {
     collectionItems = [],
     conditionalExecution = true,
     mockBase = null,
+    iteration = 1,
+    requestId = item.id || '',
   } = context;
   let vars = buildVariables(environment, collectionVariables, globals, dataRow, collVars);
   // Keep original key sets for scope routing — used when splitting script mutations
@@ -450,6 +463,8 @@ async function executeRequest(item, context) {
         collectionItems,
         executeRequestFn: executeRequest,
         context: { environment, collectionVariables, globals, dataRow, collVars, cookies, mockBase },
+        requestId,
+        iteration,
       };
       const result = await runScript(code, null, vars, scriptDeps);
       const preUpdatedVars = result.updatedVariables;
@@ -520,13 +535,16 @@ async function executeRequest(item, context) {
     }
   });
 
-  url = await applyAuth(req.auth, headers, vars, url);
+  const authWarnings = [];
+  url = await applyAuth(req.auth, headers, vars, url, authWarnings);
 
   // Inject cookies from cookie jar
   const cookieHeader = getCookiesForRequest(cookies, url);
   if (cookieHeader) headers['Cookie'] = cookieHeader;
 
-  const data = buildBody(req.body, headers, vars);
+  const buildWarnings = [];
+  const data = buildBody(req.body, headers, vars, buildWarnings);
+  const allWarnings = [...authWarnings, ...buildWarnings];
 
   // Capture request body as a loggable string
   let requestBodyStr = undefined;
@@ -648,6 +666,8 @@ async function executeRequest(item, context) {
           collectionItems,
           executeRequestFn: executeRequest,
           context: { environment, collectionVariables, globals, dataRow, collVars, cookies, mockBase },
+          requestId,
+          iteration,
         };
         const result = await runScript(code, responseData, vars, scriptDeps);
         testResults = result.tests;
@@ -729,6 +749,7 @@ async function executeRequest(item, context) {
       redirectChain,
       nextRequest: nextRequestSignal,
       nextRequestById: nextRequestByIdSignal,
+      warnings: allWarnings,
       error: null,
     };
   } catch (err) {
@@ -754,6 +775,7 @@ async function executeRequest(item, context) {
       networkTimings: { dns: 0, tcp: 0, tls: 0, server: 0, total: errorResponseTime },
       tlsCertChain: null,
       redirectChain: [],
+      warnings: allWarnings,
       error: err.message,
     };
   }

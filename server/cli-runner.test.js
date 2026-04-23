@@ -316,3 +316,135 @@ test('runCli exits 1 with request error when --timeout 1 fires against a slow se
     });
   });
 });
+
+// parseArgs — proxy / bail flags
+
+test('parseArgs captures --http-proxy and --https-proxy flags', () => {
+  const args = parseArgs(['run', 'col.json', '--http-proxy', 'http://p:3128', '--https-proxy', 'http://ps:3128']);
+  assert.equal(args.httpProxy, 'http://p:3128');
+  assert.equal(args.httpsProxy, 'http://ps:3128');
+});
+
+test('parseArgs captures --proxy-bypass host list', () => {
+  const args = parseArgs(['run', 'col.json', '--proxy-bypass', 'localhost,127.0.0.1']);
+  assert.equal(args.proxyBypass, 'localhost,127.0.0.1');
+});
+
+test('parseArgs defaults proxy fields to empty strings', () => {
+  const args = parseArgs(['run', 'col.json']);
+  assert.equal(args.httpProxy, '');
+  assert.equal(args.httpsProxy, '');
+  assert.equal(args.proxyBypass, '');
+});
+
+test('parseArgs supports --bail flag', () => {
+  const argsWithBail = parseArgs(['run', 'col.json', '--bail']);
+  assert.equal(argsWithBail.bail, true);
+
+  const argsWithoutBail = parseArgs(['run', 'col.json']);
+  assert.equal(argsWithoutBail.bail, false);
+});
+
+// --bail integration
+
+test('runCli --bail stops after first test assertion failure and exits 1', async () => {
+  let requestCount = 0;
+  await withServer((req, res) => {
+    requestCount++;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  }, async (baseUrl) => {
+    await withTempDir(async (dir) => {
+      const collectionPath = path.join(dir, 'collection.json');
+      // Two-request collection: first has a failing assertion, second would succeed
+      await fs.writeFile(collectionPath, JSON.stringify({
+        info: {
+          name: 'Bail Test Collection',
+          schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+        },
+        item: [
+          {
+            id: 'req-1',
+            name: 'Failing Request',
+            request: { method: 'GET', url: { raw: `${baseUrl}/first` } },
+            event: [{
+              listen: 'test',
+              script: {
+                type: 'text/javascript',
+                exec: ["apx.test('must fail', () => { apx.expect(apx.response.code).to.equal(999); });"],
+              },
+            }],
+          },
+          {
+            id: 'req-2',
+            name: 'Should Not Run',
+            request: { method: 'GET', url: { raw: `${baseUrl}/second` } },
+          },
+        ],
+      }));
+
+      const io = makeIo(dir);
+      const exitCode = await runCli([
+        'run',
+        'collection.json',
+        '--reporter', 'json',
+        '--bail',
+      ], io);
+
+      assert.equal(exitCode, 1);
+      const report = JSON.parse(io.readStdout());
+      // Only one request should have been executed before bail
+      assert.equal(report.summary.requests, 1);
+      assert.equal(report.summary.failed, 1);
+      // Server should have been hit exactly once
+      assert.equal(requestCount, 1);
+    });
+  });
+});
+
+test('runCli --bail stops after first request error and exits 1', async () => {
+  let requestCount = 0;
+  await withServer((req, res) => {
+    requestCount++;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  }, async (baseUrl) => {
+    await withTempDir(async (dir) => {
+      const collectionPath = path.join(dir, 'collection.json');
+      // First request points to a port nothing is listening on (will error)
+      await fs.writeFile(collectionPath, JSON.stringify({
+        info: {
+          name: 'Bail Error Collection',
+          schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+        },
+        item: [
+          {
+            id: 'req-1',
+            name: 'Erroring Request',
+            request: { method: 'GET', url: { raw: 'http://127.0.0.1:19999/fail' } },
+          },
+          {
+            id: 'req-2',
+            name: 'Should Not Run',
+            request: { method: 'GET', url: { raw: `${baseUrl}/second` } },
+          },
+        ],
+      }));
+
+      const io = makeIo(dir);
+      const exitCode = await runCli([
+        'run',
+        'collection.json',
+        '--reporter', 'json',
+        '--bail',
+      ], io);
+
+      assert.equal(exitCode, 1);
+      const report = JSON.parse(io.readStdout());
+      assert.equal(report.summary.requests, 1);
+      assert.equal(report.summary.errors, 1);
+      // The live server should not have been hit at all
+      assert.equal(requestCount, 0);
+    });
+  });
+});

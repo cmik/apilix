@@ -25,7 +25,7 @@ function usage() {
     '  --globals <file>             Globals JSON file or key/value map',
     '  --collection-vars <file>     Collection variables JSON file or key/value map',
     '  --csv <file>                 CSV data file for per-row iterations',
-    '  --iterations <n>             Iteration count when CSV is not provided',
+    '  --iterations <n>             Iteration count when CSV is not provided (max 100 without CSV)',
     '  --delay <ms>                 Delay between requests (max 5000)',
     '  --execute-child-requests     Allow apx.sendRequest()/pm.sendRequest() child calls',
     '  --no-conditional-execution   Disable setNextRequest() flow overrides',
@@ -33,6 +33,10 @@ function usage() {
     '  --out <file>                 Output file for a single json/junit reporter',
     '  --out-dir <dir>              Output directory for json/junit artifacts',
     '  --timeout <ms>               Request timeout in milliseconds (default: 30000)',
+    '  --http-proxy <url>           HTTP proxy URL (e.g., http://proxy.example.com:8080)',
+    '  --https-proxy <url>          HTTPS proxy URL (e.g., http://proxy.example.com:8080)',
+    '  --proxy-bypass <hosts>       Comma-separated hosts to bypass proxy (e.g., localhost,127.0.0.1)',
+    '  --bail                       Stop execution on first test failure or request error',
     '  --ssl-verification           Enable TLS certificate verification',
     '  --no-follow-redirects        Disable automatic redirect following',
     '  --no-color                   Disable ANSI colors in terminal output',
@@ -140,6 +144,10 @@ function createProgram(io) {
     sslVerification: false,
     color: true,
     timeout: DEFAULT_REQUEST_TIMEOUT,
+    httpProxy: '',
+    httpsProxy: '',
+    proxyBypass: '',
+    bail: false,
   };
 
   const program = new Command();
@@ -169,6 +177,10 @@ function createProgram(io) {
     .option('--out <file>', 'Output file for a single json/junit reporter')
     .option('--out-dir <dir>', 'Output directory for json/junit artifacts')
     .option('--timeout <ms>', 'Request timeout in milliseconds', String(DEFAULT_REQUEST_TIMEOUT))
+    .option('--http-proxy <url>', 'HTTP proxy URL (e.g., http://proxy.example.com:8080)')
+    .option('--https-proxy <url>', 'HTTPS proxy URL (e.g., http://proxy.example.com:8080)')
+    .option('--proxy-bypass <hosts>', 'Comma-separated hosts to bypass proxy (e.g., localhost,127.0.0.1)')
+    .option('--bail', 'Stop execution on first test failure or request error')
     .option('--ssl-verification', 'Enable TLS certificate verification')
     .option('--no-follow-redirects', 'Disable automatic redirect following')
     .option('--no-color', 'Disable ANSI colors in terminal output')
@@ -186,6 +198,10 @@ function createProgram(io) {
       parsed.outPath = opts.out;
       parsed.outDir = opts.outDir;
       parsed.timeout = opts.timeout;
+      parsed.httpProxy = opts.httpProxy || '';
+      parsed.httpsProxy = opts.httpsProxy || '';
+      parsed.proxyBypass = opts.proxyBypass || '';
+      parsed.bail = opts.bail === true;
       parsed.followRedirects = opts.followRedirects !== false;
       parsed.conditionalExecution = opts.conditionalExecution !== false;
       parsed.executeChildRequests = opts.executeChildRequests === true;
@@ -398,6 +414,10 @@ async function runCli(argv, ioOverrides = {}) {
       followRedirects: args.followRedirects !== false,
       requestTimeout: timeout,
       sslVerification: args.sslVerification === true,
+      proxyEnabled: !!(args.httpProxy || args.httpsProxy),
+      httpProxy: args.httpProxy || '',
+      httpsProxy: args.httpsProxy || '',
+      noProxy: args.proxyBypass || '',
     });
 
     const payload = {
@@ -410,6 +430,7 @@ async function runCli(argv, ioOverrides = {}) {
       iterations: Math.max(1, parseInt(args.iterations, 10) || 1),
       executeChildRequests: args.executeChildRequests === true,
       conditionalExecution: args.conditionalExecution !== false,
+      bail: args.bail === true,
       allCollectionItems: collection.item,
       mockBase: null,
     };
@@ -422,6 +443,21 @@ async function runCli(argv, ioOverrides = {}) {
 
     const table = buildSummaryTable(run.iterations, args.color !== false, io.stderr);
     io.stderr.write(`${table}\n`);
+
+    // Surface per-request warnings (unsupported auth, formdata file fields, etc.)
+    const runWarnings = [];
+    for (const iter of run.iterations || []) {
+      for (const result of iter.results || []) {
+        for (const w of result.warnings || []) {
+          if (!runWarnings.includes(w)) runWarnings.push(w);
+        }
+      }
+    }
+    if (runWarnings.length > 0) {
+      io.stderr.write(`\nWarnings (${runWarnings.length}):\n`);
+      for (const w of runWarnings) io.stderr.write(`  ! ${w}\n`);
+      io.stderr.write('\n');
+    }
 
     const jsonReport = buildJsonReport({
       version: pkg.version,

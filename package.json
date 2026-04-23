@@ -48,8 +48,11 @@
     "scripts": [
       "bin/**/*.js",
       "src/**/*.js",
+      "server/cli-runner.js",
       "server/collectionRunner.js",
       "server/executor.js",
+      "server/oauth.js",
+      "server/runnerReporters.js",
       "server/sandbox.js",
       "server/tlsUtils.js"
     ],

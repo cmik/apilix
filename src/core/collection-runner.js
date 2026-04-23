@@ -98,6 +98,7 @@ function toResultData(item, result, iteration) {
     preChildRequests: result.preChildRequests || [],
     testChildRequests: result.testChildRequests || [],
     skipped: result.skipped || false,
+    warnings: result.warnings || [],
     error: result.error,
   };
 }
@@ -113,6 +114,7 @@ async function executePreparedCollectionRun(prepared, options = {}) {
     cookies,
     executeChildRequests,
     conditionalExecution,
+    bail,
     allCollectionItems,
     mockBase,
   } = payload;
@@ -175,6 +177,8 @@ async function executePreparedCollectionRun(prepared, options = {}) {
         collectionItems: executeChildRequests ? (allCollectionItems || collection.item || []) : [],
         conditionalExecution: conditionalExecution !== false,
         mockBase: mockBase || null,
+        iteration: i + 1,
+        requestId: item.id || '',
       });
 
       if (result.updatedEnvironment) currentEnv = result.updatedEnvironment;
@@ -185,6 +189,15 @@ async function executePreparedCollectionRun(prepared, options = {}) {
       const resultData = toResultData(item, result, i + 1);
       if (collectResults && iterationRecord) iterationRecord.results.push(resultData);
       sendEvent('result', resultData);
+
+      const hasFailedTests = Array.isArray(result.testResults)
+        && result.testResults.some(test => test && test.passed === false);
+      const shouldBail = bail === true && (result.error || hasFailedTests);
+      if (shouldBail) {
+        runState.stopped = true;
+        stopped = true;
+        break outer;
+      }
 
       if (conditionalExecution !== false && result.nextRequestById !== undefined) {
         if (result.nextRequestById !== null) {

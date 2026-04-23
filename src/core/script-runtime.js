@@ -349,10 +349,12 @@ function createExpect(value, negated, onFail) {
 // apx is the primary API; pm is an alias for Postman compatibility
 
 function createApx(response, variables, updatedVariables, updatedGlobalMutations, updatedEnvMutations, updatedCollVarMutations, tests, pendingRequests, deps, childRequests, executionSignals) {
-  // deps = { collectionItems, executeRequestFn, context }
+  // deps = { collectionItems, executeRequestFn, context, requestId, iteration }
   const collectionItems = (deps && deps.collectionItems) || [];
   const executeRequestFn = (deps && deps.executeRequestFn) || null;
   const execContext = (deps && deps.context) || {};
+  const requestId = (deps && deps.requestId) || '';
+  const iteration = (deps && deps.iteration) || 1;
 
   const makeVarStore = (namespaceBucket, namespaceSrc) => {
     const isNamespaced = namespaceSrc !== undefined;
@@ -467,8 +469,8 @@ function createApx(response, variables, updatedVariables, updatedGlobalMutations
     },
 
     info: {
-      requestId: '',
-      iteration: 1,
+      requestId,
+      iteration,
       eventName: 'test',
     },
 
