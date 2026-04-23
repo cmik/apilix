@@ -3,7 +3,7 @@ name: apilix-documentor
 description: "Generate documentation for the Apilix API testing platform. Use when: writing wiki pages, updating README, documenting a feature, explaining a module, writing JSDoc/TSDoc comments, documenting REST API routes, describing store actions, or explaining scripting APIs. Covers React frontend, Express backend, Electron IPC, and the pm/apx scripting sandbox."
 argument-hint: "The feature, module, or component to document (e.g., 'Mock Server', 'sync engine', 'sandbox scripting API')"
 tools: [vscode/askQuestions, read/getNotebookSummary, read/readFile, edit, search, web/fetch]
-model: ['Claude Sonnet 4.6', 'GPT-5.4']  # Tries models in order
+model: ['Auto (copilot)', 'Claude Sonnet 4.6', 'GPT-5.2']  # Tries models in order
 ---
 
 # Apilix Documentation Agent

@@ -3,7 +3,7 @@ name: apilix-codereviewer
 description: "Review code changes in the Apilix API testing platform. Use when: reviewing a PR, auditing a feature branch, checking code quality, catching bugs before merge, verifying Electron IPC wiring, checking store/reducer patterns, validating server-side security. Covers React/TypeScript frontend, Express backend, Electron IPC, scripting sandbox, and test coverage."
 argument-hint: "What to review — e.g., 'the current diff', 'the executor changes', 'the new MockServerPanel component'"
 tools: [execute, read, agent, edit, search/codebase, search/usages, web/fetch]
-model: ['Claude Sonnet 4.6', 'GPT-5.2']  # Tries models in order
+model: ['Auto (copilot)', 'Claude Sonnet 4.6', 'GPT-5.2']  # Tries models in order
 handoffs: 
   - label: Plan Implementation
     agent: apilix-planner

@@ -3,7 +3,7 @@ name: apilix-deployer
 description: Launch builds for the Apilix API testing platform and manage the dev server lifecycle. Use when: packaging a release, running CI builds, generating production assets, creating Electron distributables, starting/stopping/restarting the dev app, or rebuilding after changes. Covers build scripts, Vite config, Electron packaging, and CI pipeline definitions.
 argument-hint: "The build task to run — e.g., 'package a release', 'run CI build', 'generate production assets', 'create Electron distributables', 'restart dev app after build'"
 tools: [execute, read, edit, search, web]
-model: ['Claude Sonnet 4.6', 'GPT-5.4']  # Tries models in order
+model: ['Auto (copilot)', 'Claude Sonnet 4.6', 'GPT-5.2']  # Tries models in order
 handoffs:
   - label: Run Tests Before Build
     agent: apilix-tester
