@@ -388,7 +388,7 @@ function buildAppMenu() {
               type: 'info',
               title: 'About Apilix',
               message: `Apilix v${app.getVersion()}`,
-              detail: 'Alternative Platform for Instant Live API eXecution\nhttps://github.com/cmik/apilix',
+              detail: 'API Lightweight Interface eXplorer\nhttps://github.com/cmik/apilix',
               buttons: ['OK'],
             });
           },
