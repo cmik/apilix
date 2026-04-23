@@ -1,0 +1,18 @@
+{
+  "info": {
+    "name": "Timeout Collection",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "id": "req-timeout",
+      "name": "Slow Request",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/slow"
+        }
+      }
+    }
+  ]
+}

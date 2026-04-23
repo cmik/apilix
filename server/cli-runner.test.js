@@ -297,27 +297,15 @@ test('runCli exits 1 with request error when --timeout 1 fires against a slow se
   }, async (baseUrl) => {
     await withTempDir(async (dir) => {
       const collectionPath = path.join(dir, 'collection.json');
-      await fs.writeFile(
-        collectionPath,
-        JSON.stringify({
-          info: {
-            name: 'Timeout Collection',
-            schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
-          },
-          item: [
-            {
-              id: 'req-t',
-              name: 'Slow Request',
-              request: { method: 'GET', url: { raw: `${baseUrl}/slow` } },
-            },
-          ],
-        }),
-      );
+      const environmentPath = path.join(dir, 'environment.json');
+      await copyFixture('collection-timeout.json', collectionPath);
+      await fs.writeFile(environmentPath, JSON.stringify(makeEnvironment(baseUrl)));
 
       const io = makeIo(dir);
       const exitCode = await runCli([
         'run',
         'collection.json',
+        '-e', 'environment.json',
         '--reporter', 'json',
         '--timeout', '1',
       ], io);

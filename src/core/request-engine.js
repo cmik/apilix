@@ -105,8 +105,8 @@ function resolveUrl(urlObj, vars) {
 
 // ─── Auth handling ───────────────────────────────────────────────────────────
 
-async function applyAuth(auth, headers, vars) {
-  if (!auth || auth.type === 'noauth') return;
+async function applyAuth(auth, headers, vars, currentUrl) {
+  if (!auth || auth.type === 'noauth') return currentUrl;
 
   switch (auth.type) {
     case 'bearer': {
@@ -125,14 +125,16 @@ async function applyAuth(auth, headers, vars) {
       const keyName = (auth.apikey || []).find(b => b.key === 'key')?.value || 'X-API-Key';
       const keyValue = (auth.apikey || []).find(b => b.key === 'value')?.value || '';
       const location = (auth.apikey || []).find(b => b.key === 'in')?.value || 'header';
+      const resolvedKey = resolveVariables(keyName, vars);
+      const resolvedValue = resolveVariables(keyValue, vars);
+
       if (location === 'query') {
-        // Query-param API keys are appended by the caller after URL resolution;
-        // we store them as a sentinel so resolveUrl can pick them up if needed.
-        // For now: best-effort append to the Authorization header is intentionally
-        // skipped since the URL is not available here. Callers relying on query-param
-        // API keys should embed the key directly in the URL via an environment variable.
+        if (!currentUrl) break;
+        const parsed = new URL(currentUrl);
+        parsed.searchParams.set(resolvedKey, resolvedValue);
+        currentUrl = parsed.toString();
       } else {
-        headers[resolveVariables(keyName, vars)] = resolveVariables(keyValue, vars);
+        headers[resolvedKey] = resolvedValue;
       }
       break;
     }
@@ -146,6 +148,8 @@ async function applyAuth(auth, headers, vars) {
       // Not implemented in this version
       break;
   }
+
+  return currentUrl;
 }
 
 /**
@@ -516,7 +520,7 @@ async function executeRequest(item, context) {
     }
   });
 
-  await applyAuth(req.auth, headers, vars);
+  url = await applyAuth(req.auth, headers, vars, url);
 
   // Inject cookies from cookie jar
   const cookieHeader = getCookiesForRequest(cookies, url);
