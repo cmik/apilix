@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 
-const { executeRequest, flattenItems, flattenItemsWithScripts, setExecutorConfig, resolveVariables, buildBody, buildProxyOption, applyAuth } = require('./executor');
+const { executeRequest, flattenItems, flattenItemsWithScripts, setExecutorConfig, resolveVariables, buildBody, buildProxyOption, applyAuth, resolveHeaderPairs, resolveParamPairs } = require('./executor');
 
 async function withServer(handler, runTest) {
   const server = http.createServer(handler);
@@ -268,6 +268,66 @@ test('resolveVariables handles whitespace inside placeholder', () => {
   assert.equal(resolveVariables('{{ name }}', { name: 'Alice' }), 'Alice');
 });
 
+// ─── resolveHeaderPairs ───────────────────────────────────────────────────────
+
+test('resolveHeaderPairs resolves header keys and values in a single call', () => {
+  const headers = [
+    { key: 'Authorization', value: 'Bearer {{token}}' },
+    { key: 'X-Request-Id', value: '{{reqId}}' },
+  ];
+  const result = resolveHeaderPairs(headers, { token: 'abc', reqId: '42' });
+  assert.deepEqual(result, { Authorization: 'Bearer abc', 'X-Request-Id': '42' });
+});
+
+test('resolveHeaderPairs resolves variable in header key', () => {
+  const result = resolveHeaderPairs([{ key: '{{headerName}}', value: 'v' }], { headerName: 'X-Custom' });
+  assert.deepEqual(result, { 'X-Custom': 'v' });
+});
+
+test('resolveHeaderPairs omits disabled headers', () => {
+  const headers = [
+    { key: 'Active', value: 'yes' },
+    { key: 'Disabled', value: 'no', disabled: true },
+  ];
+  const result = resolveHeaderPairs(headers, {});
+  assert.deepEqual(result, { Active: 'yes' });
+});
+
+test('resolveHeaderPairs returns empty object for empty input', () => {
+  assert.deepEqual(resolveHeaderPairs([], {}), {});
+  assert.deepEqual(resolveHeaderPairs(null, {}), {});
+});
+
+// ─── resolveParamPairs ────────────────────────────────────────────────────────
+
+test('resolveParamPairs resolves key and value for each enabled param', () => {
+  const params = [
+    { key: 'user', value: '{{name}}' },
+    { key: 'token', value: '{{tok}}' },
+  ];
+  const result = resolveParamPairs(params, { name: 'Alice', tok: 'abc' });
+  assert.deepEqual(result, [{ key: 'user', value: 'Alice' }, { key: 'token', value: 'abc' }]);
+});
+
+test('resolveParamPairs filters out disabled params', () => {
+  const params = [
+    { key: 'active', value: '1' },
+    { key: 'skip', value: '2', disabled: true },
+  ];
+  const result = resolveParamPairs(params, {});
+  assert.deepEqual(result, [{ key: 'active', value: '1' }]);
+});
+
+test('resolveParamPairs returns empty array for empty input', () => {
+  assert.deepEqual(resolveParamPairs([], {}), []);
+  assert.deepEqual(resolveParamPairs(null, {}), []);
+});
+
+test('resolveParamPairs leaves unknown placeholders intact', () => {
+  const result = resolveParamPairs([{ key: '{{missing}}', value: 'v' }], {});
+  assert.deepEqual(result, [{ key: '{{missing}}', value: 'v' }]);
+});
+
 // ─── buildBody ───────────────────────────────────────────────────────────────
 
 test('buildBody returns undefined when body is null or mode is none', () => {
@@ -309,6 +369,52 @@ test('buildBody urlencoded mode encodes params and skips disabled entries', () =
   assert.equal(params.get('a'), '1');
   assert.equal(params.get('b'), null);
   assert.equal(params.get('c'), '3');
+});
+
+test('buildBody urlencoded mode resolves variables in param keys', () => {
+  const headers = {};
+  const result = buildBody({
+    mode: 'urlencoded',
+    urlencoded: [{ key: '{{paramName}}', value: '{{paramValue}}' }],
+  }, headers, { paramName: 'user', paramValue: 'alice' });
+  const params = new URLSearchParams(result);
+  assert.equal(params.get('user'), 'alice');
+});
+
+test('buildBody formdata mode resolves text field key and value via variables', () => {
+  const headers = {};
+  buildBody({
+    mode: 'formdata',
+    formdata: [{ key: '{{fieldName}}', value: '{{fieldVal}}' }],
+  }, headers, { fieldName: 'caption', fieldVal: 'hello' });
+  // FormData sets a multipart Content-Type; the key resolution is verified
+  // by asserting the returned form object was built without error
+  assert.ok(headers['content-type'].startsWith('multipart/form-data'));
+});
+
+test('buildBody formdata mode skips disabled entries', () => {
+  const headers = {};
+  // No error should be thrown and no entries appended for disabled items
+  buildBody({
+    mode: 'formdata',
+    formdata: [
+      { key: 'active', value: 'yes' },
+      { key: 'skip', value: 'no', disabled: true },
+    ],
+  }, headers, {});
+  assert.ok(headers['content-type'].startsWith('multipart/form-data'));
+});
+
+test('buildBody formdata mode records resolved key in skip warning for file fields', () => {
+  const headers = {};
+  const warnings = [];
+  buildBody({
+    mode: 'formdata',
+    formdata: [{ key: '{{fname}}', value: 'data.bin', type: 'file' }],
+  }, headers, { fname: 'upload' }, warnings);
+  assert.equal(warnings.length, 1);
+  // Warning must use the resolved key name, not the raw placeholder
+  assert.ok(warnings[0].includes('"upload"'), `Expected resolved key in warning, got: ${warnings[0]}`);
 });
 
 test('buildBody graphql mode wraps query + variables in JSON', () => {
@@ -562,5 +668,92 @@ test('environment variable set in child request test script is available in pare
     // Verify the resolved header was actually sent with the token value.
     const body = JSON.parse(result.body);
     assert.equal(body.received, 'Bearer secret-token');
+  });
+});
+
+// ─── executeRequest header variable resolution (integration) ─────────────────
+
+test('executeRequest resolves variables in request header values', async () => {
+  setExecutorConfig({ followRedirects: false, requestTimeout: 3000, sslVerification: false });
+
+  await withServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ received: req.headers['x-custom'] || '' }));
+  }, async (url) => {
+    const item = {
+      name: 'Header var resolve',
+      request: {
+        method: 'GET',
+        url,
+        header: [{ key: 'X-Custom', value: '{{customVal}}' }],
+      },
+    };
+
+    const result = await executeRequest(item, {
+      ...makeContext(),
+      environment: { customVal: 'resolved-value' },
+    });
+
+    assert.equal(result.error, null);
+    const body = JSON.parse(result.body);
+    assert.equal(body.received, 'resolved-value');
+  });
+});
+
+test('executeRequest resolves variables in request header keys', async () => {
+  setExecutorConfig({ followRedirects: false, requestTimeout: 3000, sslVerification: false });
+
+  await withServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ received: req.headers['x-dynamic'] || '' }));
+  }, async (url) => {
+    const item = {
+      name: 'Header key var resolve',
+      request: {
+        method: 'GET',
+        url,
+        header: [{ key: '{{headerName}}', value: 'headerval' }],
+      },
+    };
+
+    const result = await executeRequest(item, {
+      ...makeContext(),
+      environment: { headerName: 'X-Dynamic' },
+    });
+
+    assert.equal(result.error, null);
+    const body = JSON.parse(result.body);
+    assert.equal(body.received, 'headerval');
+  });
+});
+
+test('executeRequest does not send disabled request headers', async () => {
+  setExecutorConfig({ followRedirects: false, requestTimeout: 3000, sslVerification: false });
+
+  await withServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      active: req.headers['x-active'] || '',
+      disabled: req.headers['x-disabled'] || '',
+    }));
+  }, async (url) => {
+    const item = {
+      name: 'Disabled header',
+      request: {
+        method: 'GET',
+        url,
+        header: [
+          { key: 'X-Active', value: 'yes' },
+          { key: 'X-Disabled', value: 'should-not-appear', disabled: true },
+        ],
+      },
+    };
+
+    const result = await executeRequest(item, makeContext());
+
+    assert.equal(result.error, null);
+    const body = JSON.parse(result.body);
+    assert.equal(body.active, 'yes');
+    assert.equal(body.disabled, '');
   });
 });

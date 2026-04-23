@@ -83,6 +83,31 @@ function buildVariables(environment, collectionVariables, globals, dataRow, coll
   };
 }
 
+/**
+ * Resolve all header key/value pairs in a single batch pass.
+ * Returns a plain object with resolved keys and values; disabled headers are omitted.
+ */
+function resolveHeaderPairs(headers, vars) {
+  const resolved = {};
+  (headers || []).forEach(h => {
+    if (!h.disabled) {
+      resolved[resolveVariables(h.key, vars)] = resolveVariables(h.value, vars);
+    }
+  });
+  return resolved;
+}
+
+/**
+ * Resolve all key/value param pairs (urlencoded params) in a single batch pass.
+ * Disabled entries are filtered out.
+ */
+function resolveParamPairs(params, vars) {
+  return (params || []).filter(p => !p.disabled).map(p => ({
+    key: resolveVariables(p.key, vars),
+    value: resolveVariables(p.value, vars),
+  }));
+}
+
 function resolveUrl(urlObj, vars) {
   if (typeof urlObj === 'string') {
     return resolveVariables(urlObj, vars);
@@ -236,10 +261,8 @@ function buildBody(body, headers, vars, skipWarnings = []) {
     }
     case 'urlencoded': {
       const params = new URLSearchParams();
-      (body.urlencoded || []).forEach(p => {
-        if (!p.disabled) {
-          params.append(resolveVariables(p.key, vars), resolveVariables(p.value, vars));
-        }
+      resolveParamPairs(body.urlencoded, vars).forEach(({ key, value }) => {
+        params.append(key, value);
       });
       headers['Content-Type'] = 'application/x-www-form-urlencoded';
       return params.toString();
@@ -248,10 +271,11 @@ function buildBody(body, headers, vars, skipWarnings = []) {
       const form = new FormData();
       (body.formdata || []).forEach(p => {
         if (p.disabled) return;
+        const key = resolveVariables(p.key, vars);
         if (p.type === 'file') {
-          skipWarnings.push(`Skipped file field "${p.key}" in formdata — file attachments are not supported in CLI mode`);
+          skipWarnings.push(`Skipped file field "${key}" in formdata — file attachments are not supported in CLI mode`);
         } else {
-          form.append(resolveVariables(p.key, vars), resolveVariables(p.value, vars));
+          form.append(key, resolveVariables(p.value, vars));
         }
       });
       Object.assign(headers, form.getHeaders());
@@ -530,11 +554,7 @@ async function executeRequest(item, context) {
 
   const headers = {};
 
-  (req.header || []).forEach(h => {
-    if (!h.disabled) {
-      headers[resolveVariables(h.key, vars)] = resolveVariables(h.value, vars);
-    }
-  });
+  Object.assign(headers, resolveHeaderPairs(req.header, vars));
 
   const authWarnings = [];
   url = await applyAuth(req.auth, headers, vars, url, authWarnings);
@@ -859,4 +879,4 @@ function flattenItemsWithScripts(items, collectionEvents) {
   return walk(items, colPrereq ? [colPrereq] : [], colTest ? [colTest] : []);
 }
 
-module.exports = { executeRequest, flattenItems, flattenItemsWithScripts, setExecutorConfig, resolveVariables, buildBody, buildProxyOption, applyAuth };
+module.exports = { executeRequest, flattenItems, flattenItemsWithScripts, setExecutorConfig, resolveVariables, buildBody, buildProxyOption, applyAuth, resolveHeaderPairs, resolveParamPairs };
