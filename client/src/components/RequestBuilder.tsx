@@ -1820,6 +1820,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
         {activeRequestTab === 'Params' && (
           <div className="flex flex-col gap-4">
             <KvTable
+              key={(activeTabId ?? '') + '-params'}
               rows={edit.queryParams}
               onChange={params => syncParamsToUrl(params)}
               keyPlaceholder="Parameter"
@@ -1856,6 +1857,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
 
         {activeRequestTab === 'Headers' && (
           <KvTable
+            key={(activeTabId ?? '') + '-headers'}
             rows={edit.headers}
             onChange={headers => setEdit(x => x ? { ...x, headers } : x)}
             keyPlaceholder="Header name"
@@ -1952,6 +1954,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             )}
             {bodyPreviewMode === 'edit' && edit.bodyMode === 'urlencoded' && (
               <KvTable
+                key={(activeTabId ?? '') + '-urlencoded'}
                 rows={edit.bodyUrlEncoded}
                 onChange={v => setEdit(x => x ? { ...x, bodyUrlEncoded: v } : x)}
                 variableSuggestions={variableSuggestions}
@@ -1959,6 +1962,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             )}
             {bodyPreviewMode === 'edit' && edit.bodyMode === 'formdata' && (
               <KvTable
+                key={(activeTabId ?? '') + '-formdata'}
                 rows={edit.bodyFormData}
                 onChange={v => setEdit(x => x ? { ...x, bodyFormData: v } : x)}
                 variableSuggestions={variableSuggestions}
