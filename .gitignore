@@ -55,6 +55,3 @@ coverage/
 feat/
 .pid_client
 .pid_server
-
-# GitHub workflows
-.github/

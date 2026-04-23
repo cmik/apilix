@@ -77,6 +77,9 @@ npm run electron:dev
 
 Use the CLI runner when you want to execute a collection in a pipeline without launching the UI:
 
+- Preferred syntax: `apilix run ./collection.json`
+- Legacy syntax still supported for compatibility: `apilix run --collection ./collection.json`
+
 ```bash
 npm run cli -- run \
   ./collection.json \

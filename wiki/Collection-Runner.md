@@ -77,6 +77,8 @@ Key capabilities:
 
 The same runner engine is also available from the command line for CI jobs, scheduled checks, and headless local validation. Use the CLI when you want Apilix to execute a collection, apply environments and CSV data, and emit machine-readable JSON or JUnit reports without opening the UI.
 
+Preferred syntax uses a positional collection file path (`apilix run ./collection.json`). For backward compatibility with older scripts, `--collection ./collection.json` is still supported.
+
 ### Before You Start
 
 - Export or save the collection you want to run as a Postman/Apilix collection JSON file.

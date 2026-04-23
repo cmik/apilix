@@ -12,6 +12,7 @@ const { prepareCollectionRun, executePreparedCollectionRun } = require('../core/
 const { summarizeRun, buildJsonReport, buildJUnitReport } = require('../../server/runnerReporters');
 
 const DEFAULT_REQUEST_TIMEOUT = 30000;
+const MAX_REQUEST_NAME_WIDTH = 72;
 
 function usage() {
   return [
@@ -174,6 +175,7 @@ function createProgram(io) {
     .action((collectionPath, opts) => {
       parsed.command = 'run';
       parsed.collectionPath = collectionPath || opts.collection;
+      parsed.usedLegacyCollectionFlag = !collectionPath && !!opts.collection;
       parsed.environmentPath = opts.environment;
       parsed.globalsPath = opts.globals;
       parsed.collectionVarsPath = opts.collectionVars;
@@ -256,6 +258,15 @@ function pushRows(rows, result, namePrefix) {
 }
 
 function formatTable(rows, chalk) {
+  const clippedRows = rows.map(row => {
+    const requestName = String(row.requestName || '');
+    if (requestName.length <= MAX_REQUEST_NAME_WIDTH) return row;
+    return {
+      ...row,
+      requestName: `${requestName.slice(0, Math.max(0, MAX_REQUEST_NAME_WIDTH - 3))}...`,
+    };
+  });
+
   const headers = {
     requestName: 'Request Name',
     statusCode: 'Status Code',
@@ -270,7 +281,7 @@ function formatTable(rows, chalk) {
     assertion: headers.assertion.length,
   };
 
-  for (const row of rows) {
+  for (const row of clippedRows) {
     widths.requestName = Math.max(widths.requestName, String(row.requestName).length);
     widths.statusCode = Math.max(widths.statusCode, String(row.statusCode).length);
     widths.responseTime = Math.max(widths.responseTime, String(row.responseTime).length);
@@ -283,7 +294,7 @@ function formatTable(rows, chalk) {
 
   const lines = [divider, chalk.bold(headerLine), divider];
 
-  for (const row of rows) {
+  for (const row of clippedRows) {
     const assertionText = row.assertion === 'PASS'
       ? chalk.green(row.assertion)
       : (row.assertion === 'FAIL' ? chalk.red(row.assertion) : chalk.yellow(row.assertion));
