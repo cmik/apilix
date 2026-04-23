@@ -322,6 +322,22 @@ function KvTable({
   const [bulkMode, setBulkMode] = useState(false);
   const [bulkText, setBulkText] = useState('');
 
+  // Flush in-progress bulk text back to the parent when this instance unmounts
+  // (e.g. user switches request tabs while bulk edit is open).
+  const bulkModeRef = useRef(bulkMode);
+  const bulkTextRef = useRef(bulkText);
+  bulkModeRef.current = bulkMode;
+  bulkTextRef.current = bulkText;
+  useEffect(() => {
+    return () => {
+      if (bulkModeRef.current) {
+        onChange(textToRows(bulkTextRef.current));
+      }
+    };
+    // onChange identity is stable across renders; refs hold latest values.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function enterBulk() {
     setBulkText(rowsToText(rows));
     setBulkMode(true);
@@ -1820,6 +1836,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
         {activeRequestTab === 'Params' && (
           <div className="flex flex-col gap-4">
             <KvTable
+              key={activeTabId + '-params'}
               rows={edit.queryParams}
               onChange={params => syncParamsToUrl(params)}
               keyPlaceholder="Parameter"
@@ -1856,6 +1873,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
 
         {activeRequestTab === 'Headers' && (
           <KvTable
+            key={activeTabId + '-headers'}
             rows={edit.headers}
             onChange={headers => setEdit(x => x ? { ...x, headers } : x)}
             keyPlaceholder="Header name"
@@ -1952,6 +1970,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             )}
             {bodyPreviewMode === 'edit' && edit.bodyMode === 'urlencoded' && (
               <KvTable
+                key={activeTabId + '-urlencoded'}
                 rows={edit.bodyUrlEncoded}
                 onChange={v => setEdit(x => x ? { ...x, bodyUrlEncoded: v } : x)}
                 variableSuggestions={variableSuggestions}
@@ -1959,6 +1978,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             )}
             {bodyPreviewMode === 'edit' && edit.bodyMode === 'formdata' && (
               <KvTable
+                key={activeTabId + '-formdata'}
                 rows={edit.bodyFormData}
                 onChange={v => setEdit(x => x ? { ...x, bodyFormData: v } : x)}
                 variableSuggestions={variableSuggestions}
