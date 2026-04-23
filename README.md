@@ -1,6 +1,6 @@
 [![GitHub release](https://img.shields.io/github/v/release/cmik/apilix.svg)](https://github.com/cmik/apilix/releases/latest)
 
-# Apilix — Alternative Platform for Instant Live API eXecution
+# Apilix — API Lightweight Interface eXplorer
 
 A lightweight, open-source alternative API testing tool — available as a **desktop app** (macOS, Windows, Linux) or as a local web app.
 

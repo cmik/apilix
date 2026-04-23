@@ -1,6 +1,6 @@
 # Apilix
 
-> **Alternative Platform for Instant Live API eXecution**
+> **API Lightweight Interface eXplorer**
 
 Apilix is a lightweight, open-source API development and testing tool built for developers who want full control over their workflow — without cloud lock-in. It ships as a native **desktop app** (macOS, Windows, Linux) powered by Electron, or as a **self-hosted local web app** running on Node.js.
 
