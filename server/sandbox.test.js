@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { runScript } = require('./sandbox');
+const { runScript, createScriptContext } = require('./sandbox');
 
 const baseResponse = {
   code: 200,
@@ -289,4 +289,110 @@ test('apx.response.xml() + xpath.value() can store to environment', async () => 
 
   assert.equal(result.tests[0].passed, true, result.tests[0].error);
   assert.equal(result.updatedEnvMutations['token'], 'abc123');
+});
+
+// ─── createScriptContext / vmContext reuse ─────────────────────────────────────────
+
+const vm = require('node:vm');
+
+test('createScriptContext() returns a contextified VM object', () => {
+  const ctx = createScriptContext();
+  assert.ok(vm.isContext(ctx), 'expected vm.isContext to be true');
+});
+
+test('reused context: apx env mutations do not leak to next runScript call', async () => {
+  const ctx = createScriptContext();
+
+  // First run sets an environment variable
+  await runScript(
+    `apx.environment.set('leakVar', 'leaked');`,
+    baseResponse,
+    {},
+    { context: { environment: {} } },
+    ctx,
+  );
+
+  // Second run should not see the mutation in its own result
+  const result = await runScript(
+    `apx.test('no leak', () => {
+      apx.expect(apx.environment.get('leakVar')).to.equal(undefined);
+    });`,
+    baseResponse,
+    {},
+    { context: { environment: {} } },
+    ctx,
+  );
+
+  assert.equal(result.tests[0].passed, true, result.tests[0].error);
+});
+
+test('reused context: var declaration inside IIFE does not leak to next call', async () => {
+  const ctx = createScriptContext();
+
+  await runScript(
+    `var myLeakedVar = 'leaked';`,
+    baseResponse,
+    {},
+    { context: {} },
+    ctx,
+  );
+
+  const result = await runScript(
+    `apx.test('no var leak', () => {
+      apx.expect(typeof myLeakedVar).to.equal('undefined');
+    });`,
+    baseResponse,
+    {},
+    { context: {} },
+    ctx,
+  );
+
+  assert.equal(result.tests[0].passed, true, result.tests[0].error);
+});
+
+test('reused context: bare global assignment is cleaned up between calls', async () => {
+  const ctx = createScriptContext();
+
+  await runScript(
+    `userGlobal = 'polluted';`,
+    baseResponse,
+    {},
+    { context: {} },
+    ctx,
+  );
+
+  const result = await runScript(
+    `apx.test('no global leak', () => {
+      apx.expect(typeof userGlobal).to.equal('undefined');
+    });`,
+    baseResponse,
+    {},
+    { context: {} },
+    ctx,
+  );
+
+  assert.equal(result.tests[0].passed, true, result.tests[0].error);
+});
+
+test('reused context: compiled script is cached (same results on second call)', async () => {
+  const ctx = createScriptContext();
+  const code = `apx.environment.set('hit', '1');`;
+
+  const r1 = await runScript(code, baseResponse, {}, { context: { environment: {} } }, ctx);
+  const r2 = await runScript(code, baseResponse, {}, { context: { environment: {} } }, ctx);
+
+  // Both calls must produce the same mutation, proving the cached script runs correctly
+  assert.equal(r1.updatedEnvMutations['hit'], '1');
+  assert.equal(r2.updatedEnvMutations['hit'], '1');
+});
+
+test('runScript without vmContext (fresh-context path) still works correctly', async () => {
+  const result = await runScript(
+    `apx.test('fresh ctx', () => { apx.expect(apx.response.code).to.equal(200); });`,
+    baseResponse,
+    {},
+    { context: {} },
+  );
+
+  assert.equal(result.tests[0].passed, true, result.tests[0].error);
 });

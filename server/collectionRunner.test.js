@@ -424,3 +424,51 @@ describe('executePreparedCollectionRun — result retention', () => {
     });
   });
 });
+
+describe('executePreparedCollectionRun — vmContext isolation between iterations', () => {
+  it('env var set in iteration 1 test script does not bleed into iteration 2', async () => {
+    await withServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    }, async (baseUrl) => {
+      const payload = makeValidPayload({
+        iterations: 2,
+        collection: {
+          info: { name: 'Isolation Test Collection' },
+          item: [
+            {
+              id: 'req-1',
+              name: 'Check',
+              request: { method: 'GET', url: `${baseUrl}/check` },
+              event: [{
+                listen: 'test',
+                script: {
+                  exec: [
+                    // On first iteration, set a variable. On second, assert it is NOT present
+                    // from the previous iteration's context (only from env passed at run start).
+                    `const current = apx.environment.get('iterToken') ?? 'none';`,
+                    `apx.environment.set('iterToken', 'iter-' + apx.info.iteration);`,
+                    `apx.test('iterToken from env matches start-of-iteration value', () => {`,
+                    `  apx.expect(current).to.equal('none');`,
+                    `});`,
+                  ],
+                },
+              }],
+            },
+          ],
+        },
+      });
+
+      const prepared = prepareCollectionRun(payload);
+      const run = await executePreparedCollectionRun(prepared);
+
+      // Both iterations must pass: the context is reset per iteration so
+      // 'iterToken' is always 'none' at the start of each iteration.
+      assert.equal(run.iterations.length, 2);
+      for (const iter of run.iterations) {
+        const testResult = iter.results[0].testResults[0];
+        assert.equal(testResult.passed, true, `iteration ${iter.iteration}: ${testResult.error}`);
+      }
+    });
+  });
+});

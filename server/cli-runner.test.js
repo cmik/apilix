@@ -448,3 +448,178 @@ test('runCli --bail stops after first request error and exits 1', async () => {
     });
   });
 });
+
+// apx.execution.setNextRequest()
+
+test('runCli apx.execution.setNextRequest() jumps to named request and skips intermediate', async () => {
+  const visited = [];
+  await withServer((req, res) => {
+    visited.push(req.url);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  }, async (baseUrl) => {
+    await withTempDir(async (dir) => {
+      const collectionPath = path.join(dir, 'collection.json');
+      await fs.writeFile(collectionPath, JSON.stringify({
+        info: {
+          name: 'setNextRequest Jump Collection',
+          schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+        },
+        item: [
+          {
+            id: 'req-1',
+            name: 'First',
+            request: { method: 'GET', url: { raw: `${baseUrl}/first` } },
+            event: [{
+              listen: 'test',
+              script: {
+                type: 'text/javascript',
+                exec: ["apx.execution.setNextRequest('Third');"],
+              },
+            }],
+          },
+          {
+            id: 'req-2',
+            name: 'Second',
+            request: { method: 'GET', url: { raw: `${baseUrl}/second` } },
+          },
+          {
+            id: 'req-3',
+            name: 'Third',
+            request: { method: 'GET', url: { raw: `${baseUrl}/third` } },
+          },
+        ],
+      }));
+
+      const io = makeIo(dir);
+      const exitCode = await runCli([
+        'run',
+        'collection.json',
+        '--reporter', 'json',
+      ], io);
+
+      assert.equal(exitCode, 0);
+      const report = JSON.parse(io.readStdout());
+      // Only First and Third should have been executed — Second is skipped
+      assert.equal(report.summary.requests, 2);
+      assert.equal(report.summary.errors, 0);
+      assert.ok(visited.includes('/first'), 'expected /first to be hit');
+      assert.ok(visited.includes('/third'), 'expected /third to be hit');
+      assert.ok(!visited.includes('/second'), 'expected /second to be skipped');
+    });
+  });
+});
+
+test('runCli apx.execution.setNextRequest(null) stops the run after the current request', async () => {
+  let requestCount = 0;
+  await withServer((req, res) => {
+    requestCount++;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  }, async (baseUrl) => {
+    await withTempDir(async (dir) => {
+      const collectionPath = path.join(dir, 'collection.json');
+      await fs.writeFile(collectionPath, JSON.stringify({
+        info: {
+          name: 'setNextRequest Stop Collection',
+          schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+        },
+        item: [
+          {
+            id: 'req-1',
+            name: 'First',
+            request: { method: 'GET', url: { raw: `${baseUrl}/first` } },
+            event: [{
+              listen: 'test',
+              script: {
+                type: 'text/javascript',
+                exec: ['apx.execution.setNextRequest(null);'],
+              },
+            }],
+          },
+          {
+            id: 'req-2',
+            name: 'Should Not Run',
+            request: { method: 'GET', url: { raw: `${baseUrl}/second` } },
+          },
+        ],
+      }));
+
+      const io = makeIo(dir);
+      const exitCode = await runCli([
+        'run',
+        'collection.json',
+        '--reporter', 'json',
+      ], io);
+
+      assert.equal(exitCode, 0);
+      const report = JSON.parse(io.readStdout());
+      // Run stopped after First — Second never executed
+      assert.equal(report.summary.requests, 1);
+      assert.equal(report.summary.errors, 0);
+      assert.equal(requestCount, 1);
+    });
+  });
+});
+
+// apx.execution.skipRequest()
+
+test('runCli apx.execution.skipRequest() skips the HTTP call but still records the request', async () => {
+  let requestCount = 0;
+  await withServer((req, res) => {
+    requestCount++;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  }, async (baseUrl) => {
+    await withTempDir(async (dir) => {
+      const collectionPath = path.join(dir, 'collection.json');
+      await fs.writeFile(collectionPath, JSON.stringify({
+        info: {
+          name: 'skipRequest Collection',
+          schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+        },
+        item: [
+          {
+            id: 'req-1',
+            name: 'Skipped Request',
+            request: { method: 'GET', url: { raw: `${baseUrl}/skipped` } },
+            event: [{
+              listen: 'prerequest',
+              script: {
+                type: 'text/javascript',
+                exec: ['apx.execution.skipRequest();'],
+              },
+            }],
+          },
+          {
+            id: 'req-2',
+            name: 'Normal Request',
+            request: { method: 'GET', url: { raw: `${baseUrl}/normal` } },
+          },
+        ],
+      }));
+
+      const io = makeIo(dir);
+      const exitCode = await runCli([
+        'run',
+        'collection.json',
+        '--reporter', 'json',
+      ], io);
+
+      assert.equal(exitCode, 0);
+      const report = JSON.parse(io.readStdout());
+      // Both requests counted, no errors
+      assert.equal(report.summary.requests, 2);
+      assert.equal(report.summary.errors, 0);
+      // The skipped request never reached the server; Normal Request did
+      assert.equal(requestCount, 1);
+      // The first result should be marked skipped with status 0
+      const results = report.iterations[0].results;
+      assert.equal(results[0].name, 'Skipped Request');
+      assert.equal(results[0].skipped, true);
+      assert.equal(results[0].status, 0);
+      assert.equal(results[1].name, 'Normal Request');
+      assert.equal(results[1].skipped, false);
+    });
+  });
+});

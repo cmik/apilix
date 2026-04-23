@@ -45,6 +45,112 @@ const httpClient = axios.create({
   validateStatus: null,
 });
 
+// ─── Sandbox helpers shared between runScript and createScriptContext ─────────
+
+function _xpImpl(html, expr) {
+  try {
+    const parser = new DOMParser({ onError: () => {} });
+    const doc = parser.parseFromString(html, 'text/xml');
+    const result = xpathLib.select(expr, doc);
+    if (typeof result === 'string' || typeof result === 'number' || typeof result === 'boolean') return result;
+    if (Array.isArray(result)) {
+      if (result.length === 0) return null;
+      const val = result[0];
+      return val.textContent !== undefined ? val.textContent : (val.nodeValue !== undefined ? val.nodeValue : String(val));
+    }
+    return result;
+  } catch (_) { return null; }
+}
+
+const _xpathApi = {
+  select(expr, doc) { return xpathLib.select(expr, doc); },
+  select1(expr, doc) { return xpathLib.select1(expr, doc); },
+  value(expr, doc) {
+    const result = xpathLib.select(expr, doc);
+    if (typeof result === 'string' || typeof result === 'number' || typeof result === 'boolean') return result;
+    if (Array.isArray(result) && result.length > 0) {
+      const val = result[0];
+      return val.textContent !== undefined ? val.textContent : (val.nodeValue !== undefined ? val.nodeValue : String(val));
+    }
+    return null;
+  },
+};
+
+// Property names always present in a pre-built script context.
+// Used to identify and remove user-added globals between sequential reuses.
+const STATIC_CONTEXT_KEYS = new Set([
+  'JSON', 'parseInt', 'parseFloat', 'isNaN', 'isFinite', 'Number', 'String', 'Boolean',
+  'Array', 'Object', 'Math', 'Date', 'RegExp', 'Error', 'Buffer',
+  'encodeURIComponent', 'decodeURIComponent', 'encodeURI', 'decodeURI',
+  'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval',
+  'btoa', 'atob', 'unescape', 'escape', 'crypto',
+  'TextEncoder', 'TextDecoder',
+  'Uint8Array', 'Uint8ClampedArray', 'Int8Array', 'Int16Array', 'Uint16Array',
+  'Int32Array', 'Uint32Array', 'Float32Array', 'Float64Array', 'ArrayBuffer',
+  'XMLHttpRequest', 'fetch', '_xp', 'xpath',
+]);
+
+// Compiled vm.Script cache for the reused-context path (keyed by IIFE-wrapped source).
+// Capped at 500 entries to bound memory usage.
+const _scriptCache = new Map();
+
+/**
+ * Pre-allocate a VM context loaded with all static (non-per-run) sandbox globals.
+ * Pass the returned object as the 5th argument to runScript() to avoid re-creating
+ * a V8 context on each script call — useful for collection runs with many iterations.
+ *
+ * The same object MUST NOT be used concurrently. Sequential reuse is safe.
+ */
+function createScriptContext() {
+  const shell = {
+    JSON,
+    parseInt,
+    parseFloat,
+    isNaN,
+    isFinite,
+    Number,
+    String,
+    Boolean,
+    Array,
+    Object,
+    Math,
+    Date,
+    RegExp,
+    Error,
+    Buffer,
+    encodeURIComponent,
+    decodeURIComponent,
+    encodeURI,
+    decodeURI,
+    setTimeout() {},
+    clearTimeout() {},
+    setInterval() {},
+    clearInterval() {},
+    btoa: (s) => Buffer.from(s).toString('base64'),
+    atob: (s) => Buffer.from(s, 'base64').toString('utf8'),
+    unescape,
+    escape,
+    crypto: webcrypto,
+    TextEncoder,
+    TextDecoder,
+    Uint8Array,
+    Uint8ClampedArray,
+    Int8Array,
+    Int16Array,
+    Uint16Array,
+    Int32Array,
+    Uint32Array,
+    Float32Array,
+    Float64Array,
+    ArrayBuffer,
+    XMLHttpRequest: undefined,
+    fetch: undefined,
+    _xp: _xpImpl,
+    xpath: _xpathApi,
+  };
+  return vm.createContext(shell);
+}
+
 // ─── Chainable expect ────────────────────────────────────────────────────────
 
 function createExpect(value, negated, onFail) {
@@ -764,7 +870,7 @@ function buildResponse(r) {
 
 // ─── Script runner ───────────────────────────────────────────────────────────
 
-async function runScript(code, response, variables, deps) {
+async function runScript(code, response, variables, deps, vmContext) {
   const tests = [];
   const updatedVariables = {};
   const updatedGlobalMutations = {};
@@ -830,49 +936,52 @@ async function runScript(code, response, variables, deps) {
     ArrayBuffer,
     XMLHttpRequest: undefined,
     fetch: undefined,
-    _xp(html, expr) {
-      try {
-        const parser = new DOMParser({ onError: () => {} });
-        const doc = parser.parseFromString(html, 'text/xml');
-        const result = xpathLib.select(expr, doc);
-        if (typeof result === 'string' || typeof result === 'number' || typeof result === 'boolean') return result;
-        if (Array.isArray(result)) {
-          if (result.length === 0) return null;
-          const val = result[0];
-          return val.textContent !== undefined ? val.textContent : (val.nodeValue !== undefined ? val.nodeValue : String(val));
-        }
-        return result;
-      } catch (_) { return null; }
-    },
-    xpath: {
-      select(expr, doc) { return xpathLib.select(expr, doc); },
-      select1(expr, doc) { return xpathLib.select1(expr, doc); },
-      value(expr, doc) {
-        const result = xpathLib.select(expr, doc);
-        if (typeof result === 'string' || typeof result === 'number' || typeof result === 'boolean') return result;
-        if (Array.isArray(result) && result.length > 0) {
-          const val = result[0];
-          return val.textContent !== undefined ? val.textContent : (val.nodeValue !== undefined ? val.nodeValue : String(val));
-        }
-        return null;
-      },
-    },
+    _xp: _xpImpl,
+    xpath: _xpathApi,
   };
 
-  try {
-    const script = new vm.Script(code, { filename: 'apilix-script.js' });
-    const ctx = vm.createContext(sandbox);
-    script.runInContext(ctx, { timeout: 5000 });
-
-    // Wait for all pm.sendRequest async callbacks to complete
-    if (pendingRequests.length > 0) {
-      await Promise.all(pendingRequests);
+  if (vmContext) {
+    // ─── Reused-context path (collection runs) ──────────────────────────
+    // Assign per-run properties directly onto the pre-built contextified object,
+    // wrap user code in an IIFE to scope var/function declarations, then clean up.
+    vmContext.apx = apx;
+    vmContext.pm = apx;
+    vmContext.console = sandbox.console;
+    const wrappedCode = `(function(){\n'use strict';\n${code}\n})();`;
+    let script = _scriptCache.get(wrappedCode);
+    if (!script) {
+      if (_scriptCache.size >= 500) _scriptCache.delete(_scriptCache.keys().next().value);
+      script = new vm.Script(wrappedCode, { filename: 'apilix-script.js' });
+      _scriptCache.set(wrappedCode, script);
     }
-  } catch (err) {
-    tests.push({ name: '__ScriptError__', passed: false, error: err.message });
+    try {
+      script.runInContext(vmContext, { timeout: 5000 });
+      if (pendingRequests.length > 0) await Promise.all(pendingRequests);
+    } catch (err) {
+      tests.push({ name: '__ScriptError__', passed: false, error: err.message });
+    } finally {
+      // Remove per-run refs and any user-added globals so the next invocation
+      // starts with a clean slate.
+      delete vmContext.apx;
+      delete vmContext.pm;
+      delete vmContext.console;
+      for (const k of Object.getOwnPropertyNames(vmContext)) {
+        if (!STATIC_CONTEXT_KEYS.has(k)) delete vmContext[k];
+      }
+    }
+  } else {
+    // ─── Fresh-context path (single request sends, direct tests) ───────────
+    try {
+      const script = new vm.Script(code, { filename: 'apilix-script.js' });
+      const ctx = vm.createContext(sandbox);
+      script.runInContext(ctx, { timeout: 5000 });
+      if (pendingRequests.length > 0) await Promise.all(pendingRequests);
+    } catch (err) {
+      tests.push({ name: '__ScriptError__', passed: false, error: err.message });
+    }
   }
 
   return { tests, updatedVariables, updatedEnvMutations, updatedCollVarMutations, updatedGlobalMutations, consoleLogs, childRequests, skipRequest: executionSignals.skipRequest, nextRequest: executionSignals.nextRequest, nextRequestById: executionSignals.nextRequestById };
 }
 
-module.exports = { runScript };
+module.exports = { runScript, createScriptContext };

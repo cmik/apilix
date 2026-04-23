@@ -9,6 +9,7 @@ try {
   parseCsv = require('../../server/node_modules/csv-parse/dist/cjs/sync.cjs').parse;
 }
 const { executeRequest, flattenItemsWithScripts } = require('./request-engine');
+const { createScriptContext } = require('./script-runtime');
 
 /**
  * Represents a client input error that should map to HTTP 400.
@@ -140,6 +141,7 @@ async function executePreparedCollectionRun(prepared, options = {}) {
     let currentCollVars = { ...(collectionVariables || {}) };
     let currentGlobals = { ...(globals || {}) };
     let currentCookies = { ...(cookies || {}) };
+    const vmContext = createScriptContext();
     const iterationRecord = collectIterations
       ? { iteration: i + 1, dataRow, results: [] }
       : null;
@@ -179,6 +181,7 @@ async function executePreparedCollectionRun(prepared, options = {}) {
         mockBase: mockBase || null,
         iteration: i + 1,
         requestId: item.id || '',
+        vmContext,
       });
 
       if (result.updatedEnvironment) currentEnv = result.updatedEnvironment;

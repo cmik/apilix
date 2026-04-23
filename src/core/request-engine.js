@@ -424,6 +424,7 @@ async function executeRequest(item, context) {
     mockBase = null,
     iteration = 1,
     requestId = item.id || '',
+    vmContext = null,
   } = context;
   let vars = buildVariables(environment, collectionVariables, globals, dataRow, collVars);
   // Keep original key sets for scope routing — used when splitting script mutations
@@ -466,7 +467,7 @@ async function executeRequest(item, context) {
         requestId,
         iteration,
       };
-      const result = await runScript(code, null, vars, scriptDeps);
+      const result = await runScript(code, null, vars, scriptDeps, vmContext);
       const preUpdatedVars = result.updatedVariables;
       const preEnvMutations = result.updatedEnvMutations || {};
       const preCollVarMutations = result.updatedCollVarMutations || {};
@@ -669,7 +670,7 @@ async function executeRequest(item, context) {
           requestId,
           iteration,
         };
-        const result = await runScript(code, responseData, vars, scriptDeps);
+        const result = await runScript(code, responseData, vars, scriptDeps, vmContext);
         testResults = result.tests;
         updatedVars = result.updatedVariables;
         testEnvMutations = result.updatedEnvMutations || {};
