@@ -55,8 +55,10 @@ Data (collections, environments) is stored locally in the app profile:
 ### Install dependencies
 
 ```bash
-npm run setup
+npm install
 ```
+
+This repository now uses npm workspaces (`packages/*`). Install from the repo root so local workspace packages are linked correctly.
 
 ### Start (web mode)
 
@@ -71,6 +73,17 @@ npm start
 
 ```bash
 npm run electron:dev
+```
+
+### Test
+
+```bash
+# Workspace package tests
+npm run test --workspaces --if-present
+
+# Legacy server/client test suites
+npm run test:server
+npm run test:client
 ```
 
 ### Run Collections From CI

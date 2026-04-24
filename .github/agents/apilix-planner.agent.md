@@ -1,7 +1,7 @@
 ---
 description: "Generate an implementation plan for new features or refactoring in the Apilix API testing platform. Use when: planning a feature, designing architecture, outlining steps before coding, planning a refactor. Produces layered plan covering types → store → API → server → UI → tests."
 name: apilix-planner
-tools: ['web/fetch', 'search/codebase', 'search/usages']
+tools: [edit, search/codebase, search/usages, web/fetch]
 agents: ["apilix-researcher"]
 model: ['Auto (copilot)', 'Claude Sonnet 4.6', 'GPT-5.2']  # Tries models in order
 handoffs:

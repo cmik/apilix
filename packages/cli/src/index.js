@@ -6,10 +6,8 @@ const path = require('node:path');
 const Chalk = require('chalk');
 const { Command } = require('commander');
 
-const pkg = require('../../package.json');
-const { setExecutorConfig } = require('../core/request-engine');
-const { prepareCollectionRun, executePreparedCollectionRun } = require('../core/collection-runner');
-const { summarizeRun, buildJsonReport, buildJUnitReport } = require('../../server/runnerReporters');
+const pkg = require('../package.json');
+const { setExecutorConfig, prepareCollectionRun, executePreparedCollectionRun, summarizeRun, buildJsonReport, buildJUnitReport } = require('../../core/src/index');
 
 const DEFAULT_REQUEST_TIMEOUT = 30000;
 const MAX_REQUEST_NAME_WIDTH = 72;

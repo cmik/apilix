@@ -1,3 +1,3 @@
 'use strict';
 
-module.exports = require('../src/core/request-engine');
+module.exports = require('../packages/core/src/index');

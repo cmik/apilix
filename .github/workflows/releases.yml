@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - 'refactor/**'   # run tests during monorepo refactor
     tags:
       - 'v*'   # triggers on v1.0.0, v1.2.3, etc.
   pull_request:
@@ -16,6 +17,11 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [workspaces, server, client]
+    name: Test (${{ matrix.suite }})
     steps:
       - uses: actions/checkout@v4
 
@@ -24,14 +30,21 @@ jobs:
           node-version: 20
 
       - name: Install dependencies
-        run: npm run setup
-        
+        run: npm install
+
+      - name: Run workspace package tests
+        if: matrix.suite == 'workspaces'
+        run: npm run test --workspaces --if-present
+        shell: bash
+
       - name: Run server tests
-        run: cd server && npm test
+        if: matrix.suite == 'server'
+        run: npm run test:server
         shell: bash
 
       - name: Run client tests
-        run: cd client && npm test
+        if: matrix.suite == 'client'
+        run: npm run test:client
         shell: bash
 
   build-cli:
@@ -46,7 +59,7 @@ jobs:
           node-version: 20
 
       - name: Install dependencies
-        run: npm run setup
+        run: npm install
 
       - name: Build CLI binaries
         run: npm run cli:build:binaries
@@ -142,7 +155,7 @@ jobs:
           node-version: 20
 
       - name: Install dependencies
-        run: npm run setup
+        run: npm install
 
       - name: Build CLI binaries
         run: npm run cli:build:binaries
@@ -203,7 +216,7 @@ jobs:
           node-version: 20
 
       - name: Install dependencies
-        run: npm run setup
+        run: npm install
 
       - name: Build CLI binaries
         run: npm run cli:build:binaries
@@ -259,7 +272,7 @@ jobs:
           node-version: 20
 
       - name: Install dependencies
-        run: npm run setup
+        run: npm install
 
       - name: Build macOS DMG
         env:
@@ -286,7 +299,7 @@ jobs:
           node-version: 20
 
       - name: Install dependencies
-        run: npm run setup
+        run: npm install
 
       - name: Build Windows EXE
         env:

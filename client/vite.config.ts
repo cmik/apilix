@@ -9,6 +9,11 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
   },
+  resolve: {
+    alias: {
+      '@apilix/core': resolve(__dirname, '../packages/core/src/index.js'),
+    },
+  },
   plugins: [react()],
   base: './',
   build: {

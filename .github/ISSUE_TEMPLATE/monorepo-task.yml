@@ -1,0 +1,70 @@
+name: Monorepo Task
+description: A task in the monorepo refactoring initiative
+labels: ["type:task"]
+body:
+  - type: dropdown
+    id: epic
+    attributes:
+      label: Epic
+      options:
+        - epic:foundation
+        - epic:core-extraction
+        - epic:server-migration
+        - epic:client-migration
+        - epic:cli-refactor
+        - epic:stabilisation
+    validations:
+      required: true
+
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Phase
+      options:
+        - "Phase 2 — Infrastructure"
+        - "Phase 3 — Optimisation"
+        - "Phase 4 — Stabilisation"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What
+      description: What needs to be done?
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      value: |
+        - [ ] 
+        - [ ] 
+        - [ ] 
+    validations:
+      required: true
+
+  - type: textarea
+    id: files
+    attributes:
+      label: Files Affected
+      description: Specific files or directories involved
+
+  - type: input
+    id: blocked-by
+    attributes:
+      label: Blocked by
+      description: Issue numbers this depends on (e.g. #12, #13)
+      placeholder: "Nothing"
+
+  - type: dropdown
+    id: effort
+    attributes:
+      label: Effort
+      options:
+        - "S — < 2 hours"
+        - "M — 2–8 hours"
+        - "L — 1–3 days"
+        - "XL — > 3 days"

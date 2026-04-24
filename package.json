@@ -10,6 +10,9 @@
     "node": ">=20.19.0",
     "npm": ">=9"
   },
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "start": "concurrently -k -p \"[{name}]\" -n \"SERVER,CLIENT\" -c \"bgYellow.bold,bgCyan.bold\" \"npm run server\" \"npm run client\"",
     "cli": "node bin/apilix.js",
@@ -20,7 +23,7 @@
     "test:server": "cd server && npm test",
     "test:client": "cd client && npm test",
     "client": "cd client && npm run dev",
-    "setup": "npm install && cd server && npm install && cd ../client && npm install",
+    "setup": "npm install",
     "build": "cd client && npm run build",
     "electron": "electron .",
     "electron:dev": "concurrently -k -p \"[{name}]\" -n \"SERVER,CLIENT,ELECTRON\" -c \"bgYellow.bold,bgCyan.bold,bgMagenta.bold\" \"npm run server\" \"npm run client\" \"wait-on http://localhost:5173 && electron .\"",
@@ -46,18 +49,13 @@
   },
   "pkg": {
     "scripts": [
-      "bin/**/*.js",
-      "src/**/*.js",
-      "server/cli-runner.js",
-      "server/collectionRunner.js",
-      "server/executor.js",
-      "server/oauth.js",
-      "server/runnerReporters.js",
-      "server/sandbox.js",
-      "server/tlsUtils.js"
+      "bin/apilix.js",
+      "packages/cli/src/index.js",
+      "packages/core/src/index.js"
     ],
     "assets": [
-      "server/node_modules/**/*.cjs"
+      "packages/core/node_modules/axios/dist/node/axios.cjs",
+      "packages/core/node_modules/csv-parse/dist/cjs/sync.cjs"
     ],
     "targets": [
       "node20-macos-x64",
@@ -87,8 +85,8 @@
         "to": "server/node_modules"
       },
       {
-        "from": "src/core",
-        "to": "src/core",
+        "from": "packages/core",
+        "to": "packages/core",
         "filter": ["**/*"]
       }
     ],

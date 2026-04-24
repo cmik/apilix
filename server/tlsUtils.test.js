@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { getSystemCAs, makeHttpsAgent } = require('./tlsUtils');
+const { getSystemCAs, makeHttpsAgent } = require('../packages/core/src/tls-utils');
 
 test('getSystemCAs returns same array instance on multiple calls', () => {
   const first = getSystemCAs();

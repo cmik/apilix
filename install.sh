@@ -29,20 +29,6 @@ cd "$ROOT"
 npm install || fail "Root npm install failed"
 ok "Root dependencies installed"
 
-# ── Server dependencies ────────────────────────────────────────────────────────
-
-step "Installing server dependencies"
-cd "$ROOT/server"
-npm install || fail "Server npm install failed"
-ok "Server dependencies installed"
-
-# ── Client dependencies ────────────────────────────────────────────────────────
-
-step "Installing client dependencies"
-cd "$ROOT/client"
-npm install || fail "Client npm install failed"
-ok "Client dependencies installed"
-
 # ── Done ───────────────────────────────────────────────────────────────────────
 
 cd "$ROOT"

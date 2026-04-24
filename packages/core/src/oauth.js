@@ -2,7 +2,8 @@
 
 const axios = require('axios');
 const crypto = require('crypto');
-const { makeHttpsAgent } = require('./tlsUtils');
+const { makeHttpsAgent } = require('./tls-utils');
+const { resolveVariables } = require('./variable-resolver');
 
 const allowInsecureTls = process.env.OAUTH_ALLOW_INSECURE_TLS === 'true';
 
@@ -313,17 +314,6 @@ function parseTokenResponseData(raw) {
     }
   }
   return raw ?? {};
-}
-
-/**
- * Simple variable resolution (copied from executor.js)
- */
-function resolveVariables(str, vars) {
-  if (typeof str !== 'string') return str;
-  return str.replace(/\{\{([^}]+)\}\}/g, (match, key) => {
-    const trimmed = key.trim();
-    return vars[trimmed] !== undefined ? vars[trimmed] : match;
-  });
 }
 
 // ─── Exports ──────────────────────────────────────────────────────────────────
