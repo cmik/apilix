@@ -34,12 +34,13 @@ Add `coverage.thresholds` to `client/vitest.config.ts` to enforce minimum covera
 
 ## TypeScript / Build
 
-- [ ] `client/tsconfig.json`: add `"@apilix/core/types": ["../packages/core/types/index.ts"]` to `paths` so IDE go-to-definition resolves the `/types` subpath in editors that don't read `exports` maps
-- [ ] `packages/core/tsconfig.json`: add `"types/**/*"` to `include` so `tsc --noEmit` on the core package type-checks the `.ts` declaration files in `types/`
-- [ ] **Align exports map conditions**: add explicit `"require"` / `"default"` conditions for dual-mode consumers:
+- [x] `client/tsconfig.json`: add `"@apilix/core/types": ["../packages/core/types/index.ts"]` to `paths` so IDE go-to-definition resolves the `/types` subpath in editors that don't read `exports` maps
+- [x] `packages/core/tsconfig.json`: add `"types/**/*"` to `include` so `tsc --noEmit` on the core package type-checks the `.ts` declaration files in `types/`
+- [x] **Align exports map conditions**: add explicit `"require"` / `"default"` conditions for dual-mode consumers:
   ```json
   ".": { "require": "./src/index.js", "default": "./src/index.js" }
   ```
+- [x] Root `tsconfig.json` created with `paths` for all `@apilix/core` subpaths (enables IDE go-to-definition from anywhere in the monorepo)
 
 ## Sync & Storage
 

@@ -13,14 +13,16 @@ apilix/
 ├── packages/
 │   ├── core/          @apilix/core  — execution engine, sandbox, OAuth, TLS utils
 │   └── cli/           @apilix/cli   — headless CLI runner (shipped as a binary)
-├── client/            React + Vite frontend
-├── server/            Express API server
+├── client/            React + Vite frontend  (workspace: apilix-client)
+├── server/            Express API server     (workspace: apilix-server)
 ├── electron/          Electron desktop wrapper
 ├── bin/               Entry-point shim for the CLI (apilix.js)
 └── package.json       Root workspace manifest, pkg bundler config
 ```
 
 `packages/core` is the shared library consumed by both `server/` and the CLI. All HTTP execution logic, scripting, OAuth, and TLS configuration live there.
+
+The root `workspaces` field covers `packages/*`, `client`, and `server`, so a single `npm install` from the repo root links all four workspace packages and hoists shared dependencies.
 
 ---
 

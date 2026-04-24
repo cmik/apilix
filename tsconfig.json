@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "paths": {
+      "@apilix/core": ["./packages/core/src/index.js"],
+      "@apilix/core/types": ["./packages/core/types/index.ts"],
+      "@apilix/core/request-engine": ["./packages/core/src/request-engine.js"],
+      "@apilix/core/script-runtime": ["./packages/core/src/script-runtime.js"],
+      "@apilix/core/collection-runner": ["./packages/core/src/collection-runner.js"],
+      "@apilix/core/oauth": ["./packages/core/src/oauth.js"],
+      "@apilix/core/tls-utils": ["./packages/core/src/tls-utils.js"],
+      "@apilix/core/runner-reporters": ["./packages/core/src/runner-reporters.js"],
+      "@apilix/core/variable-resolver": ["./packages/core/src/variable-resolver.js"]
+    }
+  },
+  "files": []
+}

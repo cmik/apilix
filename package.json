@@ -11,7 +11,9 @@
     "npm": ">=9"
   },
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "client",
+    "server"
   ],
   "scripts": {
     "start": "concurrently -k -p \"[{name}]\" -n \"SERVER,CLIENT\" -c \"bgYellow.bold,bgCyan.bold\" \"npm run server\" \"npm run client\"",
