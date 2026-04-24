@@ -296,6 +296,15 @@ const { WebSocketServer } = require('ws');
 /** In-memory mock routes: array of { id, enabled, type, method, path, statusCode, responseHeaders, responseBody, delay } */
 let mockRoutes = [];
 
+// Two-tier route index rebuilt on every mockRoutes update.
+// Static routes (no :param segments) are stored in a Map for O(1) lookup.
+// Parametric routes remain in an ordered array for sequential scan.
+// Disabled routes are excluded at build time.
+let _staticHttp = new Map(); // key: "METHOD:/path" or "*:/path"
+let _paramHttp  = [];         // [{ route, originalIndex }]
+let _staticWs   = new Map(); // key: "/path"
+let _paramWs    = [];         // [{ route, originalIndex }]
+
 /** The running mock HTTP server, or null. */
 let mockServerInstance = null;
 let mockServerPort = 3002;
@@ -696,6 +705,43 @@ function applyChaos(chaos, req, res, status, body, headers, delay) {
   };
 }
 
+/**
+ * Rebuilds the static + parametric route indexes from the given routes array.
+ * Must be called whenever mockRoutes is reassigned.
+ */
+function buildRouteIndex(routes) {
+  const staticHttp = new Map();
+  const paramHttp  = [];
+  const staticWs   = new Map();
+  const paramWs    = [];
+
+  routes.forEach((route, originalIndex) => {
+    if (!route.enabled) return;
+
+    const isWs     = route.type === 'websocket';
+    const hasParam = route.path.includes(':');
+    const normPath = route.path.replace(/\/+$/, '') || '/';
+
+    if (hasParam) {
+      if (isWs) paramWs.push({ route, originalIndex });
+      else      paramHttp.push({ route, originalIndex });
+    } else {
+      if (isWs) {
+        // WS routes are not method-specific — key by path only
+        if (!staticWs.has(normPath)) staticWs.set(normPath, { route, originalIndex });
+      } else {
+        const key = `${route.method.toUpperCase()}:${normPath}`;
+        if (!staticHttp.has(key)) staticHttp.set(key, { route, originalIndex });
+      }
+    }
+  });
+
+  _staticHttp = staticHttp;
+  _paramHttp  = paramHttp;
+  _staticWs   = staticWs;
+  _paramWs    = paramWs;
+}
+
 function buildMockHandler() {
   return function (req, res) {
     const method = req.method.toUpperCase();
@@ -726,18 +772,42 @@ function buildMockHandler() {
       });
     }
 
-    // Find matching route (first enabled HTTP match — WS routes are handled by the upgrade handler)
+    // Find matching route — two-tier indexed lookup (O(1) for static, O(p) for parametric)
     let matched = null;
     let pathParams = {};
-    for (const route of mockRoutes) {
-      if (!route.enabled) continue;
-      if (route.type === 'websocket') continue;
-      if (route.method !== '*' && route.method.toUpperCase() !== method) continue;
-      const params = matchPath(route.path, pathname);
-      if (params !== null) {
-        matched = route;
-        pathParams = params;
-        break;
+    {
+      const normPath    = pathname.replace(/\/+$/, '') || '/';
+      const specificKey = `${method}:${normPath}`;
+      const wildcardKey = `*:${normPath}`;
+
+      const staticSpecific = _staticHttp.get(specificKey) ?? null;
+      const staticWildcard = _staticHttp.get(wildcardKey) ?? null;
+
+      // Pick the static candidate with the lower original index (preserves list order)
+      let staticCandidate = null;
+      if (staticSpecific && staticWildcard) {
+        staticCandidate = staticSpecific.originalIndex < staticWildcard.originalIndex
+          ? staticSpecific : staticWildcard;
+      } else {
+        staticCandidate = staticSpecific ?? staticWildcard ?? null;
+      }
+
+      // Scan only the parametric subset
+      let paramCandidate = null;
+      for (const entry of _paramHttp) {
+        const { route } = entry;
+        if (route.method !== '*' && route.method.toUpperCase() !== method) continue;
+        const params = matchPath(route.path, pathname);
+        if (params !== null) { paramCandidate = { ...entry, params }; break; }
+      }
+
+      // Use whichever candidate appeared first in the original list
+      if (staticCandidate && (!paramCandidate || staticCandidate.originalIndex < paramCandidate.originalIndex)) {
+        matched    = staticCandidate.route;
+        pathParams = {};
+      } else if (paramCandidate) {
+        matched    = paramCandidate.route;
+        pathParams = paramCandidate.params;
       }
     }
 
@@ -921,17 +991,25 @@ function handleWsUpgrade(req, socket, head) {
     wsQuery[k] = v;
   }
 
-  // Find first enabled WebSocket route matching the path
+  // Find first enabled WebSocket route — two-tier indexed lookup
   let matched = null;
   let pathParams = {};
-  for (const route of mockRoutes) {
-    if (!route.enabled) continue;
-    if (route.type !== 'websocket') continue;
-    const params = matchPath(route.path, pathname);
-    if (params !== null) {
-      matched = route;
-      pathParams = params;
-      break;
+  {
+    const normWsPath = pathname.replace(/\/+$/, '') || '/';
+    const staticWsEntry = _staticWs.get(normWsPath) ?? null;
+
+    let paramWsCandidate = null;
+    for (const entry of _paramWs) {
+      const params = matchPath(entry.route.path, pathname);
+      if (params !== null) { paramWsCandidate = { ...entry, params }; break; }
+    }
+
+    if (staticWsEntry && (!paramWsCandidate || staticWsEntry.originalIndex < paramWsCandidate.originalIndex)) {
+      matched    = staticWsEntry.route;
+      pathParams = {};
+    } else if (paramWsCandidate) {
+      matched    = paramWsCandidate.route;
+      pathParams = paramWsCandidate.params;
     }
   }
 
@@ -1104,6 +1182,7 @@ function startMockServer(port, routes) {
       mockServerInstance.close(() => { mockServerInstance = null; });
     }
     mockRoutes = routes || [];
+    buildRouteIndex(mockRoutes);
     mockServerPort = port;
     mockRequestLog = [];
     mockDb = Object.create(null);
@@ -1175,6 +1254,7 @@ app.post('/api/mock/stop', async (_req, res) => {
 // PUT /api/mock/routes — sync all routes while server is running
 app.put('/api/mock/routes', (req, res) => {
   mockRoutes = req.body.routes || [];
+  buildRouteIndex(mockRoutes);
   res.json({ ok: true, count: mockRoutes.length });
 });
 

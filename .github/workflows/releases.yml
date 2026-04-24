@@ -63,11 +63,20 @@ jobs:
           fi
           chmod +x "$BIN"
 
-          PORT=19091
+          export PORT=19091
           node -e "require('http').createServer((req,res)=>{res.writeHead(200, {'content-type':'application/json'});res.end(JSON.stringify({ok:true}));}).listen(process.env.PORT,'127.0.0.1')" &
           SERVER_PID=$!
           trap 'kill $SERVER_PID >/dev/null 2>&1 || true' EXIT
-          sleep 1
+          for i in {1..25}; do
+            if curl -fsS "http://127.0.0.1:${PORT}/ping" >/dev/null; then
+              break
+            fi
+            if [[ "$i" -eq 25 ]]; then
+              echo "Smoke server did not become ready on 127.0.0.1:${PORT}"
+              exit 1
+            fi
+            sleep 0.2
+          done
 
           mkdir -p .tmp-cli-smoke
           cat > .tmp-cli-smoke/collection.json <<'JSON'
@@ -150,11 +159,20 @@ jobs:
           fi
           chmod +x "$BIN"
 
-          PORT=19092
+          export PORT=19092
           node -e "require('http').createServer((req,res)=>{res.writeHead(200, {'content-type':'application/json'});res.end(JSON.stringify({ok:true}));}).listen(process.env.PORT,'127.0.0.1')" &
           SERVER_PID=$!
           trap 'kill $SERVER_PID >/dev/null 2>&1 || true' EXIT
-          sleep 1
+          for i in {1..25}; do
+            if curl -fsS "http://127.0.0.1:${PORT}/ping" >/dev/null; then
+              break
+            fi
+            if [[ "$i" -eq 25 ]]; then
+              echo "Smoke server did not become ready on 127.0.0.1:${PORT}"
+              exit 1
+            fi
+            sleep 0.2
+          done
 
           mkdir -p .tmp-cli-smoke
           cp server/fixtures/cli/collection-success.json .tmp-cli-smoke/collection.json
