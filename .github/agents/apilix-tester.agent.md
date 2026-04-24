@@ -3,7 +3,7 @@ name: apilix-tester
 description: "Generate and run tests for the Apilix API testing platform. Use when: writing unit tests, adding test coverage for a feature, testing a bug fix, checking sandbox scripting behavior, testing import/export parsers, testing executor auth flows, or running the test suite. Covers Vitest (client) and node:test (server)."
 argument-hint: "What to test — e.g., 'the executor OAuth2 flow', 'the cURL import parser', 'the new pm.sendRequest sandbox method'"
 tools: [execute, read, edit, search/codebase, search/usages]
-model: ['Claude Sonnet 4.6', 'GPT-5.4']  # Tries models in order
+model: ['Auto (copilot)', 'Claude Sonnet 4.6', 'GPT-5.2']  # Tries models in order
 handoffs: 
   - label: Fix Failed Tests
     agent: apilix-dev

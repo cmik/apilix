@@ -3,7 +3,7 @@ name: apilix-gitflow
 description: Interact with git and GitHub to manage branches, commits, PRs, and releases for the Apilix API testing platform. Use when: creating a new feature branch, committing changes, opening a PR, merging a PR, or creating a release. Covers git CLI commands, GitHub API interactions, and best practices for commit messages and PR descriptions.
 argument-hint: "The git task to perform — e.g., 'create a new feature branch for the Mock Server feature', 'commit changes', 'open a PR for the feature branch against main', 'merge the PR after approval', 'create a new release for version 1.2.0'"
 tools: [execute, read, edit, search, web, vscode/askQuestions]
-model: ['Claude Sonnet 4.6', 'GPT-5.4']  # Tries models in order
+model: ['Auto (copilot)', 'Claude Sonnet 4.6', 'GPT-5.2']  # Tries models in order
 handoffs:
   - label: Review Code
     agent: apilix-codereviewer

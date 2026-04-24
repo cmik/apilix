@@ -2,7 +2,7 @@
 description: "Use when implementing new features, enhancements, or bug fixes in the Apilix API testing platform. Covers React frontend (components, store, types), Express backend (routes, executor, sandbox), and end-to-end feature wiring. Trigger phrases: implement feature, add functionality, build component, extend API, export, import, new endpoint."
 name: apilix-dev
 tools: [read, edit, search, execute, agent, todo]
-model: ['Claude Sonnet 4.6', 'GPT-5.2']  # Tries models in order
+model: ['Auto (copilot)', 'Claude Sonnet 4.6', 'GPT-5.2']  # Tries models in order
 handoffs:
   - label: Code review
     agent: apilix-codereviewer

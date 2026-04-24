@@ -3,7 +3,7 @@ description: "Generate an implementation plan for new features or refactoring in
 name: apilix-planner
 tools: ['web/fetch', 'search/codebase', 'search/usages']
 agents: ["apilix-researcher"]
-model: ['Claude Sonnet 4.6', 'GPT-5.4']  # Tries models in order
+model: ['Auto (copilot)', 'Claude Sonnet 4.6', 'GPT-5.2']  # Tries models in order
 handoffs:
   - label: Implement Plan
     agent: apilix-dev

@@ -4,9 +4,9 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const vm = require('vm');
-const { parse: parseCsv } = require('csv-parse/sync');
 const axios = require('axios');
-const { executeRequest, flattenItemsWithScripts, setExecutorConfig } = require('./executor');
+const { executeRequest, setExecutorConfig } = require('../src/core/request-engine');
+const { prepareCollectionRun, executePreparedCollectionRun, InputError } = require('../src/core/collection-runner');
 const { refreshOAuth2Token, exchangeAuthorizationCodeForToken } = require('./oauth');
 
 const app = express();
@@ -36,31 +36,6 @@ const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
 
 /** @type {Map<string, { paused: boolean, stopped: boolean }>} */
 const runStates = new Map();
-
-function generateRunId() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2);
-}
-
-/** Waits while the run is paused. Returns 'stopped' or 'running'. */
-async function waitForResume(runId) {
-  while (true) {
-    const state = runStates.get(runId);
-    if (!state || state.stopped) return 'stopped';
-    if (!state.paused) return 'running';
-    await new Promise(r => setTimeout(r, 100));
-  }
-}
-
-/** Waits delayMs, honouring pause/stop. Returns 'stopped' or 'running'. */
-async function awaitDelay(runId, delayMs) {
-  const end = Date.now() + delayMs;
-  while (Date.now() < end) {
-    const check = await waitForResume(runId);
-    if (check === 'stopped') return 'stopped';
-    await new Promise(r => setTimeout(r, Math.min(50, Math.max(0, end - Date.now()))));
-  }
-  return 'running';
-}
 
 app.use(cors({
   origin: (origin, callback) => {
@@ -258,36 +233,20 @@ app.post('/api/run/:runId/stop', (req, res) => {
 // ─── Run an entire collection (optionally with CSV) — SSE streaming ───────────
 
 app.post('/api/run', upload.single('csvFile'), async (req, res) => {
+  let runId = null;
   try {
     const payload = JSON.parse(req.body.data || '{}');
-    const { collection, environment, collectionVariables, globals, delay, cookies, executeChildRequests, conditionalExecution, allCollectionItems, mockBase } = payload;
+    const prepared = prepareCollectionRun(payload, {
+      csvText: req.file ? req.file.buffer.toString('utf-8') : null,
+    });
 
-    if (!collection || !collection.item) {
-      return res.status(400).json({ error: 'Missing collection in body' });
-    }
-
-    // Parse CSV rows, defaulting to a single empty iteration (or N empty rows for plain iterations)
-    let dataRows = [{}];
-    if (req.file) {
-      const csvText = req.file.buffer.toString('utf-8');
-      try {
-        dataRows = parseCsv(csvText, { columns: true, skip_empty_lines: true, trim: true });
-      } catch (csvErr) {
-        return res.status(400).json({ error: `Invalid CSV: ${csvErr.message}` });
-      }
-    } else {
-      const iterCount = Math.max(1, Math.min(100, parseInt(payload.iterations, 10) || 1));
-      if (iterCount > 1) dataRows = Array.from({ length: iterCount }, () => ({}));
-    }
-
-    const requests = flattenItemsWithScripts(collection.item, collection.event);
-    if (requests.length === 0) {
+    if (prepared.requests.length === 0) {
       return res.json({ results: [] });
     }
 
-    // Switch to SSE streaming
-    const runId = generateRunId();
-    runStates.set(runId, { paused: false, stopped: false });
+    runId = prepared.runId;
+    const runState = { paused: false, stopped: false };
+    runStates.set(runId, runState);
 
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -305,150 +264,13 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
-    sendEvent('run-id', { runId });
+    await executePreparedCollectionRun(prepared, {
+      runState,
+      onEvent: sendEvent,
+      collectIterations: false,
+      collectResults: false,
+    });
 
-    const delayMs = Math.min(parseInt(delay, 10) || 0, 5000);
-
-    // Precompute id -> index map once (requests is constant for the run)
-    const requestIdToIndex = new Map(requests.map((r, i) => [r.id, i]));
-
-    let stopped = false;
-    outer: for (let i = 0; i < dataRows.length; i++) {
-      const dataRow = dataRows[i];
-      let currentEnv = { ...(environment || {}) };
-      let currentCollVars = { ...(collectionVariables || {}) };
-      let currentGlobals = { ...(globals || {}) };
-      let currentCookies = { ...(cookies || {}) };
-
-      sendEvent('iteration-start', { iteration: i + 1, dataRow });
-
-      let reqIdx = 0;
-      // Per-request execution counter — detects cycles early.
-      // Any single request running more than (n+1) times signals a loop.
-      const perRequestCount = new Array(requests.length).fill(0);
-      const maxPerRequest = requests.length + 1;
-      while (reqIdx < requests.length) {
-        perRequestCount[reqIdx]++;
-        if (perRequestCount[reqIdx] > maxPerRequest) {
-          const loopName = requests[reqIdx].name;
-          sendEvent('error', { error: `Iteration ${i + 1} aborted: "${loopName}" was reached ${perRequestCount[reqIdx]} times — circular conditional execution detected (setNextRequest() or setNextRequestById()).` });
-          break;
-        }
-        const item = requests[reqIdx];
-        // Check pause/stop before each request
-        if ((await waitForResume(runId)) === 'stopped') { stopped = true; break outer; }
-
-        const result = await executeRequest(item, {
-          environment: currentEnv,
-          collectionVariables: currentCollVars,
-          globals: currentGlobals,
-          dataRow,
-          collVars: collection.variable || [],
-          cookies: currentCookies,
-          collectionItems: executeChildRequests ? (allCollectionItems || collection.item || []) : [],
-          conditionalExecution: conditionalExecution !== false,
-          mockBase: mockBase || null,
-        });
-
-        // Propagate environment/variable/cookie changes to next request in same iteration
-        if (result.updatedEnvironment) currentEnv = result.updatedEnvironment;
-        if (result.updatedCollectionVariables) currentCollVars = result.updatedCollectionVariables;
-        if (result.updatedGlobals) currentGlobals = result.updatedGlobals;
-        if (result.updatedCookies) currentCookies = result.updatedCookies;
-
-        const resultData = {
-          iteration: i + 1,
-          name: item.name,
-          method: item.request?.method || 'GET',
-          url: typeof item.request?.url === 'string'
-            ? item.request.url
-            : item.request?.url?.raw || '',
-          resolvedUrl: result.resolvedUrl,
-          requestHeaders: result.requestHeaders,
-          requestBody: result.requestBody,
-          status: result.status,
-          statusText: result.statusText,
-          responseTime: result.responseTime,
-          headers: result.headers,
-          body: result.body,
-          size: result.size,
-          testResults: result.testResults,
-          scriptLogs: result.scriptLogs,
-          preChildRequests: result.preChildRequests || [],
-          testChildRequests: result.testChildRequests || [],
-          skipped: result.skipped || false,
-          error: result.error,
-        };
-
-        sendEvent('result', resultData);
-
-        // When conditional execution is enabled, explicit next-request signals
-        // override sequential order.
-        // ID-based routing (setNextRequestById) takes precedence over name-based routing.
-        if (conditionalExecution !== false && result.nextRequestById !== undefined) {
-          if (result.nextRequestById !== null) {
-            const targetIdx = requestIdToIndex.has(result.nextRequestById) ? requestIdToIndex.get(result.nextRequestById) : -1;
-            if (targetIdx >= 0) {
-              const targetName = requests[targetIdx].name;
-              sendEvent('next-request', { from: item.name, to: targetName, via: 'id', targetId: result.nextRequestById });
-              if (delayMs > 0) {
-                if ((await awaitDelay(runId, delayMs)) === 'stopped') { stopped = true; break outer; }
-              }
-              reqIdx = targetIdx;
-              continue;
-            } else {
-              // Unknown request id — notify client then stop iteration
-              sendEvent('conditional-flow', { from: item.name, via: 'id', reason: 'target-not-found', attemptedTarget: result.nextRequestById });
-              break;
-            }
-          } else {
-            // setNextRequestById(null) stops iteration intentionally
-            sendEvent('conditional-flow', { from: item.name, via: 'id', reason: 'stopped-by-script' });
-            break;
-          }
-        } else if (conditionalExecution !== false && result.nextRequest !== undefined) {
-          if (result.nextRequest !== null) {
-            // Prefer a forward match to stay within the current chain segment.
-            // Fall back to the first occurrence only if nothing is found ahead.
-            const forwardIdx = requests.findIndex((r, i) => i > reqIdx && r.name === result.nextRequest);
-            const targetIdx = forwardIdx >= 0
-              ? forwardIdx
-              : requests.findIndex(r => r.name === result.nextRequest);
-            if (targetIdx >= 0) {
-              sendEvent('next-request', { from: item.name, to: result.nextRequest, via: 'name' });
-              if (delayMs > 0) {
-                if ((await awaitDelay(runId, delayMs)) === 'stopped') { stopped = true; break outer; }
-              }
-              reqIdx = targetIdx;
-              continue;
-            } else {
-              // Unknown request name — notify client then stop iteration (Postman behaviour)
-              sendEvent('conditional-flow', { from: item.name, via: 'name', reason: 'target-not-found', attemptedTarget: result.nextRequest });
-              break;
-            }
-          } else {
-            // setNextRequest(null) stops iteration intentionally
-            sendEvent('conditional-flow', { from: item.name, via: 'name', reason: 'stopped-by-script' });
-            break;
-          }
-        }
-
-        if (delayMs > 0) {
-          if ((await awaitDelay(runId, delayMs)) === 'stopped') { stopped = true; break outer; }
-        }
-
-        reqIdx++;
-      }
-
-      sendEvent('iteration-end', { iteration: i + 1 });
-    }
-
-    if (stopped) {
-      sendEvent('stopped', {});
-    } else {
-      sendEvent('done', {});
-    }
-    runStates.delete(runId);
     res.end();
   } catch (err) {
     console.error('Run error:', err);
@@ -456,9 +278,13 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
     if (res.headersSent) {
       res.write(`event: error\ndata: ${JSON.stringify({ error: err.message })}\n\n`);
       res.end();
+    } else if (err instanceof InputError) {
+      return res.status(400).json({ error: err.message });
     } else {
       return res.status(500).json({ error: err.message });
     }
+  } finally {
+    if (runId !== null) runStates.delete(runId);
   }
 });
 
@@ -469,6 +295,15 @@ const { WebSocketServer } = require('ws');
 
 /** In-memory mock routes: array of { id, enabled, type, method, path, statusCode, responseHeaders, responseBody, delay } */
 let mockRoutes = [];
+
+// Two-tier route index rebuilt on every mockRoutes update.
+// Static routes (no :param segments) are stored in a Map for O(1) lookup.
+// Parametric routes remain in an ordered array for sequential scan.
+// Disabled routes are excluded at build time.
+let _staticHttp = new Map(); // key: "METHOD:/path" or "*:/path"
+let _paramHttp  = [];         // [{ route, originalIndex }]
+let _staticWs   = new Map(); // key: "/path"
+let _paramWs    = [];         // [{ route, originalIndex }]
 
 /** The running mock HTTP server, or null. */
 let mockServerInstance = null;
@@ -870,6 +705,43 @@ function applyChaos(chaos, req, res, status, body, headers, delay) {
   };
 }
 
+/**
+ * Rebuilds the static + parametric route indexes from the given routes array.
+ * Must be called whenever mockRoutes is reassigned.
+ */
+function buildRouteIndex(routes) {
+  const staticHttp = new Map();
+  const paramHttp  = [];
+  const staticWs   = new Map();
+  const paramWs    = [];
+
+  routes.forEach((route, originalIndex) => {
+    if (!route.enabled) return;
+
+    const isWs     = route.type === 'websocket';
+    const hasParam = route.path.includes(':');
+    const normPath = route.path.replace(/\/+$/, '') || '/';
+
+    if (hasParam) {
+      if (isWs) paramWs.push({ route, originalIndex });
+      else      paramHttp.push({ route, originalIndex });
+    } else {
+      if (isWs) {
+        // WS routes are not method-specific — key by path only
+        if (!staticWs.has(normPath)) staticWs.set(normPath, { route, originalIndex });
+      } else {
+        const key = `${route.method.toUpperCase()}:${normPath}`;
+        if (!staticHttp.has(key)) staticHttp.set(key, { route, originalIndex });
+      }
+    }
+  });
+
+  _staticHttp = staticHttp;
+  _paramHttp  = paramHttp;
+  _staticWs   = staticWs;
+  _paramWs    = paramWs;
+}
+
 function buildMockHandler() {
   return function (req, res) {
     const method = req.method.toUpperCase();
@@ -900,18 +772,42 @@ function buildMockHandler() {
       });
     }
 
-    // Find matching route (first enabled HTTP match — WS routes are handled by the upgrade handler)
+    // Find matching route — two-tier indexed lookup (O(1) for static, O(p) for parametric)
     let matched = null;
     let pathParams = {};
-    for (const route of mockRoutes) {
-      if (!route.enabled) continue;
-      if (route.type === 'websocket') continue;
-      if (route.method !== '*' && route.method.toUpperCase() !== method) continue;
-      const params = matchPath(route.path, pathname);
-      if (params !== null) {
-        matched = route;
-        pathParams = params;
-        break;
+    {
+      const normPath    = pathname.replace(/\/+$/, '') || '/';
+      const specificKey = `${method}:${normPath}`;
+      const wildcardKey = `*:${normPath}`;
+
+      const staticSpecific = _staticHttp.get(specificKey) ?? null;
+      const staticWildcard = _staticHttp.get(wildcardKey) ?? null;
+
+      // Pick the static candidate with the lower original index (preserves list order)
+      let staticCandidate = null;
+      if (staticSpecific && staticWildcard) {
+        staticCandidate = staticSpecific.originalIndex < staticWildcard.originalIndex
+          ? staticSpecific : staticWildcard;
+      } else {
+        staticCandidate = staticSpecific ?? staticWildcard ?? null;
+      }
+
+      // Scan only the parametric subset
+      let paramCandidate = null;
+      for (const entry of _paramHttp) {
+        const { route } = entry;
+        if (route.method !== '*' && route.method.toUpperCase() !== method) continue;
+        const params = matchPath(route.path, pathname);
+        if (params !== null) { paramCandidate = { ...entry, params }; break; }
+      }
+
+      // Use whichever candidate appeared first in the original list
+      if (staticCandidate && (!paramCandidate || staticCandidate.originalIndex < paramCandidate.originalIndex)) {
+        matched    = staticCandidate.route;
+        pathParams = {};
+      } else if (paramCandidate) {
+        matched    = paramCandidate.route;
+        pathParams = paramCandidate.params;
       }
     }
 
@@ -1095,17 +991,25 @@ function handleWsUpgrade(req, socket, head) {
     wsQuery[k] = v;
   }
 
-  // Find first enabled WebSocket route matching the path
+  // Find first enabled WebSocket route — two-tier indexed lookup
   let matched = null;
   let pathParams = {};
-  for (const route of mockRoutes) {
-    if (!route.enabled) continue;
-    if (route.type !== 'websocket') continue;
-    const params = matchPath(route.path, pathname);
-    if (params !== null) {
-      matched = route;
-      pathParams = params;
-      break;
+  {
+    const normWsPath = pathname.replace(/\/+$/, '') || '/';
+    const staticWsEntry = _staticWs.get(normWsPath) ?? null;
+
+    let paramWsCandidate = null;
+    for (const entry of _paramWs) {
+      const params = matchPath(entry.route.path, pathname);
+      if (params !== null) { paramWsCandidate = { ...entry, params }; break; }
+    }
+
+    if (staticWsEntry && (!paramWsCandidate || staticWsEntry.originalIndex < paramWsCandidate.originalIndex)) {
+      matched    = staticWsEntry.route;
+      pathParams = {};
+    } else if (paramWsCandidate) {
+      matched    = paramWsCandidate.route;
+      pathParams = paramWsCandidate.params;
     }
   }
 
@@ -1278,6 +1182,7 @@ function startMockServer(port, routes) {
       mockServerInstance.close(() => { mockServerInstance = null; });
     }
     mockRoutes = routes || [];
+    buildRouteIndex(mockRoutes);
     mockServerPort = port;
     mockRequestLog = [];
     mockDb = Object.create(null);
@@ -1349,6 +1254,7 @@ app.post('/api/mock/stop', async (_req, res) => {
 // PUT /api/mock/routes — sync all routes while server is running
 app.put('/api/mock/routes', (req, res) => {
   mockRoutes = req.body.routes || [];
+  buildRouteIndex(mockRoutes);
   res.json({ ok: true, count: mockRoutes.length });
 });
 

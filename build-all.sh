@@ -4,6 +4,9 @@ set -e
 echo "==> Building client..."
 npm run build
 
+echo "==> Building CLI binaries..."
+npm run cli:build:binaries
+
 echo "==> Packaging for macOS..."
 DISABLE_DEVTOOLS=1 npx electron-builder --mac
 

@@ -33,6 +33,219 @@ jobs:
       - name: Run client tests
         run: cd client && npm test
         shell: bash
+
+  build-cli:
+    runs-on: ubuntu-latest
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm run setup
+
+      - name: Build CLI binaries
+        run: npm run cli:build:binaries
+
+      - name: Smoke test Linux CLI binary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BIN="$(find dist/cli -maxdepth 1 -type f | grep -E 'linux|Linux' | head -n 1 || true)"
+          if [[ -z "$BIN" ]]; then
+            echo "Linux CLI binary not found in dist/cli"
+            exit 1
+          fi
+          chmod +x "$BIN"
+
+          export PORT=19091
+          node -e "require('http').createServer((req,res)=>{res.writeHead(200, {'content-type':'application/json'});res.end(JSON.stringify({ok:true}));}).listen(process.env.PORT,'127.0.0.1')" &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID >/dev/null 2>&1 || true' EXIT
+          for i in {1..25}; do
+            if curl -fsS "http://127.0.0.1:${PORT}/ping" >/dev/null; then
+              break
+            fi
+            if [[ "$i" -eq 25 ]]; then
+              echo "Smoke server did not become ready on 127.0.0.1:${PORT}"
+              exit 1
+            fi
+            sleep 0.2
+          done
+
+          mkdir -p .tmp-cli-smoke
+          cat > .tmp-cli-smoke/collection.json <<'JSON'
+          {
+            "info": {
+              "name": "CI Smoke Collection",
+              "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+            },
+            "item": [
+              {
+                "id": "req-1",
+                "name": "Ping",
+                "request": {
+                  "method": "GET",
+                  "url": { "raw": "{{baseUrl}}/ping" }
+                },
+                "event": [
+                  {
+                    "listen": "test",
+                    "script": {
+                      "type": "text/javascript",
+                      "exec": [
+                        "apx.test('Status 200', () => { apx.expect(apx.response.code).to.equal(200); });"
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+          JSON
+
+          cat > .tmp-cli-smoke/environment.json <<JSON
+          {
+            "name": "CI",
+            "values": [
+              { "key": "baseUrl", "value": "http://127.0.0.1:${PORT}", "enabled": true }
+            ]
+          }
+          JSON
+
+          "$BIN" run .tmp-cli-smoke/collection.json -e .tmp-cli-smoke/environment.json --reporter json --no-color > .tmp-cli-smoke/report.json
+          node -e "const fs=require('fs'); const report=JSON.parse(fs.readFileSync('.tmp-cli-smoke/report.json','utf8')); if (report.summary.failed!==0 || report.summary.errors!==0) { console.error(report.summary); process.exit(1); }"
+
+          rm -rf .tmp-cli-smoke
+
+      - name: Upload CLI binaries to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/cli/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  smoke-cli-mac:
+    runs-on: macos-latest
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm run setup
+
+      - name: Build CLI binaries
+        run: npm run cli:build:binaries
+
+      - name: Smoke test macOS CLI binary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BIN="$(find dist/cli -maxdepth 1 -type f | grep -E 'macos|darwin|MacOS|macOS' | head -n 1 || true)"
+          if [[ -z "$BIN" ]]; then
+            echo "macOS CLI binary not found in dist/cli"
+            exit 1
+          fi
+          chmod +x "$BIN"
+
+          export PORT=19092
+          node -e "require('http').createServer((req,res)=>{res.writeHead(200, {'content-type':'application/json'});res.end(JSON.stringify({ok:true}));}).listen(process.env.PORT,'127.0.0.1')" &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID >/dev/null 2>&1 || true' EXIT
+          for i in {1..25}; do
+            if curl -fsS "http://127.0.0.1:${PORT}/ping" >/dev/null; then
+              break
+            fi
+            if [[ "$i" -eq 25 ]]; then
+              echo "Smoke server did not become ready on 127.0.0.1:${PORT}"
+              exit 1
+            fi
+            sleep 0.2
+          done
+
+          mkdir -p .tmp-cli-smoke
+          cp server/fixtures/cli/collection-success.json .tmp-cli-smoke/collection.json
+
+          cat > .tmp-cli-smoke/environment.json <<JSON
+          {
+            "name": "CI",
+            "values": [
+              { "key": "baseUrl", "value": "http://127.0.0.1:${PORT}", "enabled": true }
+            ]
+          }
+          JSON
+
+          "$BIN" run .tmp-cli-smoke/collection.json -e .tmp-cli-smoke/environment.json --reporter json --no-color > .tmp-cli-smoke/report.json
+          node -e "const fs=require('fs'); const report=JSON.parse(fs.readFileSync('.tmp-cli-smoke/report.json','utf8')); if (report.summary.failed!==0 || report.summary.errors!==0) { console.error(report.summary); process.exit(1); }"
+
+          rm -rf .tmp-cli-smoke
+
+  smoke-cli-windows:
+    runs-on: windows-latest
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm run setup
+
+      - name: Build CLI binaries
+        run: npm run cli:build:binaries
+
+      - name: Smoke test Windows CLI binary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $bin = Get-ChildItem dist/cli -File | Where-Object { $_.Name -match 'win|windows' } | Select-Object -First 1
+          if (-not $bin) {
+            throw 'Windows CLI binary not found in dist/cli'
+          }
+
+          $port = 19093
+          $server = Start-Process node -ArgumentList '-e', "require('http').createServer((req,res)=>{res.writeHead(200, {'content-type':'application/json'});res.end(JSON.stringify({ok:true}));}).listen($port,'127.0.0.1')" -PassThru
+          Start-Sleep -Seconds 1
+          try {
+            New-Item -ItemType Directory -Path .tmp-cli-smoke -Force | Out-Null
+            Copy-Item server/fixtures/cli/collection-success.json .tmp-cli-smoke/collection.json
+
+            @"
+            {
+              "name": "CI",
+              "values": [
+                { "key": "baseUrl", "value": "http://127.0.0.1:$port", "enabled": true }
+              ]
+            }
+            "@ | Set-Content .tmp-cli-smoke/environment.json
+
+            & $bin.FullName run .tmp-cli-smoke/collection.json -e .tmp-cli-smoke/environment.json --reporter json --no-color | Set-Content .tmp-cli-smoke/report.json
+
+            $report = Get-Content .tmp-cli-smoke/report.json | ConvertFrom-Json
+            if ($report.summary.failed -ne 0 -or $report.summary.errors -ne 0) {
+              throw "Smoke summary failed: failed=$($report.summary.failed) errors=$($report.summary.errors)"
+            }
+          } finally {
+            if ($server -and -not $server.HasExited) {
+              Stop-Process -Id $server.Id -Force
+            }
+            Remove-Item .tmp-cli-smoke -Recurse -Force -ErrorAction SilentlyContinue
+          }
         
   build-mac:
     runs-on: macos-latest

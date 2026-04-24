@@ -1,0 +1,29 @@
+{
+  "info": {
+    "name": "CLI Fixture Collection",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "id": "req-1",
+      "name": "Ping",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/ping"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "apx.test('Status 201', () => { apx.expect(apx.response.code).to.equal(201); });"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
