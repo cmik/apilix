@@ -1,18 +1,17 @@
+import { resolveVariables as resolveVariablesCore } from '@apilix/core';
 import type { CollectionVariable } from '../types';
 
 /**
  * Resolve {{variable}} placeholders in a string using the given variable map.
  * Priority order (highest to lowest): dataRow > environment > collectionVars > globals > collection definition vars
+ *
+ * Delegates to the canonical implementation in @apilix/core.
  */
 export function resolveVariables(
   str: string,
   vars: Record<string, string>
 ): string {
-  if (!str) return str;
-  return str.replace(/\{\{([^}]+)\}\}/g, (_match, key) => {
-    const trimmed = key.trim();
-    return vars[trimmed] !== undefined ? vars[trimmed] : `{{${trimmed}}}`;
-  });
+  return resolveVariablesCore(str, vars) as string;
 }
 
 export function buildCollectionDefinitionVarMap(

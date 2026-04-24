@@ -1,4 +1,4 @@
-import type { OAuth2PresetConfig } from '../types/oauth';
+import type { OAuth2PresetConfig } from '../types';
 
 export const OAUTH2_PRESET_PROVIDERS: Record<string, OAuth2PresetConfig> = {
   google: {

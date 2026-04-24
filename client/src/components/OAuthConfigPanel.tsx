@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { OAuth2Config, OAuth2GrantType } from '../types/oauth';
+import type { OAuth2Config, OAuth2GrantType } from '../types';
 import { OAUTH2_PRESET_PROVIDERS, PRESET_PROVIDER_LIST, GRANT_TYPE_LIST } from '../constants/oauthProviders';
 import VarInput from './VarInput';
 import type { VariableSuggestion } from '../utils/variableAutocomplete';

@@ -21,7 +21,6 @@ module.exports = {
   flattenItems: requestEngine.flattenItems,
   flattenItemsWithScripts: requestEngine.flattenItemsWithScripts,
   setExecutorConfig: requestEngine.setExecutorConfig,
-  resolveVariables: requestEngine.resolveVariables,
   buildBody: requestEngine.buildBody,
   buildProxyOption: requestEngine.buildProxyOption,
   applyAuth: requestEngine.applyAuth,
@@ -54,6 +53,6 @@ module.exports = {
   buildJsonReport: runnerReporters.buildJsonReport,
   buildJUnitReport: runnerReporters.buildJUnitReport,
 
-  // variable resolver
-  resolveVariablesCore: variableResolver.resolveVariables,
+  // variable resolver — single canonical export
+  resolveVariables: variableResolver.resolveVariables,
 };
