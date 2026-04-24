@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - 'refactor/**'   # run tests during monorepo refactor
     tags:
       - 'v*'   # triggers on v1.0.0, v1.2.3, etc.
   pull_request:
