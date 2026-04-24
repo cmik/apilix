@@ -1,4 +1,4 @@
-import { resolveVariables as resolveVariablesCore } from '@apilix/core/variable-resolver';
+import { resolveVariables as resolveVariablesCore } from '@apilix/core';
 import type { CollectionVariable } from '../types';
 
 /**

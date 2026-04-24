@@ -17,7 +17,7 @@
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,
     "paths": {
-      "@apilix/core": ["../packages/core/src/index.js"],
+      "@apilix/core": ["../packages/core/src"],
       "@apilix/core/types": ["../packages/core/types/index.ts"]
     }
   },
