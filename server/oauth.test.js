@@ -8,7 +8,7 @@ const {
   generatePKCEChallenge,
   verifyPKCEChallenge,
   validateOAuth2Config,
-} = require('./oauth');
+} = require('../packages/core/src/oauth');
 
 // ─── PKCE ────────────────────────────────────────────────────────────────────
 

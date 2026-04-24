@@ -38,22 +38,6 @@ npm install
 if ($LASTEXITCODE -ne 0) { Write-Fail "Root npm install failed"; exit 1 }
 Write-OK "Root dependencies installed"
 
-# ── Server dependencies ────────────────────────────────────────────────────────
-
-Write-Step "Installing server dependencies"
-Set-Location "$Root\server"
-npm install
-if ($LASTEXITCODE -ne 0) { Write-Fail "Server npm install failed"; exit 1 }
-Write-OK "Server dependencies installed"
-
-# ── Client dependencies ────────────────────────────────────────────────────────
-
-Write-Step "Installing client dependencies"
-Set-Location "$Root\client"
-npm install
-if ($LASTEXITCODE -ne 0) { Write-Fail "Client npm install failed"; exit 1 }
-Write-OK "Client dependencies installed"
-
 # ── Done ───────────────────────────────────────────────────────────────────────
 
 Set-Location $Root
