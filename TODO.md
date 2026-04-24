@@ -9,8 +9,12 @@
 - [x] Unify `resolveVariables` — single canonical export from `@apilix/core`; client delegates to it
 - [x] Fix `packages/core/src/index.js` barrel: remove `resolveVariablesCore` duplicate, clean naming
 - [x] Add `./types` subpath to `packages/core` exports map (`./types/index.ts`)
-- [ ] Publish `@apilix/core` to npm registry (bump version, run `npm publish`)
-- [ ] Publish `@apilix/cli` to npm registry
+- [x] Add `client` and `server` to root `workspaces` field (`"packages/*"`, `"client"`, `"server"`)
+- [x] Security audit — `npm audit --audit-level=high` → 0 vulnerabilities (2026-04-25)
+- [x] CLI binary size baseline recorded; tag `v1.0.0-beta.23` created and pushed
+- [x] CLI smoke test passed — `/api/health` GET → 200, assertion passed
+- [ ] Publish `@apilix/core` to npm registry (run `npm publish` from `packages/core/`)
+- [ ] Publish `@apilix/cli` to npm registry (run `npm publish` from `packages/cli/`)
 
 ## Testing
 
@@ -33,6 +37,13 @@
 Add `coverage.thresholds` to `client/vitest.config.ts` to enforce minimum coverage on utility modules.
 
 ## TypeScript / Build
+
+- [x] CLI binary size baseline recorded (built 2026-04-25 with `@yao-pkg/pkg` 6.18.2, `node20` targets):
+  | Platform | Binary | Size |
+  |---|---|---|
+  | macOS x64 | `dist/cli/apilix-macos` | 62 MB |
+  | Linux x64 | `dist/cli/apilix-linux` | 68 MB |
+  | Windows x64 | `dist/cli/apilix-win.exe` | 54 MB |
 
 - [x] `client/tsconfig.json`: add `"@apilix/core/types": ["../packages/core/types/index.ts"]` to `paths` so IDE go-to-definition resolves the `/types` subpath in editors that don't read `exports` maps
 - [x] `packages/core/tsconfig.json`: add `"types/**/*"` to `include` so `tsc --noEmit` on the core package type-checks the `.ts` declaration files in `types/`
