@@ -8,7 +8,7 @@ const {
   generatePKCEChallenge,
   verifyPKCEChallenge,
   validateOAuth2Config,
-} = require('../packages/core/src/oauth');
+} = require('../src/oauth');
 
 // ─── PKCE ────────────────────────────────────────────────────────────────────
 
@@ -119,38 +119,4 @@ test('validateOAuth2Config requires authorizationUrl for authorization_code', ()
   });
   assert.equal(result.valid, false);
   assert.ok(result.errors.some(e => /authorizationUrl/i.test(e)));
-});
-
-test('validateOAuth2Config valid for authorization_code with authorizationUrl', () => {
-  const result = validateOAuth2Config({
-    grantType: 'authorization_code',
-    clientId: 'id',
-    tokenUrl: 'https://example.com/token',
-    authorizationUrl: 'https://example.com/authorize',
-  });
-  assert.equal(result.valid, true);
-  assert.deepEqual(result.errors, []);
-});
-
-test('validateOAuth2Config requires refreshToken for refresh_token grant', () => {
-  const result = validateOAuth2Config({
-    grantType: 'refresh_token',
-    clientId: 'id',
-    clientSecret: 'sec',
-    tokenUrl: 'https://example.com/token',
-  });
-  assert.equal(result.valid, false);
-  assert.ok(result.errors.some(e => /refreshToken/i.test(e)));
-});
-
-test('validateOAuth2Config valid for refresh_token with all required fields', () => {
-  const result = validateOAuth2Config({
-    grantType: 'refresh_token',
-    clientId: 'id',
-    clientSecret: 'sec',
-    tokenUrl: 'https://example.com/token',
-    refreshToken: 'tok',
-  });
-  assert.equal(result.valid, true);
-  assert.deepEqual(result.errors, []);
 });

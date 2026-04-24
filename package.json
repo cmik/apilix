@@ -35,10 +35,6 @@
     "dist:prod:win": "npm run build && DISABLE_DEVTOOLS=1 electron-builder --win"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.908.0",
-    "@aws-sdk/s3-request-presigner": "^3.908.0",
-    "chalk": "^4.1.2",
-    "commander": "^14.0.1",
     "concurrently": "^8.2.2"
   },
   "devDependencies": {
@@ -80,8 +76,8 @@
         ]
       },
       {
-        "from": "server/node_modules",
-        "to": "server/node_modules"
+        "from": "packages/core/node_modules",
+        "to": "packages/core/node_modules"
       },
       {
         "from": "packages/core",

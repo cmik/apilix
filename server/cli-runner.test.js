@@ -7,7 +7,7 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 
-const { runCli, parseArgs } = require('./cli-runner');
+const { runCli, parseArgs } = require('../packages/cli/src/index');
 
 const FIXTURE_DIR = path.join(__dirname, 'fixtures', 'cli');
 

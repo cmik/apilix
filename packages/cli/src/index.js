@@ -7,7 +7,7 @@ const Chalk = require('chalk');
 const { Command } = require('commander');
 
 const pkg = require('../package.json');
-const { setExecutorConfig, prepareCollectionRun, executePreparedCollectionRun, summarizeRun, buildJsonReport, buildJUnitReport } = require('../../core/src/index');
+const { setExecutorConfig, prepareCollectionRun, executePreparedCollectionRun, summarizeRun, buildJsonReport, buildJUnitReport } = require('@apilix/core');
 
 const DEFAULT_REQUEST_TIMEOUT = 30000;
 const MAX_REQUEST_NAME_WIDTH = 72;

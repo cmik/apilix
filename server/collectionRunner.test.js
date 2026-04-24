@@ -4,7 +4,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 
-const { InputError, prepareCollectionRun, executePreparedCollectionRun } = require('./collectionRunner');
+const { InputError, prepareCollectionRun, executePreparedCollectionRun } = require('@apilix/core');
 
 // ─── Minimal valid collection fixture ─────────────────────────────────────────
 

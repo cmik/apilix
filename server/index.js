@@ -5,9 +5,11 @@ const cors = require('cors');
 const multer = require('multer');
 const vm = require('vm');
 const axios = require('axios');
-const { executeRequest, setExecutorConfig } = require('../packages/core/src/index');
-const { prepareCollectionRun, executePreparedCollectionRun, InputError } = require('../packages/core/src/index');
-const { refreshOAuth2Token, exchangeAuthorizationCodeForToken } = require('../packages/core/src/index');
+const {
+  executeRequest, setExecutorConfig,
+  prepareCollectionRun, executePreparedCollectionRun, InputError,
+  refreshOAuth2Token, exchangeAuthorizationCodeForToken,
+} = require('@apilix/core');
 
 const app = express();
 const PORT = process.env.PORT || 3001;

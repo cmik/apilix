@@ -3,6 +3,7 @@
   "version": "1.0.0-beta.22",
   "description": "Apilix request engine, script runtime, OAuth, TLS utils, collection runner, and shared reporters",
   "main": "src/index.js",
+  "types": "types/index.ts",
   "exports": {
     ".": "./src/index.js",
     "./request-engine": "./src/request-engine.js",
@@ -11,7 +12,8 @@
     "./oauth": "./src/oauth.js",
     "./tls-utils": "./src/tls-utils.js",
     "./runner-reporters": "./src/runner-reporters.js",
-    "./variable-resolver": "./src/variable-resolver.js"
+    "./variable-resolver": "./src/variable-resolver.js",
+    "./types": "./types/index.ts"
   },
   "engines": {
     "node": ">=20.19.0"

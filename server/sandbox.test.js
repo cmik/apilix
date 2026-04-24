@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { runScript, createScriptContext } = require('./sandbox');
+const { runScript, createScriptContext } = require('@apilix/core');
 
 const baseResponse = {
   code: 200,

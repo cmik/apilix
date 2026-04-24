@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 
-const { executeRequest, flattenItems, flattenItemsWithScripts, setExecutorConfig, resolveVariables, buildBody, buildProxyOption, applyAuth, resolveHeaderPairs, resolveParamPairs } = require('./executor');
+const { executeRequest, flattenItems, flattenItemsWithScripts, setExecutorConfig, resolveVariables, buildBody, buildProxyOption, applyAuth, resolveHeaderPairs, resolveParamPairs } = require('@apilix/core');
 
 async function withServer(handler, runTest) {
   const server = http.createServer(handler);
