@@ -3,7 +3,7 @@ name: apilix-researcher
 description: "Research and answer questions about the Apilix API testing platform codebase. Use when: investigating a bug, understanding how a feature works, finding where code lives, exploring data flow, checking what a type/action/route does, or gathering context before planning or implementing. Read-only — makes no changes."
 argument-hint: "What to research — e.g., 'how does variable resolution work', 'where is OAuth2 token refresh handled', 'trace a request from UI to executor'"
 tools: ['read', 'search/codebase', 'search/usages', 'web/fetch']
-model: ['Claude Sonnet 4.6', 'GPT-5.2']  # Tries models in order
+model: ['Auto (copilot)', 'Claude Sonnet 4.6', 'GPT-5.2']  # Tries models in order
 handoffs: 
   - label: Plan Implementation
     agent: apilix-planner

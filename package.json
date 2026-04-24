@@ -85,6 +85,11 @@
       {
         "from": "server/node_modules",
         "to": "server/node_modules"
+      },
+      {
+        "from": "src/core",
+        "to": "src/core",
+        "filter": ["**/*"]
       }
     ],
     "mac": {

@@ -10,7 +10,12 @@ try {
 }
 const http = require('http');
 const https = require('https');
-const FormData = require('form-data');
+let FormData;
+try {
+  FormData = require('form-data');
+} catch (_) {
+  FormData = require('../../server/node_modules/form-data');
+}
 const { runScript } = require('./script-runtime');
 const { refreshOAuth2Token } = require('../../server/oauth');
 const { makeHttpsAgent } = require('../../server/tlsUtils');
