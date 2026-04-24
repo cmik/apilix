@@ -1,18 +1,42 @@
 {
   "name": "@apilix/core",
-  "version": "1.0.0-beta.22",
+  "version": "1.0.0-beta.23",
   "description": "Apilix request engine, script runtime, OAuth, TLS utils, collection runner, and shared reporters",
   "main": "src/index.js",
   "types": "types/index.ts",
   "exports": {
-    ".": { "require": "./src/index.js", "default": "./src/index.js" },
-    "./request-engine": { "require": "./src/request-engine.js", "default": "./src/request-engine.js" },
-    "./script-runtime": { "require": "./src/script-runtime.js", "default": "./src/script-runtime.js" },
-    "./collection-runner": { "require": "./src/collection-runner.js", "default": "./src/collection-runner.js" },
-    "./oauth": { "require": "./src/oauth.js", "default": "./src/oauth.js" },
-    "./tls-utils": { "require": "./src/tls-utils.js", "default": "./src/tls-utils.js" },
-    "./runner-reporters": { "require": "./src/runner-reporters.js", "default": "./src/runner-reporters.js" },
-    "./variable-resolver": { "require": "./src/variable-resolver.js", "default": "./src/variable-resolver.js" },
+    ".": {
+      "require": "./src/index.js",
+      "default": "./src/index.js"
+    },
+    "./request-engine": {
+      "require": "./src/request-engine.js",
+      "default": "./src/request-engine.js"
+    },
+    "./script-runtime": {
+      "require": "./src/script-runtime.js",
+      "default": "./src/script-runtime.js"
+    },
+    "./collection-runner": {
+      "require": "./src/collection-runner.js",
+      "default": "./src/collection-runner.js"
+    },
+    "./oauth": {
+      "require": "./src/oauth.js",
+      "default": "./src/oauth.js"
+    },
+    "./tls-utils": {
+      "require": "./src/tls-utils.js",
+      "default": "./src/tls-utils.js"
+    },
+    "./runner-reporters": {
+      "require": "./src/runner-reporters.js",
+      "default": "./src/runner-reporters.js"
+    },
+    "./variable-resolver": {
+      "require": "./src/variable-resolver.js",
+      "default": "./src/variable-resolver.js"
+    },
     "./types": "./types/index.ts"
   },
   "engines": {
