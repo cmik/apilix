@@ -1207,6 +1207,11 @@ function SyncTab() {
   // Load persisted sync config on mount / workspace change
   useEffect(() => {
     let active = true;
+    setLoaded(false);
+    // Capture provider synchronously before the async boundary so the .then()
+    // callback never reads a stale closure value (same pattern as `shouldRestore`
+    // in store.tsx). This prevents re-running this effect on provider tab switches.
+    const initialProvider = provider;
     Promise.all([
       StorageDriver.readSyncConfig(workspaceId),
       StorageDriver.readSyncActivity(workspaceId),
@@ -1235,7 +1240,7 @@ function SyncTab() {
         setFields(initialConfig);
         setProviderDrafts(prev => ({
           ...prev,
-          [provider]: initialConfig,
+          [initialProvider]: initialConfig,
         }));
         setSyncMetadata(undefined);
         setReadOnly(false);
@@ -1247,9 +1252,13 @@ function SyncTab() {
       }
       setActivity(entries);
       setLoaded(true);
+    }).catch(() => {
+      if (!active) return;
+      setLoaded(true);
     });
     return () => { active = false; };
-  }, [workspaceId, provider, ensureDraftRemoteWorkspaceId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId, ensureDraftRemoteWorkspaceId]);
 
   async function logActivity(action: SyncActivityEntry['action'], level: SyncActivityLevel, message: string, detail?: string) {
     const entry: SyncActivityEntry = {
