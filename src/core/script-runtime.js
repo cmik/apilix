@@ -1,7 +1,12 @@
 'use strict';
 
 const vm = require('vm');
-const axios = require('axios');
+let axios;
+try {
+  axios = require('axios');
+} catch (_) {
+  axios = require('../../server/node_modules/axios/dist/node/axios.cjs');
+}
 const https = require('https');
 // pkg/server test execution may resolve from workspace root; fall back to
 // server-local dependency paths when core modules live outside server/.
@@ -11,7 +16,12 @@ try {
 } catch (_) {
   xpathLib = require('../../server/node_modules/xpath');
 }
-const { DOMParser } = require('@xmldom/xmldom');
+let DOMParser;
+try {
+  ({ DOMParser } = require('@xmldom/xmldom'));
+} catch (_) {
+  ({ DOMParser } = require('../../server/node_modules/@xmldom/xmldom'));
+}
 const { webcrypto } = require('crypto');
 
 // Lazy-initialised Ajv instance for matchSchema assertions
