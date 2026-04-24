@@ -1,46 +1,19 @@
 'use strict';
 
 const vm = require('vm');
-let axios;
-try {
-  axios = require('axios');
-} catch (_) {
-  axios = require('../node_modules/axios/dist/node/axios.cjs');
-}
+const axios = require('axios');
 const https = require('https');
-// pkg/server test execution may resolve from workspace root; fall back to
-// server-local dependency paths when core modules live outside server/.
-let xpathLib;
-try {
-  xpathLib = require('xpath');
-} catch (_) {
-  xpathLib = require('../node_modules/xpath');
-}
-let DOMParser;
-try {
-  ({ DOMParser } = require('@xmldom/xmldom'));
-} catch (_) {
-  ({ DOMParser } = require('../node_modules/@xmldom/xmldom'));
-}
+const xpathLib = require('xpath');
+const { DOMParser } = require('@xmldom/xmldom');
 const { webcrypto } = require('crypto');
 
 // Lazy-initialised Ajv instance for matchSchema assertions
 let _ajv = null;
 function getAjv() {
   if (!_ajv) {
-    let AjvModule;
-    try {
-      AjvModule = require('../node_modules/ajv');
-    } catch (_) {
-      AjvModule = require('ajv');
-    }
+    const AjvModule = require('ajv');
     const Ajv = AjvModule.default || AjvModule;
-    let addFormatsModule;
-    try {
-      addFormatsModule = require('../node_modules/ajv-formats');
-    } catch (_) {
-      addFormatsModule = require('ajv-formats');
-    }
+    const addFormatsModule = require('ajv-formats');
     const addFormats = addFormatsModule.default || addFormatsModule;
     _ajv = new Ajv({ allErrors: false });
     addFormats(_ajv);

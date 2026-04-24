@@ -1,12 +1,13 @@
 'use strict';
 
-// pkg bundled binaries don't resolve package 'exports' subpaths; fall back to
-// the direct CJS dist file when the snapshot resolver can't find csv-parse/sync.
+// csv-parse/sync uses package exports subpath — the direct CJS dist file is
+// listed in pkg.assets so the snapshot resolver can find it when exports are
+// not supported by the bundler.
 let parseCsv;
 try {
   parseCsv = require('csv-parse/sync').parse;
 } catch (_) {
-  parseCsv = require('../node_modules/csv-parse/dist/cjs/sync.cjs').parse;
+  parseCsv = require('csv-parse/dist/cjs/sync.cjs').parse;
 }
 const { executeRequest, flattenItemsWithScripts } = require('./request-engine');
 const { createScriptContext } = require('./script-runtime');
