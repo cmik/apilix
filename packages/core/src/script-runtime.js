@@ -5,7 +5,7 @@ let axios;
 try {
   axios = require('axios');
 } catch (_) {
-  axios = require('../../server/node_modules/axios/dist/node/axios.cjs');
+  axios = require('../node_modules/axios/dist/node/axios.cjs');
 }
 const https = require('https');
 // pkg/server test execution may resolve from workspace root; fall back to
@@ -14,13 +14,13 @@ let xpathLib;
 try {
   xpathLib = require('xpath');
 } catch (_) {
-  xpathLib = require('../../server/node_modules/xpath');
+  xpathLib = require('../node_modules/xpath');
 }
 let DOMParser;
 try {
   ({ DOMParser } = require('@xmldom/xmldom'));
 } catch (_) {
-  ({ DOMParser } = require('../../server/node_modules/@xmldom/xmldom'));
+  ({ DOMParser } = require('../node_modules/@xmldom/xmldom'));
 }
 const { webcrypto } = require('crypto');
 
@@ -30,14 +30,14 @@ function getAjv() {
   if (!_ajv) {
     let AjvModule;
     try {
-      AjvModule = require('../../server/node_modules/ajv');
+      AjvModule = require('../node_modules/ajv');
     } catch (_) {
       AjvModule = require('ajv');
     }
     const Ajv = AjvModule.default || AjvModule;
     let addFormatsModule;
     try {
-      addFormatsModule = require('../../server/node_modules/ajv-formats');
+      addFormatsModule = require('../node_modules/ajv-formats');
     } catch (_) {
       addFormatsModule = require('ajv-formats');
     }

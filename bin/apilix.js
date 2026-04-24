@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-const { runCli } = require('../src/cli/index');
+const { runCli } = require('../packages/cli/src/index');
 
 (async () => {
   process.exitCode = await runCli(process.argv.slice(2));

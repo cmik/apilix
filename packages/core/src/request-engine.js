@@ -6,7 +6,7 @@ let axios;
 try {
   axios = require('axios');
 } catch (_) {
-  axios = require('../../server/node_modules/axios/dist/node/axios.cjs');
+  axios = require('../node_modules/axios/dist/node/axios.cjs');
 }
 const http = require('http');
 const https = require('https');
@@ -14,11 +14,11 @@ let FormData;
 try {
   FormData = require('form-data');
 } catch (_) {
-  FormData = require('../../server/node_modules/form-data');
+  FormData = require('../node_modules/form-data');
 }
 const { runScript } = require('./script-runtime');
-const { refreshOAuth2Token } = require('../../server/oauth');
-const { makeHttpsAgent } = require('../../server/tlsUtils');
+const { refreshOAuth2Token } = require('./oauth');
+const { makeHttpsAgent } = require('./tls-utils');
 
 const httpClient = axios.create({
   httpsAgent: new https.Agent({ rejectUnauthorized: false }),
@@ -66,13 +66,7 @@ function buildProxyOption(proxyUrl, targetUrl) {
 
 // ─── Variable resolution ─────────────────────────────────────────────────────
 
-function resolveVariables(str, vars) {
-  if (typeof str !== 'string') return str;
-  return str.replace(/\{\{([^}]+)\}\}/g, (match, key) => {
-    const trimmed = key.trim();
-    return vars[trimmed] !== undefined ? vars[trimmed] : match;
-  });
-}
+const { resolveVariables } = require('./variable-resolver');
 
 function buildVariables(environment, collectionVariables, globals, dataRow, collVars) {
   const collVarsObj = {};

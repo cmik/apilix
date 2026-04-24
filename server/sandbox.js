@@ -1,3 +1,3 @@
 'use strict';
 
-module.exports = require('../src/core/script-runtime');
+module.exports = require('../packages/core/src/index');

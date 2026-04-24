@@ -10,6 +10,9 @@
     "node": ">=20.19.0",
     "npm": ">=9"
   },
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "start": "concurrently -k -p \"[{name}]\" -n \"SERVER,CLIENT\" -c \"bgYellow.bold,bgCyan.bold\" \"npm run server\" \"npm run client\"",
     "cli": "node bin/apilix.js",
@@ -47,7 +50,8 @@
   "pkg": {
     "scripts": [
       "bin/**/*.js",
-      "src/**/*.js",
+      "packages/cli/src/**/*.js",
+      "packages/core/src/**/*.js",
       "server/cli-runner.js",
       "server/collectionRunner.js",
       "server/executor.js",
@@ -57,7 +61,7 @@
       "server/tlsUtils.js"
     ],
     "assets": [
-      "server/node_modules/**/*.cjs"
+      "packages/core/node_modules/**/*.cjs"
     ],
     "targets": [
       "node20-macos-x64",
@@ -87,8 +91,8 @@
         "to": "server/node_modules"
       },
       {
-        "from": "src/core",
-        "to": "src/core",
+        "from": "packages/core",
+        "to": "packages/core",
         "filter": ["**/*"]
       }
     ],

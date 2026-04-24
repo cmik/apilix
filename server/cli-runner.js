@@ -1,3 +1,3 @@
 'use strict';
 
-module.exports = require('../src/cli/index');
+module.exports = require('../packages/cli/src/index');

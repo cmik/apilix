@@ -1,0 +1,24 @@
+{
+  "name": "@apilix/core",
+  "version": "1.0.0-beta.22",
+  "description": "Apilix request engine, script runtime, OAuth, TLS utils, collection runner, and shared reporters",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "test": "node --test tests/"
+  },
+  "dependencies": {
+    "@xmldom/xmldom": "^0.9.9",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "axios": "^1.6.5",
+    "csv-parse": "^5.5.3",
+    "form-data": "^4.0.0",
+    "xpath": "^0.0.34"
+  },
+  "optionalDependencies": {
+    "win-ca": "^3.5.1"
+  }
+}

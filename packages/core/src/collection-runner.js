@@ -6,7 +6,7 @@ let parseCsv;
 try {
   parseCsv = require('csv-parse/sync').parse;
 } catch (_) {
-  parseCsv = require('../../server/node_modules/csv-parse/dist/cjs/sync.cjs').parse;
+  parseCsv = require('../node_modules/csv-parse/dist/cjs/sync.cjs').parse;
 }
 const { executeRequest, flattenItemsWithScripts } = require('./request-engine');
 const { createScriptContext } = require('./script-runtime');

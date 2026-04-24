@@ -1,3 +1,3 @@
 'use strict';
 
-module.exports = require('../src/core/collection-runner');
+module.exports = require('../packages/core/src/index');
