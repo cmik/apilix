@@ -307,6 +307,11 @@ ipcMain.handle('get-presigned-url', async (_event, payload) => {
   return getSignedUrl(client, commandByOperation[operation], { expiresIn: 60 });
 });
 
+// IPC: open DevTools from any build (useful for diagnosing production issues)
+ipcMain.handle('open-devtools', () => {
+  if (mainWindow) mainWindow.webContents.openDevTools();
+});
+
 // Poll the Express health endpoint using Node's built-in http module.
 // Returns true as soon as it responds 200, false after 500 ms or on error.
 function checkServerReady(port) {
@@ -392,6 +397,14 @@ function buildAppMenu() {
           label: 'Check for Update',
           click: () => shell.openExternal('https://github.com/cmik/apilix/releases/latest'),
         },
+        ...(devToolsEnabled ? [
+          { type: 'separator' },
+          {
+            label: 'Open DevTools',
+            accelerator: 'CmdOrCtrl+Shift+I',
+            click: () => mainWindow?.webContents.openDevTools(),
+          },
+        ] : []),
         { type: 'separator' },
         {
           label: `About Apilix`,

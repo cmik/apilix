@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── CDP Browser Capture ───────────────────────────────────────────────────
   cdpLaunchChrome: (chromePath, port) => ipcRenderer.invoke('cdp-launch-chrome', { chromePath, port }),
   cdpKillChrome: () => ipcRenderer.invoke('cdp-kill-chrome'),
+  // ── DevTools ──────────────────────────────────────────────────────────────
+  openDevTools: () => ipcRenderer.invoke('open-devtools'),
   // Close guard: main process notifies renderer before closing the window.
   onWillClose: (cb) => ipcRenderer.on('app:will-close', () => cb()),
   respondClose: (confirmed) => ipcRenderer.send('app:close-response', { confirmed }),

@@ -77,7 +77,7 @@ All three suites are run in parallel in CI via the GitHub Actions test matrix.
 - Use the `withServer(handler, fn)` helper (from `executor.test.js`) for tests that need a real HTTP response.
 
 **Client (`client/src/**/*.test.ts`):**
-- Uses Vitest 2.x.
+- Uses Vitest 4.x.
 - Co-locate test files next to the module under test.
 - Mock `../store` imports that reference browser globals: `vi.mock('../store', () => ({ generateId: () => ... }))`.
 
@@ -104,7 +104,7 @@ All three suites are run in parallel in CI via the GitHub Actions test matrix.
 
 ## Pull requests
 
-1. Branch from `main` (or the active refactor branch if working on monorepo tasks).
+1. Branch from `main`.
 2. Keep PRs focused — one logical change per PR.
 3. All CI checks (lint, test matrix, smoke test) must pass before merging.
 4. Add or update tests for any changed server/client utility logic.
