@@ -97,7 +97,6 @@ All three suites are run in parallel in CI via the GitHub Actions test matrix.
 | Branch | Purpose |
 |--------|---------|
 | `main` | Stable, tagged releases |
-| `refactor/monorepo` | Active monorepo migration |
 | `feat/*` | New feature work |
 | `fix/*` | Bug fixes |
 
@@ -140,3 +139,25 @@ test: adding or updating tests
 - **Root** — only for dev tooling shared across all packages.
 
 Do not add the same dependency in multiple places; prefer pulling shared runtime deps into `packages/core`.
+
+---
+
+## Adding a new export to @apilix/core
+
+1. Create `packages/core/src/<module>.js` with your implementation.
+2. Add a subpath entry in `packages/core/package.json` under `"exports"`:
+
+   ```json
+   "./my-module": {
+     "require": "./src/my-module.js",
+     "default": "./src/my-module.js"
+   }
+   ```
+
+3. Add corresponding TypeScript declarations to `packages/core/types/index.ts`.
+4. Re-export from the barrel (`packages/core/src/index.js`) if the symbol should be available via the root import.
+5. Add path aliases for the new subpath in:
+   - `tsconfig.json` (root IDE/type-checking)
+   - `client/tsconfig.json` (if client needs it)
+   - `client/vitest.config.ts` (test resolution)
+   - `client/vite.config.ts` (if client needs it at build time)

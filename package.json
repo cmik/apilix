@@ -19,7 +19,7 @@
     "start": "concurrently -k -p \"[{name}]\" -n \"SERVER,CLIENT\" -c \"bgYellow.bold,bgCyan.bold\" \"npm run server\" \"npm run client\"",
     "cli": "node bin/apilix.js",
     "cli:help": "node bin/apilix.js --help",
-    "cli:build:binaries": "pkg . --no-bytecode --public --public-packages \"*\" --targets node20-macos-x64,node20-linux-x64,node20-win-x64 --out-path dist/cli",
+    "cli:build:binaries": "pkg . --no-bytecode --public --public-packages \"*\" --compress GZip --targets node20-macos-x64,node20-linux-x64,node20-win-x64 --out-path dist/cli",
     "server": "node server/index.js",
     "test": "cd server && npm test && cd ../client && npm test",
     "test:server": "cd server && npm test",

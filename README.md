@@ -52,13 +52,22 @@ Data (collections, environments) is stored locally in the app profile:
 - **Node.js** v20.19+
 - **npm** v9+
 
+### Repository layout
+
+| Package | Workspace name | Description |
+|---|---|---|
+| `packages/core` | `@apilix/core` | HTTP engine, scripting sandbox, OAuth, TLS, collection runner |
+| `packages/cli` | `@apilix/cli` | Headless CLI runner — shipped as a standalone binary |
+| `client/` | `apilix-client` | React + Vite frontend |
+| `server/` | `apilix-server` | Express API server |
+
 ### Install dependencies
 
 ```bash
 npm install
 ```
 
-This repository now uses npm workspaces (`packages/*`). Install from the repo root so local workspace packages are linked correctly.
+Install from the repo root — npm workspaces link all packages automatically.
 
 ### Start (web mode)
 
