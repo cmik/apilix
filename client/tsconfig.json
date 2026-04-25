@@ -7,6 +7,7 @@
     "skipLibCheck": true,
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
+    "allowJs": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
@@ -16,7 +17,6 @@
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,
     "paths": {
-      "@apilix/core": ["../packages/core/src/index.js"],
       "@apilix/core/types": ["../packages/core/types/index.ts"]
     }
   },

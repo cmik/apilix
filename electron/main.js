@@ -74,6 +74,18 @@ function startServer(port) {
       console.error = (...args) => { writeLog('[server:err] ' + args.join(' ')); _origError(...args); };
       console.warn  = (...args) => { writeLog('[server:warn] ' + args.join(' ')); _origWarn(...args);  };
 
+      // Register server/node_modules as a global fallback resolver so all
+      // require() calls — including those from @apilix/core sub-modules loaded
+      // via the packages/core/ extraResources path — can find their deps.
+      // NOTE: only effective because the server is require()'d in-process here;
+      // if the architecture changes to fork(), pass NODE_PATH via fork env instead.
+      const Module = require('module');
+      const serverNodeModules = path.join(process.resourcesPath, 'server', 'node_modules');
+      process.env.NODE_PATH = process.env.NODE_PATH
+        ? process.env.NODE_PATH + path.delimiter + serverNodeModules
+        : serverNodeModules;
+      Module._initPaths();
+
       require(serverPath);
       writeLog('Server started on port ' + port);
     } catch (err) {

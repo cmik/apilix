@@ -1,8 +1,14 @@
 {
   "name": "@apilix/cli",
-  "version": "1.0.0-beta.22",
+  "version": "1.0.0-beta.23",
   "description": "Apilix CLI — run collections from the command line",
   "main": "src/index.js",
+  "files": [
+    "src"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=20.19.0"
   },

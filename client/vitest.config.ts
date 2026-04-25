@@ -3,13 +3,23 @@ import { resolve } from 'path';
 
 export default defineConfig({
   resolve: {
-    alias: {
-      '@apilix/core/types': resolve(__dirname, '../packages/core/types/index.ts'),
-      '@apilix/core': resolve(__dirname, '../packages/core/src/index.js'),
-    },
+    alias: [
+      { find: '@apilix/core/types', replacement: resolve(__dirname, '../packages/core/types/index.ts') },
+      { find: '@apilix/core/variable-resolver', replacement: resolve(__dirname, '../packages/core/src/variable-resolver.js') },
+      { find: '@apilix/core', replacement: resolve(__dirname, '../packages/core/src/index.js') },
+    ],
   },
   test: {
     environment: 'node',
     include: ['src/**/*.test.{ts,tsx}'],
+    coverage: {
+      provider: 'v8',
+      thresholds: {
+        statements: 44,
+        branches: 39,
+        functions: 43,
+        lines: 46,
+      },
+    },
   },
 });
