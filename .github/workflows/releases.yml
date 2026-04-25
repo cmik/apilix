@@ -236,14 +236,7 @@ jobs:
             New-Item -ItemType Directory -Path .tmp-cli-smoke -Force | Out-Null
             Copy-Item server/fixtures/cli/collection-success.json .tmp-cli-smoke/collection.json
 
-            @"
-            {
-              "name": "CI",
-              "values": [
-                { "key": "baseUrl", "value": "http://127.0.0.1:$port", "enabled": true }
-              ]
-            }
-            "@ | Set-Content .tmp-cli-smoke/environment.json
+            ('{"name":"CI","values":[{"key":"baseUrl","value":"http://127.0.0.1:' + $port + '","enabled":true}]}') | Set-Content .tmp-cli-smoke/environment.json -Encoding UTF8
 
             & $bin.FullName run .tmp-cli-smoke/collection.json -e .tmp-cli-smoke/environment.json --reporter json --no-color | Set-Content .tmp-cli-smoke/report.json
 
