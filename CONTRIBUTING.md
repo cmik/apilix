@@ -154,10 +154,10 @@ Do not add the same dependency in multiple places; prefer pulling shared runtime
    }
    ```
 
-3. Add corresponding TypeScript declarations to `packages/core/types/index.ts`.
+3. Create a co-located declaration file `packages/core/src/<module>.d.ts` that exports the same symbols with TypeScript types. See `src/variable-resolver.d.ts` as a reference.
 4. Re-export from the barrel (`packages/core/src/index.js`) if the symbol should be available via the root import.
 5. Add path aliases for the new subpath in:
    - `tsconfig.json` (root IDE/type-checking)
    - `client/tsconfig.json` (if client needs it)
-   - `client/vitest.config.ts` (test resolution)
+   - `client/vitest.config.ts` (test resolution) — **important:** the alias config must use the array form (not object) so that subpath aliases appear before the catch-all `@apilix/core` entry; otherwise Vite treats `@apilix/core` as a string prefix and produces invalid paths like `index.js/subpath`
    - `client/vite.config.ts` (if client needs it at build time)

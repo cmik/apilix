@@ -15,6 +15,8 @@ The Collection Runner executes multiple requests from a collection in sequence, 
     - [Reporter Output](#reporter-output)
     - [CLI Examples](#cli-examples)
     - [Standalone Binary Examples](#standalone-binary-examples)
+    - [CLI Flags Reference](#cli-flags-reference)
+    - [Exit Codes](#exit-codes)
   - [Opening the Runner](#opening-the-runner)
   - [Selecting Requests](#selecting-requests)
     - [Reordering Requests](#reordering-requests)
@@ -240,6 +242,35 @@ apilix run ./collection.json --reporter junit --out ./artifacts/apilix.junit.xml
 > - Use `--csv` when each data row should become a separate iteration; `--iterations` is only used when no CSV file is supplied.
 > - Use `--reporter both --out-dir ...` when your CI system needs JUnit for test dashboards and JSON for later analysis.
 > - If the CLI reports an invalid CSV error, fix the file before retrying — Apilix stops before the run begins rather than silently falling back to iteration-only mode.
+
+### CLI Flags Reference
+
+| Flag | Short | Description |
+|---|---|---|
+| `./collection.json` (positional) | | Collection JSON file path — preferred syntax |
+| `--collection <path>` | | Legacy alternative to the positional argument |
+| `--environment <path>` | `-e` | Environment JSON file to apply |
+| `--globals <path>` | | Globals JSON file to apply |
+| `--collection-vars <path>` | | Collection variables JSON file to apply |
+| `--csv <path>` | | CSV file for data-driven iterations (one row = one iteration) |
+| `--iterations <n>` | | Number of iterations when no CSV is supplied (default: `1`) |
+| `--reporter <type>` | | Output format: `table` (default), `json`, `junit`, or `both` |
+| `--out <path>` | | Write `json` or `junit` output to this file instead of stdout |
+| `--out-dir <path>` | | Write both report files here (required for `--reporter both`) |
+| `--timeout <ms>` | | Per-request timeout in milliseconds (default: `30000`) |
+| `--execute-child-requests` | | Execute HTTP calls made inside scripts via `apx.executeRequest()` |
+| `--no-conditional-execution` | | Ignore `setNextRequest()` calls; run requests in listed order |
+| `--ssl-verification` | | Enforce TLS certificate verification (disabled by default) |
+| `--no-follow-redirects` | | Return redirect responses instead of following them automatically |
+| `--no-color` | | Disable ANSI colour sequences — useful for plain CI logs |
+
+### Exit Codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Successful run — no failed assertions and no request errors |
+| `1` | One or more failed assertions, request errors, or runner flow errors |
+| `2` | Invalid CLI usage or unreadable / invalid input file (collection, environment, CSV) |
 
 ---
 
