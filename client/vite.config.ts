@@ -12,12 +12,14 @@ export default defineConfig({
   resolve: {
     alias: {
       '@apilix/core/types': resolve(__dirname, '../packages/core/types/index.ts'),
-      '@apilix/core': resolve(__dirname, '../packages/core/src'),
     },
   },
   plugins: [react()],
   base: './',
   build: {
+    commonjsOptions: {
+      include: [/packages\/core/, /node_modules/],
+    },
     rollupOptions: {
       output: {
         manualChunks: {
