@@ -29,6 +29,9 @@ export default defineConfig({
       },
     },
   },
+  optimizeDeps: {
+    include: ['@apilix/core/variable-resolver'],
+  },
   server: {
     port: 5173,
     proxy: {

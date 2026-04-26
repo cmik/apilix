@@ -310,6 +310,11 @@ function ResultRow({ result }: { result: RunnerIterationResult }) {
           <span className="text-xs text-slate-500 shrink-0">{children.length} child{children.length !== 1 ? 'ren' : ''}</span>
         )}
         <span className="text-slate-500 text-xs w-20 text-right shrink-0">{result.responseTime} ms</span>
+        {(result.retryAttempts ?? 0) > 0 && (
+          <span className="text-xs px-1.5 py-0.5 rounded font-medium shrink-0 bg-amber-800/60 text-amber-300">
+            retried ×{result.retryAttempts}
+          </span>
+        )}
         {total > 0 && (
           <span className={`text-xs px-1.5 py-0.5 rounded font-medium shrink-0 ${
             hasFailed ? 'bg-red-800/60 text-red-300' : 'bg-green-800/60 text-green-300'
@@ -690,6 +695,11 @@ export default function RunnerPanel() {
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
   const [csvPreviewRows, setCsvPreviewRows] = useState<string[][]>([]);
   const [csvRowCount, setCsvRowCount] = useState(0);
+  const [dataFileType, setDataFileType] = useState<'csv' | 'json' | null>(null);
+  const [maxRetries, setMaxRetries] = useState(0);
+  const [retryDelay, setRetryDelay] = useState(1000);
+  const [retryBackoff, setRetryBackoff] = useState<'fixed' | 'exponential'>('fixed');
+  const [retryOn, setRetryOn] = useState<'failures' | 'errors' | 'both'>('both');
   const [delay, setDelay] = useState(0);
   const [iterations, setIterations] = useState(1);
   const [executeChildRequests, setExecuteChildRequests] = useState(false);
@@ -869,19 +879,32 @@ export default function RunnerPanel() {
     setCsvHeaders([]);
     setCsvPreviewRows([]);
     setCsvRowCount(0);
+    setDataFileType(null);
     if (!file) return;
     try {
       const text = await file.text();
-      const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
-      if (lines.length >= 1) {
-        const headers = parseCSVLine(lines[0]);
-        setCsvHeaders(headers);
-        const dataLines = lines.slice(1);
-        setCsvRowCount(dataLines.length);
-        setCsvPreviewRows(dataLines.slice(0, 5).map(parseCSVLine));
+      if (file.name.toLowerCase().endsWith('.json')) {
+        setDataFileType('json');
+        const rows = JSON.parse(text) as Record<string, string>[];
+        if (Array.isArray(rows) && rows.length > 0) {
+          const headers = Object.keys(rows[0]);
+          setCsvHeaders(headers);
+          setCsvRowCount(rows.length);
+          setCsvPreviewRows(rows.slice(0, 5).map(row => headers.map(h => String(row[h] ?? ''))));
+        }
+      } else {
+        setDataFileType('csv');
+        const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+        if (lines.length >= 1) {
+          const headers = parseCSVLine(lines[0]);
+          setCsvHeaders(headers);
+          const dataLines = lines.slice(1);
+          setCsvRowCount(dataLines.length);
+          setCsvPreviewRows(dataLines.slice(0, 5).map(parseCSVLine));
+        }
       }
     } catch {
-      // preview errors are non-fatal; server parses authoratively
+      // preview errors are non-fatal; server parses authoritatively
     }
   }
 
@@ -942,6 +965,10 @@ export default function RunnerPanel() {
             delay,
             executeChildRequests,
             conditionalExecution,
+            maxRetries,
+            retryDelay,
+            retryBackoff,
+            retryOn,
           },
           summary: buildRunSummary(streamingResults),
         };
@@ -959,6 +986,10 @@ export default function RunnerPanel() {
           iterations: csvFile ? undefined : iterations,
           executeChildRequests,
           conditionalExecution,
+          maxRetries: maxRetries > 0 ? maxRetries : undefined,
+          retryDelay: maxRetries > 0 ? retryDelay : undefined,
+          retryBackoff: maxRetries > 0 ? retryBackoff : undefined,
+          retryOn: maxRetries > 0 ? retryOn : undefined,
           ...(useMockServer && state.mockServerRunning
             ? { mockBase: `http://localhost:${state.mockPort}` }
             : {}),
@@ -1242,14 +1273,14 @@ export default function RunnerPanel() {
         })()}
 
         <div className="flex flex-col gap-3">
-          {/* CSV upload */}
+          {/* Data file upload (CSV or JSON) */}
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs text-slate-400 font-medium">Data File (CSV)</label>
+            <label className="text-xs text-slate-400 font-medium">Data File (CSV or JSON)</label>
             <div className="flex gap-2">
               <input
                 ref={csvRef}
                 type="file"
-                accept=".csv,text/csv"
+                accept=".csv,.json,text/csv,application/json"
                 className="hidden"
                 onChange={e => handleCsvChange(e.target.files?.[0] ?? null)}
               />
@@ -1257,7 +1288,7 @@ export default function RunnerPanel() {
                 onClick={() => csvRef.current?.click()}
                 className="flex-1 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 border border-slate-600 rounded text-slate-300 transition-colors text-left px-3"
               >
-                {csvFile ? `📄 ${csvFile.name}` : '+ Select CSV file'}
+                {csvFile ? `📄 ${csvFile.name}` : '+ Select data file'}
               </button>
               {csvFile && (
                 <button
@@ -1269,7 +1300,7 @@ export default function RunnerPanel() {
               )}
             </div>
             {!csvFile && (
-              <p className="text-xs text-slate-600">One row = one iteration. Column headers become variables.</p>
+              <p className="text-xs text-slate-600">CSV or JSON array — one row = one iteration. Column headers become variables.</p>
             )}
             {/* CSV preview table */}
             {csvHeaders.length > 0 && (
@@ -1306,7 +1337,11 @@ export default function RunnerPanel() {
             <div className="flex flex-col gap-1.5">
               <label className="text-xs text-slate-400 font-medium">
                 Iterations
-                {csvRowCount > 0 && <span className="ml-1.5 text-orange-400 font-normal">({csvRowCount} from CSV)</span>}
+                {csvRowCount > 0 && (
+                  <span className="ml-1.5 text-orange-400 font-normal">
+                    ({csvRowCount} from {dataFileType === 'json' ? 'JSON' : 'CSV'})
+                  </span>
+                )}
               </label>
               <input
                 type="number"
@@ -1329,6 +1364,62 @@ export default function RunnerPanel() {
                 className="bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-orange-500"
               />
             </div>
+          </div>
+
+          {/* Retry on failure */}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-slate-400 font-medium">Max Retries</label>
+              <input
+                type="number"
+                min={0}
+                max={10}
+                value={maxRetries}
+                onChange={e => setMaxRetries(Math.max(0, Math.min(10, parseInt(e.target.value, 10) || 0)))}
+                className="w-16 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-slate-100 focus:outline-none focus:border-orange-500"
+              />
+              {maxRetries > 0 && (
+                <span className="text-xs text-slate-500">retries per failed request</span>
+              )}
+            </div>
+            {maxRetries > 0 && (
+              <div className="grid grid-cols-3 gap-2 pl-1">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-slate-500">Delay (ms)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={30000}
+                    value={retryDelay}
+                    onChange={e => setRetryDelay(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                    className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs text-slate-100 focus:outline-none focus:border-orange-500"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-slate-500">Backoff</label>
+                  <select
+                    value={retryBackoff}
+                    onChange={e => setRetryBackoff(e.target.value as 'fixed' | 'exponential')}
+                    className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs text-slate-100 focus:outline-none focus:border-orange-500"
+                  >
+                    <option value="fixed">Fixed</option>
+                    <option value="exponential">Exponential</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-slate-500">Retry on</label>
+                  <select
+                    value={retryOn}
+                    onChange={e => setRetryOn(e.target.value as 'failures' | 'errors' | 'both')}
+                    className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs text-slate-100 focus:outline-none focus:border-orange-500"
+                  >
+                    <option value="both">Both</option>
+                    <option value="failures">Failures</option>
+                    <option value="errors">Errors</option>
+                  </select>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Execute child requests toggle */}

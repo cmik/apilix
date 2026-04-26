@@ -623,3 +623,260 @@ test('runCli apx.execution.skipRequest() skips the HTTP call but still records t
     });
   });
 });
+
+// ─── Feature 45: --data flag (JSON data file) ─────────────────────────────────
+
+test('--data flag runs one iteration per JSON row', async () => {
+  await withServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  }, async (baseUrl) => {
+    await withTempDir(async (dir) => {
+      const collectionPath = path.join(dir, 'collection.json');
+      const environmentPath = path.join(dir, 'environment.json');
+      const dataPath = path.join(dir, 'rows.json');
+      await copyFixture('collection-success.json', collectionPath);
+      await fs.writeFile(environmentPath, JSON.stringify(makeEnvironment(baseUrl)));
+      // Use column names that don't shadow the environment's baseUrl
+      await fs.writeFile(dataPath, JSON.stringify([
+        { tag: 'row1' },
+        { tag: 'row2' },
+        { tag: 'row3' },
+      ]));
+
+      const io = makeIo(dir);
+      const exitCode = await runCli([
+        'run', 'collection.json',
+        '-e', 'environment.json',
+        '--data', 'rows.json',
+        '--reporter', 'json',
+      ], io);
+
+      // 3 rows → 3 iterations (server returns 200 via env baseUrl, not the dummy rows.json values)
+      assert.equal(exitCode, 0);
+      const report = JSON.parse(io.readStdout());
+      assert.equal(report.iterations.length, 3);
+      assert.equal(report.config.dataPath, 'rows.json');
+    });
+  });
+});
+
+test('--data flag uses JSON row values as variables', async () => {
+  await withServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  }, async (baseUrl) => {
+    await withTempDir(async (dir) => {
+      const collection = {
+        info: { name: 'Data Vars Test' },
+        item: [{
+          id: 'req-1',
+          name: 'CheckVar',
+          request: { method: 'GET', url: `${baseUrl}/` },
+          event: [{ listen: 'test', script: { exec: [
+            "apx.test('label var present', () => {",
+            "  apx.expect(apx.variables.get('label')).to.be.a('string');",
+            "  apx.expect(apx.variables.get('label').length).to.be.above(0);",
+            "});",
+          ] } }],
+        }],
+      };
+      const dataRows = [{ label: 'alpha' }, { label: 'beta' }];
+      await fs.writeFile(path.join(dir, 'col.json'), JSON.stringify(collection));
+      await fs.writeFile(path.join(dir, 'rows.json'), JSON.stringify(dataRows));
+
+      const io = makeIo(dir);
+      const exitCode = await runCli([
+        'run', 'col.json',
+        '--data', 'rows.json',
+        '--reporter', 'json',
+      ], io);
+
+      assert.equal(exitCode, 0);
+      const report = JSON.parse(io.readStdout());
+      assert.equal(report.summary.passed, 2);
+    });
+  });
+});
+
+test('--data and --csv together exit 1 with a clear error', async () => {
+  await withTempDir(async (dir) => {
+    await fs.writeFile(path.join(dir, 'col.json'), JSON.stringify({ info: { name: 'X' }, item: [] }));
+    await fs.writeFile(path.join(dir, 'rows.json'), JSON.stringify([{ x: '1' }]));
+    await fs.writeFile(path.join(dir, 'data.csv'), 'x\n1\n');
+
+    const io = makeIo(dir);
+    const exitCode = await runCli([
+      'run', 'col.json',
+      '--csv', 'data.csv',
+      '--data', 'rows.json',
+    ], io);
+
+    assert.equal(exitCode, 2);
+    assert.match(io.readStderr(), /use either.*csv.*data/i);
+  });
+});
+
+test('--data with a non-array JSON file exits 2 with a clear error', async () => {
+  await withTempDir(async (dir) => {
+    await fs.writeFile(path.join(dir, 'col.json'), JSON.stringify({ info: { name: 'X' }, item: [] }));
+    await fs.writeFile(path.join(dir, 'rows.json'), JSON.stringify({ notAnArray: true }));
+
+    const io = makeIo(dir);
+    const exitCode = await runCli([
+      'run', 'col.json',
+      '--data', 'rows.json',
+    ], io);
+
+    assert.equal(exitCode, 2);
+    assert.match(io.readStderr(), /invalid json data file/i);
+  });
+});
+
+test('--data with malformed JSON exits 2 with a clear error', async () => {
+  await withTempDir(async (dir) => {
+    await fs.writeFile(path.join(dir, 'col.json'), JSON.stringify({ info: { name: 'X' }, item: [] }));
+    await fs.writeFile(path.join(dir, 'rows.json'), '{ not valid json }');
+
+    const io = makeIo(dir);
+    const exitCode = await runCli([
+      'run', 'col.json',
+      '--data', 'rows.json',
+    ], io);
+
+    assert.equal(exitCode, 2);
+    assert.match(io.readStderr(), /invalid json data file/i);
+  });
+});
+
+// ─── Feature 46: --retry flags ───────────────────────────────────────────────
+
+test('--retry retries failing requests and reports retryAttempts in JSON output', async () => {
+  let callCount = 0;
+  await withServer((req, res) => {
+    callCount++;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ attempt: callCount }));
+  }, async (baseUrl) => {
+    await withTempDir(async (dir) => {
+      // Test passes only on the 2nd call (1 original + 1 retry)
+      const collection = {
+        info: { name: 'Retry Test' },
+        item: [{
+          id: 'req-1',
+          name: 'EventuallyPass',
+          request: { method: 'GET', url: `${baseUrl}/` },
+          event: [{ listen: 'test', script: { exec: [
+            "const body = JSON.parse(apx.response.text());",
+            "apx.test('passes on 2nd call', () => { apx.expect(body.attempt).to.equal(2); });",
+          ] } }],
+        }],
+      };
+      await fs.writeFile(path.join(dir, 'col.json'), JSON.stringify(collection));
+
+      const io = makeIo(dir);
+      const exitCode = await runCli([
+        'run', 'col.json',
+        '--retry', '3',
+        '--retry-delay', '0',
+        '--retry-on', 'failures',
+        '--reporter', 'json',
+      ], io);
+
+      assert.equal(exitCode, 0);
+      assert.equal(callCount, 2);
+      const report = JSON.parse(io.readStdout());
+      assert.equal(report.iterations[0].results[0].retryAttempts, 1);
+    });
+  });
+});
+
+test('--retry exhausted still exits 1 when all retries fail', async () => {
+  await withServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end('{}');
+  }, async (baseUrl) => {
+    await withTempDir(async (dir) => {
+      await copyFixture('collection-fail.json', path.join(dir, 'col.json'));
+      await fs.writeFile(path.join(dir, 'env.json'), JSON.stringify(makeEnvironment(baseUrl)));
+
+      const io = makeIo(dir);
+      const exitCode = await runCli([
+        'run', 'col.json',
+        '-e', 'env.json',
+        '--retry', '2',
+        '--retry-delay', '0',
+        '--reporter', 'json',
+      ], io);
+
+      assert.equal(exitCode, 1);
+      const report = JSON.parse(io.readStdout());
+      assert.equal(report.iterations[0].results[0].retryAttempts, 2);
+      assert.equal(report.summary.failed, 1);
+    });
+  });
+});
+
+test('--retry 0 (default) does not retry', async () => {
+  let callCount = 0;
+  await withServer((req, res) => {
+    callCount++;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end('{}');
+  }, async (baseUrl) => {
+    await withTempDir(async (dir) => {
+      await copyFixture('collection-fail.json', path.join(dir, 'col.json'));
+      await fs.writeFile(path.join(dir, 'env.json'), JSON.stringify(makeEnvironment(baseUrl)));
+
+      const io = makeIo(dir);
+      await runCli([
+        'run', 'col.json',
+        '-e', 'env.json',
+        '--reporter', 'json',
+      ], io);
+
+      assert.equal(callCount, 1);
+      const report = JSON.parse(io.readStdout());
+      assert.equal(report.iterations[0].results[0].retryAttempts, 0);
+    });
+  });
+});
+
+test('--retry with JUnit output annotates retried test classname', async () => {
+  let callCount = 0;
+  await withServer((req, res) => {
+    callCount++;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ attempt: callCount }));
+  }, async (baseUrl) => {
+    await withTempDir(async (dir) => {
+      const collection = {
+        info: { name: 'JUnit Retry' },
+        item: [{
+          id: 'req-1',
+          name: 'EventuallyPass',
+          request: { method: 'GET', url: `${baseUrl}/` },
+          event: [{ listen: 'test', script: { exec: [
+            "const body = JSON.parse(apx.response.text());",
+            "apx.test('passes on 2nd call', () => { apx.expect(body.attempt).to.equal(2); });",
+          ] } }],
+        }],
+      };
+      await fs.writeFile(path.join(dir, 'col.json'), JSON.stringify(collection));
+
+      const io = makeIo(dir);
+      const exitCode = await runCli([
+        'run', 'col.json',
+        '--retry', '3',
+        '--retry-delay', '0',
+        '--retry-on', 'failures',
+        '--reporter', 'junit',
+        '--out', 'report.xml',
+      ], io);
+
+      assert.equal(exitCode, 0);
+      const xml = await fs.readFile(path.join(dir, 'report.xml'), 'utf8');
+      assert.match(xml, /retried ×1/);
+    });
+  });
+});

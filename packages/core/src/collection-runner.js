@@ -49,7 +49,12 @@ async function awaitDelay(runState, delayMs) {
   return 'running';
 }
 
-function parseRunDataRows(payload, csvText) {
+function parseRunDataRows(payload, { csvText, jsonRows } = {}) {
+  if (jsonRows !== undefined && jsonRows !== null) {
+    if (!Array.isArray(jsonRows) || jsonRows.length === 0)
+      throw new InputError('JSON data file must be a non-empty array of objects');
+    return jsonRows;
+  }
   if (csvText !== null && csvText !== undefined) {
     try {
       return parseCsv(csvText, { columns: true, skip_empty_lines: true, trim: true });
@@ -67,7 +72,7 @@ function prepareCollectionRun(payload, options = {}) {
     throw new InputError('Missing collection in body');
   }
 
-  const dataRows = parseRunDataRows(payload, options.csvText);
+  const dataRows = parseRunDataRows(payload, { csvText: options.csvText, jsonRows: options.jsonRows });
   const requests = flattenItemsWithScripts(payload.collection.item, payload.collection.event);
 
   return {
@@ -102,6 +107,7 @@ function toResultData(item, result, iteration) {
     skipped: result.skipped || false,
     warnings: result.warnings || [],
     error: result.error,
+    retryAttempts: result._retryAttempts || 0,
   };
 }
 
@@ -120,6 +126,11 @@ async function executePreparedCollectionRun(prepared, options = {}) {
     allCollectionItems,
     mockBase,
   } = payload;
+  const maxRetries = Math.max(0, Math.min(10, parseInt(payload.maxRetries, 10) || 0));
+  const _rawRetryDelay = parseInt(payload.retryDelay, 10);
+  const retryDelay = Math.max(0, Math.min(30000, Number.isNaN(_rawRetryDelay) ? 1000 : _rawRetryDelay));
+  const retryBackoff = payload.retryBackoff === 'exponential' ? 'exponential' : 'fixed';
+  const retryOn = ['failures', 'errors', 'both'].includes(payload.retryOn) ? payload.retryOn : 'both';
   const onEvent = typeof options.onEvent === 'function' ? options.onEvent : null;
   const runState = options.runState || { paused: false, stopped: false };
   const collectIterations = options.collectIterations !== false;
@@ -170,7 +181,7 @@ async function executePreparedCollectionRun(prepared, options = {}) {
         break outer;
       }
 
-      const result = await executeRequest(item, {
+      let result = await executeRequest(item, {
         environment: currentEnv,
         collectionVariables: currentCollVars,
         globals: currentGlobals,
@@ -189,6 +200,47 @@ async function executePreparedCollectionRun(prepared, options = {}) {
       if (result.updatedCollectionVariables) currentCollVars = result.updatedCollectionVariables;
       if (result.updatedGlobals) currentGlobals = result.updatedGlobals;
       if (result.updatedCookies) currentCookies = result.updatedCookies;
+
+      let retryAttempts = 0;
+      if (maxRetries > 0) {
+        while (retryAttempts < maxRetries) {
+          const hasError = !!result.error;
+          const hasFailed = Array.isArray(result.testResults)
+            && result.testResults.some(t => t && t.passed === false);
+          const shouldRetry =
+            retryOn === 'errors'   ? hasError :
+            retryOn === 'failures' ? hasFailed :
+            /* both */               (hasError || hasFailed);
+          if (!shouldRetry) break;
+          retryAttempts++;
+          const backoffMs = retryBackoff === 'exponential'
+            ? Math.min(30000, retryDelay * Math.pow(2, retryAttempts - 1))
+            : retryDelay;
+          if (backoffMs > 0 && (await awaitDelay(runState, backoffMs)) === 'stopped') {
+            stopped = true;
+            break outer;
+          }
+          result = await executeRequest(item, {
+            environment: currentEnv,
+            collectionVariables: currentCollVars,
+            globals: currentGlobals,
+            dataRow,
+            collVars: collection.variable || [],
+            cookies: currentCookies,
+            collectionItems: executeChildRequests ? (allCollectionItems || collection.item || []) : [],
+            conditionalExecution: conditionalExecution !== false,
+            mockBase: mockBase || null,
+            iteration: i + 1,
+            requestId: item.id || '',
+            vmContext,
+          });
+          if (result.updatedEnvironment) currentEnv = result.updatedEnvironment;
+          if (result.updatedCollectionVariables) currentCollVars = result.updatedCollectionVariables;
+          if (result.updatedGlobals) currentGlobals = result.updatedGlobals;
+          if (result.updatedCookies) currentCookies = result.updatedCookies;
+        }
+      }
+      result._retryAttempts = retryAttempts;
 
       const resultData = toResultData(item, result, i + 1);
       if (collectResults && iterationRecord) iterationRecord.results.push(resultData);

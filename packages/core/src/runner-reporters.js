@@ -100,7 +100,8 @@ function buildJUnitReport({ collectionName, iterations, errors }) {
     const testCases = [];
 
     for (const result of iteration.results || []) {
-      const executionClass = `iteration.${iteration.iteration}.${result.name}`;
+      const retrySuffix = result.retryAttempts > 0 ? ` (retried ×${result.retryAttempts})` : '';
+      const executionClass = `iteration.${iteration.iteration}.${result.name}${retrySuffix}`;
       testCases.push({
         name: `[request] ${result.method} ${result.name}`,
         classname: executionClass,

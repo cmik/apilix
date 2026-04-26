@@ -64,6 +64,10 @@ export interface RunPayload {
   allCollectionItems?: CollectionItem[];
   /** When set, the server rewrites every request URL to this base (after variable resolution). */
   mockBase?: string;
+  maxRetries?: number;
+  retryDelay?: number;
+  retryBackoff?: 'fixed' | 'exponential';
+  retryOn?: 'failures' | 'errors' | 'both';
 }
 
 export async function runCollection(
