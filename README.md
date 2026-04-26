@@ -438,7 +438,7 @@ Click **New window** to pop the console out into a separate browser tab that liv
 
 ---
 
-## Test Scripts (`pm` API)
+## Test Scripts (`apx` and `pm` API)
 
 Apilix supports a subset of the Postman `pm` scripting API:
 
