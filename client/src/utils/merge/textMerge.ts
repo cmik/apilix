@@ -12,6 +12,8 @@
  *     local and remote changed the same lines relative to base.
  */
 
+import { deepEqual } from './workspaceDiffer';
+
 // ─── Public types ──────────────────────────────────────────────────────────────
 
 export interface Hunk {
@@ -332,11 +334,6 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 function jsonEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (a === undefined || b === undefined) return false;
-  try {
-    return JSON.stringify(a) === JSON.stringify(b);
-  } catch {
-    return false;
-  }
+  if (a === undefined || b === undefined) return a === b;
+  return deepEqual(a, b);
 }

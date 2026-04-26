@@ -16,6 +16,10 @@ import { generateId } from '../store';
 
 const MAX_SNAPSHOTS = 50;
 
+function hasSecrets(data: WorkspaceData): boolean {
+  return data.environments.some(env => env.values.some(v => v.secret));
+}
+
 /**
  * Create a new snapshot for the given workspace.
  * Called automatically by store.tsx after every debounced save.
@@ -29,7 +33,9 @@ export async function createSnapshot(
   const timestamp = new Date().toISOString();
   const autoSummary = summary ?? `${data.collections.length} collection(s), auto-save`;
 
-  const encryptedData = await StorageDriver.encryptWorkspaceSecrets(data);
+  const encryptedData = hasSecrets(data)
+    ? await StorageDriver.encryptWorkspaceSecrets(data)
+    : data;
   const snapshot: WorkspaceSnapshot = { snapshotId, timestamp, summary: autoSummary, data: encryptedData };
   await StorageDriver.writeSnapshot(workspaceId, snapshotId, snapshot);
 

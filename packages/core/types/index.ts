@@ -319,6 +319,8 @@ export interface AppSettings {
   // CDP Browser Capture
   cdpChromePath?: string;
   cdpPort?: number;
+  // Capture panel view preferences (persisted across restarts)
+  captureViewState?: CaptureViewState;
   [key: string]: unknown;
 }
 
