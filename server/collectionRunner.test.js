@@ -425,6 +425,267 @@ describe('executePreparedCollectionRun — result retention', () => {
   });
 });
 
+// ─── Feature 45: JSON data rows ───────────────────────────────────────────────
+
+describe('prepareCollectionRun — JSON data rows', () => {
+  it('accepts a JSON array via jsonRows and produces correct dataRows', () => {
+    const rows = [{ name: 'Alice', age: '30' }, { name: 'Bob', age: '25' }];
+    const result = prepareCollectionRun(makeValidPayload(), { jsonRows: rows });
+    assert.equal(result.dataRows.length, 2);
+    assert.equal(result.dataRows[0].name, 'Alice');
+    assert.equal(result.dataRows[1].age, '25');
+  });
+
+  it('jsonRows takes priority over csvText when both are provided', () => {
+    const rows = [{ source: 'json' }];
+    const csv = 'source\ncsv\n';
+    const result = prepareCollectionRun(makeValidPayload(), { jsonRows: rows, csvText: csv });
+    assert.equal(result.dataRows.length, 1);
+    assert.equal(result.dataRows[0].source, 'json');
+  });
+
+  it('throws InputError for an empty jsonRows array', () => {
+    assert.throws(
+      () => prepareCollectionRun(makeValidPayload(), { jsonRows: [] }),
+      (err) => err instanceof InputError && /non-empty/i.test(err.message),
+    );
+  });
+
+  it('throws InputError when jsonRows is not an array', () => {
+    assert.throws(
+      () => prepareCollectionRun(makeValidPayload(), { jsonRows: { name: 'Alice' } }),
+      (err) => err instanceof InputError,
+    );
+  });
+
+  it('JSON rows are used as variable maps during execution', async () => {
+    await withServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    }, async (baseUrl) => {
+      const rows = [{ userName: 'Alice' }, { userName: 'Bob' }];
+      const payload = makeValidPayload({
+        collection: {
+          info: { name: 'JSON Rows Test' },
+          item: [{
+            id: 'req-1',
+            name: 'Check',
+            request: { method: 'GET', url: `${baseUrl}/` },
+            event: [{
+              listen: 'test',
+              script: { exec: [
+                "apx.test('userName is set', () => {",
+                "  apx.expect(apx.variables.get('userName')).to.be.a('string');",
+                "  apx.expect(apx.variables.get('userName').length).to.be.above(0);",
+                "});",
+              ] },
+            }],
+          }],
+        },
+      });
+      const prepared = prepareCollectionRun(payload, { jsonRows: rows });
+      const run = await executePreparedCollectionRun(prepared);
+      assert.equal(run.iterations.length, 2);
+      for (const iter of run.iterations) {
+        assert.equal(iter.results[0].testResults[0].passed, true);
+      }
+    });
+  });
+});
+
+// ─── Feature 46: Retry on failure ────────────────────────────────────────────
+
+describe('executePreparedCollectionRun — retry on failure', () => {
+  it('retryAttempts is 0 when maxRetries is 0 (default)', async () => {
+    await withServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    }, async (baseUrl) => {
+      const payload = makeValidPayload({
+        collection: {
+          info: { name: 'No Retry' },
+          item: [{ id: 'req-1', name: 'Get', request: { method: 'GET', url: `${baseUrl}/` } }],
+        },
+      });
+      const prepared = prepareCollectionRun(payload);
+      const run = await executePreparedCollectionRun(prepared);
+      assert.equal(run.iterations[0].results[0].retryAttempts, 0);
+    });
+  });
+
+  it('does not retry when maxRetries is 0 even if a test fails', async () => {
+    let callCount = 0;
+    await withServer((req, res) => {
+      callCount++;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{}');
+    }, async (baseUrl) => {
+      const payload = makeValidPayload({
+        maxRetries: 0,
+        retryDelay: 0,
+        collection: {
+          info: { name: 'No Retry On Fail' },
+          item: [{
+            id: 'req-1',
+            name: 'Fail',
+            request: { method: 'GET', url: `${baseUrl}/` },
+            event: [{ listen: 'test', script: { exec: [
+              "apx.test('always fails', () => { apx.expect(1).to.equal(2); });",
+            ] } }],
+          }],
+        },
+      });
+      const prepared = prepareCollectionRun(payload);
+      const run = await executePreparedCollectionRun(prepared);
+      assert.equal(callCount, 1);
+      assert.equal(run.iterations[0].results[0].retryAttempts, 0);
+    });
+  });
+
+  it('retries up to maxRetries times when tests keep failing', async () => {
+    let callCount = 0;
+    await withServer((req, res) => {
+      callCount++;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{}');
+    }, async (baseUrl) => {
+      const payload = makeValidPayload({
+        maxRetries: 2,
+        retryOn: 'failures',
+        retryDelay: 0,
+        collection: {
+          info: { name: 'Retry Exhausted' },
+          item: [{
+            id: 'req-1',
+            name: 'AlwaysFail',
+            request: { method: 'GET', url: `${baseUrl}/` },
+            event: [{ listen: 'test', script: { exec: [
+              "apx.test('always fails', () => { apx.expect(1).to.equal(2); });",
+            ] } }],
+          }],
+        },
+      });
+      const prepared = prepareCollectionRun(payload);
+      const run = await executePreparedCollectionRun(prepared);
+      assert.equal(callCount, 3); // 1 original + 2 retries
+      assert.equal(run.iterations[0].results[0].retryAttempts, 2);
+    });
+  });
+
+  it('stops retrying once a retry succeeds', async () => {
+    let callCount = 0;
+    await withServer((req, res) => {
+      callCount++;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ attempt: callCount }));
+    }, async (baseUrl) => {
+      // Test passes only when body.attempt === 2 (i.e. the first retry)
+      const payload = makeValidPayload({
+        maxRetries: 5,
+        retryOn: 'failures',
+        retryDelay: 0,
+        collection: {
+          info: { name: 'Eventually Pass' },
+          item: [{
+            id: 'req-1',
+            name: 'EventuallyPass',
+            request: { method: 'GET', url: `${baseUrl}/` },
+            event: [{ listen: 'test', script: { exec: [
+              "const body = JSON.parse(apx.response.text());",
+              "apx.test('passes on 2nd call', () => { apx.expect(body.attempt).to.equal(2); });",
+            ] } }],
+          }],
+        },
+      });
+      const prepared = prepareCollectionRun(payload);
+      const run = await executePreparedCollectionRun(prepared);
+      assert.equal(callCount, 2); // 1 original + 1 retry (succeeds)
+      assert.equal(run.iterations[0].results[0].retryAttempts, 1);
+      assert.equal(run.iterations[0].results[0].testResults[0].passed, true);
+    });
+  });
+
+  it('retryOn=errors does not retry on test failure', async () => {
+    let callCount = 0;
+    await withServer((req, res) => {
+      callCount++;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{}');
+    }, async (baseUrl) => {
+      const payload = makeValidPayload({
+        maxRetries: 3,
+        retryOn: 'errors',
+        retryDelay: 0,
+        collection: {
+          info: { name: 'Retry Errors Only' },
+          item: [{
+            id: 'req-1',
+            name: 'TestFail',
+            request: { method: 'GET', url: `${baseUrl}/` },
+            event: [{ listen: 'test', script: { exec: [
+              "apx.test('fail', () => { apx.expect(1).to.equal(2); });",
+            ] } }],
+          }],
+        },
+      });
+      const prepared = prepareCollectionRun(payload);
+      const run = await executePreparedCollectionRun(prepared);
+      assert.equal(callCount, 1); // no retry — test failure is not a request error
+      assert.equal(run.iterations[0].results[0].retryAttempts, 0);
+    });
+  });
+
+  it('retryOn=failures does not retry on request error', async () => {
+    const payload = makeValidPayload({
+      maxRetries: 3,
+      retryOn: 'failures',
+      retryDelay: 0,
+      collection: {
+        info: { name: 'Retry Failures Only' },
+        item: [{
+          id: 'req-1',
+          name: 'ConnRefused',
+          request: { method: 'GET', url: 'http://127.0.0.1:1' }, // nothing listening
+        }],
+      },
+    });
+    const prepared = prepareCollectionRun(payload);
+    const run = await executePreparedCollectionRun(prepared);
+    assert.ok(run.iterations[0].results[0].error, 'expected a connection error');
+    assert.equal(run.iterations[0].results[0].retryAttempts, 0);
+  });
+
+  it('retryOn=both retries on either test failure or request error', async () => {
+    let callCount = 0;
+    await withServer((req, res) => {
+      callCount++;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{}');
+    }, async (baseUrl) => {
+      const payload = makeValidPayload({
+        maxRetries: 2,
+        retryOn: 'both',
+        retryDelay: 0,
+        collection: {
+          info: { name: 'Retry Both' },
+          item: [{
+            id: 'req-1',
+            name: 'Fail',
+            request: { method: 'GET', url: `${baseUrl}/` },
+            event: [{ listen: 'test', script: { exec: [
+              "apx.test('always fails', () => { apx.expect(1).to.equal(2); });",
+            ] } }],
+          }],
+        },
+      });
+      const prepared = prepareCollectionRun(payload);
+      const run = await executePreparedCollectionRun(prepared);
+      assert.equal(callCount, 3); // 1 + 2 retries
+      assert.equal(run.iterations[0].results[0].retryAttempts, 2);
+    });
+  });
+});
+
 describe('executePreparedCollectionRun — vmContext isolation between iterations', () => {
   it('env var set in iteration 1 test script does not bleed into iteration 2', async () => {
     await withServer((req, res) => {

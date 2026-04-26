@@ -217,6 +217,7 @@ export interface RunnerIterationResult {
   preChildRequests?: Array<{ name: string; method: string; result: RequestResponse & { resolvedUrl?: string; requestHeaders?: Record<string, string>; requestBody?: string } }>;
   testChildRequests?: Array<{ name: string; method: string; result: RequestResponse & { resolvedUrl?: string; requestHeaders?: Record<string, string>; requestBody?: string } }>;
   error: string | null;
+  retryAttempts?: number;
 }
 
 export interface ConditionalFlowRecord {
@@ -248,6 +249,10 @@ export interface RunnerRunConfig {
   delay: number;
   executeChildRequests: boolean;
   conditionalExecution: boolean;
+  maxRetries?: number;
+  retryDelay?: number;
+  retryBackoff?: 'fixed' | 'exponential';
+  retryOn?: 'failures' | 'errors' | 'both';
 }
 
 /** Aggregate counts shown in the sidebar run rows. */

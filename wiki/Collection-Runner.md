@@ -1,6 +1,6 @@
 # Collection Runner
 
-The Collection Runner executes multiple requests from a collection in sequence, repeating them across iterations, optionally driven by a CSV data file. It is the primary tool for automated testing, data-driven API validation, and scripted workflow execution.
+The Collection Runner executes multiple requests from a collection in sequence, repeating them across iterations, optionally driven by a CSV or JSON data file. It is the primary tool for automated testing, data-driven API validation, and scripted workflow execution.
 
 ---
 
@@ -23,11 +23,13 @@ The Collection Runner executes multiple requests from a collection in sequence, 
   - [Configuring the Run](#configuring-the-run)
     - [Iterations](#iterations)
     - [Delay](#delay)
+    - [Retry on Failure](#retry-on-failure)
     - [Conditional Execution](#conditional-execution)
     - [Execute Child Requests](#execute-child-requests)
     - [Mock Server Mode](#mock-server-mode)
-  - [Data-driven Runs with CSV](#data-driven-runs-with-csv)
-    - [CSV Format](#csv-format)
+  - [Data-driven Runs](#data-driven-runs)
+    - [CSV Files](#csv-files)
+    - [JSON Files](#json-files)
     - [Accessing Data in Scripts](#accessing-data-in-scripts)
   - [Running, Pausing, and Stopping](#running-pausing-and-stopping)
   - [Live Results](#live-results)
@@ -55,6 +57,7 @@ The Collection Runner executes multiple requests from a collection in sequence, 
     - [Pattern 2 — Data-driven CRUD Test](#pattern-2--data-driven-crud-test)
     - [Pattern 3 — Polling Loop](#pattern-3--polling-loop)
     - [Pattern 4 — Stop on First Failure](#pattern-4--stop-on-first-failure)
+    - [Pattern 5 — Retry Flaky Requests](#pattern-5--retry-flaky-requests)
   - [See Also](#see-also)
 
 ---
@@ -68,7 +71,8 @@ Key capabilities:
 | Capability | Description |
 |---|---|
 | **Multi-iteration** | Run the same set of requests N times |
-| **CSV-driven** | Each CSV row becomes one iteration, with row data available as `apx.iterationData` |
+| **Data-driven** | Each CSV row or JSON object becomes one iteration, with row data available as `apx.iterationData` |
+| **Retry on failure** | Automatically re-run a request when its tests fail or a network error occurs, with configurable delay and backoff |
 | **Conditional flow** | Scripts can jump to a named request or stop the run early via `apx.execution.setNextRequest()` |
 | **Performance metrics** | Min/avg/max/P50/P95/P99 response time statistics with a live bar chart |
 | **Live streaming** | Results appear as each request completes — no waiting for the full run |
@@ -78,7 +82,7 @@ Key capabilities:
 
 ## Run Collections from the CLI
 
-The same runner engine is also available from the command line for CI jobs, scheduled checks, and headless local validation. Use the CLI when you want Apilix to execute a collection, apply environments and CSV data, and emit machine-readable JSON or JUnit reports without opening the UI.
+The same runner engine is also available from the command line for CI jobs, scheduled checks, and headless local validation. Use the CLI when you want Apilix to execute a collection, apply environments and data files, and emit machine-readable JSON or JUnit reports without opening the UI.
 
 Preferred syntax uses a positional collection file path (`apilix run ./collection.json`). For backward compatibility with older scripts, `--collection ./collection.json` is still supported.
 
@@ -86,13 +90,13 @@ Preferred syntax uses a positional collection file path (`apilix run ./collectio
 
 - Export or save the collection you want to run as a Postman/Apilix collection JSON file.
 - Export the environment, globals, or collection variables you want to apply as JSON files when needed.
-- If you want data-driven iterations, prepare a CSV file with a header row.
+- If you want data-driven iterations, prepare a CSV file with a header row, or a JSON file containing an array of objects.
 
 ### Basic Workflow
 
 1. Open a terminal in your Apilix project checkout.
 2. Run the CLI with the `run` command and pass a collection file.
-3. Optionally add `-e/--environment`, `--globals`, `--collection-vars`, or `--csv`.
+3. Optionally add `-e/--environment`, `--globals`, `--collection-vars`, `--csv`, or `--data`.
 4. Choose a reporter: `table`, `json`, `junit`, or `both`.
 5. Write the report to terminal, standard output, a single file, or an output directory.
 
@@ -161,6 +165,28 @@ npm run cli -- run \
   --csv ./users.csv \
   --reporter both \
   --out-dir ./artifacts
+```
+
+Run one iteration per JSON data object:
+
+```bash
+npm run cli -- run \
+  ./collection.json \
+  -e ./environment.json \
+  --data ./users.json \
+  --reporter json
+```
+
+Retry each failing request up to 3 times with exponential backoff:
+
+```bash
+npm run cli -- run \
+  ./collection.json \
+  -e ./environment.json \
+  --retry 3 \
+  --retry-delay 500 \
+  --retry-backoff exponential \
+  --reporter json
 ```
 
 Enable child requests and keep `setNextRequest()` flow control active:
@@ -239,9 +265,9 @@ apilix run ./collection.json --reporter junit --out ./artifacts/apilix.junit.xml
 
 > **Tips**
 >
-> - Use `--csv` when each data row should become a separate iteration; `--iterations` is only used when no CSV file is supplied.
+> - Use `--csv` or `--data` when each row/object should become a separate iteration; `--iterations` is only used when no data file is supplied. You cannot use both flags at once.
 > - Use `--reporter both --out-dir ...` when your CI system needs JUnit for test dashboards and JSON for later analysis.
-> - If the CLI reports an invalid CSV error, fix the file before retrying — Apilix stops before the run begins rather than silently falling back to iteration-only mode.
+> - Use `--retry` for flaky tests or rate-limited endpoints. The `retryAttempts` count is included in the JSON report and annotated in the JUnit `classname` attribute.
 
 ### CLI Flags Reference
 
@@ -253,13 +279,19 @@ apilix run ./collection.json --reporter junit --out ./artifacts/apilix.junit.xml
 | `--globals <path>` | | Globals JSON file to apply |
 | `--collection-vars <path>` | | Collection variables JSON file to apply |
 | `--csv <path>` | | CSV file for data-driven iterations (one row = one iteration) |
-| `--iterations <n>` | | Number of iterations when no CSV is supplied (default: `1`) |
+| `--data <path>` | | JSON array file for data-driven iterations (one object = one iteration) |
+| `--iterations <n>` | | Number of iterations when no data file is supplied (default: `1`) |
+| `--retry <n>` | | Max retries per request on failure (0–10, default: `0`) |
+| `--retry-delay <ms>` | | Base delay between retries in ms (default: `1000`) |
+| `--retry-backoff <type>` | | Backoff strategy: `fixed` (default) or `exponential` |
+| `--retry-on <target>` | | What triggers a retry: `both` (default), `failures`, or `errors` |
 | `--reporter <type>` | | Output format: `table` (default), `json`, `junit`, or `both` |
 | `--out <path>` | | Write `json` or `junit` output to this file instead of stdout |
 | `--out-dir <path>` | | Write both report files here (required for `--reporter both`) |
 | `--timeout <ms>` | | Per-request timeout in milliseconds (default: `30000`) |
 | `--execute-child-requests` | | Execute HTTP calls made inside scripts via `apx.executeRequest()` |
 | `--no-conditional-execution` | | Ignore `setNextRequest()` calls; run requests in listed order |
+| `--bail` | | Stop the run on the first test failure or request error |
 | `--ssl-verification` | | Enforce TLS certificate verification (disabled by default) |
 | `--no-follow-redirects` | | Return redirect responses instead of following them automatically |
 | `--no-color` | | Disable ANSI colour sequences — useful for plain CI logs |
@@ -270,7 +302,7 @@ apilix run ./collection.json --reporter junit --out ./artifacts/apilix.junit.xml
 |---|---|
 | `0` | Successful run — no failed assertions and no request errors |
 | `1` | One or more failed assertions, request errors, or runner flow errors |
-| `2` | Invalid CLI usage or unreadable / invalid input file (collection, environment, CSV) |
+| `2` | Invalid CLI usage or unreadable / invalid input file (collection, environment, CSV, JSON data) |
 
 ---
 
@@ -320,11 +352,26 @@ The **Execution Order** list below the selection tree shows the selected request
 
 Set the number of times the full request sequence runs. Each pass is one **iteration**. Results are grouped by iteration number in the results panel.
 
-> When a CSV file is uploaded, the iteration count is ignored — the runner runs one iteration per CSV data row instead.
+> When a data file (CSV or JSON) is uploaded, the iteration count is ignored — the runner runs one iteration per data row instead.
 
 ### Delay
 
 Set an inter-request delay in milliseconds. A non-zero delay inserts a pause between each request. Useful for rate-limited APIs or simulating realistic user pacing.
+
+### Retry on Failure
+
+Configure automatic retries for requests that fail with a network error or test assertion failure.
+
+| Setting | Description |
+|---|---|
+| **Max Retries** | Number of additional attempts per request (0 = disabled, max 10). When `0`, retry is off. |
+| **Delay (ms)** | Base pause between retry attempts (visible when Max Retries > 0). |
+| **Backoff** | `Fixed` — every retry waits the same delay. `Exponential` — delay doubles on each attempt (capped at 30 s). |
+| **Retry on** | `Both` — retry on test failures or network errors. `Failures` — retry only when a test assertion fails. `Errors` — retry only on network/connection errors. |
+
+When a request is retried, the final result (the last attempt's response and test results) is what gets recorded. An amber **retried ×N** badge appears on the request row to indicate how many extra attempts were made.
+
+> **Retry vs. Bail:** If `--bail` is also active, a run stops on the first request that still fails after all retries are exhausted.
 
 ### Conditional Execution
 
@@ -346,13 +393,11 @@ See [Mock Server](Mock-Server) for how to define routes and start the server.
 
 ---
 
-## Data-driven Runs with CSV
+## Data-driven Runs
 
-Upload a CSV file to drive iterations with real data. Each row after the header becomes one iteration.
+Upload a data file to drive iterations with real data. Each row (CSV) or object (JSON) becomes one iteration, with its values available as variables in scripts and URL/header/body templates.
 
-![CSV upload and preview](images/runner-csv-upload.png)
-
-### CSV Format
+### CSV Files
 
 ```csv
 username,password,expectedRole
@@ -362,16 +407,34 @@ carol,secret3,viewer
 ```
 
 - The **first row** is the header row — column names become variable keys.
-- Each **subsequent row** is one iteration. The runner runs as many iterations as there are data rows.
+- Each **subsequent row** is one iteration.
 - Values are always strings. Convert in scripts when needed (e.g. `Number(apx.iterationData.get('count'))`).
 - A **preview table** (first 5 rows) is shown after upload.
 
+Use `--csv <path>` from the CLI.
+
+### JSON Files
+
+```json
+[
+  { "username": "alice", "password": "secret1", "expectedRole": "admin" },
+  { "username": "bob",   "password": "secret2", "expectedRole": "user"  }
+]
+```
+
+- The file must contain a **top-level JSON array** of objects.
+- Keys from the first object are used as headers for the preview table.
+- Values can be any JSON primitive (strings, numbers, booleans) — they are available in scripts as-is, and substituted as strings in `{{variable}}` placeholders.
+- A **preview table** (first 5 objects) is shown after upload.
+
+Use `--data <path>` from the CLI. You cannot use `--csv` and `--data` together.
+
 ### Accessing Data in Scripts
 
-Use `apx.iterationData` to read the current row's values. It is read-only (`.get()` and `.has()` only).
+Both formats expose the current row's values through `apx.iterationData`. It is read-only (`.get()` and `.has()` only).
 
 ```js
-// Pre-request script — inject CSV values into the request body
+// Pre-request script — inject data file values into the request body
 const username = apx.iterationData.get('username');
 const password = apx.iterationData.get('password');
 
@@ -381,7 +444,7 @@ apx.environment.set('password', password);
 ```
 
 ```js
-// Test script — validate against expected CSV value
+// Test script — validate against expected value from the data file
 apx.test("Role matches expected", () => {
   const expected = apx.iterationData.get('expectedRole');
   apx.expect(apx.response.json().role).to.equal(expected);
@@ -422,7 +485,7 @@ Each iteration is a collapsible block with a summary badge:
 | Green | All tests passed |
 | Grey | No tests defined — shows request count instead |
 
-The header also shows data row values when a CSV file was used (e.g. `username=alice | expectedRole=admin`).
+The header also shows data row values when a data file was used (e.g. `username=alice | expectedRole=admin`).
 
 ### Request Rows
 
@@ -434,6 +497,7 @@ Each request row shows:
 | **Method** | HTTP method |
 | **Name** | Request name |
 | **Response time** | Time in ms |
+| **Retried badge** | Amber **retried ×N** pill — shown only when the request was retried at least once |
 | **Test badge** | `passed/total` count — green if all passed, red if any failed |
 
 Click a row to expand it and see individual test results.
@@ -485,7 +549,7 @@ After a run completes (or while it is still running), the **⚡ Performance Metr
 | **P95** | 95th percentile — 95% of requests were faster than this |
 | **P99** | 99th percentile — 99% of requests were faster than this |
 
-> Failed requests (network errors) are excluded from performance metrics. Child requests are included and shown in a distinct colour.
+> Failed requests (network errors) are excluded from performance metrics. Retried requests contribute only the final attempt's response time. Child requests are included and shown in a distinct colour.
 
 ### Bar Chart
 
@@ -608,7 +672,7 @@ Each run row shows:
 Click any run row in the sidebar to load it into the Runner panel:
 
 1. The Runner panel opens (or comes into focus).
-2. The configuration is restored to match the original run: collection, selected requests, execution order, iterations, delay, and advanced settings.
+2. The configuration is restored to match the original run: collection, selected requests, execution order, iterations, delay, retry settings, and advanced settings.
 3. The original results are displayed in the results panel.
 4. A **Viewing saved run** notice appears at the top of the results panel as a reminder that you are looking at historical data.
 
@@ -658,13 +722,22 @@ All other requests use `Bearer {{accessToken}}` in their Auth tab (set to **Inhe
 
 ### Pattern 2 — Data-driven CRUD Test
 
-Use a CSV to create, update, and delete resources with different data for each iteration.
+Use a CSV or JSON data file to create, update, and delete resources with different data for each iteration.
 
-**CSV (`users.csv`):**
+**`users.csv`:**
 ```csv
 name,email,role
 Alice,alice@example.com,admin
 Bob,bob@example.com,user
+```
+
+Or equivalently, **`users.json`:**
+
+```json
+[
+  { "name": "Alice", "email": "alice@example.com", "role": "admin" },
+  { "name": "Bob",   "email": "bob@example.com",   "role": "user"  }
+]
 ```
 
 **POST /users — test script:**
@@ -678,7 +751,7 @@ apx.environment.set('createdUserId', String(json.id));
 
 **DELETE /users/:id — uses `{{createdUserId}}`**
 
-Each CSV row runs through all three requests independently.
+Each data row runs through all three requests independently.
 
 ---
 
@@ -726,6 +799,33 @@ if (apx.response.code !== 200) {
   apx.execution.setNextRequest(null);
 }
 ```
+
+---
+
+### Pattern 5 — Retry Flaky Requests
+
+Use retry to handle transient failures such as rate-limited endpoints, cold-start latency, or eventual-consistency delays.
+
+**UI:** Set **Max Retries** to `3`, **Delay** to `1000`, **Backoff** to `Exponential`, **Retry on** to `Both`.
+
+**CLI:**
+
+```bash
+apilix run ./collection.json \
+  -e ./environment.json \
+  --retry 3 \
+  --retry-delay 1000 \
+  --retry-backoff exponential \
+  --retry-on both \
+  --reporter json
+```
+
+The retry behaviour:
+
+- If a request succeeds on the first attempt, no retry occurs and `retryAttempts` is `0`.
+- If a retry succeeds, the run continues with the successful result. The amber **retried ×N** badge records how many extra attempts were needed.
+- If all retries are exhausted and the request is still failing, the final (failed) result is recorded and the run continues to the next request (or stops, if `--bail` is active).
+- Exponential delays: attempt 1 waits 1 s, attempt 2 waits 2 s, attempt 3 waits 4 s (capped at 30 s).
 
 ---
 

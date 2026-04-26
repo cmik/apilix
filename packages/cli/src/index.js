@@ -23,7 +23,8 @@ function usage() {
     '  --globals <file>             Globals JSON file or key/value map',
     '  --collection-vars <file>     Collection variables JSON file or key/value map',
     '  --csv <file>                 CSV data file for per-row iterations',
-    '  --iterations <n>             Iteration count when CSV is not provided (max 100 without CSV)',
+    '  --data <file>                JSON data file (array of objects) for per-row iterations',
+    '  --iterations <n>             Iteration count when no data file is provided (max 100)',
     '  --delay <ms>                 Delay between requests (max 5000)',
     '  --execute-child-requests     Allow apx.sendRequest()/pm.sendRequest() child calls',
     '  --no-conditional-execution   Disable setNextRequest() flow overrides',
@@ -35,6 +36,10 @@ function usage() {
     '  --https-proxy <url>          HTTPS proxy URL (e.g., http://proxy.example.com:8080)',
     '  --proxy-bypass <hosts>       Comma-separated hosts to bypass proxy (e.g., localhost,127.0.0.1)',
     '  --bail                       Stop execution on first test failure or request error',
+    '  --retry <n>                  Max retries per request on failure (0–10, default 0)',
+    '  --retry-delay <ms>           Base delay between retries in ms (default 1000)',
+    '  --retry-backoff <fixed|exponential>  Backoff strategy (default: fixed)',
+    '  --retry-on <failures|errors|both>    What triggers a retry (default: both)',
     '  --ssl-verification           Enable TLS certificate verification',
     '  --no-follow-redirects        Disable automatic redirect following',
     '  --no-color                   Disable ANSI colors in terminal output',
@@ -179,6 +184,11 @@ function createProgram(io) {
     .option('--https-proxy <url>', 'HTTPS proxy URL (e.g., http://proxy.example.com:8080)')
     .option('--proxy-bypass <hosts>', 'Comma-separated hosts to bypass proxy (e.g., localhost,127.0.0.1)')
     .option('--bail', 'Stop execution on first test failure or request error')
+    .option('--data <file>', 'JSON data file (array of objects) for per-row iterations')
+    .option('--retry <n>', 'Max retries per request on failure (0–10)', '0')
+    .option('--retry-delay <ms>', 'Base delay between retries in ms', '1000')
+    .option('--retry-backoff <fixed|exponential>', 'Backoff strategy (fixed or exponential)', 'fixed')
+    .option('--retry-on <failures|errors|both>', 'What triggers a retry', 'both')
     .option('--ssl-verification', 'Enable TLS certificate verification')
     .option('--no-follow-redirects', 'Disable automatic redirect following')
     .option('--no-color', 'Disable ANSI colors in terminal output')
@@ -190,7 +200,12 @@ function createProgram(io) {
       parsed.globalsPath = opts.globals;
       parsed.collectionVarsPath = opts.collectionVars;
       parsed.csvPath = opts.csv;
+      parsed.dataPath = opts.data;
       parsed.iterations = opts.iterations;
+      parsed.maxRetries = opts.retry;
+      parsed.retryDelay = opts.retryDelay;
+      parsed.retryBackoff = opts.retryBackoff;
+      parsed.retryOn = opts.retryOn;
       parsed.delay = opts.delay;
       parsed.reporter = opts.reporter;
       parsed.outPath = opts.out;
@@ -397,9 +412,23 @@ async function runCli(argv, ioOverrides = {}) {
     const collectionVarsJson = args.collectionVarsPath
       ? await readJsonFile(io, args.collectionVarsPath, 'collection variables')
       : null;
+    if (args.csvPath && args.dataPath) {
+      throw new Error('Use either --csv or --data, not both');
+    }
     const csvText = args.csvPath
       ? await readTextFile(io, args.csvPath, 'csv')
       : null;
+    let jsonRows = null;
+    if (args.dataPath) {
+      const dataText = await readTextFile(io, args.dataPath, 'data');
+      try {
+        const parsed = JSON.parse(dataText);
+        if (!Array.isArray(parsed)) throw new Error('must be an array of objects');
+        jsonRows = parsed;
+      } catch (e) {
+        throw new Error(`Invalid JSON data file: ${e.message}`);
+      }
+    }
 
     const collection = normalizeCollection(collectionJson);
     const environment = normalizeEnvironment(environmentJson);
@@ -429,12 +458,16 @@ async function runCli(argv, ioOverrides = {}) {
       executeChildRequests: args.executeChildRequests === true,
       conditionalExecution: args.conditionalExecution !== false,
       bail: args.bail === true,
+      maxRetries: Math.max(0, Math.min(10, parseInt(args.maxRetries, 10) || 0)),
+      retryDelay: (() => { const d = parseInt(args.retryDelay, 10); return Math.max(0, Number.isNaN(d) ? 1000 : d); })(),
+      retryBackoff: args.retryBackoff === 'exponential' ? 'exponential' : 'fixed',
+      retryOn: ['failures', 'errors', 'both'].includes(args.retryOn) ? args.retryOn : 'both',
       allCollectionItems: collection.item,
       mockBase: null,
     };
 
     const startedAt = new Date().toISOString();
-    const prepared = prepareCollectionRun(payload, { csvText });
+    const prepared = prepareCollectionRun(payload, { csvText, jsonRows });
     const run = await executePreparedCollectionRun(prepared);
     const finishedAt = new Date().toISOString();
     const summary = summarizeRun(run.iterations);
@@ -474,6 +507,11 @@ async function runCli(argv, ioOverrides = {}) {
         globalsPath: args.globalsPath ? path.relative(io.cwd, resolvePath(io, args.globalsPath)) : null,
         collectionVarsPath: args.collectionVarsPath ? path.relative(io.cwd, resolvePath(io, args.collectionVarsPath)) : null,
         csvPath: args.csvPath ? path.relative(io.cwd, resolvePath(io, args.csvPath)) : null,
+        dataPath: args.dataPath ? path.relative(io.cwd, resolvePath(io, args.dataPath)) : null,
+        maxRetries: payload.maxRetries,
+        retryDelay: payload.retryDelay,
+        retryBackoff: payload.retryBackoff,
+        retryOn: payload.retryOn,
         iterations: payload.iterations,
         delay: payload.delay,
         executeChildRequests: payload.executeChildRequests,

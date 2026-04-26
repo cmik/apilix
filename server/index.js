@@ -238,9 +238,20 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
   let runId = null;
   try {
     const payload = JSON.parse(req.body.data || '{}');
-    const prepared = prepareCollectionRun(payload, {
-      csvText: req.file ? req.file.buffer.toString('utf-8') : null,
-    });
+    let csvText = null;
+    let jsonRows = null;
+    if (req.file) {
+      const content = req.file.buffer.toString('utf-8').trim();
+      if (content.startsWith('[')) {
+        const parsed = JSON.parse(content);
+        if (!Array.isArray(parsed))
+          return res.status(400).json({ error: 'JSON data file must be an array' });
+        jsonRows = parsed;
+      } else {
+        csvText = content;
+      }
+    }
+    const prepared = prepareCollectionRun(payload, { csvText, jsonRows });
 
     if (prepared.requests.length === 0) {
       return res.json({ results: [] });
