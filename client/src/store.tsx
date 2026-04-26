@@ -9,9 +9,12 @@ import { buildSecretSet } from './utils/secretMask';
 
 const STORAGE_KEY = 'apilix_persist'; // legacy key — kept for migration only
 
+function treeNeedsIds(items: CollectionItem[]): boolean {
+  return items.some(item => item.id == null || (item.item != null && treeNeedsIds(item.item)));
+}
+
 function ensureIds(items: CollectionItem[]): CollectionItem[] {
-  const needsWork = items.some(item => item.id == null || (item.item?.some(c => c.id == null)));
-  if (!needsWork) return items;
+  if (!treeNeedsIds(items)) return items;
   return items.map(item => ({
     ...item,
     id: item.id ?? generateId(),
@@ -1090,12 +1093,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.settings, state.storageReady]);
 
   // ── Debounced captureViewState persistence ───────────────────────────────
+  // Refs ensure the timer callback always reads the current values at fire
+  // time, not the stale closure from when the timer was scheduled.
   const captureViewSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestSettingsRef = useRef(state.settings);
+  const latestCaptureViewStateRef = useRef(state.captureViewState);
+  latestSettingsRef.current = state.settings;
+  latestCaptureViewStateRef.current = state.captureViewState;
   useEffect(() => {
     if (!state.storageReady) return;
     if (captureViewSaveTimerRef.current) clearTimeout(captureViewSaveTimerRef.current);
     captureViewSaveTimerRef.current = setTimeout(() => {
-      StorageDriver.writeSettings({ ...state.settings, captureViewState: state.captureViewState });
+      StorageDriver.writeSettings({ ...latestSettingsRef.current, captureViewState: latestCaptureViewStateRef.current });
     }, 500);
     return () => {
       if (captureViewSaveTimerRef.current) clearTimeout(captureViewSaveTimerRef.current);

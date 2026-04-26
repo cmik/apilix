@@ -409,9 +409,7 @@ let mockDb = Object.create(null);
 function cloneJson(value) {
   if (value === undefined) return undefined;
   try {
-    return typeof structuredClone === 'function'
-      ? structuredClone(value)
-      : JSON.parse(JSON.stringify(value));
+    return JSON.parse(JSON.stringify(value));
   } catch {
     return value;
   }
@@ -1577,12 +1575,12 @@ app.post('/api/sync/git/timestamp', async (req, res) => {
       url.password = encodeURIComponent(config.token);
       remote = url.toString();
     }
-    // Shallow fetch (depth=1) — only the tip commit, no full history download
+    // Shallow fetch (depth=1) — only the tip commit, no full history download.
+    // Read from FETCH_HEAD to avoid mutating any persistent local ref.
     const branch = config.branch || 'main';
-    const fetchRef = `${branch}:refs/remotes/origin/${branch}`;
-    await git.fetch([remote, fetchRef, '--depth=1']);
-    const version = await git.revparse([`refs/remotes/origin/${branch}`]).catch(() => null);
-    const log = await git.log([`refs/remotes/origin/${branch}`, '-1']).catch(() => null);
+    await git.fetch([remote, branch, '--depth=1']);
+    const version = await git.revparse(['FETCH_HEAD']).catch(() => null);
+    const log = await git.log(['FETCH_HEAD', '-1']).catch(() => null);
     if (!log || !log.latest) {
       return res.json({ timestamp: null, version });
     }
