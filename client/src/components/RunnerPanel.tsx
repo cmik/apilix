@@ -920,6 +920,7 @@ export default function RunnerPanel() {
     setError(null);
     setResults(null);
     setIsViewingLoadedRun(false);
+    dispatch({ type: 'SET_RUNNER_RESULTS', payload: null });
 
     try {
       const envVars = getEnvironmentVars();

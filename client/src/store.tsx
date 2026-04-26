@@ -10,6 +10,8 @@ import { buildSecretSet } from './utils/secretMask';
 const STORAGE_KEY = 'apilix_persist'; // legacy key — kept for migration only
 
 function ensureIds(items: CollectionItem[]): CollectionItem[] {
+  const needsWork = items.some(item => item.id == null || (item.item?.some(c => c.id == null)));
+  if (!needsWork) return items;
   return items.map(item => ({
     ...item,
     id: item.id ?? generateId(),
@@ -407,8 +409,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'SET_GLOBAL_VARS':
       return { ...state, globalVariables: action.payload };
 
-    case 'ADD_CONSOLE_LOG':
-      return { ...state, consoleLogs: [action.payload, ...state.consoleLogs].slice(0, 500) };
+    case 'ADD_CONSOLE_LOG': {
+      const prev = state.consoleLogs;
+      const next = prev.length >= 500
+        ? [action.payload, ...prev.slice(0, 499)]
+        : [action.payload, ...prev];
+      return { ...state, consoleLogs: next };
+    }
 
     case 'CLEAR_CONSOLE_LOGS':
       return { ...state, consoleLogs: [] };
@@ -678,14 +685,21 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
-    case 'CAPTURE_ADD_ENTRY':
+    case 'CAPTURE_ADD_ENTRY': {
       if (action.payload.generation !== state.captureGeneration) return state;
-      return {
-        ...state,
-        captureEntries: state.captureEntries.some(entry => entry.id === action.payload.entry.id)
-          ? state.captureEntries.map(entry => entry.id === action.payload.entry.id ? { ...entry, ...action.payload.entry } : entry)
-          : [...state.captureEntries, action.payload.entry],
-      };
+      const existing = state.captureEntries;
+      const matchIdx = existing.findIndex(e => e.id === action.payload.entry.id);
+      if (matchIdx >= 0) {
+        const updated = existing.slice();
+        updated[matchIdx] = { ...existing[matchIdx], ...action.payload.entry };
+        return { ...state, captureEntries: updated };
+      }
+      const MAX_CAPTURE_ENTRIES = 5000;
+      const appended = existing.length >= MAX_CAPTURE_ENTRIES
+        ? [...existing.slice(1), action.payload.entry]
+        : [...existing, action.payload.entry];
+      return { ...state, captureEntries: appended };
+    }
 
     case 'CAPTURE_UPDATE_ENTRY':
       if (action.payload.generation !== undefined && action.payload.generation !== state.captureGeneration) return state;
@@ -858,6 +872,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         mergedSettings.theme = legacyTheme;
       }
       dispatch({ type: 'SET_SETTINGS', payload: mergedSettings });
+      if (mergedSettings.captureViewState) {
+        dispatch({ type: 'SET_CAPTURE_VIEW_STATE', payload: mergedSettings.captureViewState });
+      }
     }
     init();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1071,6 +1088,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.settings, state.storageReady]);
+
+  // ── Debounced captureViewState persistence ───────────────────────────────
+  const captureViewSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!state.storageReady) return;
+    if (captureViewSaveTimerRef.current) clearTimeout(captureViewSaveTimerRef.current);
+    captureViewSaveTimerRef.current = setTimeout(() => {
+      StorageDriver.writeSettings({ ...state.settings, captureViewState: state.captureViewState });
+    }, 500);
+    return () => {
+      if (captureViewSaveTimerRef.current) clearTimeout(captureViewSaveTimerRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.captureViewState, state.storageReady]);
 
   // ── Push proxy + CORS settings to the local API server ───────────────────
   useEffect(() => {

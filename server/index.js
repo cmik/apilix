@@ -370,8 +370,8 @@ function generateMockId() {
 }
 
 function addLogEntry(entry) {
-  mockRequestLog.unshift(entry);
-  if (mockRequestLog.length > MAX_LOG_ENTRIES) mockRequestLog.length = MAX_LOG_ENTRIES;
+  mockRequestLog.push(entry);
+  if (mockRequestLog.length > MAX_LOG_ENTRIES) mockRequestLog.shift();
   _saveMockLogDebounced();
 }
 
@@ -407,7 +407,9 @@ let mockDb = Object.create(null);
 function cloneJson(value) {
   if (value === undefined) return undefined;
   try {
-    return JSON.parse(JSON.stringify(value));
+    return typeof structuredClone === 'function'
+      ? structuredClone(value)
+      : JSON.parse(JSON.stringify(value));
   } catch {
     return value;
   }
@@ -757,9 +759,9 @@ function applyChaos(chaos, req, res, status, body, headers, delay) {
  */
 function buildRouteIndex(routes) {
   const staticHttp = new Map();
-  const paramHttp  = [];
+  const paramHttp  = new Map(); // Map<segmentCount, Array<{route, originalIndex}>>
   const staticWs   = new Map();
-  const paramWs    = [];
+  const paramWs    = new Map(); // Map<segmentCount, Array<{route, originalIndex}>>
 
   routes.forEach((route, originalIndex) => {
     if (!route.enabled) return;
@@ -769,8 +771,14 @@ function buildRouteIndex(routes) {
     const normPath = route.path.replace(/\/+$/, '') || '/';
 
     if (hasParam) {
-      if (isWs) paramWs.push({ route, originalIndex });
-      else      paramHttp.push({ route, originalIndex });
+      const segCount = normPath.split('/').length;
+      if (isWs) {
+        if (!paramWs.has(segCount)) paramWs.set(segCount, []);
+        paramWs.get(segCount).push({ route, originalIndex });
+      } else {
+        if (!paramHttp.has(segCount)) paramHttp.set(segCount, []);
+        paramHttp.get(segCount).push({ route, originalIndex });
+      }
     } else {
       if (isWs) {
         // WS routes are not method-specific — key by path only
@@ -838,9 +846,10 @@ function buildMockHandler() {
         staticCandidate = staticSpecific ?? staticWildcard ?? null;
       }
 
-      // Scan only the parametric subset
+      // Scan only the parametric subset — indexed by segment count for O(1) bucket lookup
+      const incomingSegCount = pathname.replace(/\/+$/, '').split('/').length;
       let paramCandidate = null;
-      for (const entry of _paramHttp) {
+      for (const entry of (_paramHttp.get(incomingSegCount) ?? [])) {
         const { route } = entry;
         if (route.method !== '*' && route.method.toUpperCase() !== method) continue;
         const params = matchPath(route.path, pathname);
@@ -1044,8 +1053,9 @@ function handleWsUpgrade(req, socket, head) {
     const normWsPath = pathname.replace(/\/+$/, '') || '/';
     const staticWsEntry = _staticWs.get(normWsPath) ?? null;
 
+    const wsSegCount = pathname.replace(/\/+$/, '').split('/').length;
     let paramWsCandidate = null;
-    for (const entry of _paramWs) {
+    for (const entry of (_paramWs.get(wsSegCount) ?? [])) {
       const params = matchPath(entry.route.path, pathname);
       if (params !== null) { paramWsCandidate = { ...entry, params }; break; }
     }
@@ -1305,9 +1315,9 @@ app.put('/api/mock/routes', (req, res) => {
   res.json({ ok: true, count: mockRoutes.length });
 });
 
-// GET /api/mock-log — return traffic log
+// GET /api/mock-log — return traffic log (newest first)
 app.get('/api/mock-log', (_req, res) => {
-  res.json({ entries: mockRequestLog });
+  res.json({ entries: [...mockRequestLog].reverse() });
 });
 
 // DELETE /api/mock-log — clear traffic log
@@ -1568,10 +1578,12 @@ app.post('/api/sync/git/timestamp', async (req, res) => {
       url.password = encodeURIComponent(config.token);
       remote = url.toString();
     }
-    // Fetch only — don't merge
-    await git.fetch(remote, config.branch || 'main');
-    const version = await git.revparse(['FETCH_HEAD']).catch(() => null);
-    const log = await git.log(['FETCH_HEAD', '-1']).catch(() => null);
+    // Shallow fetch (depth=1) — only the tip commit, no full history download
+    const branch = config.branch || 'main';
+    const fetchRef = `${branch}:refs/remotes/origin/${branch}`;
+    await git.fetch([remote, fetchRef, '--depth=1']);
+    const version = await git.revparse([`refs/remotes/origin/${branch}`]).catch(() => null);
+    const log = await git.log([`refs/remotes/origin/${branch}`, '-1']).catch(() => null);
     if (!log || !log.latest) {
       return res.json({ timestamp: null, version });
     }

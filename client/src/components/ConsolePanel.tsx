@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useApp } from '../store';
 import type { ConsoleEntry } from '../types';
 import { maskSecrets } from '../utils/secretMask';
@@ -601,15 +601,17 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme }:
   const shouldMask = state.settings?.maskSecrets !== false;
   const mask = (v: string) => shouldMask ? maskSecrets(v, secretSet) : v;
 
-  const maskedLogs = shouldMask && secretSet.size > 0
-    ? logs.map(e => ({
-        ...e,
-        url: mask(e.url),
-        requestHeaders: e.requestHeaders.map(h => ({ ...h, value: mask(h.value) })),
-        requestBody: e.requestBody ? mask(e.requestBody) : e.requestBody,
-        scriptLogs: e.scriptLogs?.map(l => ({ ...l, args: l.args.map(a => mask(a)) })),
-      }))
-    : logs;
+  const maskedLogs = useMemo(() => {
+    if (!shouldMask || secretSet.size === 0) return logs;
+    return logs.map(e => ({
+      ...e,
+      url: mask(e.url),
+      requestHeaders: e.requestHeaders.map(h => ({ ...h, value: mask(h.value) })),
+      requestBody: e.requestBody ? mask(e.requestBody) : e.requestBody,
+      scriptLogs: e.scriptLogs?.map(l => ({ ...l, args: l.args.map(a => mask(a)) })),
+    }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logs, shouldMask, secretSet]);
 
   const dragging = useRef(false);
   const startY = useRef(0);
