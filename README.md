@@ -15,6 +15,7 @@ A lightweight, open-source alternative API testing tool — available as a **des
 - **Authentication** (Bearer, Basic, API Key)
 - **Pre-request & Test scripts** (`apx.*` Postman-compatible API, including `apx.sendRequest()`)
 - **Collection Runner** with CSV data-driven testing and multi-iteration support
+- **Headless CLI runner** (`@apilix/cli`) — run collections from CI/CD pipelines without the UI; supports JSON, JUnit, and table reporters, CSV data files, and `setNextRequest()` flow control; ships as a standalone binary (no Node.js required)
 - **Environment variables** with `{{variable}}` substitution
 - **Global variables** — cross-collection variables manageable via the Globals panel and scriptable with `apx.globals.*`
 - **Tabbed request editing** — open multiple requests simultaneously, save changes independently
