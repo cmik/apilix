@@ -5,6 +5,8 @@ const cors = require('cors');
 const multer = require('multer');
 const vm = require('vm');
 const axios = require('axios');
+const path = require('path');
+const fs = require('fs');
 const {
   executeRequest, setExecutorConfig,
   prepareCollectionRun, executePreparedCollectionRun, InputError,
@@ -1354,9 +1356,6 @@ try {
 } catch {
   // simple-git is optional — git sync routes will return 501 if missing
 }
-
-const path = require('path');
-const fs = require('fs');
 
 function assertGitAvailable(res) {
   if (!simpleGit) {
