@@ -32,7 +32,7 @@
    - **`updateAvailable=true, latestVersion="1.2.3"`** → link rendered with correct `href` and text
    - **`updateAvailable=false, latestVersion="1.2.3"`** → link absent even when version is provided
 
-### [ ] Add Vitest coverage thresholds
+### [x] Add Vitest coverage thresholds
 
 Add `coverage.thresholds` to `client/vitest.config.ts` to enforce minimum coverage on utility modules.
 
@@ -56,9 +56,9 @@ Add `coverage.thresholds` to `client/vitest.config.ts` to enforce minimum covera
 ## Sync & Storage
 
 - [ ] Team-adapter JWT refresh: implement silent token refresh before expiry (currently throws `401` and forces re-login)
-- [ ] Git adapter: surface `stderr` from `simple-git` merge failures in the conflict UI
-- [ ] Persist mock traffic log across restarts (currently in-memory only, cleared on server stop)
+- [x] Git adapter: surface `stderr` from `simple-git` merge failures in the conflict UI
+- [x] Persist mock traffic log across restarts (currently in-memory only, cleared on server stop)
 
 ## Electron
 
-- [ ] Wire `ipcMain.handle('open-devtools')` + renderer call for in-app DevTools toggle (currently only available via keyboard shortcut)
+- [x] Wire `ipcMain.handle('open-devtools')` + renderer call for in-app DevTools toggle (currently only available via keyboard shortcut)

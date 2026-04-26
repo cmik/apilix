@@ -322,6 +322,38 @@ let wsClientCounter = 0;
 const MAX_LOG_ENTRIES = 200;
 let mockRequestLog = [];
 
+const _mockLogFile = () => process.env.APILIX_DATA_DIR
+  ? path.join(process.env.APILIX_DATA_DIR, 'mock-traffic-log.json')
+  : null;
+
+function _loadMockLog() {
+  const file = _mockLogFile();
+  if (!file) return;
+  try {
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (Array.isArray(data)) mockRequestLog = data.slice(0, MAX_LOG_ENTRIES);
+  } catch {}
+}
+
+let _saveMockLogTimer = null;
+function _saveMockLogDebounced() {
+  const file = _mockLogFile();
+  if (!file) return;
+  if (_saveMockLogTimer) clearTimeout(_saveMockLogTimer);
+  _saveMockLogTimer = setTimeout(() => {
+    try { fs.writeFileSync(file, JSON.stringify(mockRequestLog), 'utf8'); } catch {}
+    _saveMockLogTimer = null;
+  }, 2000);
+}
+
+function _clearMockLogFile() {
+  const file = _mockLogFile();
+  if (!file) return;
+  try { fs.unlinkSync(file); } catch {}
+}
+
+_loadMockLog();
+
 function generateMockId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2);
 }
@@ -329,6 +361,7 @@ function generateMockId() {
 function addLogEntry(entry) {
   mockRequestLog.unshift(entry);
   if (mockRequestLog.length > MAX_LOG_ENTRIES) mockRequestLog.length = MAX_LOG_ENTRIES;
+  _saveMockLogDebounced();
 }
 
 function safeDecode(str) {
@@ -1187,6 +1220,7 @@ function startMockServer(port, routes) {
     buildRouteIndex(mockRoutes);
     mockServerPort = port;
     mockRequestLog = [];
+    _clearMockLogFile();
     mockDb = Object.create(null);
     routeHitCounts.clear();
     wsClientCounter = 0;
@@ -1268,6 +1302,7 @@ app.get('/api/mock-log', (_req, res) => {
 // DELETE /api/mock-log — clear traffic log
 app.delete('/api/mock-log', (_req, res) => {
   mockRequestLog = [];
+  _clearMockLogFile();
   res.json({ ok: true });
 });
 
@@ -1429,7 +1464,8 @@ app.post('/api/sync/git/push', async (req, res) => {
     await git.push(remote, branch, ['--set-upstream']);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    const stderr = err?.git?.all ?? '';
+    res.status(500).json({ error: err.message, ...(stderr && { stderr }) });
   }
 });
 
@@ -1494,7 +1530,8 @@ app.post('/api/sync/git/pull', async (req, res) => {
       version,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    const stderr = err?.git?.all ?? '';
+    res.status(500).json({ error: err.message, ...(stderr && { stderr }) });
   }
 });
 

@@ -1,5 +1,6 @@
 export interface SyncErrorPayload {
   error?: string;
+  stderr?: string;
   code?: string;
   expectedVersion?: string | null;
   currentVersion?: string | null;
@@ -28,7 +29,8 @@ export async function throwSyncRequestError(res: Response, context: string): Pro
   }
 
   const message = payload.error ?? `${res.status} ${res.statusText}`;
-  throw new Error(`${context} failed (${res.status}): ${message}`);
+  const detail = payload.stderr ? `\n${payload.stderr}` : '';
+  throw new Error(`${context} failed (${res.status}): ${message}${detail}`);
 }
 
 async function readSyncErrorPayload(res: Response): Promise<SyncErrorPayload> {
