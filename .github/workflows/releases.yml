@@ -94,7 +94,7 @@ jobs:
           done
 
           mkdir -p .tmp-cli-smoke
-          cp server/fixtures/cli/collection-success.json .tmp-cli-smoke/collection.json
+          cp packages/server/fixtures/cli/collection-success.json .tmp-cli-smoke/collection.json
 
           cat > .tmp-cli-smoke/environment.json <<JSON
           {
@@ -170,7 +170,7 @@ jobs:
           done
 
           mkdir -p .tmp-cli-smoke
-          cp server/fixtures/cli/collection-success.json .tmp-cli-smoke/collection.json
+          cp packages/server/fixtures/cli/collection-success.json .tmp-cli-smoke/collection.json
 
           cat > .tmp-cli-smoke/environment.json <<JSON
           {
@@ -234,7 +234,7 @@ jobs:
 
           try {
             New-Item -ItemType Directory -Path .tmp-cli-smoke -Force | Out-Null
-            Copy-Item server/fixtures/cli/collection-success.json .tmp-cli-smoke/collection.json
+            Copy-Item packages/server/fixtures/cli/collection-success.json .tmp-cli-smoke/collection.json
 
             ('{"name":"CI","values":[{"key":"baseUrl","value":"http://127.0.0.1:' + $port + '","enabled":true}]}') | Set-Content .tmp-cli-smoke/environment.json -Encoding UTF8
 

@@ -32,7 +32,7 @@ async function withTempDir(runTest) {
 }
 
 function runNodeCli(args, cwd) {
-  const root = path.resolve(__dirname, '..');
+  const root = path.resolve(__dirname, '../..');
   const entry = path.join(root, 'bin', 'apilix.js');
 
   return new Promise((resolve, reject) => {
@@ -67,7 +67,7 @@ async function copyFixture(fileName, targetPath) {
 }
 
 test('process CLI prints help and exits 0', async () => {
-  const result = await runNodeCli(['--help'], path.resolve(__dirname, '..'));
+  const result = await runNodeCli(['--help'], path.resolve(__dirname, '../..'));
   assert.equal(result.code, 0);
   assert.match(result.stdout, /Usage:/);
   assert.match(result.stdout, /run \[collectionPath\]|run \[options\]/);

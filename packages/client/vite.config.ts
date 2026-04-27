@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
-const pkg = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf-8'));
+const pkg = JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf-8'));
 
 export default defineConfig({
   define: {
@@ -11,7 +11,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@apilix/core/types': resolve(__dirname, '../packages/core/types/index.ts'),
+      '@apilix/core/types': resolve(__dirname, '../core/types/index.ts'),
     },
   },
   plugins: [react()],
