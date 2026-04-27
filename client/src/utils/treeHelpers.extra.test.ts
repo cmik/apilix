@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import type { CollectionItem, CollectionAuth } from '../types';
+import type { CollectionItem, CollectionAuth, RunnerIteration } from '../types';
 import {
   getAllRequestIds,
   flattenRequestNames,
   flattenRequestItems,
   resolveInheritedAuthWithSource,
+  exportWorkflowCollection,
 } from './treeHelpers';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -216,5 +217,247 @@ describe('resolveInheritedAuthWithSource', () => {
     const { auth, source } = resolveInheritedAuthWithSource(tree, 'r1', undefined, 'Collection');
     expect(auth).toBeUndefined();
     expect(source.kind).toBe('collection');
+  });
+});
+
+// ─── exportWorkflowCollection ────────────────────────────────────────────────
+
+describe('exportWorkflowCollection', () => {
+  it('creates a valid Postman v2.1 collection', () => {
+    const iterations: RunnerIteration[] = [
+      {
+        iteration: 1,
+        dataRow: {},
+        results: [
+          {
+            name: 'Get Users',
+            method: 'GET',
+            url: 'https://api.example.com/users',
+            resolvedUrl: 'https://api.example.com/users',
+            status: 200,
+            statusText: 'OK',
+            responseTime: 100,
+            testResults: [],
+            error: null,
+          },
+        ],
+      },
+    ];
+
+    const collection = exportWorkflowCollection('Test Run', 'My Collection', iterations);
+
+    expect(collection._id).toBeDefined();
+    expect(collection.info.name).toBe('My Collection – Test Run');
+    expect(collection.info.schema).toBe('https://schema.getpostman.com/json/collection/v2.1.0/collection.json');
+    expect(collection.item).toHaveLength(1);
+    expect(collection.item[0].name).toBe('Get Users');
+    expect(collection.item[0].request?.method).toBe('GET');
+    expect(collection.item[0].request?.url).toBe('https://api.example.com/users');
+  });
+
+  it('preserves exact iteration order', () => {
+    const iterations: RunnerIteration[] = [
+      {
+        iteration: 1,
+        dataRow: {},
+        results: [
+          { name: 'First', method: 'GET', url: 'http://a.com', status: 200, statusText: 'OK', responseTime: 0, testResults: [], error: null },
+          { name: 'Second', method: 'POST', url: 'http://b.com', status: 201, statusText: 'Created', responseTime: 0, testResults: [], error: null },
+        ],
+      },
+    ];
+
+    const collection = exportWorkflowCollection('Test', 'Collection', iterations);
+
+    expect(collection.item[0].name).toBe('First');
+    expect(collection.item[1].name).toBe('Second');
+  });
+
+  it('keeps duplicates when request executed multiple times', () => {
+    const iterations: RunnerIteration[] = [
+      {
+        iteration: 1,
+        dataRow: {},
+        results: [
+          { name: 'Request A', method: 'GET', url: 'http://api.com', status: 200, statusText: 'OK', responseTime: 0, testResults: [], error: null },
+        ],
+      },
+      {
+        iteration: 2,
+        dataRow: { row: '2' },
+        results: [
+          { name: 'Request A', method: 'GET', url: 'http://api.com', status: 200, statusText: 'OK', responseTime: 0, testResults: [], error: null },
+        ],
+      },
+    ];
+
+    const collection = exportWorkflowCollection('Test', 'Collection', iterations);
+
+    expect(collection.item).toHaveLength(2);
+    expect(collection.item[0].name).toBe('Request A');
+    expect(collection.item[1].name).toBe('Request A');
+  });
+
+  it('uses resolvedUrl when available', () => {
+    const iterations: RunnerIteration[] = [
+      {
+        iteration: 1,
+        dataRow: {},
+        results: [
+          {
+            name: 'Request',
+            method: 'GET',
+            url: 'https://{{host}}/users',
+            resolvedUrl: 'https://api.example.com/users',
+            status: 200,
+            statusText: 'OK',
+            responseTime: 0,
+            testResults: [],
+            error: null,
+          },
+        ],
+      },
+    ];
+
+    const collection = exportWorkflowCollection('Test', 'Collection', iterations);
+
+    expect(collection.item[0].request?.url).toBe('https://api.example.com/users');
+  });
+
+  it('falls back to url when resolvedUrl is undefined', () => {
+    const iterations: RunnerIteration[] = [
+      {
+        iteration: 1,
+        dataRow: {},
+        results: [
+          {
+            name: 'Request',
+            method: 'GET',
+            url: 'https://api.example.com/users',
+            status: 200,
+            statusText: 'OK',
+            responseTime: 0,
+            testResults: [],
+            error: null,
+          },
+        ],
+      },
+    ];
+
+    const collection = exportWorkflowCollection('Test', 'Collection', iterations);
+
+    expect(collection.item[0].request?.url).toBe('https://api.example.com/users');
+  });
+
+  it('maps requestHeaders as Record to header array', () => {
+    const iterations: RunnerIteration[] = [
+      {
+        iteration: 1,
+        dataRow: {},
+        results: [
+          {
+            name: 'Request',
+            method: 'GET',
+            url: 'http://api.com',
+            requestHeaders: { 'Authorization': 'Bearer token', 'Content-Type': 'application/json' },
+            status: 200,
+            statusText: 'OK',
+            responseTime: 0,
+            testResults: [],
+            error: null,
+          },
+        ],
+      },
+    ];
+
+    const collection = exportWorkflowCollection('Test', 'Collection', iterations);
+
+    const headers = collection.item[0].request?.header;
+    expect(headers).toBeDefined();
+    expect(headers).toHaveLength(2);
+    expect(headers).toContainEqual({ key: 'Authorization', value: 'Bearer token' });
+    expect(headers).toContainEqual({ key: 'Content-Type', value: 'application/json' });
+  });
+
+  it('includes requestBody in the exported item', () => {
+    const iterations: RunnerIteration[] = [
+      {
+        iteration: 1,
+        dataRow: {},
+        results: [
+          {
+            name: 'Create User',
+            method: 'POST',
+            url: 'http://api.com/users',
+            requestBody: JSON.stringify({ name: 'John', age: 30 }),
+            status: 201,
+            statusText: 'Created',
+            responseTime: 0,
+            testResults: [],
+            error: null,
+          },
+        ],
+      },
+    ];
+
+    const collection = exportWorkflowCollection('Test', 'Collection', iterations);
+
+    expect(collection.item[0].request?.body).toBeDefined();
+    expect(collection.item[0].request?.body?.mode).toBe('raw');
+    expect(collection.item[0].request?.body?.raw).toBe(JSON.stringify({ name: 'John', age: 30 }));
+  });
+
+  it('omits body when requestBody is undefined', () => {
+    const iterations: RunnerIteration[] = [
+      {
+        iteration: 1,
+        dataRow: {},
+        results: [
+          {
+            name: 'Get Request',
+            method: 'GET',
+            url: 'http://api.com',
+            status: 200,
+            statusText: 'OK',
+            responseTime: 0,
+            testResults: [],
+            error: null,
+          },
+        ],
+      },
+    ];
+
+    const collection = exportWorkflowCollection('Test', 'Collection', iterations);
+
+    expect(collection.item[0].request?.body).toBeUndefined();
+  });
+
+  it('handles empty iterations gracefully', () => {
+    const collection = exportWorkflowCollection('Test', 'Collection', []);
+
+    expect(collection._id).toBeDefined();
+    expect(collection.info.name).toBe('Collection – Test');
+    expect(collection.item).toHaveLength(0);
+  });
+
+  it('handles multiple results within a single iteration', () => {
+    const iterations: RunnerIteration[] = [
+      {
+        iteration: 1,
+        dataRow: {},
+        results: [
+          { name: 'Step 1', method: 'GET', url: 'http://a.com', status: 200, statusText: 'OK', responseTime: 0, testResults: [], error: null },
+          { name: 'Step 2', method: 'POST', url: 'http://b.com', status: 201, statusText: 'Created', responseTime: 0, testResults: [], error: null },
+          { name: 'Step 3', method: 'PUT', url: 'http://c.com', status: 200, statusText: 'OK', responseTime: 0, testResults: [], error: null },
+        ],
+      },
+    ];
+
+    const collection = exportWorkflowCollection('Test', 'Collection', iterations);
+
+    expect(collection.item).toHaveLength(3);
+    expect(collection.item[0].name).toBe('Step 1');
+    expect(collection.item[1].name).toBe('Step 2');
+    expect(collection.item[2].name).toBe('Step 3');
   });
 });
