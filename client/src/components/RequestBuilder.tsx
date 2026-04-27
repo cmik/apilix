@@ -1079,6 +1079,39 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     }).filter(p => p.key);
   }
 
+  // Build CodeGenParams with all variable placeholders resolved
+  function buildResolvedCodeGenParams(editState: EditState, vars: Record<string, string>) {
+    return {
+      method: editState.method,
+      url: resolveVariables(editState.url, vars),
+      headers: editState.headers.map(h => ({
+        key: resolveVariables(h.key, vars),
+        value: resolveVariables(h.value, vars),
+        disabled: h.disabled,
+      })),
+      bodyMode: editState.bodyMode,
+      bodyRaw: resolveVariables(editState.bodyRaw, vars),
+      bodyFormData: editState.bodyFormData.map(f => ({
+        key: resolveVariables(f.key, vars),
+        value: resolveVariables(f.value, vars),
+        disabled: f.disabled,
+      })),
+      bodyUrlEncoded: editState.bodyUrlEncoded.map(e => ({
+        key: resolveVariables(e.key, vars),
+        value: resolveVariables(e.value, vars),
+        disabled: e.disabled,
+      })),
+      bodyGraphqlQuery: resolveVariables(editState.bodyGraphqlQuery, vars),
+      bodyGraphqlVariables: resolveVariables(editState.bodyGraphqlVariables, vars),
+      authType: editState.authType,
+      authBearer: resolveVariables(editState.authBearer, vars),
+      authBasicUser: resolveVariables(editState.authBasicUser, vars),
+      authBasicPass: resolveVariables(editState.authBasicPass, vars),
+      authApiKeyName: resolveVariables(editState.authApiKeyName, vars),
+      authApiKeyValue: resolveVariables(editState.authApiKeyValue, vars),
+    };
+  }
+
   async function handleSend() {
     if (!edit || !activeReq || !activeTab) return;
     const tabId = activeTab.id;
@@ -2774,23 +2807,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
       {showCodeGen && (
         <Suspense fallback={null}>
           <CodeGenModal
-            params={{
-              method: edit.method,
-              url: edit.url,
-              headers: edit.headers,
-              bodyMode: edit.bodyMode,
-              bodyRaw: edit.bodyRaw,
-              bodyFormData: edit.bodyFormData,
-              bodyUrlEncoded: edit.bodyUrlEncoded,
-              bodyGraphqlQuery: edit.bodyGraphqlQuery,
-              bodyGraphqlVariables: edit.bodyGraphqlVariables,
-              authType: edit.authType,
-              authBearer: edit.authBearer,
-              authBasicUser: edit.authBasicUser,
-              authBasicPass: edit.authBasicPass,
-              authApiKeyName: edit.authApiKeyName,
-              authApiKeyValue: edit.authApiKeyValue,
-            }}
+            params={buildResolvedCodeGenParams(edit, allVars)}
             onClose={() => setShowCodeGen(false)}
           />
         </Suspense>
