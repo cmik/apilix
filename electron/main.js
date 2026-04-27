@@ -52,40 +52,13 @@ function startServer(port) {
     serverProcess.stderr.on('data', (d) => writeLog('[server:err] ' + d.toString().trim()));
     serverProcess.on('error', (err) => writeLog('Server process error: ' + err));
   } else {
-    const serverPath = path.join(process.resourcesPath, 'server', 'index.js');
-    writeLog('Starting server from: ' + serverPath);
-    writeLog('Server file exists: ' + fs.existsSync(serverPath));
-
-    if (!fs.existsSync(serverPath)) {
-      try {
-        const files = fs.readdirSync(process.resourcesPath);
-        writeLog('Resources dir contents: ' + files.join(', '));
-      } catch (e) {
-        writeLog('Could not read resources dir: ' + e.message);
-      }
-      return;
-    }
-
     try {
-      // Redirect console.error/warn to the log file so server-side errors
-      // (e.g. OAuth failures, execute errors) are visible in the log.
       const _origError = console.error.bind(console);
       const _origWarn  = console.warn.bind(console);
       console.error = (...args) => { writeLog('[server:err] ' + args.join(' ')); _origError(...args); };
       console.warn  = (...args) => { writeLog('[server:warn] ' + args.join(' ')); _origWarn(...args);  };
 
-      // Register server/node_modules as a global fallback resolver so all
-      // require() calls — including those from @apilix/core sub-modules loaded
-      // via the packages/core/ extraResources path — can find their deps.
-      // NOTE: only effective because the server is require()'d in-process here;
-      // if the architecture changes to fork(), pass NODE_PATH via fork env instead.
-      const Module = require('module');
-      const serverNodeModules = path.join(process.resourcesPath, 'server', 'node_modules');
-      process.env.NODE_PATH = process.env.NODE_PATH
-        ? process.env.NODE_PATH + path.delimiter + serverNodeModules
-        : serverNodeModules;
-      Module._initPaths();
-
+      const serverPath = path.join(__dirname, '..', 'server', 'index.js');
       require(serverPath);
       writeLog('Server started on port ' + port);
     } catch (err) {

@@ -29,16 +29,16 @@
     "build": "cd client && npm run build",
     "electron": "electron .",
     "electron:dev": "concurrently -k -p \"[{name}]\" -n \"SERVER,CLIENT,ELECTRON\" -c \"bgYellow.bold,bgCyan.bold,bgMagenta.bold\" \"npm run server\" \"npm run client\" \"wait-on http://localhost:5173 && electron .\"",
-    "dist:prepare:server": "npm install --prefix server --omit=dev --install-links",
-    "dist": "npm run build && npm run dist:prepare:server && electron-builder",
-    "dist:mac": "npm run build && npm run dist:prepare:server && electron-builder --mac",
-    "dist:win": "npm run build && npm run dist:prepare:server && electron-builder --win",
-    "dist:prod": "npm run build && npm run dist:prepare:server && DISABLE_DEVTOOLS=1 electron-builder",
-    "dist:prod:mac": "npm run build && npm run dist:prepare:server && DISABLE_DEVTOOLS=1 electron-builder --mac",
-    "dist:prod:win": "npm run build && npm run dist:prepare:server && DISABLE_DEVTOOLS=1 electron-builder --win"
+    "dist": "npm run build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:prod": "npm run build && DISABLE_DEVTOOLS=1 electron-builder",
+    "dist:prod:mac": "npm run build && DISABLE_DEVTOOLS=1 electron-builder --mac",
+    "dist:prod:win": "npm run build && DISABLE_DEVTOOLS=1 electron-builder --win"
   },
   "dependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "apilix-server": "*"
   },
   "devDependencies": {
     "@yao-pkg/pkg": "^6.18.2",
@@ -68,30 +68,10 @@
     "files": [
       "electron/**/*",
       "client/dist/**/*",
+      "server/**/*",
+      "!server/node_modules",
+      "!node_modules/apilix-server",
       "node_modules/**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "server",
-        "to": "server",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "server/node_modules",
-        "to": "server/node_modules",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "packages/core",
-        "to": "packages/core",
-        "filter": [
-          "**/*"
-        ]
-      }
     ],
     "mac": {
       "target": [
