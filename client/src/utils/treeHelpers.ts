@@ -412,12 +412,13 @@ export function exportWorkflowCollection(
           method: result.method,
           url: urlValue, // Can be string or parsed URL object, Postman accepts both
           header: headerArray,
-          body: result.requestBody
-            ? {
-                mode: 'raw',
-                raw: result.requestBody,
-              }
-            : undefined,
+          body:
+            result.requestBody !== undefined && result.requestBody !== null
+              ? {
+                  mode: 'raw',
+                  raw: result.requestBody,
+                }
+              : undefined,
         },
       };
 
