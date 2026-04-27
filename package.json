@@ -70,7 +70,10 @@
       "client/dist/**/*",
       "server/**/*",
       "!server/node_modules",
+      "packages/core/**/*",
+      "!packages/core/node_modules",
       "!node_modules/apilix-server",
+      "!node_modules/@apilix",
       "node_modules/**/*"
     ],
     "mac": {
