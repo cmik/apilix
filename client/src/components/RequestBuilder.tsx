@@ -1079,11 +1079,23 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     }).filter(p => p.key);
   }
 
+  function resolveCodeGenUrlWithPathParams(editState: EditState, vars: Record<string, string>) {
+    const resolvedUrl = resolveVariables(editState.url, vars);
+    const pathParams = Array.isArray(editState.pathParams) ? editState.pathParams : [];
+
+    return pathParams.reduce((url, param) => {
+      const key = resolveVariables(param.key, vars);
+      if (!key) return url;
+      const value = encodeURIComponent(resolveVariables(param.value, vars));
+      return url.replace(new RegExp(`:${key}(?=/|$|\\?)`, 'g'), value);
+    }, resolvedUrl);
+  }
+
   // Build CodeGenParams with all variable placeholders resolved
   function buildResolvedCodeGenParams(editState: EditState, vars: Record<string, string>) {
     return {
       method: editState.method,
-      url: resolveVariables(editState.url, vars),
+      url: resolveCodeGenUrlWithPathParams(editState, vars),
       headers: editState.headers.map(h => ({
         key: resolveVariables(h.key, vars),
         value: resolveVariables(h.value, vars),
