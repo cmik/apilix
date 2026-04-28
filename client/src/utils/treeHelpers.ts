@@ -1,4 +1,4 @@
-import type { CollectionItem, CollectionAuth, CollectionEvent } from '../types';
+import type { CollectionItem, CollectionAuth, CollectionEvent, RunnerIteration, AppCollection } from '../types';
 
 export function findItemInTree(items: CollectionItem[], id: string): CollectionItem | null {
   for (const item of items) {
@@ -371,4 +371,73 @@ export function sortChildrenByName(items: CollectionItem[], folderId?: string): 
     }
     return node;
   });
+}
+
+/**
+ * Export workflow from runner iterations into a Postman v2.1 collection.
+ * Flattens all iterations and results in execution order, mapping each
+ * RunnerIterationResult to a CollectionItem request.
+ *
+ * @param runName - Display name for the exported run
+ * @param collectionName - Name of the original collection
+ * @param iterations - Array of RunnerIteration objects from a runner execution
+ * @returns AppCollection compatible with Postman v2.1 schema
+ */
+export function exportWorkflowCollection(
+  runName: string,
+  collectionName: string,
+  iterations: RunnerIteration[]
+): AppCollection {
+  const items: CollectionItem[] = [];
+
+  // Flatten all iterations and their results in order
+  for (const iteration of iterations) {
+    for (const result of iteration.results) {
+      // Determine the URL to use (prefer resolvedUrl with fallback)
+      const urlValue = result.resolvedUrl || result.url || '';
+
+      // Convert requestHeaders Record to header array format
+      const headerArray = result.requestHeaders
+        ? Object.entries(result.requestHeaders).map(([key, value]) => ({
+            key,
+            value,
+          }))
+        : [];
+
+      // Build the collection item
+      const item: CollectionItem = {
+        id: `${Math.random().toString(36).slice(2, 10)}`, // Generate unique ID
+        name: result.name,
+        request: {
+          method: result.method,
+          url: urlValue, // Can be string or parsed URL object, Postman accepts both
+          header: headerArray,
+          body:
+            result.requestBody !== undefined && result.requestBody !== null
+              ? {
+                  mode: 'raw',
+                  raw: result.requestBody,
+                }
+              : undefined,
+        },
+      };
+
+      items.push(item);
+    }
+  }
+
+  // Build the Postman v2.1 collection
+  const _id = Math.random().toString(36).slice(2, 10);
+  const collection: AppCollection = {
+    _id,
+    info: {
+      _postman_id: _id,
+      name: `${collectionName} – ${runName}`,
+      description: `Exported workflow from runner execution: ${runName}`,
+      schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+    },
+    item: items,
+  } as AppCollection;
+
+  return collection;
 }
