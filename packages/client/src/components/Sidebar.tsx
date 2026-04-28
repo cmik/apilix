@@ -1,4 +1,4 @@
-import { useState, lazy, Suspense } from 'react';
+import { useEffect, useState, lazy, Suspense } from 'react';
 import { useApp, generateId } from '../store';
 import CollectionTree from './CollectionTree';
 import WorkspaceSwitcher from './WorkspaceSwitcher';
@@ -19,6 +19,11 @@ export default function Sidebar() {
   const [expandSignal, setExpandSignal] = useState(0);
   const [sortAZ, setSortAZ] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
+
+  useEffect(() => {
+    if (!state.activeWorkspaceId) return;
+    setCollapseSignal(s => s + 1);
+  }, [state.activeWorkspaceId]);
 
   return (
     <div className="w-full bg-slate-900 flex flex-col h-full overflow-hidden">
