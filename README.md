@@ -59,8 +59,8 @@ Data (collections, environments) is stored locally in the app profile:
 |---|---|---|
 | `packages/core` | `@apilix/core` | HTTP engine, scripting sandbox, OAuth, TLS, collection runner |
 | `packages/cli` | `@apilix/cli` | Headless CLI runner — shipped as a standalone binary |
-| `client/` | `apilix-client` | React + Vite frontend |
-| `server/` | `apilix-server` | Express API server |
+| `packages/client` | `apilix-client` | React + Vite frontend |
+| `packages/server` | `@apilix/server` | Express API server |
 
 ### Install dependencies
 
@@ -88,12 +88,14 @@ npm run electron:dev
 ### Test
 
 ```bash
-# Workspace package tests
-npm run test --workspaces --if-present
+# All workspaces
+npm test
 
-# Legacy server/client test suites
-npm run test:server
-npm run test:client
+# Individual suites
+npm run test:server    # packages/server (node --test)
+npm run test:client    # packages/client (vitest)
+npm run test:core      # packages/core
+npm run test:cli       # packages/cli
 ```
 
 ### Run Collections From CI

@@ -11,18 +11,18 @@ Apilix is an **npm workspaces monorepo**.
 ```
 apilix/
 ├── packages/
-│   ├── core/          @apilix/core  — execution engine, sandbox, OAuth, TLS utils
-│   └── cli/           @apilix/cli   — headless CLI runner (shipped as a binary)
-├── client/            React + Vite frontend  (workspace: apilix-client)
-├── server/            Express API server     (workspace: apilix-server)
+│   ├── core/          @apilix/core   — execution engine, sandbox, OAuth, TLS utils
+│   ├── cli/           @apilix/cli    — headless CLI runner (shipped as a binary)
+│   ├── client/        apilix-client  — React + Vite frontend
+│   └── server/        @apilix/server — Express API server
 ├── electron/          Electron desktop wrapper
 ├── bin/               Entry-point shim for the CLI (apilix.js)
 └── package.json       Root workspace manifest, pkg bundler config
 ```
 
-`packages/core` is the shared library consumed by both `server/` and the CLI. All HTTP execution logic, scripting, OAuth, and TLS configuration live there.
+`packages/core` is the shared library consumed by both `packages/server` and the CLI. All HTTP execution logic, scripting, OAuth, and TLS configuration live there.
 
-The root `workspaces` field covers `packages/*`, `client`, and `server`, so a single `npm install` from the repo root links all four workspace packages and hoists shared dependencies.
+The root `workspaces` field covers `packages/*`, so a single `npm install` from the repo root links all four workspace packages and hoists shared dependencies.
 
 ---
 
@@ -57,8 +57,8 @@ npm run electron:dev
 ## Running tests
 
 ```bash
-# Workspace package tests (packages/core, packages/cli)
-npm run test --workspaces --if-present
+# All workspace package tests
+npm test
 
 # Server tests (Node built-in test runner)
 npm run test:server
@@ -71,12 +71,12 @@ All three suites are run in parallel in CI via the GitHub Actions test matrix.
 
 ### Writing tests
 
-**Server (`server/*.test.js`):**
+**Server (`packages/server/*.test.js`):**
 - Uses Node.js built-in `node:test` and `node:assert/strict` — no external framework.
 - Co-locate test files next to the module under test.
 - Use the `withServer(handler, fn)` helper (from `executor.test.js`) for tests that need a real HTTP response.
 
-**Client (`client/src/**/*.test.ts`):**
+**Client (`packages/client/src/**/*.test.ts`):**
 - Uses Vitest 4.x.
 - Co-locate test files next to the module under test.
 - Mock `../store` imports that reference browser globals: `vi.mock('../store', () => ({ generateId: () => ... }))`.
