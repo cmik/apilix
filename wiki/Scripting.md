@@ -725,7 +725,7 @@ Click the **Snippets** button in the script editor to open the Snippet Library. 
 | **Status Code** | Status is 200, Status is 2xx, Status is 201 Created |
 | **Response Time** | < 500ms, < 1s |
 | **JSON Body** | Response is JSON, Property exists, Property equals value, Array not empty, Store value from response |
-| **Apilix Functions** | Get/Set/Unset env, Parse JSON, Get text, Decode JWT Payload, Generate Random String, Generate Formatted Date (UTC), Skip request, Set next request |
+| **Apilix apx.* functions** | Get/Set/Unset env, Parse JSON, Get text, Decode JWT Payload, Generate Random String, Generate Formatted Date (UTC), Skip request, Set next request |
 | **Headers** | Content-Type is JSON, Header exists, Store header value |
 | **Advanced Assertions** | JSON Schema validation, Partial object match, Deep property check, Array has exact members, Array includes members, Value is one of, Every array item satisfies predicate, Custom predicate assertion, Number type guards, String starts/ends with, Soft assertions block |
 | **Test Control** | Skip a test, Conditionally skip test |
