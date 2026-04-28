@@ -11,6 +11,7 @@ import {
 } from '../utils/treeHelpers';
 import { generateHurlFromItems } from '../utils/hurlUtils';
 import { useImportFile } from '../utils/useImportFile';
+import ConfirmModal from './ConfirmModal';
 
 const ItemSettingsModal = lazy(() => import('./ItemSettingsModal'));
 
@@ -340,6 +341,7 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
   const [showSettings, setShowSettings] = useState(false);
   const [newItemId, setNewItemId] = useState<string | null>(null);
   const [mockItems, setMockItems] = useState<CollectionItem[] | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string; isFolder: boolean } | null>(null);
   const rowRef = useRef<HTMLDivElement>(null);
 
   const isFolder = Array.isArray(item.item);
@@ -378,15 +380,17 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
 
   function handleDelete() {
     if (!item.id) return;
-    const label = isFolder
-      ? `folder "${item.name}" and all its contents`
-      : `request "${item.name}"`;
-    if (confirm(`Delete ${label}?`)) {
-      dispatch({
-        type: 'UPDATE_COLLECTION',
-        payload: { ...collection, item: removeItemById(collection.item, item.id) },
-      });
-    }
+    setMenu(null);
+    setPendingDelete({ id: item.id, name: item.name, isFolder });
+  }
+
+  function confirmDelete() {
+    if (!pendingDelete) return;
+    dispatch({
+      type: 'UPDATE_COLLECTION',
+      payload: { ...collection, item: removeItemById(collection.item, pendingDelete.id) },
+    });
+    setPendingDelete(null);
   }
 
   function handleAddFolder() {
@@ -615,6 +619,20 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
             onClose={() => setMockItems(null)}
           />
         )}
+
+        {pendingDelete && (
+          <ConfirmModal
+            title={pendingDelete.isFolder ? 'Delete folder?' : 'Delete request?'}
+            message={pendingDelete.isFolder
+              ? <>Delete folder <strong className="text-slate-200">{pendingDelete.name}</strong> and all its contents? This cannot be undone.</>
+              : <>Delete request <strong className="text-slate-200">{pendingDelete.name}</strong>? This cannot be undone.</>
+            }
+            confirmLabel="Delete"
+            danger={true}
+            onConfirm={confirmDelete}
+            onCancel={() => setPendingDelete(null)}
+          />
+        )}
       </div>
     );
   }
@@ -679,6 +697,17 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
           onClose={() => setMockItems(null)}
         />
       )}
+
+      {pendingDelete && (
+        <ConfirmModal
+          title="Delete request?"
+          message={<>Delete request <strong className="text-slate-200">{pendingDelete.name}</strong>? This cannot be undone.</>}
+          confirmLabel="Delete"
+          danger={true}
+          onConfirm={confirmDelete}
+          onCancel={() => setPendingDelete(null)}
+        />
+      )}
     </div>
   );
 }
@@ -718,6 +747,7 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
   const [renameVal, setRenameVal] = useState(startRenaming ? '' : collection.info.name);
   const [showSettings, setShowSettings] = useState(false);
   const [newItemId, setNewItemId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
 
   function handleHeaderDragOver(e: React.DragEvent) {
     if (!dragCtx.draggingId) return;
@@ -814,6 +844,17 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
     dispatch({ type: 'SET_VIEW', payload: 'mock' });
   }
 
+  function promptDeleteCollection() {
+    setMenu(null);
+    setPendingDelete({ id: collection._id, name: collection.info.name });
+  }
+
+  function confirmDeleteCollection() {
+    if (!pendingDelete) return;
+    dispatch({ type: 'REMOVE_COLLECTION', payload: pendingDelete.id });
+    setPendingDelete(null);
+  }
+
   const menuItems: MenuItem[] = [
     { label: 'View settings', icon: '⚙️', onClick: () => setShowSettings(true) },
     { label: 'Add request', icon: '➕', onClick: handleAddRequest },
@@ -846,10 +887,7 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
       label: 'Delete',
       icon: '🗑',
       danger: true,
-      onClick: () => {
-        if (confirm(`Remove collection "${collection.info.name}"?`))
-          dispatch({ type: 'REMOVE_COLLECTION', payload: collection._id });
-      },
+      onClick: promptDeleteCollection,
     },
   ];
 
@@ -951,6 +989,17 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
             variableSuggestions={variableSuggestions}
           />
         </Suspense>
+      )}
+
+      {pendingDelete && (
+        <ConfirmModal
+          title="Delete collection?"
+          message={<>Remove collection <strong className="text-slate-200">{pendingDelete.name}</strong>? This cannot be undone.</>}
+          confirmLabel="Delete"
+          danger={true}
+          onConfirm={confirmDeleteCollection}
+          onCancel={() => setPendingDelete(null)}
+        />
       )}
     </div>
   );
