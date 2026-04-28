@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useApp, generateId } from '../store';
 import type { AppEnvironment } from '../types';
+import ConfirmModal from './ConfirmModal';
 
 interface EnvEditorProps {
   env: AppEnvironment;
@@ -184,6 +185,7 @@ export default function EnvironmentPanel() {
   const [creating, setCreating] = useState(false);
   const [filter, setFilter] = useState('');
   const [sortAZ, setSortAZ] = useState(false);
+  const [pendingDeleteEnv, setPendingDeleteEnv] = useState<AppEnvironment | null>(null);
 
   const editingEnv = editingId ? state.environments.find(e => e._id === editingId) : null;
 
@@ -198,9 +200,15 @@ export default function EnvironmentPanel() {
   }
 
   function handleDelete(id: string) {
-    if (confirm('Delete this environment?')) {
-      dispatch({ type: 'REMOVE_ENVIRONMENT', payload: id });
-    }
+    const env = state.environments.find(e => e._id === id);
+    if (!env) return;
+    setPendingDeleteEnv(env);
+  }
+
+  function confirmDeleteEnvironment() {
+    if (!pendingDeleteEnv) return;
+    dispatch({ type: 'REMOVE_ENVIRONMENT', payload: pendingDeleteEnv._id });
+    setPendingDeleteEnv(null);
   }
 
   if (creating) {
@@ -352,6 +360,17 @@ export default function EnvironmentPanel() {
           })
           )}
         </div>
+      )}
+
+      {pendingDeleteEnv && (
+        <ConfirmModal
+          title="Delete environment?"
+          message={<>Delete environment <strong className="text-slate-200">{pendingDeleteEnv.name}</strong>? This cannot be undone.</>}
+          confirmLabel="Delete"
+          danger={true}
+          onConfirm={confirmDeleteEnvironment}
+          onCancel={() => setPendingDeleteEnv(null)}
+        />
       )}
     </div>
   );
