@@ -20,6 +20,8 @@ Apilix can exchange data with other tools through a variety of formats — both 
   - [Import — OpenAPI / Swagger](#import--openapi--swagger)
     - [Paste spec text](#paste-spec-text)
     - [Import from URL](#import-from-url)
+      - [Selective request import](#selective-request-import)
+      - [Host rewrite before import](#host-rewrite-before-import)
     - [Upload a spec file](#upload-a-spec-file)
     - [How endpoints are mapped](#how-endpoints-are-mapped)
   - [Import — HAR](#import--har)
@@ -266,7 +268,42 @@ Paste a YAML or JSON spec directly into the text area, then click **Import from 
 
 ### Import from URL
 
-Enter the public URL of the spec (e.g. `https://petstore3.swagger.io/api/v3/openapi.json`) and click **Import from URL**. Apilix fetches the spec server-side, parses it, and creates a collection.
+Enter the public URL of the spec (e.g. `https://petstore3.swagger.io/api/v3/openapi.json`) and click **Fetch** or **Import**. Apilix fetches the spec directly in the browser and parses it before creating a collection.
+
+Two optional **OpenAPI-only** switches appear above the URL field:
+
+| Switch | What it does |
+|---|---|
+| **Select requests before import** | After fetching, shows a filterable preview list of every endpoint. Only checked requests are imported. |
+| **Rewrite hosts before import** | After fetching, shows a mapping row for each detected base host. Enter a replacement (or an environment variable token such as `{{baseUrl}}`) for each one. |
+
+When either switch is on, the button label changes to **Fetch** to indicate that clicking it shows the preview panel rather than importing immediately. After configuring the preview, click **Import Previewed Requests** to complete the import.
+
+> Both switches are independent. You can use one, both, or neither.
+
+#### Selective request import
+
+1. Check **Select requests before import**.
+2. Enter the spec URL and click **Fetch**.
+3. The preview panel lists every endpoint (`METHOD /path`, tag). All are checked by default.
+4. Uncheck individual endpoints, or use the **Filter** field to narrow the list and then click **Select all** to select only the visible rows.
+5. The selection count shows how many requests will be imported.
+6. Click **Import Previewed Requests**.
+
+Tag folders (tree structure) and collection-level authentication are preserved — empty folders (all requests deselected) are pruned automatically.
+
+#### Host rewrite before import
+
+1. Check **Rewrite hosts before import**.
+2. Enter the spec URL and click **Fetch**.
+3. The preview panel shows a row for each unique host detected in the spec (e.g. `https://api.example.com`).
+4. Type the replacement value in the right-hand field for each host you want to change:
+   - A literal URL: `https://staging.example.com`
+   - An environment variable token: `{{baseUrl}}`
+   - Leave a row blank to keep that host unchanged.
+5. Click **Import Previewed Requests**.
+
+Only the `raw` URL of each request is rewritten. Requests whose URLs do not start with a given host are unaffected.
 
 ### Upload a spec file
 
@@ -434,9 +471,28 @@ To also migrate environments:
 
 ### Seed a collection from an OpenAPI spec
 
-1. **Import → OpenAPI** → paste your spec or enter the spec URL.
+**Basic import:**
+
+1. **Import → OpenAPI** → paste your spec or enter the spec URL and click **Import**.
 2. Apilix creates a collection with folders matching your API tags.
 3. Rename the collection and add environment variables for the base URL and auth tokens.
+
+**Import only specific endpoints:**
+
+1. **Import → OpenAPI → URL tab**.
+2. Check **Select requests before import**.
+3. Enter the spec URL and click **Fetch**.
+4. Uncheck or filter out the endpoints you do not need.
+5. Click **Import Previewed Requests**.
+
+**Make requests environment-aware (replace hardcoded hosts):**
+
+1. **Import → OpenAPI → URL tab**.
+2. Check **Rewrite hosts before import**.
+3. Enter the spec URL and click **Fetch**.
+4. Type `{{baseUrl}}` (or another variable token) in the replacement field next to the detected host.
+5. Click **Import Previewed Requests**.
+6. Create an environment with `baseUrl` set to the appropriate value for each target environment (dev, staging, production).
 
 ### Record browser traffic and export as HAR
 

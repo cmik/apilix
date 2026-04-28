@@ -154,6 +154,59 @@ export interface ParsedOpenApiResult {
   collectionAuth?: CollectionAuth;
 }
 
+/** Preview metadata for a single OpenAPI operation, used to populate the
+ * request-selection UI before committing to a full import. */
+export interface OpenApiRequestPreview {
+  id: string;
+  method: string;
+  path: string;
+  name: string;
+  tag?: string;
+  /** Full URL string built from the spec base URL + path + query parameters. */
+  rawUrl: string;
+  /** Origin (scheme + host) extracted from `rawUrl`, if the URL is absolute. */
+  host?: string;
+}
+
+/** A host-to-replacement mapping used by `applyOpenApiHostReplacements`. */
+export interface OpenApiHostReplacement {
+  from: string;
+  to: string;
+}
+
+/**
+ * Options passed from the import UI to `useImportFile` for OpenAPI imports.
+ * Both properties are optional and independent of each other.
+ */
+export interface OpenApiImportOptions {
+  /** When present (even as an empty array), activates request filtering.
+   * Only items whose IDs appear in this array are included in the import.
+   * An empty array causes the import to be aborted with an error toast. */
+  selectedRequestIds?: string[];
+  /** Host-rewrite rules. Applied after filtering. Rules with a blank `to`
+   * value are silently skipped. Only the first matching rule per URL wins. */
+  hostReplacements?: OpenApiHostReplacement[];
+}
+
+/** Full parse result returned by `parseOpenApiSpecWithPreview`, extending the
+ * base result with the data needed to render the import preview UI. */
+export interface ParsedOpenApiPreviewResult extends ParsedOpenApiResult {
+  requestPreviews: OpenApiRequestPreview[];
+  detectedHosts: string[];
+}
+
+function makeOperationId(method: string, pathStr: string): string {
+  return `oa:${method.toUpperCase()}:${pathStr}`;
+}
+
+function detectHost(rawUrl: string): string | undefined {
+  try {
+    return new URL(rawUrl).origin;
+  } catch {
+    return undefined;
+  }
+}
+
 // ─── Security scheme → CollectionAuth ────────────────────────────────────────
 
 function securitySchemeToAuth(scheme: OaSecurityScheme): CollectionAuth | undefined {
@@ -275,7 +328,16 @@ function resolveTopLevelAuth(spec: OaSpec): CollectionAuth | undefined {
   return scheme ? securitySchemeToAuth(scheme) : undefined;
 }
 
-export function parseOpenApiSpec(text: string, filename?: string): ParsedOpenApiResult {
+/**
+ * Parses an OpenAPI 3.x or Swagger 2.0 spec and returns the full collection
+ * tree **plus** preview metadata for the import UI.
+ *
+ * @param text - Raw YAML or JSON spec text.
+ * @param filename - Optional filename used as a fallback collection name.
+ * @returns Parsed collection items, auth, request previews, and detected hosts.
+ * @throws If `text` is not a recognised OpenAPI/Swagger document.
+ */
+export function parseOpenApiSpecWithPreview(text: string, filename?: string): ParsedOpenApiPreviewResult {
   // Parse YAML or JSON
   let spec: OaSpec;
   const trimmed = text.trimStart();
@@ -308,6 +370,7 @@ export function parseOpenApiSpec(text: string, filename?: string): ParsedOpenApi
   // Collect items grouped by first tag
   const tagMap = new Map<string, CollectionItem[]>();
   const untagged: CollectionItem[] = [];
+  const requestPreviews: OpenApiRequestPreview[] = [];
 
   for (const [pathStr, pathItem] of Object.entries(paths)) {
     const pathLevelParams: OaParameter[] = pathItem.parameters || [];
@@ -390,8 +453,11 @@ export function parseOpenApiSpec(text: string, filename?: string): ParsedOpenApi
         operation.operationId ||
         `${method.toUpperCase()} ${pathStr}`;
 
+      const requestId = makeOperationId(method, pathStr);
+      const tag = operation.tags?.[0];
+
       const item: CollectionItem = {
-        id: crypto.randomUUID(),
+        id: requestId,
         name: opName,
         description: operation.description,
         request: {
@@ -406,8 +472,17 @@ export function parseOpenApiSpec(text: string, filename?: string): ParsedOpenApi
         },
       };
 
+      requestPreviews.push({
+        id: requestId,
+        method: method.toUpperCase(),
+        path: pathStr,
+        name: opName,
+        tag,
+        rawUrl: urlWithQuery,
+        host: detectHost(urlWithQuery),
+      });
+
       // Group by tag
-      const tag = operation.tags?.[0];
       if (tag) {
         if (!tagMap.has(tag)) tagMap.set(tag, []);
         tagMap.get(tag)!.push(item);
@@ -429,6 +504,114 @@ export function parseOpenApiSpec(text: string, filename?: string): ParsedOpenApi
   items.push(...untagged);
 
   const collectionAuth = resolveTopLevelAuth(spec);
+  const detectedHosts = Array.from(new Set(requestPreviews.map(r => r.host).filter((h): h is string => !!h)));
 
+  return { collectionName, items, collectionAuth, requestPreviews, detectedHosts };
+}
+
+/**
+ * Convenience wrapper around `parseOpenApiSpecWithPreview` that strips the
+ * preview-only fields. Use this when you do not need the preview UI data.
+ *
+ * @param text - Raw YAML or JSON spec text.
+ * @param filename - Optional filename used as a fallback collection name.
+ */
+export function parseOpenApiSpec(text: string, filename?: string): ParsedOpenApiResult {
+  const { collectionName, items, collectionAuth } = parseOpenApiSpecWithPreview(text, filename);
   return { collectionName, items, collectionAuth };
+}
+
+/** Re-assign fresh IDs to every item node so that repeated imports of the same
+ * spec never produce duplicate IDs in the store. */
+export function assignFreshIds(items: CollectionItem[]): CollectionItem[] {
+  return items.map(node => {
+    if (node.item) {
+      return { ...node, id: crypto.randomUUID(), item: assignFreshIds(node.item) };
+    }
+    return { ...node, id: crypto.randomUUID() };
+  });
+}
+
+/**
+ * Recursively prunes a collection item tree to include only the request nodes
+ * whose IDs appear in `selectedRequestIds`. Empty folders (all children
+ * filtered out) are removed.
+ *
+ * @param items - Root-level items from a parsed OpenAPI collection.
+ * @param selectedRequestIds - IDs of the request items to keep.
+ * @returns Pruned item tree. May be empty if no IDs match.
+ */
+export function filterOpenApiItemsByRequestIds(items: CollectionItem[], selectedRequestIds: string[]): CollectionItem[] {
+  const selected = new Set(selectedRequestIds);
+
+  function filterNode(node: CollectionItem): CollectionItem | null {
+    if (node.item) {
+      const children = node.item.map(filterNode).filter((child): child is CollectionItem => !!child);
+      if (children.length === 0) return null;
+      return { ...node, item: children };
+    }
+
+    if (!node.request) return null;
+    return node.id && selected.has(node.id) ? { ...node } : null;
+  }
+
+  return items.map(filterNode).filter((item): item is CollectionItem => !!item);
+}
+
+function replaceHostInRawUrl(rawUrl: string, rules: OpenApiHostReplacement[]): string {
+  let next = rawUrl;
+  for (const rule of rules) {
+    if (!rule.from || !rule.to) continue;
+    if (next.startsWith(rule.from)) {
+      next = `${rule.to}${next.slice(rule.from.length)}`;
+      break; // only the first matching rule wins
+    }
+  }
+  return next;
+}
+
+/**
+ * Rewrites the `raw` URL of every request item in the tree by applying
+ * `replacements` in order. Only the first matching rule per URL takes effect.
+ * Rules with a blank `from` or `to` are skipped.
+ *
+ * @param items - Collection item tree to rewrite.
+ * @param replacements - Ordered list of `{ from, to }` host replacement rules.
+ * @returns New item tree with URLs rewritten (original tree is not mutated).
+ */
+export function applyOpenApiHostReplacements(items: CollectionItem[], replacements: OpenApiHostReplacement[]): CollectionItem[] {
+  const rules = replacements.filter(r => r.from.trim() && r.to.trim()).map(r => ({ from: r.from.trim(), to: r.to.trim() }));
+  if (rules.length === 0) return items;
+
+  function mapNode(node: CollectionItem): CollectionItem {
+    if (node.item) {
+      return { ...node, item: node.item.map(mapNode) };
+    }
+
+    if (!node.request) return { ...node };
+
+    if (typeof node.request.url === 'string') {
+      return {
+        ...node,
+        request: {
+          ...node.request,
+          url: replaceHostInRawUrl(node.request.url, rules),
+        },
+      };
+    }
+
+    const nextRaw = replaceHostInRawUrl(node.request.url.raw, rules);
+    return {
+      ...node,
+      request: {
+        ...node.request,
+        url: {
+          ...node.request.url,
+          raw: nextRaw,
+        },
+      },
+    };
+  }
+
+  return items.map(mapNode);
 }
