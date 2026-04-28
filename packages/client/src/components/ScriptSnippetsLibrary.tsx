@@ -480,7 +480,7 @@ console.log('body:', text);`,
       {
         id: 'test-jwt-decode',
         name: 'Decode JWT Payload',
-        description: 'Decode a JWT payload and validate selected claims',
+        description: 'Decode a JWT payload and store the parsed payload for later checks',
         code: `const token = apx.environment.get('jwt') ?? '';
 if (!token) throw new Error('jwt environment variable is not set');
 
