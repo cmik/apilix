@@ -85,6 +85,8 @@ Each snippet is generated from five aspects of the current request:
 
 Disabled headers and disabled body fields are excluded from all generated snippets.
 
+> **Variable resolution:** `{{variable}}` placeholders in the URL, headers, body, and auth fields are resolved against the active environment, collection variables, and globals before the snippet is generated. The emitted snippet contains the resolved values — not the placeholder tokens — so it runs immediately without modification.
+
 ---
 
 ## Language Reference
