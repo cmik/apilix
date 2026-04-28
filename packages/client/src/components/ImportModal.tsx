@@ -1,8 +1,13 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import { useApp, generateId } from '../store';
 import { parseCurlCommand } from '../utils/curlUtils';
 import { parseHurlFile } from '../utils/hurlUtils';
-import { parseOpenApiSpec } from '../utils/openApiUtils';
+import {
+  parseOpenApiSpec,
+  parseOpenApiSpecWithPreview,
+  type OpenApiImportOptions,
+  type OpenApiRequestPreview,
+} from '../utils/openApiUtils';
 import { parseHarFile } from '../utils/harUtils';
 import { parseWsdlToCollection } from '../utils/wsdlUtils';
 import { fetchWsdl } from '../api';
@@ -92,13 +97,39 @@ export default function ImportModal({ onClose }: ImportModalProps) {
   const [urlInput, setUrlInput] = useState('');
   const [urlError, setUrlError] = useState<string | null>(null);
   const [urlLoading, setUrlLoading] = useState(false);
+  const [urlEnableRequestSelection, setUrlEnableRequestSelection] = useState(false);
+  const [urlEnableHostRewrite, setUrlEnableHostRewrite] = useState(false);
+  const [urlOpenApiPreviewRequests, setUrlOpenApiPreviewRequests] = useState<OpenApiRequestPreview[] | null>(null);
+  const [urlOpenApiHosts, setUrlOpenApiHosts] = useState<string[]>([]);
+  const [urlFetchedText, setUrlFetchedText] = useState<string | null>(null);
+  const [urlFetchedFilename, setUrlFetchedFilename] = useState<string | undefined>(undefined);
+  const [urlFetchedSourceUrl, setUrlFetchedSourceUrl] = useState<string | undefined>(undefined);
+  const [urlSelectedRequestIds, setUrlSelectedRequestIds] = useState<Set<string>>(new Set());
+  const [urlRequestFilter, setUrlRequestFilter] = useState('');
+  const [urlHostRewriteValues, setUrlHostRewriteValues] = useState<Record<string, string>>({});
   const [targetCollectionId, setTargetCollectionId] = useState<string>(
     state.collections[0]?._id ?? ''
   );
 
-  async function parseAndImport(text: string, filename?: string, sourceUrl?: string) {
+  function clearUrlOpenApiPreview() {
+    setUrlOpenApiPreviewRequests(null);
+    setUrlOpenApiHosts([]);
+    setUrlFetchedText(null);
+    setUrlFetchedFilename(undefined);
+    setUrlFetchedSourceUrl(undefined);
+    setUrlSelectedRequestIds(new Set());
+    setUrlRequestFilter('');
+    setUrlHostRewriteValues({});
+  }
+
+  async function parseAndImport(
+    text: string,
+    filename?: string,
+    sourceUrl?: string,
+    openApiOptions?: OpenApiImportOptions,
+  ) {
     setError(null);
-    const ok = await importFile(text, filename, sourceUrl, targetCollectionId);
+    const ok = await importFile(text, filename, sourceUrl, targetCollectionId, openApiOptions);
     if (ok) onClose();
   }
 
@@ -134,6 +165,30 @@ export default function ImportModal({ onClose }: ImportModalProps) {
         }
         text = await response.text();
       }
+
+      if (urlEnableRequestSelection || urlEnableHostRewrite) {
+        try {
+          const parsed = parseOpenApiSpecWithPreview(text, filename);
+          const ids = new Set(parsed.requestPreviews.map(req => req.id));
+          const rewriteDefaults: Record<string, string> = {};
+          parsed.detectedHosts.forEach(host => { rewriteDefaults[host] = ''; });
+
+          setUrlOpenApiPreviewRequests(parsed.requestPreviews);
+          setUrlOpenApiHosts(parsed.detectedHosts);
+          setUrlSelectedRequestIds(ids);
+          setUrlHostRewriteValues(rewriteDefaults);
+          setUrlFetchedText(text);
+          setUrlFetchedFilename(filename);
+          setUrlFetchedSourceUrl(url);
+          setUrlRequestFilter('');
+          setUrlLoading(false);
+          return;
+        } catch {
+          clearUrlOpenApiPreview();
+          toast.info('URL is not an OpenAPI spec — importing without preview options.');
+        }
+      }
+
       setUrlLoading(false);
       await parseAndImport(text, filename, url);
     } catch (e) {
@@ -141,6 +196,39 @@ export default function ImportModal({ onClose }: ImportModalProps) {
       const msg = `Failed to fetch: ${(e as Error).message}`;
       setUrlError(msg); toast.error(msg);
     }
+  }
+
+  function toggleUrlPreviewRequest(requestId: string) {
+    setUrlSelectedRequestIds(prev => {
+      const next = new Set(prev);
+      if (next.has(requestId)) next.delete(requestId);
+      else next.add(requestId);
+      return next;
+    });
+  }
+
+  async function handleUrlPreviewImport() {
+    if (!urlFetchedText) {
+      setUrlError('No fetched OpenAPI content found. Fetch the URL again.');
+      return;
+    }
+
+    const options: OpenApiImportOptions = {};
+    if (urlEnableRequestSelection) {
+      options.selectedRequestIds = Array.from(urlSelectedRequestIds);
+      if (options.selectedRequestIds.length === 0) {
+        setUrlError('Select at least one request to import.');
+        return;
+      }
+    }
+
+    if (urlEnableHostRewrite && urlOpenApiHosts.length > 0) {
+      options.hostReplacements = urlOpenApiHosts
+        .map(from => ({ from, to: (urlHostRewriteValues[from] || '').trim() }))
+        .filter(rule => rule.to.length > 0);
+    }
+
+    await parseAndImport(urlFetchedText, urlFetchedFilename, urlFetchedSourceUrl, options);
   }
 
   function handleFiles(files: FileList | null) {
@@ -334,6 +422,20 @@ export default function ImportModal({ onClose }: ImportModalProps) {
     }
   }
 
+  const filteredUrlPreviewRequests = useMemo(
+    () => (urlOpenApiPreviewRequests ?? []).filter(req => {
+      if (!urlRequestFilter.trim()) return true;
+      const needle = urlRequestFilter.toLowerCase();
+      return (
+        req.name.toLowerCase().includes(needle) ||
+        req.path.toLowerCase().includes(needle) ||
+        req.method.toLowerCase().includes(needle) ||
+        (req.tag?.toLowerCase().includes(needle) ?? false)
+      );
+    }),
+    [urlOpenApiPreviewRequests, urlRequestFilter],
+  );
+
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
       <div
@@ -390,11 +492,45 @@ export default function ImportModal({ onClose }: ImportModalProps) {
               <p className="text-slate-400 text-xs bg-slate-900/50 border border-slate-700 rounded p-2 leading-relaxed">
                 Enter a public URL pointing to a Postman Collection, Environment JSON, Insomnia export, OpenAPI/Swagger spec, HURL file, HAR file, or WSDL. WSDL URLs (ending in <code className="text-orange-400">?WSDL</code>) are fetched via the local proxy to avoid CORS.
               </p>
+
+              <div className="flex flex-col gap-2 bg-slate-900/30 border border-slate-700 rounded p-3">
+                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={urlEnableRequestSelection}
+                    onChange={e => {
+                      setUrlEnableRequestSelection(e.target.checked);
+                      setUrlError(null);
+                      clearUrlOpenApiPreview();
+                    }}
+                    className="accent-orange-500"
+                  />
+                  Select requests before import (OpenAPI only)
+                </label>
+                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={urlEnableHostRewrite}
+                    onChange={e => {
+                      setUrlEnableHostRewrite(e.target.checked);
+                      setUrlError(null);
+                      clearUrlOpenApiPreview();
+                    }}
+                    className="accent-orange-500"
+                  />
+                  Rewrite hosts before import (OpenAPI only)
+                </label>
+              </div>
+
               <div className="flex gap-2">
                 <input
                   type="url"
                   value={urlInput}
-                  onChange={e => { setUrlInput(e.target.value); setUrlError(null); }}
+                  onChange={e => {
+                    setUrlInput(e.target.value);
+                    setUrlError(null);
+                    clearUrlOpenApiPreview();
+                  }}
                   onKeyDown={e => { if (e.key === 'Enter') handleUrlImport(); }}
                   placeholder="https://example.com/collection.json"
                   className="flex-1 bg-slate-900 border border-slate-600 rounded px-3 py-2 text-slate-100 text-sm focus:outline-none focus:border-orange-500"
@@ -404,9 +540,113 @@ export default function ImportModal({ onClose }: ImportModalProps) {
                   disabled={urlLoading}
                   className="px-4 py-2 bg-orange-600 hover:bg-orange-500 disabled:bg-slate-600 text-white rounded text-sm font-medium transition-colors whitespace-nowrap"
                 >
-                  {urlLoading ? 'Fetching…' : 'Import'}
+                  {urlLoading ? 'Fetching…' : ((urlEnableRequestSelection || urlEnableHostRewrite) ? 'Fetch' : 'Import')}
                 </button>
               </div>
+
+              {urlOpenApiPreviewRequests && (
+                <div className="flex flex-col gap-3 border border-slate-700 rounded p-3 bg-slate-900/40">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs text-slate-300">
+                      OpenAPI preview ready. Tree and auth settings will be kept for imported requests.
+                    </p>
+                    <button
+                      onClick={clearUrlOpenApiPreview}
+                      className="text-xs text-slate-400 hover:text-slate-200 transition-colors"
+                    >
+                      Clear preview
+                    </button>
+                  </div>
+
+                  {urlEnableRequestSelection && (
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={urlRequestFilter}
+                          onChange={e => setUrlRequestFilter(e.target.value)}
+                          placeholder="Filter requests by name, method, path, or tag"
+                          className="flex-1 bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-orange-500"
+                        />
+                        <button
+                          onClick={() => setUrlSelectedRequestIds(prev => {
+                            const next = new Set(prev);
+                            filteredUrlPreviewRequests.forEach(req => next.add(req.id));
+                            return next;
+                          })}
+                          className="text-xs text-orange-400 hover:text-orange-300 transition-colors"
+                        >
+                          Select all
+                        </button>
+                        <button
+                          onClick={() => setUrlSelectedRequestIds(new Set())}
+                          className="text-xs text-slate-400 hover:text-slate-200 transition-colors"
+                        >
+                          Clear
+                        </button>
+                      </div>
+
+                      <div className="max-h-56 overflow-y-auto border border-slate-700 rounded bg-slate-900/60">
+                        {filteredUrlPreviewRequests.map(req => (
+                          <label key={req.id} className="flex items-center gap-2 px-2 py-1.5 border-b border-slate-800 last:border-b-0 hover:bg-slate-800/70 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={urlSelectedRequestIds.has(req.id)}
+                              onChange={() => toggleUrlPreviewRequest(req.id)}
+                              className="accent-orange-500"
+                            />
+                            <span className="text-[11px] font-mono font-semibold text-orange-300 w-16 shrink-0">{req.method}</span>
+                            <span className="text-xs text-slate-200 truncate flex-1">{req.path}</span>
+                            {req.tag && <span className="text-[11px] text-slate-400 truncate max-w-[120px]">{req.tag}</span>}
+                          </label>
+                        ))}
+                        {filteredUrlPreviewRequests.length === 0 && (
+                          <p className="text-xs text-slate-500 italic px-3 py-2">No requests match the filter.</p>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-400">
+                        {urlSelectedRequestIds.size} request(s) selected
+                      </p>
+                    </div>
+                  )}
+
+                  {urlEnableHostRewrite && urlOpenApiHosts.length > 0 && (
+                    <div className="flex flex-col gap-2">
+                      <p className="text-xs text-slate-300">Host replacements</p>
+                      {urlOpenApiHosts.map(host => (
+                        <div key={host} className="grid grid-cols-[1fr_16px_1fr] items-center gap-2">
+                          <input
+                            value={host}
+                            disabled
+                            className="bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-400"
+                          />
+                          <span className="text-slate-500 text-xs text-center">→</span>
+                          <input
+                            value={urlHostRewriteValues[host] ?? ''}
+                            onChange={e => setUrlHostRewriteValues(prev => ({ ...prev, [host]: e.target.value }))}
+                            placeholder="https://new-host.tld or {{baseUrl}}"
+                            className="bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-orange-500"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {urlEnableHostRewrite && urlOpenApiHosts.length === 0 && (
+                    <p className="text-xs text-slate-500 italic">No absolute hosts detected in requests.</p>
+                  )}
+
+                  <div className="flex justify-end">
+                    <button
+                      onClick={handleUrlPreviewImport}
+                      disabled={urlEnableRequestSelection && urlSelectedRequestIds.size === 0}
+                      className="px-4 py-2 bg-orange-600 hover:bg-orange-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded text-sm font-medium transition-colors"
+                    >
+                      Import Previewed Requests
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {urlError && (
                 <p className="text-red-400 text-sm bg-red-900/20 border border-red-700 rounded p-2">{urlError}</p>
               )}

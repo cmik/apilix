@@ -1,6 +1,12 @@
 import { useApp, parseCollectionFile, parseEnvironmentFile, generateId } from '../store';
 import { parseHurlFile, HURL_METHOD_REGEX } from './hurlUtils';
-import { parseOpenApiSpec } from './openApiUtils';
+import {
+  parseOpenApiSpec,
+  filterOpenApiItemsByRequestIds,
+  applyOpenApiHostReplacements,
+  assignFreshIds,
+  type OpenApiImportOptions,
+} from './openApiUtils';
 import { parseHarFile } from './harUtils';
 import { parseWsdlToCollection, isWsdlContent } from './wsdlUtils';
 import { tryParseInsomniaText } from './insomniaUtils';
@@ -23,6 +29,7 @@ export function useImportFile() {
     filename?: string,
     sourceUrl?: string,
     targetCollectionId?: string,
+    openApiOptions?: OpenApiImportOptions,
   ): Promise<boolean> {
 
     // ── Insomnia v4 (JSON) or v5 (YAML/JSON) ────────────────────────────────
@@ -77,6 +84,22 @@ export function useImportFile() {
     if (isOpenApiFile) {
       try {
         const { collectionName, items, collectionAuth } = parseOpenApiSpec(text, filename);
+        const selectedIds = openApiOptions?.selectedRequestIds;
+        const hostReplacements = openApiOptions?.hostReplacements;
+
+        let importedItems = items;
+        if (Array.isArray(selectedIds)) {
+          if (selectedIds.length === 0) {
+            toast.error('No OpenAPI requests selected for import.');
+            return false;
+          }
+          importedItems = filterOpenApiItemsByRequestIds(importedItems, selectedIds);
+        }
+        if (hostReplacements && hostReplacements.length > 0) {
+          importedItems = applyOpenApiHostReplacements(importedItems, hostReplacements);
+        }
+        importedItems = assignFreshIds(importedItems);
+
         const newColId = generateId();
         dispatch({
           type: 'ADD_COLLECTION',
@@ -86,11 +109,11 @@ export function useImportFile() {
               name: collectionName,
               schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
             },
-            item: items,
+            item: importedItems,
             ...(collectionAuth && { auth: collectionAuth }),
           },
         });
-        const total = items.reduce((sum, i) => sum + (i.item ? i.item.length : 1), 0);
+        const total = importedItems.reduce((sum, i) => sum + (i.item ? i.item.length : 1), 0);
         toast.success(`Collection "${collectionName}" with ${total} request(s) imported!`);
         return true;
       } catch (e) {
@@ -192,6 +215,22 @@ export function useImportFile() {
       } else if (json.openapi || json.swagger) {
         try {
           const { collectionName, items, collectionAuth } = parseOpenApiSpec(text);
+          const selectedIds = openApiOptions?.selectedRequestIds;
+          const hostReplacements = openApiOptions?.hostReplacements;
+
+          let importedItems = items;
+          if (Array.isArray(selectedIds)) {
+            if (selectedIds.length === 0) {
+              toast.error('No OpenAPI requests selected for import.');
+              return false;
+            }
+            importedItems = filterOpenApiItemsByRequestIds(importedItems, selectedIds);
+          }
+          if (hostReplacements && hostReplacements.length > 0) {
+            importedItems = applyOpenApiHostReplacements(importedItems, hostReplacements);
+          }
+          importedItems = assignFreshIds(importedItems);
+
           const newColId = generateId();
           dispatch({
             type: 'ADD_COLLECTION',
@@ -201,11 +240,11 @@ export function useImportFile() {
                 name: collectionName,
                 schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
               },
-              item: items,
+              item: importedItems,
               ...(collectionAuth && { auth: collectionAuth }),
             },
           });
-          const total = items.reduce((sum, i) => sum + (i.item ? i.item.length : 1), 0);
+          const total = importedItems.reduce((sum, i) => sum + (i.item ? i.item.length : 1), 0);
           toast.success(`Collection "${collectionName}" with ${total} request(s) imported!`);
           return true;
         } catch (e) {
