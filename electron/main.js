@@ -141,6 +141,17 @@ ipcMain.handle('save-file-to-disk', async (_event, { filePath, content }) => {
   fs.writeFileSync(filePath, content, 'utf8');
 });
 
+// IPC: open a Save As dialog and write response body to the chosen path
+ipcMain.handle('save-response-file', async (_event, { defaultPath, content }) => {
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Save Response',
+    defaultPath,
+  });
+  if (result.canceled || !result.filePath) return { canceled: true };
+  await fs.promises.writeFile(result.filePath, content, 'utf8');
+  return { canceled: false, filePath: result.filePath };
+});
+
 // ─── Workspace / Persistence IPC ─────────────────────────────────────────────
 
 function getUserDataDir() {
