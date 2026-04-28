@@ -1,5 +1,5 @@
 {
-  "name": "apilix-server",
+  "name": "@apilix/server",
   "version": "1.0.0",
   "description": "APILIX backend server",
   "main": "index.js",

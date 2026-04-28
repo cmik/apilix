@@ -43,7 +43,7 @@ function startServer(port) {
 
   if (isDev) {
     const { fork } = require('child_process');
-    const serverPath = path.join(__dirname, '..', 'server', 'index.js');
+    const serverPath = path.join(__dirname, '..', 'packages', 'server', 'index.js');
     serverProcess = fork(serverPath, [], {
       env: { ...process.env, PORT: String(port), APILIX_DATA_DIR: app.getPath('userData') },
       stdio: 'pipe',
@@ -58,7 +58,14 @@ function startServer(port) {
       console.error = (...args) => { writeLog('[server:err] ' + args.join(' ')); _origError(...args); };
       console.warn  = (...args) => { writeLog('[server:warn] ' + args.join(' ')); _origWarn(...args);  };
 
-      const serverPath = path.join(__dirname, '..', 'server', 'index.js');
+      const Module = require('module');
+      const serverNodeModules = path.join(process.resourcesPath, 'packages', 'server', 'node_modules');
+      process.env.NODE_PATH = process.env.NODE_PATH
+        ? process.env.NODE_PATH + path.delimiter + serverNodeModules
+        : serverNodeModules;
+      Module._initPaths();
+
+      const serverPath = path.join(process.resourcesPath, 'packages', 'server', 'index.js');
       require(serverPath);
       writeLog('Server started on port ' + port);
     } catch (err) {
@@ -302,7 +309,7 @@ function checkServerReady(port) {
 async function waitAndLoadApp(port) {
   const startURL = isDev
     ? 'http://localhost:5173'
-    : `file://${path.join(__dirname, '..', 'client', 'dist', 'index.html')}`;
+    : `file://${path.join(__dirname, '..', 'packages', 'client', 'dist', 'index.html')}`;
 
   // Run health polling and a minimum splash display time concurrently.
   // The minimum ensures the splash is always visible long enough to be seen,

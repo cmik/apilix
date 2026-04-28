@@ -14,7 +14,7 @@ Write-Host "Root: $Root"
 
 Write-Host "`n==> Starting server (port 3001)..." -ForegroundColor Cyan
 $serverJob = Start-Process -FilePath "node" `
-    -ArgumentList "$Root\server\index.js" `
+    -ArgumentList "$Root\packages\server\index.js" `
     -WorkingDirectory $Root `
     -PassThru `
     -WindowStyle Minimized
@@ -26,7 +26,7 @@ Write-Host "  [OK] Server started (PID $($serverJob.Id))" -ForegroundColor Green
 Write-Host "`n==> Starting client (Vite dev server, port 5173)..." -ForegroundColor Cyan
 $clientJob = Start-Process -FilePath "cmd" `
     -ArgumentList "/c npm run dev" `
-    -WorkingDirectory "$Root\client" `
+    -WorkingDirectory "$Root\packages\client" `
     -PassThru `
     -WindowStyle Minimized
 

@@ -11,37 +11,36 @@
     "npm": ">=9"
   },
   "workspaces": [
-    "packages/*",
-    "client",
-    "server"
+    "packages/*"
   ],
   "scripts": {
     "start": "concurrently -k -p \"[{name}]\" -n \"SERVER,CLIENT\" -c \"bgYellow.bold,bgCyan.bold\" \"npm run server\" \"npm run client\"",
     "cli": "node bin/apilix.js",
     "cli:help": "node bin/apilix.js --help",
     "cli:build:binaries": "pkg . --no-bytecode --public --public-packages \"*\" --compress GZip --targets node20-macos-x64,node20-linux-x64,node20-win-x64 --out-path dist/cli",
-    "server": "node server/index.js",
-    "test": "cd server && npm test && cd ../client && npm test",
-    "test:server": "cd server && npm test",
-    "test:client": "cd client && npm test",
-    "client": "cd client && npm run dev",
+    "server": "node packages/server/index.js",
+    "test": "npm test -w @apilix/server && npm test -w @apilix/client",
+    "test:server": "npm test -w @apilix/server",
+    "test:client": "npm test -w @apilix/client",
+    "test:core": "npm test -w @apilix/core",
+    "test:cli": "npm test -w @apilix/cli",
+    "client": "npm run dev -w @apilix/client",
     "setup": "npm install",
-    "build": "cd client && npm run build",
+    "build": "npm run build -w @apilix/client",
     "electron": "electron .",
     "electron:dev": "concurrently -k -p \"[{name}]\" -n \"SERVER,CLIENT,ELECTRON\" -c \"bgYellow.bold,bgCyan.bold,bgMagenta.bold\" \"npm run server\" \"npm run client\" \"wait-on http://localhost:5173 && electron .\"",
-    "dist": "npm run build && electron-builder",
-    "dist:mac": "npm run build && electron-builder --mac",
-    "dist:win": "npm run build && electron-builder --win",
-    "dist:prod": "npm run build && DISABLE_DEVTOOLS=1 electron-builder",
-    "dist:prod:mac": "npm run build && DISABLE_DEVTOOLS=1 electron-builder --mac",
-    "dist:prod:win": "npm run build && DISABLE_DEVTOOLS=1 electron-builder --win"
-  },
-  "dependencies": {
-    "concurrently": "^8.2.2",
-    "apilix-server": "*"
+    "dist:prepare:server": "npm install --prefix packages/server --omit=dev --install-links",
+    "dist": "npm run dist:prepare:server && npm run build && electron-builder",
+    "dist:mac": "npm run dist:prepare:server && npm run build && electron-builder --mac",
+    "dist:win": "npm run dist:prepare:server && npm run build && electron-builder --win",
+    "dist:prod": "npm run dist:prepare:server && npm run build && DISABLE_DEVTOOLS=1 electron-builder",
+    "dist:prod:mac": "npm run dist:prepare:server && npm run build && DISABLE_DEVTOOLS=1 electron-builder --mac",
+    "dist:prod:win": "npm run dist:prepare:server && npm run build && DISABLE_DEVTOOLS=1 electron-builder --win"
   },
   "devDependencies": {
     "@yao-pkg/pkg": "^6.18.2",
+    "@apilix/server": "*",
+    "concurrently": "^8.2.2",
     "electron": "^41.1.1",
     "electron-builder": "^26.8.1",
     "wait-on": "^8.0.0"
@@ -67,14 +66,22 @@
     "productName": "Apilix",
     "files": [
       "electron/**/*",
-      "client/dist/**/*",
-      "server/**/*",
-      "!server/node_modules",
-      "packages/core/**/*",
-      "!packages/core/node_modules",
-      "!node_modules/apilix-server",
+      "packages/client/dist/**/*",
       "!node_modules/@apilix",
       "node_modules/**/*"
+    ],
+    "asarUnpack": [],
+    "extraResources": [
+      {
+        "from": "packages/server",
+        "to": "packages/server",
+        "filter": ["**/*", "!node_modules/**"]
+      },
+      {
+        "from": "packages/server/node_modules",
+        "to": "packages/server/node_modules",
+        "filter": ["**/*"]
+      }
     ],
     "mac": {
       "target": [
