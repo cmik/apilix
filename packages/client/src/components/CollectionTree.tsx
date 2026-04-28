@@ -386,9 +386,11 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
 
   function confirmDelete() {
     if (!pendingDelete) return;
+    const latestCollection = state.collections.find(c => c.id === collection.id);
+    if (!latestCollection) return;
     dispatch({
       type: 'UPDATE_COLLECTION',
-      payload: { ...collection, item: removeItemById(collection.item, pendingDelete.id) },
+      payload: { ...latestCollection, item: removeItemById(latestCollection.item, pendingDelete.id) },
     });
     setPendingDelete(null);
   }
