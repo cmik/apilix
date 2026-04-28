@@ -58,6 +58,6 @@ describe('ScriptSnippetsLibrary', () => {
     expect(onInsert).toHaveBeenCalledTimes(1);
     expect(onInsert.mock.calls[0][0]).toContain("const formatted = [");
     expect(onInsert.mock.calls[0][0]).toContain("apx.environment.set('formattedDate', formatted);");
-    expect(onInsert.mock.calls[0][0]).toContain("apx.test('formatted date matches YYYY-MM-DD HH:mm:ss'",);
+    expect(onInsert.mock.calls[0][0]).toContain("apx.test('formatted date matches YYYY-MM-DD HH:mm:ss'");
   });
 });
