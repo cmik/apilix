@@ -51,6 +51,58 @@ apx.environment.set('randomInt', rand.toString());`,
         code: `// Set current UTC date-time in ISO 8601 format
 apx.environment.set('isoDate', new Date().toISOString());`,
       },
+      {
+        id: 'jwt-decode',
+        name: 'Decode JWT Payload',
+        description: 'Decode a JWT payload and store claims for reuse',
+        code: `// Decode JWT payload from environment and store useful fields
+const token = apx.environment.get('jwt') ?? '';
+if (!token) throw new Error('jwt environment variable is not set');
+
+function decodeBase64Url(input) {
+  const b64 = input.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = b64 + '='.repeat((4 - (b64.length % 4 || 4)) % 4);
+  return decodeURIComponent(escape(atob(padded)));
+}
+
+const parts = token.split('.');
+if (parts.length < 2) throw new Error('Invalid JWT format');
+
+const payload = JSON.parse(decodeBase64Url(parts[1]));
+apx.environment.set('jwtPayload', JSON.stringify(payload));
+if (payload.sub != null) apx.environment.set('jwtSub', String(payload.sub));`,
+      },
+      {
+        id: 'random-string',
+        name: 'Random String',
+        description: 'Generate a random alphanumeric string',
+        code: `// Generate a random string and store it in environment
+const length = 24;
+const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+let out = '';
+for (let i = 0; i < length; i++) {
+  out += charset.charAt(Math.floor(Math.random() * charset.length));
+}
+apx.environment.set('randomString', out);`,
+      },
+      {
+        id: 'formatted-date',
+        name: 'Formatted Date (UTC)',
+        description: 'Generate YYYY-MM-DD HH:mm:ss date format in UTC',
+        code: `// Build a UTC timestamp in YYYY-MM-DD HH:mm:ss format
+const now = new Date();
+const pad = n => String(n).padStart(2, '0');
+const formatted = [
+  now.getUTCFullYear(),
+  pad(now.getUTCMonth() + 1),
+  pad(now.getUTCDate()),
+].join('-') + ' ' + [
+  pad(now.getUTCHours()),
+  pad(now.getUTCMinutes()),
+  pad(now.getUTCSeconds()),
+].join(':');
+apx.environment.set('formattedDate', formatted);`,
+      },
     ],
   },
   {
@@ -424,6 +476,64 @@ console.log('status:', json.status);`,
         description: 'Access the raw response body as a string',
         code: `const text = apx.response.text();
 console.log('body:', text);`,
+      },
+      {
+        id: 'test-jwt-decode',
+        name: 'Decode JWT Payload',
+        description: 'Decode a JWT payload and store the parsed payload for later checks',
+        code: `const token = apx.environment.get('jwt') ?? '';
+if (!token) throw new Error('jwt environment variable is not set');
+
+function decodeBase64Url(input) {
+  const b64 = input.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = b64 + '='.repeat((4 - (b64.length % 4 || 4)) % 4);
+  return decodeURIComponent(escape(atob(padded)));
+}
+
+const parts = token.split('.');
+if (parts.length < 2) throw new Error('Invalid JWT format');
+
+const payload = JSON.parse(decodeBase64Url(parts[1]));
+apx.test('JWT payload can be decoded', () => {
+  apx.expect(payload).to.be.an('object');
+});
+apx.environment.set('jwtPayload', JSON.stringify(payload));`,
+      },
+      {
+        id: 'test-random-string',
+        name: 'Generate Random String',
+        description: 'Generate a random alphanumeric string for downstream steps',
+        code: `const length = 24;
+const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+let out = '';
+for (let i = 0; i < length; i++) {
+  out += charset.charAt(Math.floor(Math.random() * charset.length));
+}
+apx.environment.set('randomString', out);
+apx.test('random string has expected length', () => {
+  apx.expect(out.length).to.equal(length);
+});`,
+      },
+      {
+        id: 'test-formatted-date',
+        name: 'Generate Formatted Date (UTC)',
+        description: 'Generate and validate YYYY-MM-DD HH:mm:ss format in UTC',
+        code: `const now = new Date();
+const pad = n => String(n).padStart(2, '0');
+const formatted = [
+  now.getUTCFullYear(),
+  pad(now.getUTCMonth() + 1),
+  pad(now.getUTCDate()),
+].join('-') + ' ' + [
+  pad(now.getUTCHours()),
+  pad(now.getUTCMinutes()),
+  pad(now.getUTCSeconds()),
+].join(':');
+
+apx.environment.set('formattedDate', formatted);
+apx.test('formatted date matches YYYY-MM-DD HH:mm:ss', () => {
+  apx.expect(/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$/.test(formatted)).to.be.true;
+});`,
       },
       {
         id: 'test-apx-skip-request',
