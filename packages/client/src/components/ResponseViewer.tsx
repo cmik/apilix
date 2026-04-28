@@ -6,6 +6,7 @@ import TestValueModal from './TestValueModal';
 import { buildSaveToVarSnippet } from '../utils/testSnippetUtils';
 import { INJECT_TEST_SNIPPET } from '../utils/appEvents';
 import type { InjectTestSnippetDetail } from '../utils/appEvents';
+import { buildSuggestedFilename, saveResponseToFile } from '../utils/responseFileSave';
 
 type RespTab = 'Body' | 'Headers' | 'Test Results' | 'TLS' | 'Timeline' | 'Redirects';
 
@@ -711,6 +712,7 @@ export default function ResponseViewer() {
   const [searchQuery, setSearchQuery] = useState('');
   const [matchIndex, setMatchIndex] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'canceled' | 'error'>('idle');
   const [expandSignal, setExpandSignal] = useState(0);
   const [collapseSignal, setCollapseSignal] = useState(0);
   const [jsonPathExpr, setJsonPathExpr] = useState('');
@@ -733,6 +735,21 @@ export default function ResponseViewer() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
+  };
+
+  const handleSaveToFile = async () => {
+    if (!response || saveState === 'saving') return;
+    setSaveState('saving');
+    const filename = buildSuggestedFilename(response.headers);
+    const result = await saveResponseToFile(filename, response.body);
+    if (!result.ok) {
+      setSaveState('error');
+    } else if (result.canceled) {
+      setSaveState('canceled');
+    } else {
+      setSaveState('saved');
+    }
+    setTimeout(() => setSaveState('idle'), 2000);
   };
   const searchInputRef = useRef<HTMLInputElement>(null);
   const bodyContentRef = useRef<HTMLDivElement>(null);
@@ -960,6 +977,33 @@ export default function ResponseViewer() {
               title={copied ? 'Copied!' : 'Copy response body'}
             >
               {copied ? '✓' : '⧉'}
+            </button>
+            <button
+              onClick={handleSaveToFile}
+              disabled={saveState === 'saving'}
+              className={`text-xs px-1.5 py-0.5 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+                saveState === 'saved' ? 'text-green-400' :
+                saveState === 'error' ? 'text-red-400' :
+                'text-slate-500 hover:text-slate-300'
+              }`}
+              title={
+                saveState === 'saved' ? 'Saved!' :
+                saveState === 'error' ? 'Save failed' :
+                saveState === 'saving' ? 'Saving…' :
+                'Save response to file'
+              }
+            >
+              {saveState === 'saved' ? (
+                '✓'
+              ) : saveState === 'error' ? (
+                '✗'
+              ) : (
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ display: 'inline' }}>
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="7 10 12 15 17 10"/>
+                  <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+              )}
             </button>
             {!rawMode && (isJson || isXml) && (
               <>

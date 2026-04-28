@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   chooseExportFolder: () => ipcRenderer.invoke('choose-export-folder'),
   saveFileToDisk: (filePath, content) =>
     ipcRenderer.invoke('save-file-to-disk', { filePath, content }),
+  saveResponseFile: (defaultPath, content) =>
+    ipcRenderer.invoke('save-response-file', { defaultPath, content }),
   // ── Workspace / Persistence ───────────────────────────────────────────────
   getDataDir: () => ipcRenderer.invoke('get-data-dir'),
   readJsonFile: (filePath) => ipcRenderer.invoke('read-json-file', { filePath }),
