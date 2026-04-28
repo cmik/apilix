@@ -568,11 +568,7 @@ export default function ImportModal({ onClose }: ImportModalProps) {
                           className="flex-1 bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-orange-500"
                         />
                         <button
-                          onClick={() => setUrlSelectedRequestIds(prev => {
-                            const next = new Set(prev);
-                            filteredUrlPreviewRequests.forEach(req => next.add(req.id));
-                            return next;
-                          })}
+                          onClick={() => setUrlSelectedRequestIds(new Set(filteredUrlPreviewRequests.map(req => req.id)))}
                           className="text-xs text-orange-400 hover:text-orange-300 transition-colors"
                         >
                           Select all
