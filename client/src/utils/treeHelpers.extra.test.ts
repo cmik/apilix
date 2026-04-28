@@ -246,7 +246,7 @@ describe('exportWorkflowCollection', () => {
 
     const collection = exportWorkflowCollection('Test Run', 'My Collection', iterations);
 
-    expect(collection._id).toBeDefined();
+    expect(collection.info._postman_id).toBeDefined();
     expect(collection.info.name).toBe('My Collection – Test Run');
     expect(collection.info.schema).toBe('https://schema.getpostman.com/json/collection/v2.1.0/collection.json');
     expect(collection.item).toHaveLength(1);
@@ -435,7 +435,7 @@ describe('exportWorkflowCollection', () => {
   it('handles empty iterations gracefully', () => {
     const collection = exportWorkflowCollection('Test', 'Collection', []);
 
-    expect(collection._id).toBeDefined();
+    expect(collection.info._postman_id).toBeDefined();
     expect(collection.info.name).toBe('Collection – Test');
     expect(collection.item).toHaveLength(0);
   });

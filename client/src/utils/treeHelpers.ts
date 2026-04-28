@@ -426,12 +426,12 @@ export function exportWorkflowCollection(
     }
   }
 
-  const postmanId = Math.random().toString(36).slice(2, 10);
-
-  // Build the Postman v2.1 collection using Postman-compatible metadata fields
-  const collection = {
+  // Build the Postman v2.1 collection
+  const _id = Math.random().toString(36).slice(2, 10);
+  const collection: AppCollection = {
+    _id,
     info: {
-      _postman_id: postmanId,
+      _postman_id: _id,
       name: `${collectionName} – ${runName}`,
       description: `Exported workflow from runner execution: ${runName}`,
       schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
