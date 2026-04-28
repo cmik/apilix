@@ -245,8 +245,8 @@ jobs:
               throw "Smoke summary failed: failed=$($report.summary.failed) errors=$($report.summary.errors)"
             }
           } finally {
-            if ($server -and (Get-Process -Id $server.Id -ErrorAction SilentlyContinue)) {
-              Stop-Process -Id $server.Id -Force
+            if ($server -and $server.Id) {
+              Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
             }
             Remove-Item .tmp-cli-smoke -Recurse -Force -ErrorAction SilentlyContinue
           }
