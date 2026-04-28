@@ -2,7 +2,8 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { useApp, generateId } from '../store';
 import { runCollectionStream, pauseRun, resumeRun, stopRun } from '../api';
 import type { RunnerIteration, RunnerIterationResult, CollectionItem, ConditionalFlowRecord, SavedRunnerRun, RunnerRunSummary } from '../types';
-import { applyInheritedAuth, getAllRequestIds } from '../utils/treeHelpers';
+import { applyInheritedAuth, getAllRequestIds, exportWorkflowCollection } from '../utils/treeHelpers';
+import { useToast } from './Toast';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -688,6 +689,7 @@ function buildRunSummary(iterations: RunnerIteration[]): RunnerRunSummary {
 
 export default function RunnerPanel() {
   const { state, dispatch, getEnvironmentVars, getCollectionVars } = useApp();
+  const toast = useToast();
   const [selectedCollectionId, setSelectedCollectionId] = useState<string>('');
   const [selectedRequestIds, setSelectedRequestIds] = useState<Set<string>>(new Set());
   const [executionOrder, setExecutionOrder] = useState<string[]>([]);
@@ -1598,7 +1600,7 @@ export default function RunnerPanel() {
 
           {/* Save Run button */}
           {!isRunning && results.length > 0 && (
-            <div className="flex items-center justify-end shrink-0">
+            <div className="flex items-center justify-end gap-2 shrink-0">
               <button
                 disabled={!hasBaseRunToSave}
                 onClick={() => {
@@ -1610,6 +1612,31 @@ export default function RunnerPanel() {
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" /></svg>
                 Save Run
+              </button>
+              <button
+                onClick={() => {
+                  if (!selectedCollection) return;
+                  const exported = exportWorkflowCollection(
+                    lastRunRef.current?.name ?? `Run ${new Date().toLocaleDateString()}`,
+                    selectedCollection.info.name,
+                    results
+                  );
+                  const content = JSON.stringify(exported, null, 2);
+                  const safeName = selectedCollection.info.name.replace(/[^a-z0-9_\-. ]/gi, '_');
+                  const blob = new Blob([content], { type: 'application/json' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `${safeName}.postman_collection.json`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                  toast.success('Workflow exported successfully');
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 text-xs rounded font-medium transition-colors"
+                title="Export workflow collection in Postman v2.1 format"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                Export Workflow
               </button>
             </div>
           )}
