@@ -50,8 +50,8 @@ describe('storageKeyError', () => {
   it('returns error for a key with internal space', () => {
     expect(storageKeyError('my token')).toBe('Variable names cannot contain spaces or whitespace');
   });
-  it('returns error for a key with leading space', () => {
-    expect(storageKeyError(' token')).toBe('Variable names cannot contain spaces or whitespace');
+  it('returns null for a key with leading space (trimmed before validation)', () => {
+    expect(storageKeyError(' token')).toBeNull();
   });
   it('returns error for a key with tab', () => {
     expect(storageKeyError('to\tken')).toBe('Variable names cannot contain spaces or whitespace');
