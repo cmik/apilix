@@ -8,6 +8,7 @@ import { API_BASE } from '../api';
 import { openAuthorizationWindow } from '../utils/oauth';
 import VarInput from './VarInput';
 import type { VariableSuggestion } from '../utils/variableAutocomplete';
+import { normalizeVariableName, storageKeyError } from '../utils/variableUtils';
 
 type AuthType = CollectionAuth['type'];
 const SUPPORTED_AUTH: AuthType[] = ['inherit', 'noauth', 'bearer', 'basic', 'apikey', 'oauth2'];
@@ -218,9 +219,14 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
     let events = event ? [...event] : [];
     events = patchEvents(events, 'prerequest', preScript);
     events = patchEvents(events, 'test', testScript);
-    onSave(buildAuth(), events, description, vars.filter(v => v.key));
+    const normalizedVars = vars
+      .filter(v => v.key.trim())
+      .map(v => ({ ...v, key: normalizeVariableName(v.key) }));
+    onSave(buildAuth(), events, description, normalizedVars);
     onClose();
   }
+
+  const hasVarErrors = vars.some(v => storageKeyError(v.key) !== null);
 
   const TABS = [
     { key: 'auth' as const, label: 'Authorization' },
@@ -365,35 +371,45 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
                 They can also be read and set in scripts via <code className="text-orange-400 font-mono">apx.collection.get/set(key)</code>.
               </p>
               <div className="flex flex-col gap-1">
-                {vars.map((v, i) => (
-                  <div key={i} className={`flex gap-1 items-center ${v.disabled ? 'opacity-40' : ''}`}>
-                    <input
-                      type="checkbox"
-                      checked={!v.disabled}
-                      onChange={() => setVars(prev => prev.map((x, j) => j === i ? { ...x, disabled: !x.disabled } : x))}
-                      className="shrink-0 accent-orange-500 cursor-pointer"
-                      title={v.disabled ? 'Enable' : 'Disable'}
-                    />
-                    <input
-                      value={v.key}
-                      onChange={e => setVars(prev => prev.map((x, j) => j === i ? { ...x, key: e.target.value } : x))}
-                      placeholder="Variable name"
-                      className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
-                    />
-                    <VarInput
-                      value={v.value}
-                      onChange={val => setVars(prev => prev.map((x, j) => j === i ? { ...x, value: val } : x))}
-                      placeholder="value"
-                      variableSuggestions={variableSuggestions}
-                      className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
-                    />
-                    <button
-                      onClick={() => setVars(prev => prev.filter((_, j) => j !== i))}
-                      className="text-slate-600 hover:text-red-400 transition-colors px-1 text-lg leading-none shrink-0"
-                      title="Remove"
-                    >×</button>
-                  </div>
-                ))}
+                {vars.map((v, i) => {
+                  const keyErr = storageKeyError(v.key);
+                  return (
+                    <div key={i} className={`flex flex-col gap-0.5 ${v.disabled ? 'opacity-40' : ''}`}>
+                      <div className="flex gap-1 items-center">
+                        <input
+                          type="checkbox"
+                          checked={!v.disabled}
+                          onChange={() => setVars(prev => prev.map((x, j) => j === i ? { ...x, disabled: !x.disabled } : x))}
+                          className="shrink-0 accent-orange-500 cursor-pointer"
+                          title={v.disabled ? 'Enable' : 'Disable'}
+                        />
+                        <input
+                          value={v.key}
+                          onChange={e => setVars(prev => prev.map((x, j) => j === i ? { ...x, key: e.target.value } : x))}
+                          placeholder="Variable name"
+                          className={`flex-1 bg-slate-700 border rounded px-2 py-1 text-sm font-mono text-slate-100 focus:outline-none ${
+                            keyErr ? 'border-red-500 focus:border-red-400' : 'border-slate-600 focus:border-orange-500'
+                          }`}
+                        />
+                        <VarInput
+                          value={v.value}
+                          onChange={val => setVars(prev => prev.map((x, j) => j === i ? { ...x, value: val } : x))}
+                          placeholder="value"
+                          variableSuggestions={variableSuggestions}
+                          className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
+                        />
+                        <button
+                          onClick={() => setVars(prev => prev.filter((_, j) => j !== i))}
+                          className="text-slate-600 hover:text-red-400 transition-colors px-1 text-lg leading-none shrink-0"
+                          title="Remove"
+                        >×</button>
+                      </div>
+                      {keyErr && (
+                        <p className="text-xs text-red-400 pl-5">{keyErr}</p>
+                      )}
+                    </div>
+                  );
+                })}
                 <button
                   onClick={() => setVars(prev => [...prev, { key: '', value: '' }])}
                   className="self-start mt-1 text-xs text-orange-400 hover:text-orange-300 transition-colors"
@@ -487,7 +503,8 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
           </button>
           <button
             onClick={handleSave}
-            className="px-4 py-1.5 bg-orange-600 hover:bg-orange-500 text-white text-sm rounded font-medium transition-colors"
+            disabled={hasVarErrors}
+            className="px-4 py-1.5 bg-orange-600 hover:bg-orange-500 text-white text-sm rounded font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Save
           </button>

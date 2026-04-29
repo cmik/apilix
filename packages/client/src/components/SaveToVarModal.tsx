@@ -11,7 +11,14 @@ export interface SaveToVarModalProps {
 
 function defaultVarName(path: (string | number)[]): string {
   const lastString = [...path].reverse().find(s => typeof s === 'string') as string | undefined;
-  return lastString ?? 'value';
+  const raw = lastString ?? 'value';
+  // Strip leading chars that are not valid JS identifier starters, then replace
+  // remaining non-identifier chars with underscores so the pre-fill passes the
+  // strict regex used by this modal.
+  const sanitized = raw
+    .replace(/^[^a-zA-Z_$]+/, '')
+    .replace(/[^a-zA-Z0-9_$]/g, '_');
+  return sanitized || 'value';
 }
 
 function previewValue(value: unknown): string {
@@ -109,6 +116,9 @@ export default function SaveToVarModal({ path, value, collectionId, onConfirm, o
                   : 'border-slate-600 focus:border-orange-500'
               }`}
             />
+            {varName === '' && (
+              <p className="text-xs text-slate-500">Enter a variable name to generate the snippet</p>
+            )}
             {varName && !isValidName && (
               <p className="text-xs text-red-400">Must start with a letter, $, or _ and contain only letters, digits, $, _</p>
             )}

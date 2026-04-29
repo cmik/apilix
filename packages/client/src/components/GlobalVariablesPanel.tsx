@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useApp } from '../store';
+import { normalizeVariableName, storageKeyError } from '../utils/variableUtils';
 
 function EnvGlobalsTabBar() {
   const { state, dispatch } = useApp();
@@ -70,9 +71,12 @@ export default function GlobalVariablesPanel() {
   }
 
   function save() {
+    const hasErrors = rows.some(r => storageKeyError(r.key) !== null);
+    if (hasErrors) return;
     const result: Record<string, string> = {};
     rows.forEach(r => {
-      if (r.key.trim()) result[r.key.trim()] = r.value;
+      const normalized = normalizeVariableName(r.key);
+      if (normalized) result[normalized] = r.value;
     });
     dispatch({ type: 'SET_GLOBAL_VARS', payload: result });
     setSaved(true);
@@ -164,7 +168,8 @@ export default function GlobalVariablesPanel() {
           </button>
           <button
             onClick={save}
-            className={`px-4 py-1.5 text-white text-sm rounded font-medium transition-colors ${
+            disabled={rows.some(r => storageKeyError(r.key) !== null)}
+            className={`px-4 py-1.5 text-white text-sm rounded font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
               saved ? 'bg-green-600 hover:bg-green-500' : 'bg-orange-600 hover:bg-orange-500'
             }`}
           >
@@ -226,35 +231,41 @@ export default function GlobalVariablesPanel() {
                 </tr>
               </thead>
               <tbody>
-                {filteredIndices.map(({ row, i }) => (
-                  <tr key={i} className="border-b border-slate-800/50 group">
-                    <td className="py-1 pr-2">
-                      <input
-                        value={row.key}
-                        onChange={e => updateRow(i, 'key', e.target.value)}
-                        placeholder="variable_name"
-                        className="w-full bg-slate-700/50 border border-transparent focus:border-slate-500 rounded px-2 py-0.5 text-slate-200 font-mono text-xs focus:outline-none placeholder-slate-600"
-                      />
-                    </td>
-                    <td className="py-1 pr-2">
-                      <input
-                        value={row.value}
-                        onChange={e => updateRow(i, 'value', e.target.value)}
-                        placeholder="value"
-                        className="w-full bg-slate-700/50 border border-transparent focus:border-slate-500 rounded px-2 py-0.5 text-slate-200 font-mono text-xs focus:outline-none placeholder-slate-600"
-                      />
-                    </td>
-                    <td className="py-1">
-                      <button
-                        onClick={() => removeRow(i)}
-                        className="text-slate-600 hover:text-red-400 text-lg leading-none opacity-0 group-hover:opacity-100 transition-opacity"
-                        title="Remove variable"
-                      >
-                        ×
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {filteredIndices.map(({ row, i }) => {
+                  const keyErr = storageKeyError(row.key);
+                  return (
+                    <tr key={i} className="border-b border-slate-800/50 group">
+                      <td className="py-1 pr-2">
+                        <input
+                          value={row.key}
+                          onChange={e => updateRow(i, 'key', e.target.value)}
+                          placeholder="variable_name"
+                          title={keyErr ?? undefined}
+                          className={`w-full bg-slate-700/50 border rounded px-2 py-0.5 text-slate-200 font-mono text-xs focus:outline-none placeholder-slate-600 ${
+                            keyErr ? 'border-red-500 focus:border-red-400' : 'border-transparent focus:border-slate-500'
+                          }`}
+                        />
+                      </td>
+                      <td className="py-1 pr-2">
+                        <input
+                          value={row.value}
+                          onChange={e => updateRow(i, 'value', e.target.value)}
+                          placeholder="value"
+                          className="w-full bg-slate-700/50 border border-transparent focus:border-slate-500 rounded px-2 py-0.5 text-slate-200 font-mono text-xs focus:outline-none placeholder-slate-600"
+                        />
+                      </td>
+                      <td className="py-1">
+                        <button
+                          onClick={() => removeRow(i)}
+                          className="text-slate-600 hover:text-red-400 text-lg leading-none opacity-0 group-hover:opacity-100 transition-opacity"
+                          title="Remove variable"
+                        >
+                          ×
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
             {filter && filteredIndices.length === 0 && (

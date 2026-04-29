@@ -17,7 +17,7 @@ import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
 import ScriptEditor from './ScriptEditor';
 import OAuthConfigPanel from './OAuthConfigPanel';
 import type { SaveExistingRequestTabsResult, UnsavedRequestTabSummary } from '../utils/requestTabSyncGuard';
-import { buildVariableSuggestions, type VariableSuggestion } from '../utils/variableAutocomplete';
+import { buildAllVariableSuggestions, DYNAMIC_VARIABLE_SUGGESTIONS, type VariableSuggestion } from '../utils/variableAutocomplete';
 import VarInput from './VarInput';
 import { buildBodyPreview, highlightUnresolved } from '../utils/bodyPreview';
 import { INJECT_TEST_SNIPPET } from '../utils/appEvents';
@@ -57,13 +57,20 @@ function extractPathParamNames(url: string): string[] {
   return names;
 }
 
-function applyPathParams(url: string, params: Array<{ key: string; value: string }>): string {
+function applyPathParams(
+  url: string,
+  params: Array<{ key: string; value: string }>,
+  vars?: Record<string, string>
+): string {
   let resolved = url;
   for (const p of params) {
     if (p.key) {
+      // Resolve {{variable}} tokens in the param value before URL-encoding,
+      // so that e.g. :id = {{userId}} correctly substitutes the variable.
+      const rawValue = vars ? resolveVariables(p.value, vars) : p.value;
       resolved = resolved.replace(
         new RegExp(`:${p.key}(?=/|$|\\?|#)`, 'g'),
-        encodeURIComponent(p.value)
+        encodeURIComponent(rawValue)
       );
     }
   }
@@ -986,7 +993,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
   const col = state.collections.find(c => c._id === activeReq.collectionId);
   const collectionDefinitionVars = buildCollectionDefinitionVarMap(col?.variable ?? []);
   const allVars = buildVarMap(envVars, collVars, state.globalVariables, {}, collectionDefinitionVars);
-  const variableSuggestions = buildVariableSuggestions(allVars);
+  const variableSuggestions = buildAllVariableSuggestions(allVars);
 
   // Sync query params into URL
   function syncParamsToUrl(params: CollectionQueryParam[]) {
@@ -1025,7 +1032,10 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     const openIdx = before.lastIndexOf('{{');
     if (openIdx !== -1 && !before.slice(openIdx + 2).includes('}}')) {
       const query = before.slice(openIdx + 2).toLowerCase();
-      const matches = Object.keys(allVars).filter(k => k.toLowerCase().startsWith(query));
+      const dynamicNames = DYNAMIC_VARIABLE_SUGGESTIONS.map(s => s.name);
+      const dynamicNamesSet = new Set(dynamicNames);
+      const allVarNames = [...dynamicNames, ...Object.keys(allVars).filter(k => !dynamicNamesSet.has(k))];
+      const matches = allVarNames.filter(k => k.toLowerCase().startsWith(query));
       setUrlAcSuggestions(matches);
       setUrlAcIndex(0);
       // Compute horizontal offset: padding-left (12px) + width of text up to {{ opening
@@ -1147,7 +1157,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     }
 
     // Build the item from current edit state
-    const resolvedUrl = applyPathParams(edit.url, edit.pathParams);
+    const resolvedUrl = applyPathParams(edit.url, edit.pathParams, allVars);
     const ancestorScripts = collectAncestorScripts(col?.item ?? [], activeReq.item.id ?? '', col?.event);
     const item: CollectionItem = {
       ...activeReq.item,
@@ -1366,7 +1376,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
       ...activeReq.item,
       request: {
         method: edit.method,
-        url: { raw: applyPathParams(edit.url, edit.pathParams) },
+        url: { raw: applyPathParams(edit.url, edit.pathParams, allVars) },
         header: edit.headers.filter(h => !h.disabled),
         body: edit.bodyMode !== 'none' ? (
           edit.bodyMode === 'soap' ? buildSoapBody(edit) : {

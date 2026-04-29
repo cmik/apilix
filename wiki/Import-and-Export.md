@@ -100,7 +100,7 @@ The **JSON** tab accepts raw JSON pasted into a text area.
 - **Insomnia v4 export (JSON)** — must contain `__export_format: 4` and a `resources` array. Creates one collection per workspace and one environment per named environment with data.
 - **Insomnia v5 export (YAML or JSON)** — must contain `type: collection.insomnia.rest/5.x` and a `collection` array. Creates one collection and optionally one environment.
 - **Postman Collection v2.1** — must contain `info` and `item` keys. Creates a new collection.
-- **Postman Environment** — must contain `name` and `values` keys. Creates a new environment.
+- **Postman Environment** — must contain `name` and `values` keys. Creates a new environment. Variable keys are trimmed of surrounding whitespace; empty keys are discarded.
 - **OpenAPI / Swagger JSON** — if the pasted object contains an `openapi` or `swagger` root key, it is parsed as an OpenAPI spec and a new collection is created.
 
 See [Import — Insomnia](#import--insomnia) for full details on both Insomnia formats.
@@ -127,6 +127,8 @@ Produced by **Insomnia ≤ 9** via the Application Menu → Preferences → Data
 
 **What gets imported:** One **collection per workspace**. Request groups (folders) become nested folders (unlimited depth). Each workspace's named environments with at least one variable become Apilix environments.
 
+> **Variable key normalisation:** On import, all variable keys are automatically trimmed of leading and trailing whitespace. Keys that are empty after trimming are silently discarded.
+
 ### Insomnia v5 (YAML)
 
 Produced by **Insomnia 10+** via the collection **Export** button in the top-right of the collection view.
@@ -142,6 +144,8 @@ Produced by **Insomnia 10+** via the collection **Export** button in the top-rig
 **What gets imported:** One **collection** with all requests from the flat `collection[]` array. If the `environments` block has at least one variable, one Apilix environment is created.
 
 > **Note:** Insomnia v5 exports one collection per file. If you have multiple collections, export them separately and import each file.
+>
+> **Variable key normalisation:** Variable keys are automatically trimmed of surrounding whitespace on import. Empty keys are silently discarded.
 
 ### What gets imported — request fields
 

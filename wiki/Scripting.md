@@ -547,6 +547,8 @@ All stores support the same interface:
 | `.clear()` | Remove all keys (namespaced stores only) |
 | `.toObject()` | Snapshot as a plain JS object |
 
+> **Key trimming:** All store methods automatically trim leading and trailing whitespace from the `key` argument. `apx.environment.set('  token  ', value)` stores under the key `token`, and `apx.environment.get('  token  ')` reads the same entry. Non-string keys are coerced to string before trimming.
+
 | Store | Scope | Notes |
 |---|---|---|
 | `apx.environment` | Active environment | Most commonly used for per-environment config |

@@ -21,6 +21,7 @@ Apilix supports `{{variable}}` substitution everywhere — in URLs, query parame
   - [Collection Variables](#collection-variables)
   - [Data Row Variables (Runner)](#data-row-variables-runner)
   - [Variable Scope Inspector](#variable-scope-inspector)
+  - [Variable Name Rules](#variable-name-rules)
   - [Setting Variables from Scripts](#setting-variables-from-scripts)
     - [Reading variables](#reading-variables)
     - [Writing variables](#writing-variables)
@@ -57,7 +58,9 @@ Variables are resolved at send time — the raw template is stored, not the reso
 | Pre-request script | `const url = apx.variables.get('baseUrl')` |
 | Test script | `apx.expect(apx.variables.get('userId')).to.be.a('string')` |
 
-Variable names are **case-sensitive** and must not contain spaces. Whitespace inside `{{ }}` is trimmed automatically.
+Variable names are **case-sensitive**. Whitespace inside `{{ }}` is trimmed automatically, so `{{ baseUrl }}` resolves the same as `{{baseUrl}}`.
+
+See [Variable Name Rules](#variable-name-rules) for the full set of constraints that apply when you save or import variables.
 
 ### Variable Autocomplete
 
@@ -144,6 +147,8 @@ Each row in the variable table has:
 
 **Deleting:** Click the ✕ icon at the end of a row to remove a variable.
 
+**Variable name validation:** The key field validates the name in real time as you type. The border turns red and an inline error message appears if the name is invalid. The **Save** button is disabled until all errors are resolved. See [Variable Name Rules](#variable-name-rules) for the complete list of constraints.
+
 ### Enabling and Disabling Variables
 
 The checkbox in the first column controls whether a variable participates in resolution. Disabled variables are greyed out and will not override variables from lower-priority scopes.
@@ -169,6 +174,8 @@ Global variables are **cross-collection** — they are available in every collec
 **Access the Globals panel:**
 - Click the **🌐 Globals** tab in the Environments/Globals/Variables panel.
 - Or click the **Globals** icon in the Activity Bar.
+
+> Variable name validation applies here too — the **Save** button is disabled when any key is invalid. See [Variable Name Rules](#variable-name-rules).
 
 ![Globals panel](images/variables-globals-panel.png)
 
@@ -199,6 +206,8 @@ Collection variables are scoped to a single collection. They are available to al
 1. Right-click the collection in the tree and select **Settings**.
 2. Open the **Variables** tab.
 3. Add key/value rows.
+
+Each key input validates in real time; invalid names are highlighted with a red border and an inline error message. The modal's **Save** button is disabled until all keys are valid. See [Variable Name Rules](#variable-name-rules).
 
 ![Collection variables in settings](images/variables-collection-settings.png)
 
@@ -260,6 +269,44 @@ Each variable is listed with:
 **Filtering:** Type in the search box to filter variables by name.
 
 The Scope Inspector is read-only — edit values in the respective panel (Environments, Globals, or Collection Settings).
+
+---
+
+## Variable Name Rules
+
+These rules apply everywhere you can create or edit a variable key — in environment editors, the Globals panel, collection variable settings, and at import time.
+
+### Allowed characters
+
+A variable name may contain any character **except** whitespace and curly braces `{` `}`.
+
+| ✅ Valid | ❌ Invalid |
+|---|---|
+| `accessToken` | `access token` (space) |
+| `api-key` | `{{token}}` (braces) |
+| `X-Request-ID` | `my\tvar` (tab) |
+| `base_url_v2` | `key name` (leading space) |
+
+### Real-time validation
+
+All variable editors validate key names as you type:
+
+- The key input border turns **red** if the name is invalid.
+- An **inline error message** appears below the offending row immediately.
+- The **Save** button is disabled until all errors are resolved — you cannot accidentally persist an invalid name.
+- Empty rows (no key entered) are silently filtered out on save — they do not trigger a validation error.
+
+### Normalization on save
+
+When you click **Save**, any leading or trailing whitespace in a key is automatically stripped before the variable is stored. An internal space (e.g. `my token`) is **not** silently converted — it triggers a validation error that must be fixed first.
+
+### At import time
+
+When importing environments from Postman JSON, Insomnia v4, or Insomnia v5 files, all variable keys are automatically trimmed of surrounding whitespace. Keys that are empty after trimming are dropped silently.
+
+### In scripts
+
+Key arguments passed to `apx.environment.set()`, `apx.globals.set()`, and `apx.collectionVariables.set()` are automatically trimmed of leading and trailing whitespace at runtime. This means `apx.environment.set('  token  ', value)` stores the value under the key `token`.
 
 ---
 

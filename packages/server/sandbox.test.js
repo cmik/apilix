@@ -396,3 +396,36 @@ test('runScript without vmContext (fresh-context path) still works correctly', a
 
   assert.equal(result.tests[0].passed, true, result.tests[0].error);
 });
+
+// ─── makeVarStore key trimming ────────────────────────────────────────────────
+
+test('environment.set with padded key trims and stores under trimmed key', async () => {
+  const result = await runScript(
+    `apx.environment.set('  token  ', 'abc');`,
+    baseResponse,
+    {},
+    { context: { environment: {} } },
+  );
+  assert.equal(result.updatedEnvMutations['token'], 'abc');
+  assert.equal(result.updatedEnvMutations['  token  '], undefined);
+});
+
+test('environment.get retrieves value set under padded key by trimmed key', async () => {
+  const result = await runScript(
+    `apx.environment.set('  x  ', 'v'); apx.test('get trimmed', () => { apx.expect(apx.environment.get('x')).to.equal('v'); });`,
+    baseResponse,
+    {},
+    { context: { environment: {} } },
+  );
+  assert.equal(result.tests[0].passed, true, result.tests[0].error);
+});
+
+test('globals.set with padded key trims and stores under trimmed key', async () => {
+  const result = await runScript(
+    `apx.globals.set(' g ', 'v'); apx.test('globals get', () => { apx.expect(apx.globals.get('g')).to.equal('v'); });`,
+    baseResponse,
+    {},
+    { context: { globals: {} } },
+  );
+  assert.equal(result.tests[0].passed, true, result.tests[0].error);
+});

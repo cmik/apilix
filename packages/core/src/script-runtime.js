@@ -450,33 +450,37 @@ function createApx(response, variables, updatedVariables, updatedGlobalMutations
     const deletedKeys = new Set();
     return {
       get(key) {
+        const k = String(key).trim();
         if (isNamespaced) {
-          if (deletedKeys.has(key)) return undefined;
-          if (namespaceBucket && Object.prototype.hasOwnProperty.call(namespaceBucket, key)) return namespaceBucket[key];
-          if (namespaceSrc && Object.prototype.hasOwnProperty.call(namespaceSrc, key)) return namespaceSrc[key];
+          if (deletedKeys.has(k)) return undefined;
+          if (namespaceBucket && Object.prototype.hasOwnProperty.call(namespaceBucket, k)) return namespaceBucket[k];
+          if (namespaceSrc && Object.prototype.hasOwnProperty.call(namespaceSrc, k)) return namespaceSrc[k];
           return undefined;
         }
         // Generic (apx.variables): mutations overlay takes priority over original flat
-        if (updatedVariables[key] !== undefined) return updatedVariables[key];
-        return Object.prototype.hasOwnProperty.call(variables, key) ? variables[key] : undefined;
+        if (updatedVariables[k] !== undefined) return updatedVariables[k];
+        return Object.prototype.hasOwnProperty.call(variables, k) ? variables[k] : undefined;
       },
       set(key, value) {
-        updatedVariables[key] = String(value);
-        deletedKeys.delete(key);
-        if (namespaceBucket) namespaceBucket[key] = String(value);
+        const k = String(key).trim();
+        updatedVariables[k] = String(value);
+        deletedKeys.delete(k);
+        if (namespaceBucket) namespaceBucket[k] = String(value);
       },
       unset(key) {
-        delete updatedVariables[key];
-        if (namespaceBucket) delete namespaceBucket[key];
-        if (isNamespaced) deletedKeys.add(key);
+        const k = String(key).trim();
+        delete updatedVariables[k];
+        if (namespaceBucket) delete namespaceBucket[k];
+        if (isNamespaced) deletedKeys.add(k);
       },
       has(key) {
+        const k = String(key).trim();
         if (isNamespaced) {
-          if (deletedKeys.has(key)) return false;
-          if (namespaceBucket && Object.prototype.hasOwnProperty.call(namespaceBucket, key)) return true;
-          return !!(namespaceSrc && Object.prototype.hasOwnProperty.call(namespaceSrc, key));
+          if (deletedKeys.has(k)) return false;
+          if (namespaceBucket && Object.prototype.hasOwnProperty.call(namespaceBucket, k)) return true;
+          return !!(namespaceSrc && Object.prototype.hasOwnProperty.call(namespaceSrc, k));
         }
-        return key in variables || key in updatedVariables;
+        return k in variables || k in updatedVariables;
       },
       clear() {
         if (isNamespaced) {

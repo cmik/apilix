@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useApp, generateId } from '../store';
 import type { AppEnvironment } from '../types';
 import ConfirmModal from './ConfirmModal';
+import { normalizeVariableName, storageKeyError } from '../utils/variableUtils';
 
 interface EnvEditorProps {
   env: AppEnvironment;
@@ -31,6 +32,8 @@ function EnvEditor({ env, onSave, onCancel }: EnvEditorProps) {
     setRows(r => r.map((row, idx) => (idx === i ? { ...row, secret: !row.secret } : row)));
   }
 
+  const hasErrors = rows.some(r => storageKeyError(r.key) !== null);
+
   return (
     <div className="flex flex-col gap-3 h-full">
       <div className="flex items-center gap-2">
@@ -41,8 +44,9 @@ function EnvEditor({ env, onSave, onCancel }: EnvEditorProps) {
           className="flex-1 bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-orange-500"
         />
         <button
-          onClick={() => onSave({ ...env, name, values: rows.filter(r => r.key) })}
-          className="px-4 py-1.5 bg-orange-600 hover:bg-orange-500 text-white text-sm rounded font-medium transition-colors"
+          onClick={() => onSave({ ...env, name, values: rows.filter(r => r.key.trim()).map(r => ({ ...r, key: normalizeVariableName(r.key) })) })}
+          disabled={hasErrors}
+          className="px-4 py-1.5 bg-orange-600 hover:bg-orange-500 text-white text-sm rounded font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Save
         </button>
@@ -53,6 +57,9 @@ function EnvEditor({ env, onSave, onCancel }: EnvEditorProps) {
           Cancel
         </button>
       </div>
+      {hasErrors && (
+        <p className="text-xs text-red-400">Fix variable name errors before saving.</p>
+      )}
 
       <div className="overflow-y-auto flex-1">
         <table className="w-full text-sm">
@@ -81,7 +88,12 @@ function EnvEditor({ env, onSave, onCancel }: EnvEditorProps) {
                     value={row.key}
                     onChange={e => updateRow(i, 'key', e.target.value)}
                     placeholder="key"
-                    className={`w-full bg-slate-700/50 border border-transparent focus:border-slate-500 rounded px-2 py-0.5 text-slate-200 font-mono focus:outline-none ${
+                    title={storageKeyError(row.key) ?? undefined}
+                    className={`w-full bg-slate-700/50 border rounded px-2 py-0.5 text-slate-200 font-mono focus:outline-none ${
+                      storageKeyError(row.key)
+                        ? 'border-red-500 focus:border-red-400'
+                        : 'border-transparent focus:border-slate-500'
+                    } ${
                       !row.enabled ? 'opacity-40' : ''
                     }`}
                   />
