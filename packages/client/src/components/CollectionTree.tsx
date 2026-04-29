@@ -8,6 +8,8 @@ import {
   renameItemById, updateItemById, removeItemById, addItemToFolder, duplicateItem,
   moveItemInTree, extractItemById, insertItemInTree, isDescendantOf, getAllRequestIds,
   flattenRequestNames, flattenRequestItems, sortChildrenByName,
+  removeItemsByIds, getCollectionLevelCandidates, getItemLevelCandidates,
+  type BulkDeleteCandidate,
 } from '../utils/treeHelpers';
 import { generateHurlFromItems } from '../utils/hurlUtils';
 import { useImportFile } from '../utils/useImportFile';
@@ -256,6 +258,185 @@ function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   );
 }
 
+// --- BulkDeleteModal ---
+
+interface BulkDeleteModalProps {
+  candidates: BulkDeleteCandidate[];
+  /** Id of the item that triggered the action — pre-selected. */
+  initialSelectedId?: string;
+  onConfirm: (selectedIds: Set<string>) => void;
+  onCancel: () => void;
+}
+
+const KIND_ICON: Record<BulkDeleteCandidate['kind'], string> = {
+  collection: '📚',
+  folder: '📁',
+  request: '→',
+};
+const KIND_LABEL: Record<BulkDeleteCandidate['kind'], string> = {
+  collection: 'Collection',
+  folder: 'Folder',
+  request: 'Request',
+};
+const KIND_BADGE: Record<BulkDeleteCandidate['kind'], string> = {
+  collection: 'text-orange-400 bg-orange-400/10',
+  folder: 'text-sky-400 bg-sky-400/10',
+  request: 'text-slate-300 bg-slate-700',
+};
+
+function BulkDeleteModal({ candidates, initialSelectedId, onConfirm, onCancel }: BulkDeleteModalProps) {
+  const [filter, setFilter] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(() => {
+    const s = new Set<string>();
+    if (initialSelectedId) s.add(initialSelectedId);
+    return s;
+  });
+
+  // Keep a stable ref to onCancel so the Escape listener doesn't need to
+  // re-register on every parent render.
+  const onCancelRef = useRef(onCancel);
+  useEffect(() => { onCancelRef.current = onCancel; });
+
+  const q = filter.trim().toLowerCase();
+  const filtered = q
+    ? candidates.filter(c =>
+        c.name.toLowerCase().includes(q) ||
+        c.path.toLowerCase().includes(q) ||
+        c.collectionName.toLowerCase().includes(q)
+      )
+    : candidates;
+
+  const allVisible = filtered.length > 0 && filtered.every(c => selected.has(c.id));
+  const noneVisibleSelected = filtered.length > 0 && filtered.every(c => !selected.has(c.id));
+
+  function toggle(id: string) {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function selectAllVisible() {
+    setSelected(prev => { const next = new Set(prev); filtered.forEach(c => next.add(c.id)); return next; });
+  }
+
+  function clearVisible() {
+    setSelected(prev => { const next = new Set(prev); filtered.forEach(c => next.delete(c.id)); return next; });
+  }
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancelRef.current(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []); // stable — onCancelRef.current is updated above on every render
+
+  return createPortal(
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60" onClick={onCancel}>
+      <div
+        className="relative z-10 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl w-full max-w-lg mx-4 flex flex-col"
+        style={{ maxHeight: '80vh' }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700 shrink-0">
+          <h2 className="text-sm font-semibold text-slate-200">Delete multiple</h2>
+          <button onClick={onCancel} className="text-slate-500 hover:text-slate-200 text-xl leading-none px-1">×</button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-hidden flex flex-col px-5 py-4 gap-3 min-h-0">
+          <input
+            type="text"
+            placeholder="Filter items…"
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+            className="w-full bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2.5 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none shrink-0"
+            autoFocus
+          />
+
+          <div className="flex items-center justify-between shrink-0">
+            <span className="text-xs text-slate-500">
+              {selected.size} of {candidates.length} selected
+            </span>
+            <div className="flex gap-3">
+              <button
+                onClick={selectAllVisible}
+                disabled={allVisible}
+                className="text-xs text-orange-400 hover:text-orange-300 transition-colors disabled:opacity-40"
+              >
+                Select all visible
+              </button>
+              <button
+                onClick={clearVisible}
+                disabled={noneVisibleSelected}
+                className="text-xs text-slate-400 hover:text-slate-200 transition-colors disabled:opacity-40"
+              >
+                Clear visible
+              </button>
+            </div>
+          </div>
+
+          <ul className="flex-1 overflow-y-auto space-y-0.5 pr-1 min-h-0">
+            {filtered.length === 0 && (
+              <li className="text-xs text-slate-500 italic px-2 py-4 text-center">No items match</li>
+            )}
+            {filtered.map(candidate => (
+              <li key={candidate.id}>
+                <label className="flex items-start gap-2.5 px-2 py-1.5 rounded hover:bg-slate-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(candidate.id)}
+                    onChange={() => toggle(candidate.id)}
+                    className="accent-orange-500 shrink-0 mt-0.5"
+                  />
+                  <span className="shrink-0 text-sm leading-none mt-0.5">{KIND_ICON[candidate.kind]}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs text-slate-200 truncate">{candidate.name}</div>
+                    {candidate.kind !== 'collection' && (
+                      <div className="text-[10px] text-slate-500 truncate mt-0.5">
+                        {[candidate.collectionName, candidate.path].filter(Boolean).join(' / ')}
+                      </div>
+                    )}
+                  </div>
+                  <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded shrink-0 self-start mt-0.5 ${KIND_BADGE[candidate.kind]}`}>
+                    {KIND_LABEL[candidate.kind]}
+                  </span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-3 border-t border-slate-700 flex items-center justify-between shrink-0">
+          <p className="text-xs text-slate-500 mr-4">
+            {selected.size > 0
+              ? <>Permanently delete <strong className="text-red-400">{selected.size}</strong> item{selected.size !== 1 ? 's' : ''}. Cannot be undone.</>
+              : 'Select items to delete.'}
+          </p>
+          <div className="flex gap-2 shrink-0">
+            <button
+              onClick={onCancel}
+              className="px-3 py-1.5 text-xs rounded border border-slate-700 hover:border-slate-600 text-slate-400 hover:text-slate-200 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              disabled={selected.size === 0}
+              onClick={() => onConfirm(selected)}
+              className="px-3 py-1.5 text-xs rounded bg-red-700 hover:bg-red-600 text-white font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              Delete{selected.size > 0 ? ` ${selected.size}` : ''}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 // --- Inline rename input ---
 
 function InlineRename({
@@ -342,6 +523,7 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
   const [newItemId, setNewItemId] = useState<string | null>(null);
   const [mockItems, setMockItems] = useState<CollectionItem[] | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string; isFolder: boolean } | null>(null);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const rowRef = useRef<HTMLDivElement>(null);
 
   const isFolder = Array.isArray(item.item);
@@ -382,6 +564,21 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
     if (!item.id) return;
     setMenu(null);
     setPendingDelete({ id: item.id, name: item.name, isFolder });
+  }
+
+  function handleBulkDelete() {
+    setMenu(null);
+    setBulkDeleteOpen(true);
+  }
+
+  function confirmBulkDelete(selectedIds: Set<string>) {
+    const latestCollection = state.collections.find(c => c._id === collection._id);
+    if (!latestCollection) { setBulkDeleteOpen(false); return; }
+    dispatch({
+      type: 'UPDATE_COLLECTION',
+      payload: { ...latestCollection, item: removeItemsByIds(latestCollection.item, selectedIds) },
+    });
+    setBulkDeleteOpen(false);
   }
 
   function confirmDelete() {
@@ -515,6 +712,7 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
     },
     { label: 'Duplicate', icon: '⧉', onClick: handleDuplicate },
     { label: 'Delete', icon: '🗑', danger: true, onClick: handleDelete },
+    { label: 'Delete multiple…', icon: '🗑', danger: true, onClick: handleBulkDelete },
   ];
 
   const indentPx = depth * 12 + 8;
@@ -635,6 +833,15 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
             onCancel={() => setPendingDelete(null)}
           />
         )}
+
+        {bulkDeleteOpen && item.id && (
+          <BulkDeleteModal
+            candidates={getItemLevelCandidates(collection.item, item.id, collectionId, collection.info.name)}
+            initialSelectedId={item.id}
+            onConfirm={confirmBulkDelete}
+            onCancel={() => setBulkDeleteOpen(false)}
+          />
+        )}
       </div>
     );
   }
@@ -710,6 +917,15 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
           onCancel={() => setPendingDelete(null)}
         />
       )}
+
+      {bulkDeleteOpen && item.id && (
+        <BulkDeleteModal
+          candidates={getItemLevelCandidates(collection.item, item.id, collectionId, collection.info.name)}
+          initialSelectedId={item.id}
+          onConfirm={confirmBulkDelete}
+          onCancel={() => setBulkDeleteOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -750,6 +966,7 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
   const [showSettings, setShowSettings] = useState(false);
   const [newItemId, setNewItemId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   function handleHeaderDragOver(e: React.DragEvent) {
     if (!dragCtx.draggingId) return;
@@ -857,6 +1074,38 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
     setPendingDelete(null);
   }
 
+  function handleBulkDelete() {
+    setMenu(null);
+    setBulkDeleteOpen(true);
+  }
+
+  function confirmBulkDelete(selectedIds: Set<string>) {
+    const collectionIds = new Set(state.collections.map(c => c._id));
+    const selectedCollectionIds = new Set([...selectedIds].filter(id => collectionIds.has(id)));
+
+    // Build map of item ids to delete per collection, skipping collections being fully removed
+    const candidates = getCollectionLevelCandidates(state.collections);
+    const itemsByCollection = new Map<string, Set<string>>();
+    for (const cand of candidates) {
+      if (cand.kind === 'collection') continue;
+      if (!selectedIds.has(cand.id)) continue;
+      if (selectedCollectionIds.has(cand.collectionId)) continue; // parent collection already being removed
+      if (!itemsByCollection.has(cand.collectionId)) itemsByCollection.set(cand.collectionId, new Set());
+      itemsByCollection.get(cand.collectionId)!.add(cand.id);
+    }
+
+    for (const colId of selectedCollectionIds) {
+      dispatch({ type: 'REMOVE_COLLECTION', payload: colId });
+    }
+    for (const [colId, itemIds] of itemsByCollection) {
+      const col = state.collections.find(c => c._id === colId);
+      if (!col) continue;
+      dispatch({ type: 'UPDATE_COLLECTION', payload: { ...col, item: removeItemsByIds(col.item, itemIds) } });
+    }
+
+    setBulkDeleteOpen(false);
+  }
+
   const menuItems: MenuItem[] = [
     { label: 'View settings', icon: '⚙️', onClick: () => setShowSettings(true) },
     { label: 'Add request', icon: '➕', onClick: handleAddRequest },
@@ -890,6 +1139,12 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
       icon: '🗑',
       danger: true,
       onClick: promptDeleteCollection,
+    },
+    {
+      label: 'Delete multiple…',
+      icon: '🗑',
+      danger: true,
+      onClick: handleBulkDelete,
     },
   ];
 
@@ -1001,6 +1256,15 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
           danger={true}
           onConfirm={confirmDeleteCollection}
           onCancel={() => setPendingDelete(null)}
+        />
+      )}
+
+      {bulkDeleteOpen && (
+        <BulkDeleteModal
+          candidates={getCollectionLevelCandidates(state.collections)}
+          initialSelectedId={collection._id}
+          onConfirm={confirmBulkDelete}
+          onCancel={() => setBulkDeleteOpen(false)}
         />
       )}
     </div>

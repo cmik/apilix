@@ -373,6 +373,105 @@ export function sortChildrenByName(items: CollectionItem[], folderId?: string): 
   });
 }
 
+// ─── Bulk Delete Helpers ──────────────────────────────────────────────────────
+
+export interface BulkDeleteCandidate {
+  id: string;
+  name: string;
+  kind: 'collection' | 'folder' | 'request';
+  /** For collection candidates: same as id. For item candidates: the owning collection's _id. */
+  collectionId: string;
+  collectionName: string;
+  /** Ancestor breadcrumb (e.g. "Folder A / Folder B"). Empty string for root-level items. */
+  path: string;
+}
+
+function walkBulkCandidates(
+  nodes: CollectionItem[],
+  collectionId: string,
+  collectionName: string,
+  pathPrefix: string,
+  result: BulkDeleteCandidate[],
+): void {
+  for (const node of nodes) {
+    if (!node.id) continue;
+    result.push({
+      id: node.id,
+      name: node.name,
+      kind: Array.isArray(node.item) ? 'folder' : 'request',
+      collectionId,
+      collectionName,
+      path: pathPrefix,
+    });
+    if (Array.isArray(node.item)) {
+      const childPath = pathPrefix ? `${pathPrefix} / ${node.name}` : node.name;
+      walkBulkCandidates(node.item, collectionId, collectionName, childPath, result);
+    }
+  }
+}
+
+/**
+ * Build a flat list of all sibling collections and their descendants as bulk-delete candidates.
+ * Used when the action is triggered at the collection level.
+ */
+export function getCollectionLevelCandidates(collections: AppCollection[]): BulkDeleteCandidate[] {
+  const result: BulkDeleteCandidate[] = [];
+  for (const col of collections) {
+    result.push({
+      id: col._id,
+      name: col.info.name,
+      kind: 'collection',
+      collectionId: col._id,
+      collectionName: col.info.name,
+      path: '',
+    });
+    walkBulkCandidates(col.item, col._id, col.info.name, '', result);
+  }
+  return result;
+}
+
+/**
+ * Build a flat list of sibling items (same parent container as targetId) and their descendants.
+ * Used when the action is triggered on a folder or request inside a collection.
+ */
+export function getItemLevelCandidates(
+  items: CollectionItem[],
+  targetId: string,
+  collectionId: string,
+  collectionName: string,
+): BulkDeleteCandidate[] {
+  function findContainerWithPath(
+    nodes: CollectionItem[],
+    pathPrefix: string,
+  ): { container: CollectionItem[]; pathPrefix: string } | null {
+    if (nodes.some(n => n.id === targetId)) return { container: nodes, pathPrefix };
+    for (const node of nodes) {
+      if (node.item) {
+        const childPath = pathPrefix ? `${pathPrefix} / ${node.name}` : node.name;
+        const found = findContainerWithPath(node.item, childPath);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  const containerResult = findContainerWithPath(items, '');
+  if (!containerResult) return [];
+
+  const result: BulkDeleteCandidate[] = [];
+  walkBulkCandidates(containerResult.container, collectionId, collectionName, containerResult.pathPrefix, result);
+  return result;
+}
+
+/**
+ * Remove all items whose ids are present in the given set, recursively.
+ */
+export function removeItemsByIds(items: CollectionItem[], ids: Set<string>): CollectionItem[] {
+  return items
+    .filter(item => !item.id || !ids.has(item.id))
+    .map(item => item.item ? { ...item, item: removeItemsByIds(item.item, ids) } : item);
+}
+
 /**
  * Export workflow from runner iterations into a Postman v2.1 collection.
  * Flattens all iterations and results in execution order, mapping each

@@ -16,7 +16,11 @@ import {
   collectAncestorScripts,
   sortItemsByName,
   sortChildrenByName,
+  removeItemsByIds,
+  getCollectionLevelCandidates,
+  getItemLevelCandidates,
 } from './treeHelpers';
+import type { AppCollection } from '../types';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -504,5 +508,210 @@ describe('sortChildrenByName', () => {
     const f1 = result.find(i => i.id === 'f1')!;
     const f2 = f1.item!.find(i => i.id === 'f2')!;
     expect(f2.item!.map(i => i.id)).toEqual(['r1', 'r2']);
+  });
+});
+
+// ─── Helper: makeCollection ───────────────────────────────────────────────────
+
+function makeCollection(id: string, name: string, items: CollectionItem[] = []): AppCollection {
+  return {
+    _id: id,
+    info: { name, schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
+    item: items,
+  } as AppCollection;
+}
+
+// ─── removeItemsByIds ─────────────────────────────────────────────────────────
+
+describe('removeItemsByIds', () => {
+  it('removes multiple top-level items', () => {
+    const tree = [req('r1', 'R1'), req('r2', 'R2'), req('r3', 'R3')];
+    const result = removeItemsByIds(tree, new Set(['r1', 'r3']));
+    expect(result.map(i => i.id)).toEqual(['r2']);
+  });
+
+  it('removes nested items', () => {
+    const tree = [folder('f1', 'Folder', [req('r1', 'R1'), req('r2', 'R2')])];
+    const result = removeItemsByIds(tree, new Set(['r1']));
+    const f1 = findItemInTree(result, 'f1')!;
+    expect(f1.item?.map(i => i.id)).toEqual(['r2']);
+  });
+
+  it('removes a folder and all its contents', () => {
+    const tree = [folder('f1', 'Folder', [req('r1', 'R1'), req('r2', 'R2')]), req('r3', 'R3')];
+    const result = removeItemsByIds(tree, new Set(['f1']));
+    expect(result.map(i => i.id)).toEqual(['r3']);
+  });
+
+  it('removes both a folder and a sibling in one pass', () => {
+    const tree = [req('r1', 'R1'), folder('f1', 'Folder', [req('r2', 'R2')]), req('r3', 'R3')];
+    const result = removeItemsByIds(tree, new Set(['r1', 'f1']));
+    expect(result.map(i => i.id)).toEqual(['r3']);
+  });
+
+  it('is a no-op for unknown ids', () => {
+    const tree = [req('r1', 'R1'), req('r2', 'R2')];
+    const result = removeItemsByIds(tree, new Set(['nonexistent']));
+    expect(result.map(i => i.id)).toEqual(['r1', 'r2']);
+  });
+
+  it('returns empty array when all items are removed', () => {
+    const tree = [req('r1', 'R1'), req('r2', 'R2')];
+    const result = removeItemsByIds(tree, new Set(['r1', 'r2']));
+    expect(result).toEqual([]);
+  });
+
+  it('skips items with missing id', () => {
+    const tree: CollectionItem[] = [
+      { id: undefined as unknown as string, name: 'No ID', request: { method: 'GET', url: '' } },
+      req('r1', 'R1'),
+    ];
+    const result = removeItemsByIds(tree, new Set(['r1']));
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe('No ID');
+  });
+});
+
+// ─── getCollectionLevelCandidates ─────────────────────────────────────────────
+
+describe('getCollectionLevelCandidates', () => {
+  it('includes each collection as a candidate of kind "collection"', () => {
+    const cols = [makeCollection('c1', 'Col A'), makeCollection('c2', 'Col B')];
+    const result = getCollectionLevelCandidates(cols);
+    const colCandidates = result.filter(c => c.kind === 'collection');
+    expect(colCandidates.map(c => c.id)).toEqual(['c1', 'c2']);
+  });
+
+  it('includes nested folders and requests as candidates', () => {
+    const cols = [
+      makeCollection('c1', 'Col A', [
+        folder('f1', 'Folder', [req('r1', 'Request')]),
+      ]),
+    ];
+    const result = getCollectionLevelCandidates(cols);
+    const ids = result.map(c => c.id);
+    expect(ids).toContain('c1');
+    expect(ids).toContain('f1');
+    expect(ids).toContain('r1');
+  });
+
+  it('returns correct kind for folders and requests', () => {
+    const cols = [makeCollection('c1', 'Col', [folder('f1', 'F', [req('r1', 'R')])])];
+    const result = getCollectionLevelCandidates(cols);
+    expect(result.find(c => c.id === 'f1')?.kind).toBe('folder');
+    expect(result.find(c => c.id === 'r1')?.kind).toBe('request');
+  });
+
+  it('sets collectionId correctly for nested items', () => {
+    const cols = [makeCollection('c1', 'Col', [folder('f1', 'F', [req('r1', 'R')])])];
+    const result = getCollectionLevelCandidates(cols);
+    expect(result.find(c => c.id === 'f1')?.collectionId).toBe('c1');
+    expect(result.find(c => c.id === 'r1')?.collectionId).toBe('c1');
+  });
+
+  it('sets path correctly for deeply nested items', () => {
+    const cols = [makeCollection('c1', 'Col', [folder('f1', 'Folder', [req('r1', 'Req')])])];
+    const result = getCollectionLevelCandidates(cols);
+    expect(result.find(c => c.id === 'r1')?.path).toBe('Folder');
+    expect(result.find(c => c.id === 'f1')?.path).toBe('');
+  });
+
+  it('returns empty array for empty collections list', () => {
+    expect(getCollectionLevelCandidates([])).toEqual([]);
+  });
+
+  it('returns only collection candidate for empty collection', () => {
+    const cols = [makeCollection('c1', 'Empty')];
+    const result = getCollectionLevelCandidates(cols);
+    expect(result).toHaveLength(1);
+    expect(result[0].kind).toBe('collection');
+  });
+
+  it('skips items without an id', () => {
+    const cols = [
+      makeCollection('c1', 'Col', [
+        { id: undefined as unknown as string, name: 'No ID', request: { method: 'GET', url: '' } },
+      ]),
+    ];
+    const result = getCollectionLevelCandidates(cols);
+    expect(result.some(c => c.name === 'No ID')).toBe(false);
+  });
+});
+
+// ─── getItemLevelCandidates ───────────────────────────────────────────────────
+
+describe('getItemLevelCandidates', () => {
+  it('returns siblings of a top-level item (all root items)', () => {
+    const items = [req('r1', 'R1'), req('r2', 'R2'), folder('f1', 'F1', [req('r3', 'R3')])];
+    const result = getItemLevelCandidates(items, 'r1', 'c1', 'Col');
+    const ids = result.map(c => c.id);
+    expect(ids).toContain('r1');
+    expect(ids).toContain('r2');
+    expect(ids).toContain('f1');
+    expect(ids).toContain('r3');
+  });
+
+  it('returns siblings and descendants when targeting a top-level folder', () => {
+    const items = [folder('f1', 'F1', [req('r1', 'R1')]), req('r2', 'R2')];
+    const result = getItemLevelCandidates(items, 'f1', 'c1', 'Col');
+    const ids = result.map(c => c.id);
+    expect(ids).toContain('f1');
+    expect(ids).toContain('r1');  // descendant of f1
+    expect(ids).toContain('r2');  // sibling of f1
+  });
+
+  it('returns only items within the same parent folder, not the full collection', () => {
+    const items = [
+      req('r_root', 'Root Request'),
+      folder('f1', 'F1', [req('r1', 'R1'), req('r2', 'R2')]),
+    ];
+    const result = getItemLevelCandidates(items, 'r1', 'c1', 'Col');
+    const ids = result.map(c => c.id);
+    // siblings of r1 inside f1
+    expect(ids).toContain('r1');
+    expect(ids).toContain('r2');
+    // root-level items NOT included
+    expect(ids).not.toContain('r_root');
+    expect(ids).not.toContain('f1');
+  });
+
+  it('includes descendants of sibling folders', () => {
+    const items = [
+      folder('f1', 'F1', [
+        req('r1', 'R1'),
+        folder('f2', 'F2', [req('r2', 'R2')]),
+      ]),
+    ];
+    const result = getItemLevelCandidates(items, 'r1', 'c1', 'Col');
+    const ids = result.map(c => c.id);
+    expect(ids).toContain('r1');
+    expect(ids).toContain('f2');
+    expect(ids).toContain('r2');  // descendant of sibling f2
+  });
+
+  it('returns empty array when targetId is not found', () => {
+    const items = [req('r1', 'R1')];
+    expect(getItemLevelCandidates(items, 'nonexistent', 'c1', 'Col')).toEqual([]);
+  });
+
+  it('sets collectionId and collectionName on all candidates', () => {
+    const items = [req('r1', 'R1'), req('r2', 'R2')];
+    const result = getItemLevelCandidates(items, 'r1', 'c1', 'My Col');
+    result.forEach(c => {
+      expect(c.collectionId).toBe('c1');
+      expect(c.collectionName).toBe('My Col');
+    });
+  });
+
+  it('sets path to empty string for root-level candidates', () => {
+    const items = [req('r1', 'R1'), req('r2', 'R2')];
+    const result = getItemLevelCandidates(items, 'r1', 'c1', 'Col');
+    result.forEach(c => expect(c.path).toBe(''));
+  });
+
+  it('sets path to folder name for candidates inside a folder', () => {
+    const items = [folder('f1', 'Outer', [req('r1', 'R1'), req('r2', 'R2')])];
+    const result = getItemLevelCandidates(items, 'r1', 'c1', 'Col');
+    result.forEach(c => expect(c.path).toBe('Outer'));
   });
 });
