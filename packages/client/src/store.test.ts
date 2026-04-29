@@ -5,7 +5,7 @@ vi.mock('./api', () => ({ API_BASE: '/api', executeRequest: vi.fn() }));
 vi.mock('./utils/storageDriver', () => ({}));
 vi.mock('./utils/snapshotEngine', () => ({}));
 
-import { appReducer, initialState } from './store';
+import { appReducer, initialState, parseEnvironmentFile } from './store';
 import type { AppState, HistoryRequest, CollectionItem, Workspace, WorkspaceData, SavedRunnerRun } from './types';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -1032,5 +1032,70 @@ describe('workspace data import — duplicate workspace ID', () => {
     // Guard must prevent this in UI; reducer does not deduplicate.
     const count = next.workspaces.filter(w => w.id === 'w-new').length;
     expect(count).toBe(2);
+  });
+});
+
+// ─── parseEnvironmentFile ─────────────────────────────────────────────────────
+
+describe('parseEnvironmentFile', () => {
+  it('imports a well-formed environment without error', () => {
+    const env = parseEnvironmentFile({
+      name: 'Staging',
+      values: [{ key: 'HOST', value: 'example.com', enabled: true }],
+    });
+    expect(env.name).toBe('Staging');
+    expect(env.values).toHaveLength(1);
+    expect(env.values[0].key).toBe('HOST');
+  });
+
+  it('silently drops rows with a null key', () => {
+    const env = parseEnvironmentFile({
+      name: 'Env',
+      values: [
+        { key: null, value: 'x', enabled: true },
+        { key: 'VALID', value: 'ok', enabled: true },
+      ],
+    });
+    expect(env.values).toHaveLength(1);
+    expect(env.values[0].key).toBe('VALID');
+  });
+
+  it('silently drops rows with an undefined key', () => {
+    const env = parseEnvironmentFile({
+      name: 'Env',
+      values: [
+        { value: 'no-key', enabled: true },
+        { key: 'VALID', value: 'ok', enabled: true },
+      ],
+    });
+    expect(env.values).toHaveLength(1);
+    expect(env.values[0].key).toBe('VALID');
+  });
+
+  it('coerces a numeric key to its string representation without throwing', () => {
+    const env = parseEnvironmentFile({
+      name: 'Env',
+      values: [{ key: 123, value: 'num', enabled: true }],
+    });
+    expect(env.values).toHaveLength(1);
+    expect(env.values[0].key).toBe('123');
+  });
+
+  it('trims whitespace from string keys', () => {
+    const env = parseEnvironmentFile({
+      name: 'Env',
+      values: [{ key: '  PADDED  ', value: 'v', enabled: true }],
+    });
+    expect(env.values[0].key).toBe('PADDED');
+  });
+
+  it('throws for input missing a name', () => {
+    expect(() =>
+      parseEnvironmentFile({ values: [{ key: 'A', value: '1', enabled: true }] })
+    ).toThrow();
+  });
+
+  it('throws for input missing a values array', () => {
+    expect(() => parseEnvironmentFile({ name: 'X' })).toThrow();
   });
 });
