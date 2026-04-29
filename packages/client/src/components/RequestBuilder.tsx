@@ -57,13 +57,20 @@ function extractPathParamNames(url: string): string[] {
   return names;
 }
 
-function applyPathParams(url: string, params: Array<{ key: string; value: string }>): string {
+function applyPathParams(
+  url: string,
+  params: Array<{ key: string; value: string }>,
+  vars?: Record<string, string>
+): string {
   let resolved = url;
   for (const p of params) {
     if (p.key) {
+      // Resolve {{variable}} tokens in the param value before URL-encoding,
+      // so that e.g. :id = {{userId}} correctly substitutes the variable.
+      const rawValue = vars ? resolveVariables(p.value, vars) : p.value;
       resolved = resolved.replace(
         new RegExp(`:${p.key}(?=/|$|\\?|#)`, 'g'),
-        encodeURIComponent(p.value)
+        encodeURIComponent(rawValue)
       );
     }
   }
@@ -1147,7 +1154,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     }
 
     // Build the item from current edit state
-    const resolvedUrl = applyPathParams(edit.url, edit.pathParams);
+    const resolvedUrl = applyPathParams(edit.url, edit.pathParams, allVars);
     const ancestorScripts = collectAncestorScripts(col?.item ?? [], activeReq.item.id ?? '', col?.event);
     const item: CollectionItem = {
       ...activeReq.item,
@@ -1366,7 +1373,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
       ...activeReq.item,
       request: {
         method: edit.method,
-        url: { raw: applyPathParams(edit.url, edit.pathParams) },
+        url: { raw: applyPathParams(edit.url, edit.pathParams, allVars) },
         header: edit.headers.filter(h => !h.disabled),
         body: edit.bodyMode !== 'none' ? (
           edit.bodyMode === 'soap' ? buildSoapBody(edit) : {

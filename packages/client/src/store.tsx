@@ -1228,5 +1228,11 @@ export function parseEnvironmentFile(json: unknown): AppEnvironment {
   if (!env.name || !Array.isArray(env.values)) {
     throw new Error('Not a valid environment: expected JSON with a name and a values array');
   }
-  return { ...env, _id: generateId() };
+  return {
+    ...env,
+    _id: generateId(),
+    values: env.values
+      .filter(v => v.key && v.key.trim() !== '')
+      .map(v => ({ ...v, key: v.key.trim() })),
+  };
 }

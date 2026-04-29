@@ -353,9 +353,9 @@ export function parseInsomniaExport(json: unknown): InsomniaParseResult {
     .filter(env => env.data && Object.keys(env.data).length > 0)
     .map(env => {
       const values = Object.entries(env.data!)
-        .filter(([key]) => key !== '')
+        .filter(([key]) => key.trim() !== '')
         .map(([key, val]) => ({
-          key,
+          key: key.trim(),
           value: typeof val === 'string' ? val : JSON.stringify(val),
           type: 'text',
           enabled: true,
@@ -495,9 +495,9 @@ export function parseInsomniaV5Export(json: InsomniaV5Export): InsomniaParseResu
   const env = json.environments;
   if (env?.data && Object.keys(env.data).length > 0) {
     const values = Object.entries(env.data)
-      .filter(([key]) => key !== '')
+      .filter(([key]) => key.trim() !== '')
       .map(([key, val]) => ({
-        key,
+        key: key.trim(),
         value: typeof val === 'string' ? val : JSON.stringify(val),
         type: 'text',
         enabled: true,

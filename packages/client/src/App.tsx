@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, lazy, Suspense } from 'react'
 import { API_BASE } from './api';
 import { useApp, generateId } from './store';
 import type { AppEnvironment, CollectionItem, WorkspaceData, SyncConfig, SyncMetadata, ConflictPackage } from './types';
+import { normalizeVariableName, storageKeyError } from './utils/variableUtils';
 import Sidebar from './components/Sidebar';
 import ActivityBar from './components/ActivityBar';
 import RequestBuilder from './components/RequestBuilder';
@@ -54,6 +55,7 @@ import { isVersionGreater, fetchLatestGitHubVersion } from './utils/versionUtils
 function EnvQuickPanel({ env, onClose }: { env: AppEnvironment; onClose: () => void }) {
   const { dispatch } = useApp();
   const [rows, setRows] = useState(env.values.map(v => ({ ...v })));
+  const [showBackdropWarning, setShowBackdropWarning] = useState(false);
 
   useEffect(() => {
     setRows(env.values.map(v => ({ ...v })));
@@ -81,14 +83,27 @@ function EnvQuickPanel({ env, onClose }: { env: AppEnvironment; onClose: () => v
     setRows(r => [...r, { key: '', value: '', enabled: true, secret: false }]);
   }
   function save() {
-    dispatch({ type: 'UPDATE_ENVIRONMENT', payload: { ...env, values: rows.filter(r => r.key) } });
+    const hasErrors = rows.some(r => storageKeyError(r.key) !== null);
+    if (hasErrors) return;
+    dispatch({ type: 'UPDATE_ENVIRONMENT', payload: { ...env, values: rows.filter(r => r.key.trim()).map(r => ({ ...r, key: normalizeVariableName(r.key) })) } });
     onClose();
+  }
+
+  /** Called by the backdrop click: saves & closes if valid, otherwise keeps the
+   *  panel open and shows a banner so the user knows why it didn't close. */
+  function tryCloseOrWarn() {
+    const hasErrors = rows.some(r => storageKeyError(r.key) !== null);
+    if (!hasErrors) {
+      save();
+    } else {
+      setShowBackdropWarning(true);
+    }
   }
 
   return (
     <>
       {/* backdrop */}
-      <div className="fixed inset-0 z-40" onClick={save} />
+      <div className="fixed inset-0 z-40" onClick={tryCloseOrWarn} />
       {/* panel */}
       <div className="fixed inset-y-0 right-0 z-50 w-96 bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col">
         {/* header */}
@@ -100,7 +115,8 @@ function EnvQuickPanel({ env, onClose }: { env: AppEnvironment; onClose: () => v
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={save}
-              className="px-3 py-1.5 bg-orange-600 hover:bg-orange-500 text-white text-xs rounded font-medium transition-colors"
+              disabled={rows.some(r => storageKeyError(r.key) !== null)}
+              className="px-3 py-1.5 bg-orange-600 hover:bg-orange-500 text-white text-xs rounded font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Save
             </button>
@@ -118,64 +134,79 @@ function EnvQuickPanel({ env, onClose }: { env: AppEnvironment; onClose: () => v
           {rows.length === 0 && (
             <p className="text-slate-600 text-xs text-center py-6 italic">No variables yet</p>
           )}
-          {rows.map((row, i) => (
-            <div key={i} className="flex items-center gap-1.5 mb-1.5 group">
-              <input
-                type="checkbox"
-                checked={row.enabled}
-                onChange={() => toggle(i)}
-                className="accent-orange-500 shrink-0"
-              />
-              <input
-                value={row.key}
-                onChange={e => update(i, 'key', e.target.value)}
-                placeholder="key"
-                className={`flex-1 min-w-0 bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none ${!row.enabled ? 'opacity-40' : ''}`}
-              />
-              <input
-                type={row.secret ? 'password' : 'text'}
-                value={row.value}
-                onChange={e => update(i, 'value', e.target.value)}
-                placeholder="value"
-                className={`flex-1 min-w-0 bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none ${!row.enabled ? 'opacity-40' : ''}`}
-              />
-              <button
-                onClick={() => toggleSecret(i)}
-                title={row.secret ? 'Secret — encrypted on disk (local only). Remote sync sends plaintext unless \"Encrypt remote data\" is enabled. Click to make plain.' : 'Make secret — will be encrypted on disk (local only). Enable \"Encrypt remote data\" in sync settings to protect it remotely.'}
-                className={`shrink-0 p-0.5 rounded transition-colors ${
-                  row.secret ? 'text-orange-400 hover:text-orange-300' : 'text-slate-600 hover:text-slate-400'
-                }`}
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                  {row.secret ? (
-                    <>
-                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                    </>
-                  ) : (
-                    <>
-                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                      <path d="M7 11V7a5 5 0 0 1 9.9-1" />
-                      <line x1="2" y1="2" x2="22" y2="22" />
-                    </>
-                  )}
-                </svg>
-              </button>
-              <button
-                onClick={() => remove(i)}
-                className="text-slate-600 hover:text-red-400 text-base leading-none opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-              >
-                ×
-              </button>
-            </div>
-          ))}
+          {rows.map((row, i) => {
+            const keyErr = storageKeyError(row.key);
+            return (
+              <div key={i} className="mb-1.5 group">
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    checked={row.enabled}
+                    onChange={() => toggle(i)}
+                    className="accent-orange-500 shrink-0"
+                  />
+                  <input
+                    value={row.key}
+                    onChange={e => update(i, 'key', e.target.value)}
+                    placeholder="key"
+                    className={`flex-1 min-w-0 bg-slate-800 border rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none ${
+                      keyErr ? 'border-red-500 focus:border-red-400' : 'border-slate-700 focus:border-orange-500'
+                    } ${!row.enabled ? 'opacity-40' : ''}`}
+                  />
+                  <input
+                    type={row.secret ? 'password' : 'text'}
+                    value={row.value}
+                    onChange={e => update(i, 'value', e.target.value)}
+                    placeholder="value"
+                    className={`flex-1 min-w-0 bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none ${!row.enabled ? 'opacity-40' : ''}`}
+                  />
+                  <button
+                    onClick={() => toggleSecret(i)}
+                    title={row.secret ? 'Secret — encrypted on disk (local only). Remote sync sends plaintext unless \"Encrypt remote data\" is enabled. Click to make plain.' : 'Make secret — will be encrypted on disk (local only). Enable \"Encrypt remote data\" in sync settings to protect it remotely.'}
+                    className={`shrink-0 p-0.5 rounded transition-colors ${
+                      row.secret ? 'text-orange-400 hover:text-orange-300' : 'text-slate-600 hover:text-slate-400'
+                    }`}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      {row.secret ? (
+                        <>
+                          <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                        </>
+                      ) : (
+                        <>
+                          <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                          <path d="M7 11V7a5 5 0 0 1 9.9-1" />
+                          <line x1="2" y1="2" x2="22" y2="22" />
+                        </>
+                      )}
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => remove(i)}
+                    className="text-slate-600 hover:text-red-400 text-base leading-none opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                  >
+                    ×
+                  </button>
+                </div>
+                {keyErr && (
+                  <p className="text-[10px] text-red-400 pl-5 mt-0.5">{keyErr}</p>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         {/* footer */}
-        <div className="px-3 py-2 border-t border-slate-700 shrink-0">
+        <div className="px-3 py-2 border-t border-slate-700 shrink-0 flex flex-col gap-1.5">
+          {showBackdropWarning && (
+            <p className="text-xs text-red-400">
+              Fix variable name errors before closing, or press × to discard.
+            </p>
+          )}
           <button
             onClick={addRow}
-            className="text-xs text-slate-500 hover:text-orange-400 transition-colors"
+            className="text-xs text-slate-500 hover:text-orange-400 transition-colors self-start"
           >
             + Add variable
           </button>
