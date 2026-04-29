@@ -31,9 +31,10 @@ const STORAGE_KEY_REGEX = /^[^\s{}]+$/;
  * dropped silently on save and need no message).
  */
 export function storageKeyError(key: string): string | null {
-  if (!key) return null;
-  if (/\s/.test(key)) return 'Variable names cannot contain spaces or whitespace';
-  if (/[{}]/.test(key)) return 'Variable names cannot contain { or }';
-  if (!STORAGE_KEY_REGEX.test(key)) return 'Invalid variable name';
+  const trimmedKey = key.trim();
+  if (!trimmedKey) return null;
+  if (/\s/.test(trimmedKey)) return 'Variable names cannot contain spaces or whitespace';
+  if (/[{}]/.test(trimmedKey)) return 'Variable names cannot contain { or }';
+  if (!STORAGE_KEY_REGEX.test(trimmedKey)) return 'Invalid variable name';
   return null;
 }
