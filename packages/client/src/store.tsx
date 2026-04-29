@@ -1232,7 +1232,7 @@ export function parseEnvironmentFile(json: unknown): AppEnvironment {
     ...env,
     _id: generateId(),
     values: env.values
-      .filter(v => v.key && v.key.trim() !== '')
-      .map(v => ({ ...v, key: v.key.trim() })),
+      .filter(v => v.key != null && String(v.key).trim() !== '')
+      .map(v => ({ ...v, key: String(v.key).trim() })),
   };
 }
