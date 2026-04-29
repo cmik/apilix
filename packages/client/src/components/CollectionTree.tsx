@@ -393,8 +393,10 @@ function BulkDeleteModal({ candidates, initialSelectedId, onConfirm, onCancel }:
                   <span className="shrink-0 text-sm leading-none mt-0.5">{KIND_ICON[candidate.kind]}</span>
                   <div className="min-w-0 flex-1">
                     <div className="text-xs text-slate-200 truncate">{candidate.name}</div>
-                    {candidate.path && (
-                      <div className="text-[10px] text-slate-500 truncate mt-0.5">{candidate.path}</div>
+                    {candidate.kind !== 'collection' && (
+                      <div className="text-[10px] text-slate-500 truncate mt-0.5">
+                        {[candidate.collectionName, candidate.path].filter(Boolean).join(' / ')}
+                      </div>
                     )}
                   </div>
                   <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded shrink-0 self-start mt-0.5 ${KIND_BADGE[candidate.kind]}`}>
