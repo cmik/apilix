@@ -166,6 +166,113 @@ test('executePreparedCollectionRun - executes a single GET request and records r
   });
 });
 
+test('executePreparedCollectionRun - resolves :path params from request.url.variable entries', async () => {
+  let seenPath = '';
+  await withServer((req, res) => {
+    seenPath = req.url || '';
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  }, async (baseUrl) => {
+    const payload = makePayload({
+      collection: {
+        info: { name: 'Path Params Test' },
+        item: [{
+          id: 'r1',
+          name: 'Get User',
+          request: {
+            method: 'GET',
+            url: {
+              raw: `${baseUrl}/users/:id`,
+              variable: [{ key: 'id', value: '{{userId}}' }],
+            },
+          },
+        }],
+      },
+      environment: { userId: '123' },
+    });
+
+    const prepared = prepareCollectionRun(payload);
+    const run = await executePreparedCollectionRun(prepared);
+
+    assert.equal(run.errors.length, 0);
+    assert.equal(run.iterations[0].results[0].status, 200);
+    assert.equal(seenPath, '/users/123');
+    assert.equal(run.iterations[0].results[0].resolvedUrl, `${baseUrl}/users/123`);
+  });
+});
+
+test('executePreparedCollectionRun - resolves :path params for URL objects without raw', async () => {
+  let seenPath = '';
+  await withServer((req, res) => {
+    seenPath = req.url || '';
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  }, async (baseUrl) => {
+    const payload = makePayload({
+      collection: {
+        info: { name: 'Path Params Non-Raw Test' },
+        item: [{
+          id: 'r1',
+          name: 'Get User',
+          request: {
+            method: 'GET',
+            url: {
+              protocol: 'https',
+              host: ['api', 'example', 'com'],
+              path: ['users', ':id'],
+              variable: [{ key: 'id', value: '{{userId}}' }],
+            },
+          },
+        }],
+      },
+      environment: { userId: '123' },
+      mockBase: baseUrl,
+    });
+
+    const prepared = prepareCollectionRun(payload);
+    const run = await executePreparedCollectionRun(prepared);
+
+    assert.equal(run.errors.length, 0);
+    assert.equal(run.iterations[0].results[0].status, 200);
+    assert.equal(seenPath, '/users/123');
+    assert.equal(run.iterations[0].results[0].resolvedUrl, `${baseUrl}/users/123`);
+  });
+});
+
+test('executePreparedCollectionRun - leaves :path param untouched when URL variable is disabled', async () => {
+  let seenPath = '';
+  await withServer((req, res) => {
+    seenPath = req.url || '';
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  }, async (baseUrl) => {
+    const payload = makePayload({
+      collection: {
+        info: { name: 'Path Params Disabled Test' },
+        item: [{
+          id: 'r1',
+          name: 'Get User',
+          request: {
+            method: 'GET',
+            url: {
+              raw: `${baseUrl}/users/:id`,
+              variable: [{ key: 'id', value: '123', disabled: true }],
+            },
+          },
+        }],
+      },
+    });
+
+    const prepared = prepareCollectionRun(payload);
+    const run = await executePreparedCollectionRun(prepared);
+
+    assert.equal(run.errors.length, 0);
+    assert.equal(run.iterations[0].results[0].status, 200);
+    assert.equal(seenPath, '/users/:id');
+    assert.equal(run.iterations[0].results[0].resolvedUrl, `${baseUrl}/users/:id`);
+  });
+});
+
 test('executePreparedCollectionRun - emits run-id event with correct runId', async () => {
   await withServer((req, res) => {
     res.writeHead(200); res.end();

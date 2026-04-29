@@ -95,12 +95,31 @@ function resolveParamPairs(params, vars) {
   }));
 }
 
+function escapeRegExp(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function applyPathVariables(url, variables, vars) {
+  let resolved = url;
+  (variables || []).forEach(variable => {
+    if (!variable || variable.disabled) return;
+    const key = resolveVariables(variable.key || '', vars);
+    if (!key) return;
+    const value = encodeURIComponent(resolveVariables(variable.value || '', vars));
+    resolved = resolved.replace(new RegExp(`:${escapeRegExp(key)}(?=/|$|\\?|#)`, 'g'), value);
+  });
+  return resolved;
+}
+
 function resolveUrl(urlObj, vars) {
   if (typeof urlObj === 'string') {
     return resolveVariables(urlObj, vars);
   }
   if (urlObj && urlObj.raw) {
-    return resolveVariables(urlObj.raw, vars);
+    // Keep ordering consistent with Postman-like semantics:
+    // resolve {{vars}} first, then apply :path variables from url.variable.
+    const resolvedRaw = resolveVariables(urlObj.raw, vars);
+    return applyPathVariables(resolvedRaw, urlObj.variable, vars);
   }
   // Reconstruct from parts if raw is absent
   const protocol = (urlObj.protocol || 'https').replace('://', '');
@@ -112,7 +131,8 @@ function resolveUrl(urlObj, vars) {
     .join('&');
   let url = `${protocol}://${host}/${path.replace(/^\//, '')}`;
   if (query) url += `?${query}`;
-  return resolveVariables(url, vars);
+  const resolvedUrl = resolveVariables(url, vars);
+  return applyPathVariables(resolvedUrl, urlObj.variable, vars);
 }
 
 // ─── Auth handling ───────────────────────────────────────────────────────────
