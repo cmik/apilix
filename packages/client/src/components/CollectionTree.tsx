@@ -508,7 +508,7 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
   const dragCtx = useDragCtx();
   const collapseSignal = useContext(CollapseCtx);
   const expandSignal = useContext(ExpandCtx);
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(() => expandSignal >= collapseSignal);
 
   useEffect(() => {
     if (collapseSignal > 0 && Array.isArray(item.item)) setOpen(false);
@@ -952,7 +952,7 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
   const variableSuggestions = buildVariableSuggestions(varMap);
   const collapseSignal = useContext(CollapseCtx);
   const expandSignal = useContext(ExpandCtx);
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(() => expandSignal >= collapseSignal);
 
   useEffect(() => {
     if (collapseSignal > 0) setOpen(false);

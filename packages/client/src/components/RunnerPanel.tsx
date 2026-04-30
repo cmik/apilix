@@ -717,6 +717,7 @@ export default function RunnerPanel() {
   const [saveRunName, setSaveRunName] = useState('');
   const [isViewingLoadedRun, setIsViewingLoadedRun] = useState(false);
   const lastRunRef = useRef<SavedRunnerRun | null>(null);
+  const loadedSavedRunIdRef = useRef<string | null>(null);
   const csvRef = useRef<HTMLInputElement>(null);
   const dragItemRef = useRef<number | null>(null);
   const dragOverRef = useRef<number | null>(null);
@@ -771,6 +772,7 @@ export default function RunnerPanel() {
     setSaveRunName('');
     setIsViewingLoadedRun(false);
     lastRunRef.current = null;
+    loadedSavedRunIdRef.current = null;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.activeWorkspaceId]);
   useEffect(() => {
@@ -800,6 +802,7 @@ export default function RunnerPanel() {
     setConditionalExecution(config.conditionalExecution);
     setResults(run.iterations);
     setIsViewingLoadedRun(true);
+    loadedSavedRunIdRef.current = state.savedRuns.some(r => r.id === run.id) ? run.id : null;
     setConfigOpen(false);
     setError(null);
   }, [dispatch, state.runnerLoadedRun]);
@@ -922,6 +925,7 @@ export default function RunnerPanel() {
     setError(null);
     setResults(null);
     setIsViewingLoadedRun(false);
+    loadedSavedRunIdRef.current = null;
     dispatch({ type: 'SET_RUNNER_RESULTS', payload: null });
 
     try {
@@ -1594,7 +1598,15 @@ export default function RunnerPanel() {
             <div className="flex items-center gap-2 px-3 py-2 bg-sky-900/20 border border-sky-700/40 rounded text-xs text-sky-300 shrink-0">
               <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
               <span className="flex-1">Viewing saved run — modify config and click <span className="font-semibold">Run</span> to re-execute</span>
-              <button onClick={() => setIsViewingLoadedRun(false)} className="text-sky-500 hover:text-sky-300 text-base leading-none">×</button>
+              <button
+                onClick={() => {
+                  setIsViewingLoadedRun(false);
+                  loadedSavedRunIdRef.current = null;
+                }}
+                className="text-sky-500 hover:text-sky-300 text-base leading-none"
+              >
+                ×
+              </button>
             </div>
           )}
 
@@ -1604,7 +1616,9 @@ export default function RunnerPanel() {
               <button
                 disabled={!hasBaseRunToSave}
                 onClick={() => {
-                  setSaveRunName(lastRunRef.current?.name ?? `Run ${new Date().toLocaleDateString()}`);
+                  const existingId = loadedSavedRunIdRef.current;
+                  const existingSaved = existingId ? state.savedRuns.find(r => r.id === existingId) : null;
+                  setSaveRunName(existingSaved?.name ?? lastRunRef.current?.name ?? `Run ${new Date().toLocaleDateString()}`);
                   setSaveRunModalOpen(true);
                 }}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:hover:bg-slate-700 border border-slate-600 text-slate-300 hover:text-slate-100 disabled:text-slate-500 text-xs rounded font-medium transition-colors disabled:cursor-not-allowed"
@@ -1678,10 +1692,17 @@ export default function RunnerPanel() {
         >
           <div className="bg-slate-900 border border-slate-700 rounded-lg shadow-2xl w-full max-w-sm mx-4">
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700 shrink-0">
-              <h3 className="text-sm font-semibold text-slate-200">Save Run</h3>
+              <h3 className="text-sm font-semibold text-slate-200">
+                {loadedSavedRunIdRef.current ? 'Update Saved Run' : 'Save Run'}
+              </h3>
               <button onClick={() => setSaveRunModalOpen(false)} className="text-slate-500 hover:text-slate-300 text-xl leading-none">×</button>
             </div>
             <div className="px-4 py-4 flex flex-col gap-3">
+              {loadedSavedRunIdRef.current && (
+                <p className="text-[11px] text-sky-400 bg-sky-900/20 border border-sky-700/40 rounded px-2 py-1.5">
+                  This will update the existing saved run with new results and config.
+                </p>
+              )}
               <label className="text-xs text-slate-400">Run name</label>
               <input
                 type="text"
@@ -1691,7 +1712,12 @@ export default function RunnerPanel() {
                   if (e.key === 'Enter' && saveRunName.trim()) {
                     const base = lastRunRef.current;
                     if (base) {
-                      dispatch({ type: 'SAVE_RUNNER_RUN', payload: { ...base, id: generateId(), name: saveRunName.trim() } });
+                      const existingId = loadedSavedRunIdRef.current;
+                      if (existingId && state.savedRuns.some(r => r.id === existingId)) {
+                        dispatch({ type: 'UPDATE_SAVED_RUN', payload: { ...base, id: existingId, name: saveRunName.trim() } });
+                      } else {
+                        dispatch({ type: 'SAVE_RUNNER_RUN', payload: { ...base, id: generateId(), name: saveRunName.trim() } });
+                      }
                     }
                     setSaveRunModalOpen(false);
                   }
@@ -1712,13 +1738,18 @@ export default function RunnerPanel() {
                 onClick={() => {
                   const base = lastRunRef.current;
                   if (base && saveRunName.trim()) {
-                    dispatch({ type: 'SAVE_RUNNER_RUN', payload: { ...base, id: generateId(), name: saveRunName.trim() } });
+                    const existingId = loadedSavedRunIdRef.current;
+                    if (existingId && state.savedRuns.some(r => r.id === existingId)) {
+                      dispatch({ type: 'UPDATE_SAVED_RUN', payload: { ...base, id: existingId, name: saveRunName.trim() } });
+                    } else {
+                      dispatch({ type: 'SAVE_RUNNER_RUN', payload: { ...base, id: generateId(), name: saveRunName.trim() } });
+                    }
                   }
                   setSaveRunModalOpen(false);
                 }}
                 className="px-4 py-1.5 bg-orange-600 hover:bg-orange-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs rounded font-medium transition-colors"
               >
-                Save
+                {loadedSavedRunIdRef.current ? 'Update' : 'Save'}
               </button>
             </div>
           </div>

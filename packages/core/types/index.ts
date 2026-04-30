@@ -827,6 +827,7 @@ export type AppAction =
   | { type: 'ADD_RECENT_RUN'; payload: SavedRunnerRun }
   | { type: 'SET_RECENT_RUNS'; payload: SavedRunnerRun[] }
   | { type: 'SAVE_RUNNER_RUN'; payload: SavedRunnerRun }
+  | { type: 'UPDATE_SAVED_RUN'; payload: SavedRunnerRun }
   | { type: 'DELETE_SAVED_RUN'; payload: string }
   | { type: 'SET_SAVED_RUNS'; payload: SavedRunnerRun[] }
   | { type: 'LOAD_RUNNER_RUN'; payload: SavedRunnerRun }
