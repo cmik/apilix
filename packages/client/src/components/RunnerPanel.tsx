@@ -724,7 +724,7 @@ export default function RunnerPanel() {
   const dragOverRef = useRef<number | null>(null);
 
   const selectedCollection = state.collections.find(c => c._id === selectedCollectionId);
-  const hasBaseRunToSave = !!lastRunRef.current || !!loadedRunDataRef.current;
+  const hasBaseRunToSave = !!lastRunRef.current;
 
   // When conditional execution is on, resolve one chain per selected request
   // (primary order) by following setNextRequest() targets (secondary chains).
