@@ -150,6 +150,8 @@ function EntryDetail({
             }}
             className="text-[11px] text-slate-500 hover:text-orange-300 px-2 py-1 rounded hover:bg-slate-800 transition-colors"
             title={detailMode === 'focus' ? 'Use compact detail view' : 'Use focus detail view'}
+            aria-label="Toggle focus/compact detail view"
+            aria-pressed={detailMode === 'focus'}
           >
             {detailMode === 'focus' ? 'Compact view' : 'Focus view'}
           </button>
