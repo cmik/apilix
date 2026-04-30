@@ -1,4 +1,4 @@
-import { useState, useMemo, type ReactNode } from 'react';
+import { useState, useMemo, useEffect, type ReactNode } from 'react';
 import { useApp } from '../store';
 import { buildVarMap } from '../utils/variableResolver';
 import { IconEnvironments, IconGlobals, IconScopeInspector, IconSearch, IconCollection, IconChevronDown, IconEye, IconEyeOff } from './Icons';
@@ -11,33 +11,36 @@ function EnvGlobalsTabBar() {
     <div className="flex border-b border-slate-700 shrink-0 -mx-4 px-4 mb-2">
       <button
         onClick={() => dispatch({ type: 'SET_VIEW', payload: 'environments' })}
-        className={`mr-4 pb-2 text-xs font-medium transition-colors border-b-2 flex items-center gap-1 ${
+        className={`mr-4 pb-2 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 ${
           state.view === 'environments'
             ? 'text-orange-400 border-orange-400'
             : 'text-slate-400 hover:text-slate-200 border-transparent'
         }`}
       >
-        <IconEnvironments className="w-3.5 h-3.5" /> Environments
+        <IconEnvironments className="w-3.5 h-3.5" />
+        Environments
       </button>
       <button
         onClick={() => dispatch({ type: 'SET_VIEW', payload: 'globals' })}
-        className={`mr-4 pb-2 text-xs font-medium transition-colors border-b-2 flex items-center gap-1 ${
+        className={`mr-4 pb-2 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 ${
           state.view === 'globals'
             ? 'text-orange-400 border-orange-400'
             : 'text-slate-400 hover:text-slate-200 border-transparent'
         }`}
       >
-        <IconGlobals className="w-3.5 h-3.5" /> Globals
+        <IconGlobals className="w-3.5 h-3.5" />
+        Globals
       </button>
       <button
         onClick={() => dispatch({ type: 'SET_VIEW', payload: 'variables' })}
-        className={`pb-2 text-xs font-medium transition-colors border-b-2 flex items-center gap-1 ${
+        className={`pb-2 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 ${
           state.view === 'variables'
             ? 'text-orange-400 border-orange-400'
             : 'text-slate-400 hover:text-slate-200 border-transparent'
         }`}
       >
-        <IconScopeInspector className="w-3.5 h-3.5" /> Scope Inspector
+        <IconScopeInspector className="w-3.5 h-3.5" />
+        Scope Inspector
       </button>
     </div>
   );
@@ -75,6 +78,11 @@ function ScopeSection({ title, subtitle, vars, overriddenKeys, filter, defaultOp
   const [open, setOpen] = useState(defaultOpen);
   const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
 
+  // Reset revealed state when the secret key set or variable set changes (e.g. environment switch)
+  useEffect(() => {
+    setRevealedKeys(new Set());
+  }, [secretKeys, vars]);
+
   function toggleReveal(key: string) {
     setRevealedKeys(prev => {
       const next = new Set(prev);
@@ -97,16 +105,17 @@ function ScopeSection({ title, subtitle, vars, overriddenKeys, filter, defaultOp
   return (
     <div className="mb-3 rounded-lg border border-slate-700 overflow-hidden">
       <button
+        type="button"
         className="w-full flex items-center justify-between px-3 py-2 bg-slate-800 hover:bg-slate-750 text-left"
         onClick={() => setOpen(o => !o)}
       >
         <div className="flex items-center gap-2">
-          {icon && <span className="text-slate-400 shrink-0">{icon}</span>}
+          {icon}
           <span className="text-xs font-semibold text-slate-200">{title}</span>
           {subtitle && <span className="text-xs text-slate-500">{subtitle}</span>}
           <span className="text-[10px] bg-slate-700 text-slate-400 px-1.5 py-0.5 rounded-full">{Object.keys(vars).length}</span>
         </div>
-        <IconChevronDown className={`w-4 h-4 text-slate-500 transition-transform ${open ? 'rotate-180' : ''}`} />
+        <IconChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && (
@@ -134,6 +143,7 @@ function ScopeSection({ title, subtitle, vars, overriddenKeys, filter, defaultOp
                       <td className="pr-3 py-1.5 text-right whitespace-nowrap">
                         {isSecret && (
                           <button
+                            type="button"
                             onClick={() => toggleReveal(key)}
                             aria-label={revealed ? 'Hide value' : 'Reveal value'}
                             title={revealed ? 'Hide value' : 'Reveal value'}
@@ -177,6 +187,11 @@ export default function VariableScopeInspector() {
         .map(v => v.key)
     );
   }, [activeEnv]);
+
+  // Reset resolved reveal state when active environment or its secret keys change
+  useEffect(() => {
+    setRevealedResolved(new Set());
+  }, [activeEnv, secretEnvKeys]);
 
   const activeCollectionId = state.activeRequest?.collectionId ?? null;
   const activeCollection = activeCollectionId
@@ -303,6 +318,7 @@ export default function VariableScopeInspector() {
                         <span className="inline-flex items-center gap-1.5">
                           {secret && (
                             <button
+                              type="button"
                               onClick={() => toggleResolvedReveal(key)}
                               aria-label={revealed ? 'Hide value' : 'Reveal value'}
                               title={revealed ? 'Hide value' : 'Reveal value'}
