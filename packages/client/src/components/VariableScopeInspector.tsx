@@ -1,6 +1,9 @@
-import { useState } from 'react';
+import { useState, useMemo, type ReactNode } from 'react';
 import { useApp } from '../store';
 import { buildVarMap } from '../utils/variableResolver';
+import { IconEnvironments, IconGlobals, IconScopeInspector, IconSearch, IconCollection, IconChevronDown, IconEye, IconEyeOff } from './Icons';
+
+const SECRET_MASK = '••••••••';
 
 function EnvGlobalsTabBar() {
   const { state, dispatch } = useApp();
@@ -8,33 +11,33 @@ function EnvGlobalsTabBar() {
     <div className="flex border-b border-slate-700 shrink-0 -mx-4 px-4 mb-2">
       <button
         onClick={() => dispatch({ type: 'SET_VIEW', payload: 'environments' })}
-        className={`mr-4 pb-2 text-xs font-medium transition-colors border-b-2 ${
+        className={`mr-4 pb-2 text-xs font-medium transition-colors border-b-2 flex items-center gap-1 ${
           state.view === 'environments'
             ? 'text-orange-400 border-orange-400'
             : 'text-slate-400 hover:text-slate-200 border-transparent'
         }`}
       >
-        🌍 Environments
+        <IconEnvironments className="w-3.5 h-3.5" /> Environments
       </button>
       <button
         onClick={() => dispatch({ type: 'SET_VIEW', payload: 'globals' })}
-        className={`mr-4 pb-2 text-xs font-medium transition-colors border-b-2 ${
+        className={`mr-4 pb-2 text-xs font-medium transition-colors border-b-2 flex items-center gap-1 ${
           state.view === 'globals'
             ? 'text-orange-400 border-orange-400'
             : 'text-slate-400 hover:text-slate-200 border-transparent'
         }`}
       >
-        🌐 Globals
+        <IconGlobals className="w-3.5 h-3.5" /> Globals
       </button>
       <button
         onClick={() => dispatch({ type: 'SET_VIEW', payload: 'variables' })}
-        className={`pb-2 text-xs font-medium transition-colors border-b-2 ${
+        className={`pb-2 text-xs font-medium transition-colors border-b-2 flex items-center gap-1 ${
           state.view === 'variables'
             ? 'text-orange-400 border-orange-400'
             : 'text-slate-400 hover:text-slate-200 border-transparent'
         }`}
       >
-        🔍 Scope Inspector
+        <IconScopeInspector className="w-3.5 h-3.5" /> Scope Inspector
       </button>
     </div>
   );
@@ -63,12 +66,32 @@ interface ScopeSectionProps {
   overriddenKeys: Set<string>;
   filter: string;
   defaultOpen?: boolean;
+  icon?: ReactNode;
+  /** Keys in this section whose values should be masked by default */
+  secretKeys?: Set<string>;
 }
 
-function ScopeSection({ title, subtitle, vars, overriddenKeys, filter, defaultOpen = true }: ScopeSectionProps) {
+function ScopeSection({ title, subtitle, vars, overriddenKeys, filter, defaultOpen = true, icon, secretKeys }: ScopeSectionProps) {
   const [open, setOpen] = useState(defaultOpen);
+  const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
+
+  function toggleReveal(key: string) {
+    setRevealedKeys(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
   const entries = Object.entries(vars)
-    .filter(([k]) => !filter || k.toLowerCase().includes(filter.toLowerCase()) || vars[k].toLowerCase().includes(filter.toLowerCase()))
+    .filter(([k, v]) => {
+      if (!filter) return true;
+      const lc = filter.toLowerCase();
+      if (k.toLowerCase().includes(lc)) return true;
+      // Don't leak secret values via filter match
+      if (secretKeys?.has(k)) return false;
+      return v.toLowerCase().includes(lc);
+    })
     .sort(([a], [b]) => a.localeCompare(b));
 
   return (
@@ -78,11 +101,12 @@ function ScopeSection({ title, subtitle, vars, overriddenKeys, filter, defaultOp
         onClick={() => setOpen(o => !o)}
       >
         <div className="flex items-center gap-2">
+          {icon && <span className="text-slate-400 shrink-0">{icon}</span>}
           <span className="text-xs font-semibold text-slate-200">{title}</span>
           {subtitle && <span className="text-xs text-slate-500">{subtitle}</span>}
           <span className="text-[10px] bg-slate-700 text-slate-400 px-1.5 py-0.5 rounded-full">{Object.keys(vars).length}</span>
         </div>
-        <span className="text-slate-500 text-xs">{open ? '▲' : '▼'}</span>
+        <IconChevronDown className={`w-4 h-4 text-slate-500 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && (
@@ -94,6 +118,8 @@ function ScopeSection({ title, subtitle, vars, overriddenKeys, filter, defaultOp
               <tbody>
                 {entries.map(([key, value]) => {
                   const overridden = overriddenKeys.has(key);
+                  const isSecret = secretKeys?.has(key) ?? false;
+                  const revealed = revealedKeys.has(key);
                   return (
                     <tr
                       key={key}
@@ -102,10 +128,22 @@ function ScopeSection({ title, subtitle, vars, overriddenKeys, filter, defaultOp
                       <td className="pl-3 pr-2 py-1.5 font-mono text-slate-300 w-1/3 truncate">
                         {key}
                       </td>
-                      <td className="pr-2 py-1.5 font-mono text-slate-400 truncate max-w-0 w-full">
-                        {value}
+                      <td className="pr-1 py-1.5 font-mono text-slate-400 truncate max-w-0 w-full">
+                        {isSecret && !revealed ? SECRET_MASK : value}
                       </td>
                       <td className="pr-3 py-1.5 text-right whitespace-nowrap">
+                        {isSecret && (
+                          <button
+                            onClick={() => toggleReveal(key)}
+                            aria-label={revealed ? 'Hide value' : 'Reveal value'}
+                            title={revealed ? 'Hide value' : 'Reveal value'}
+                            className="mr-1 p-0.5 rounded text-slate-500 hover:text-slate-300 transition-colors"
+                          >
+                            {revealed
+                              ? <IconEyeOff className="w-3.5 h-3.5" />
+                              : <IconEye className="w-3.5 h-3.5" />}
+                          </button>
+                        )}
                         {overridden && (
                           <span className="text-[10px] text-amber-600 font-medium">overridden</span>
                         )}
@@ -125,9 +163,20 @@ function ScopeSection({ title, subtitle, vars, overriddenKeys, filter, defaultOp
 export default function VariableScopeInspector() {
   const { state, getEnvironmentVars, getActiveEnvironment } = useApp();
   const [filter, setFilter] = useState('');
+  const [revealedResolved, setRevealedResolved] = useState<Set<string>>(new Set());
 
   const activeEnv = getActiveEnvironment();
   const envVars = getEnvironmentVars();
+
+  // Set of env keys whose values are marked secret
+  const secretEnvKeys = useMemo<Set<string>>(() => {
+    if (!activeEnv) return new Set();
+    return new Set(
+      activeEnv.values
+        .filter(v => v.secret && v.enabled !== false)
+        .map(v => v.key)
+    );
+  }, [activeEnv]);
 
   const activeCollectionId = state.activeRequest?.collectionId ?? null;
   const activeCollection = activeCollectionId
@@ -160,8 +209,27 @@ export default function VariableScopeInspector() {
     return sources > 1;
   }
 
+  function isResolvedSecret(key: string): boolean {
+    return winningScope(key) === 'ENV' && secretEnvKeys.has(key);
+  }
+
+  function toggleResolvedReveal(key: string) {
+    setRevealedResolved(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
   const resolvedEntries = [...allKeys]
-    .filter(k => !filter || k.toLowerCase().includes(filter.toLowerCase()) || resolved[k]?.toLowerCase().includes(filter.toLowerCase()))
+    .filter(k => {
+      if (!filter) return true;
+      const lc = filter.toLowerCase();
+      if (k.toLowerCase().includes(lc)) return true;
+      // Don't leak secret ENV values via filter match
+      if (isResolvedSecret(k)) return false;
+      return resolved[k]?.toLowerCase().includes(lc);
+    })
     .sort((a, b) => a.localeCompare(b));
 
   return (
@@ -214,7 +282,10 @@ export default function VariableScopeInspector() {
                   </tr>
                 </thead>
                 <tbody>
-                  {resolvedEntries.map(key => (
+                  {resolvedEntries.map(key => {
+                    const secret = isResolvedSecret(key);
+                    const revealed = revealedResolved.has(key);
+                    return (
                     <tr key={key} className="border-t border-slate-800 hover:bg-slate-800/40 transition-colors">
                       <td className="pl-3 pr-2 py-1.5 font-mono text-slate-200 truncate">
                         <span className="flex items-center gap-1.5">
@@ -224,14 +295,29 @@ export default function VariableScopeInspector() {
                           {key}
                         </span>
                       </td>
-                      <td className="pr-2 py-1.5 font-mono text-slate-400 truncate max-w-0 w-full">
-                        {resolved[key]}
+                      <td className="pr-1 py-1.5 font-mono text-slate-400 truncate max-w-0 w-full">
+                        {secret && !revealed ? SECRET_MASK : resolved[key]}
                       </td>
-                      <td className="pr-3 py-1.5 text-right">
-                        <ScopeTag scope={winningScope(key)} />
+                      <td className="pr-3 py-1.5 text-right whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1.5">
+                          {secret && (
+                            <button
+                              onClick={() => toggleResolvedReveal(key)}
+                              aria-label={revealed ? 'Hide value' : 'Reveal value'}
+                              title={revealed ? 'Hide value' : 'Reveal value'}
+                              className="p-0.5 rounded text-slate-500 hover:text-slate-300 transition-colors"
+                            >
+                              {revealed
+                                ? <IconEyeOff className="w-3.5 h-3.5" />
+                                : <IconEye className="w-3.5 h-3.5" />}
+                            </button>
+                          )}
+                          <ScopeTag scope={winningScope(key)} />
+                        </span>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -243,27 +329,31 @@ export default function VariableScopeInspector() {
           <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wide mb-2">By Scope</h3>
 
           <ScopeSection
-            title="🌍 Environment"
+            title="Environment"
             subtitle={activeEnv ? `(${activeEnv.name})` : '(none active)'}
             vars={envVars}
             overriddenKeys={new Set()}
             filter={filter}
+            icon={<IconEnvironments className="w-3.5 h-3.5" />}
+            secretKeys={secretEnvKeys}
           />
 
           <ScopeSection
-            title="📦 Collection Variables"
+            title="Collection Variables"
             subtitle={activeCollection ? `(${activeCollection.info.name})` : '(no active request)'}
             vars={collVars}
             overriddenKeys={collOverridden}
             filter={filter}
+            icon={<IconCollection className="w-3.5 h-3.5" />}
           />
 
           <ScopeSection
-            title="🌐 Globals"
+            title="Globals"
             vars={globals}
             overriddenKeys={globalOverridden}
             filter={filter}
             defaultOpen={false}
+            icon={<IconGlobals className="w-3.5 h-3.5" />}
           />
         </div>
       </div>

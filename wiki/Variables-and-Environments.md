@@ -270,6 +270,8 @@ Each variable is listed with:
 
 The Scope Inspector is read-only — edit values in the respective panel (Environments, Globals, or Collection Settings).
 
+**Secret variables:** Environment variables marked as secret (🔒) have their values hidden by default in both the *Resolved Variables* table and the *By Scope* section. Click the eye icon (👁) next to a masked value to temporarily reveal it. Clicking again re-masks it. Reveal state is not persisted and resets when you navigate away.
+
 ---
 
 ## Variable Name Rules
