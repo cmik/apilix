@@ -29,15 +29,15 @@ A lightweight, open-source alternative API testing tool — available as a **des
 
 ## Desktop App (Electron)
 
-Pre-built installers are available for:
+Pre-built installers are available on the [**GitHub Releases page**](https://github.com/cmik/apilix/releases/latest):
 
 | Platform | File |
 |---|---|
 | macOS | `Apilix-x.x.x.dmg` |
-| Windows | `Apilix x.x.x.exe` (portable, no installation required) |
+| Windows | `Apilix Setup x.x.x.exe` |
 | Linux | `Apilix-x.x.x.AppImage` |
 
-Download the installer for your platform, install, and launch — no Node.js required.
+Download the installer for your platform from the [releases page](https://github.com/cmik/apilix/releases/latest), install, and launch — no Node.js required.
 
 Data (collections, environments) is stored locally in the app profile:
 - **macOS:** `~/Library/Application Support/Apilix/`
@@ -186,9 +186,25 @@ Notes:
 
 ---
 
-## Build Standalone CLI Binaries
+## Standalone CLI Binaries
 
-Build standalone `apilix` binaries for macOS, Linux, and Windows using `pkg`:
+Pre-built `apilix` binaries for macOS, Linux, and Windows are available on the [**GitHub Releases page**](https://github.com/cmik/apilix/releases/latest) — no Node.js required.
+
+| Platform | File |
+|---|---|
+| macOS | `apilix-macos` |
+| Linux | `apilix-linux` |
+| Windows | `apilix-win.exe` |
+
+Download the binary, make it executable (macOS/Linux: `chmod +x apilix-macos`), and run it directly:
+
+```bash
+./apilix-macos run ./collection.json -e ./environment.json
+```
+
+### Build from Source
+
+To build standalone `apilix` binaries yourself using `pkg`:
 
 ```bash
 npm run cli:build:binaries
