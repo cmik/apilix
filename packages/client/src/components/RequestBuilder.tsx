@@ -16,6 +16,7 @@ import type { CodeLanguage } from './CodeEditor';
 import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
 import ScriptEditor from './ScriptEditor';
 import OAuthConfigPanel from './OAuthConfigPanel';
+import { IconRequests } from './Icons';
 import type { SaveExistingRequestTabsResult, UnsavedRequestTabSummary } from '../utils/requestTabSyncGuard';
 import { buildAllVariableSuggestions, DYNAMIC_VARIABLE_SUGGESTIONS, type VariableSuggestion } from '../utils/variableAutocomplete';
 import VarInput from './VarInput';
@@ -980,7 +981,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     return (
       <div className="flex-1 flex items-center justify-center text-center">
         <div>
-          <div className="text-5xl mb-4">⚡</div>
+          <IconRequests className="w-16 h-16 mb-4 mx-auto text-slate-500" />
           <p className="text-slate-400">Select a request from the sidebar</p>
           <p className="text-slate-600 text-sm mt-1">or import a collection to get started</p>
         </div>

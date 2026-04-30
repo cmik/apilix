@@ -6,7 +6,7 @@ import ScriptEditor from './ScriptEditor';
 import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
 import ConfirmModal from './ConfirmModal';
 import { useToast } from './Toast';
-import { IconMock } from './Icons';
+import { IconMock, IconSignal } from './Icons';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', '*'];
 const STATUS_CODES = [200, 201, 204, 301, 302, 400, 401, 403, 404, 409, 422, 500, 502, 503];
@@ -1042,7 +1042,7 @@ function TrafficInspector({ running }: { running: boolean }) {
   if (!running) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-center pb-16">
-        <p className="text-3xl mb-3">📡</p>
+        <IconSignal className="w-16 h-16 mb-3 mx-auto text-slate-500" />
         <p className="text-sm font-medium text-slate-300 mb-1">Server not running</p>
         <p className="text-xs text-slate-500 max-w-xs">Start the mock server to capture incoming requests here.</p>
       </div>
@@ -1052,7 +1052,7 @@ function TrafficInspector({ running }: { running: boolean }) {
   if (entries.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-center pb-16">
-        <p className="text-3xl mb-3">📡</p>
+        <IconSignal className="w-16 h-16 mb-3 mx-auto text-slate-500" />
         <p className="text-sm font-medium text-slate-300 mb-1">Waiting for requests…</p>
         <p className="text-xs text-slate-500 max-w-xs">Incoming requests to the mock server will appear here in real time.</p>
       </div>
