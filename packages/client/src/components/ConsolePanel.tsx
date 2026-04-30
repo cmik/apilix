@@ -417,10 +417,18 @@ function applyDetailMode() {
   var btn = document.getElementById('focusBtn');
   if (detailMode === 'focus') {
     document.body.classList.add('focus-detail');
-    if (btn) btn.textContent = 'Compact view';
+    if (btn) {
+      btn.textContent = 'Compact view';
+      btn.setAttribute('aria-pressed', 'true');
+      btn.setAttribute('aria-label', 'Switch to compact view');
+    }
   } else {
     document.body.classList.remove('focus-detail');
-    if (btn) btn.textContent = 'Focus view';
+    if (btn) {
+      btn.textContent = 'Focus view';
+      btn.setAttribute('aria-pressed', 'false');
+      btn.setAttribute('aria-label', 'Switch to focus view');
+    }
   }
 }
 
