@@ -925,7 +925,6 @@ export default function RunnerPanel() {
     setError(null);
     setResults(null);
     setIsViewingLoadedRun(false);
-    loadedSavedRunIdRef.current = null;
     dispatch({ type: 'SET_RUNNER_RESULTS', payload: null });
 
     try {
