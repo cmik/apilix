@@ -14,6 +14,25 @@ import {
 import { generateHurlFromItems } from '../utils/hurlUtils';
 import { useImportFile } from '../utils/useImportFile';
 import ConfirmModal from './ConfirmModal';
+import {
+  IconViewSettings,
+  IconOpen,
+  IconAddRequest,
+  IconAddFolder,
+  IconSort,
+  IconRunner,
+  IconMock,
+  IconRename,
+  IconDuplicate,
+  IconDelete,
+  IconFolder as IconFolderComponent,
+  IconCollection,
+  IconChevronDown,
+  IconSearch,
+  IconClose,
+  IconDownload,
+  IconEmptyMailbox,
+} from './Icons';
 
 const ItemSettingsModal = lazy(() => import('./ItemSettingsModal'));
 
@@ -101,7 +120,9 @@ function SendToMockModal({
               Add to Mock Server
               <span className="ml-2 text-slate-400 font-normal text-xs">({routeCount} route{routeCount !== 1 ? 's' : ''})</span>
             </h2>
-            <button onClick={onClose} className="text-slate-500 hover:text-slate-200 text-xl leading-none">×</button>
+            <button onClick={onClose} className="text-slate-500 hover:text-slate-200">
+              <IconClose className="w-5 h-5" />
+            </button>
           </div>
           <div className="px-5 py-4 space-y-2">
             <label className={`flex items-start gap-3 px-3 py-2.5 rounded-lg border cursor-pointer transition-colors ${mode === 'new' ? 'border-orange-500 bg-orange-500/5' : 'border-slate-700 hover:border-slate-600'}`}>
@@ -203,7 +224,7 @@ function getUrlShort(url: NonNullable<CollectionItem['request']>['url'] | undefi
 
 interface MenuItem {
   label: string;
-  icon: string;
+  icon: React.ComponentType<{ className?: string }>;
   danger?: boolean;
   onClick: () => void;
 }
@@ -241,18 +262,21 @@ function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
       style={{ position: 'fixed', top: TOP, left: LEFT, zIndex: 9999 }}
       className="bg-slate-800 border border-slate-600 rounded-md shadow-2xl py-1 min-w-[160px]"
     >
-      {items.map((item, i) => (
-        <button
-          key={i}
-          onClick={() => { item.onClick(); onClose(); }}
-          className={`w-full text-left flex items-center gap-2.5 px-3 py-1.5 text-xs transition-colors hover:bg-slate-700 ${
-            item.danger ? 'text-red-400 hover:text-red-300' : 'text-slate-200'
-          }`}
-        >
-          <span className="w-4 shrink-0 text-center">{item.icon}</span>
-          {item.label}
-        </button>
-      ))}
+      {items.map((item, i) => {
+        const IconComponent = item.icon;
+        return (
+          <button
+            key={i}
+            onClick={() => { item.onClick(); onClose(); }}
+            className={`w-full text-left flex items-center gap-2.5 px-3 py-1.5 text-xs transition-colors hover:bg-slate-700 ${
+              item.danger ? 'text-red-400 hover:text-red-300' : 'text-slate-200'
+            }`}
+          >
+            <IconComponent className="w-4 h-4 shrink-0" />
+            {item.label}
+          </button>
+        );
+      })}
     </div>,
     document.body,
   );
@@ -268,11 +292,6 @@ interface BulkDeleteModalProps {
   onCancel: () => void;
 }
 
-const KIND_ICON: Record<BulkDeleteCandidate['kind'], string> = {
-  collection: '📚',
-  folder: '📁',
-  request: '→',
-};
 const KIND_LABEL: Record<BulkDeleteCandidate['kind'], string> = {
   collection: 'Collection',
   folder: 'Folder',
@@ -341,7 +360,9 @@ function BulkDeleteModal({ candidates, initialSelectedId, onConfirm, onCancel }:
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700 shrink-0">
           <h2 className="text-sm font-semibold text-slate-200">Delete multiple</h2>
-          <button onClick={onCancel} className="text-slate-500 hover:text-slate-200 text-xl leading-none px-1">×</button>
+          <button onClick={onCancel} className="text-slate-500 hover:text-slate-200 px-1">
+            <IconClose className="w-5 h-5" />
+          </button>
         </div>
 
         {/* Body */}
@@ -390,7 +411,13 @@ function BulkDeleteModal({ candidates, initialSelectedId, onConfirm, onCancel }:
                     onChange={() => toggle(candidate.id)}
                     className="accent-orange-500 shrink-0 mt-0.5"
                   />
-                  <span className="shrink-0 text-sm leading-none mt-0.5">{KIND_ICON[candidate.kind]}</span>
+                  {candidate.kind === 'folder' ? (
+                    <IconFolderComponent className="w-4 h-4 shrink-0 text-sky-400" />
+                  ) : candidate.kind === 'request' ? (
+                    <IconOpen className="w-4 h-4 shrink-0 text-slate-400" />
+                  ) : (
+                    <IconViewSettings className="w-4 h-4 shrink-0 text-orange-400" />
+                  )}
                   <div className="min-w-0 flex-1">
                     <div className="text-xs text-slate-200 truncate">{candidate.name}</div>
                     {candidate.kind !== 'collection' && (
@@ -668,21 +695,21 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
 
   const menuItems: MenuItem[] = [
     isFolder
-      ? { label: 'View settings', icon: '⚙️', onClick: () => setShowSettings(true) }
+      ? { label: 'View settings', icon: IconViewSettings, onClick: () => setShowSettings(true) }
       : {
           label: 'Open',
-          icon: '↗',
+          icon: IconOpen,
           onClick: () => {
             dispatch({ type: 'OPEN_TAB', payload: { collectionId, item } });
             dispatch({ type: 'SET_VIEW', payload: 'request' });
           },
         },
     ...(isFolder ? [
-      { label: 'Add request', icon: '➕', onClick: handleAddRequest },
-      { label: 'Add folder', icon: '📁', onClick: handleAddFolder },
+      { label: 'Add request', icon: IconAddRequest, onClick: handleAddRequest },
+      { label: 'Add folder', icon: IconAddFolder, onClick: handleAddFolder },
       ...((item.item?.length ?? 0) >= 2 && !!item.id ? [{
         label: 'Order items A→Z',
-        icon: '⇅',
+        icon: IconSort,
         onClick: () => {
           dispatch({ type: 'UPDATE_COLLECTION', payload: { ...collection, item: sortChildrenByName(collection.item, item.id) } });
         },
@@ -690,7 +717,7 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
     ] : []),
     {
       label: 'Execute in Runner',
-      icon: '▶',
+      icon: IconRunner,
       onClick: () => {
         const ids = isFolder ? getAllRequestIds(item.item || []) : (item.id ? [item.id] : []);
         dispatch({ type: 'SET_RUNNER_PRESELECTION', payload: { collectionId, requestIds: ids } });
@@ -699,7 +726,7 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
     },
     {
       label: 'Add to Mock Server',
-      icon: '🎭',
+      icon: IconMock,
       onClick: () => {
         const items = isFolder ? flattenMockItems(item.item || []) : (item.request ? [item] : []);
         if (items.length > 0) setMockItems(items);
@@ -707,12 +734,12 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
     },
     {
       label: 'Rename',
-      icon: '✏️',
+      icon: IconRename,
       onClick: () => { setRenameVal(item.name); setRenaming(true); },
     },
-    { label: 'Duplicate', icon: '⧉', onClick: handleDuplicate },
-    { label: 'Delete', icon: '🗑', danger: true, onClick: handleDelete },
-    { label: 'Delete multiple…', icon: '🗑', danger: true, onClick: handleBulkDelete },
+    { label: 'Duplicate', icon: IconDuplicate, onClick: handleDuplicate },
+    { label: 'Delete', icon: IconDelete, danger: true, onClick: handleDelete },
+    { label: 'Delete multiple…', icon: IconDelete, danger: true, onClick: handleBulkDelete },
   ];
 
   const indentPx = depth * 12 + 8;
@@ -745,8 +772,8 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
               onClick={() => !renaming && setOpen(o => !o)}
               className="flex items-center gap-1.5 flex-1 min-w-0 py-1 text-sm text-slate-300"
             >
-              <span className="text-xs text-slate-500 shrink-0">{open ? '▾' : '▸'}</span>
-              <span className="shrink-0">📁</span>
+              <IconChevronDown className={`w-3.5 h-3.5 text-slate-500 shrink-0 transition-transform ${open ? '' : '-rotate-90'}`} />
+              <IconFolderComponent className="w-4 h-4 shrink-0 text-slate-400" />
               {renaming
                 ? <InlineRename value={renameVal} onChange={setRenameVal} onConfirm={commitRename} onCancel={() => setRenaming(false)} />
                 : <span className="truncate">{item.name}</span>
@@ -1107,42 +1134,42 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
   }
 
   const menuItems: MenuItem[] = [
-    { label: 'View settings', icon: '⚙️', onClick: () => setShowSettings(true) },
-    { label: 'Add request', icon: '➕', onClick: handleAddRequest },
-    { label: 'Add folder', icon: '📁', onClick: handleAddFolder },
+    { label: 'View settings', icon: IconViewSettings, onClick: () => setShowSettings(true) },
+    { label: 'Add request', icon: IconAddRequest, onClick: handleAddRequest },
+    { label: 'Add folder', icon: IconAddFolder, onClick: handleAddFolder },
     {
       label: 'Execute in Runner',
-      icon: '▶',
+      icon: IconRunner,
       onClick: () => {
         const ids = getAllRequestIds(collection.item);
         dispatch({ type: 'SET_RUNNER_PRESELECTION', payload: { collectionId: collection._id, requestIds: ids } });
         dispatch({ type: 'SET_VIEW', payload: 'runner' });
       },
     },
-    { label: 'Add to Mock Server', icon: '🎭', onClick: handleSendCollectionToMock },
-    { label: 'Export', icon: '⬇️', onClick: handleExport },
-    { label: 'Export as HURL', icon: '⬇️', onClick: handleExportHurl },
+    { label: 'Add to Mock Server', icon: IconMock, onClick: handleSendCollectionToMock },
+    { label: 'Export', icon: IconDownload, onClick: handleExport },
+    { label: 'Export as HURL', icon: IconDownload, onClick: handleExportHurl },
     ...(collection.item.length >= 2 ? [{
       label: 'Order items A→Z',
-      icon: '⇅',
+      icon: IconSort,
       onClick: () => {
         dispatch({ type: 'UPDATE_COLLECTION', payload: { ...collection, item: sortChildrenByName(collection.item) } });
       },
     }] : []),
     {
       label: 'Rename',
-      icon: '✏️',
+      icon: IconRename,
       onClick: () => { setRenameVal(collection.info.name); setRenaming(true); },
     },
     {
       label: 'Delete',
-      icon: '🗑',
+      icon: IconDelete,
       danger: true,
       onClick: promptDeleteCollection,
     },
     {
       label: 'Delete multiple…',
-      icon: '🗑',
+      icon: IconDelete,
       danger: true,
       onClick: handleBulkDelete,
     },
@@ -1192,8 +1219,8 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
           onClick={() => !renaming && setOpen(o => !o)}
           className="flex items-center gap-1.5 flex-1 min-w-0 text-left px-2 py-1.5 hover:bg-slate-700/50 rounded text-sm font-medium text-slate-200"
         >
-          <span className="text-xs shrink-0">{open ? '▾' : '▸'}</span>
-          <span className="shrink-0">📚</span>
+          <IconChevronDown className={`w-3.5 h-3.5 text-slate-500 shrink-0 transition-transform ${open ? '' : '-rotate-90'}`} />
+          <IconCollection className="w-4 h-4 shrink-0 text-slate-300" />
           {renaming
             ? <InlineRename value={renameVal} onChange={setRenameVal} onConfirm={commitRename} onCancel={() => { setRenaming(false); onRenamingDone?.(); }} />
             : <span className="truncate">{collection.info.name}</span>
@@ -1498,7 +1525,7 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
         onDragLeave={handleFilesDragLeave}
         onDrop={handleFilesDrop}
       >
-        <div className="text-4xl mb-3">📭</div>
+        <IconEmptyMailbox className="w-16 h-16 mb-3 text-slate-500 mx-auto" />
         <p className="text-slate-400 text-sm">
           {fileDropActive ? 'Drop to import' : 'No collections yet'}
         </p>
@@ -1523,7 +1550,7 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
     if (matched.length === 0) {
       return (
         <div className="flex-1 flex flex-col items-center justify-center text-center p-4">
-          <div className="text-3xl mb-2">🔍</div>
+          <IconSearch className="w-10 h-10 mb-2 text-slate-500" />
           <p className="text-slate-400 text-sm">No requests match</p>
           <p className="text-slate-600 text-xs mt-1">"{trimmed}"</p>
         </div>

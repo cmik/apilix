@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useApp } from '../store';
 import { buildVarMap } from '../utils/variableResolver';
+import { IconEnvironments, IconGlobals, IconScopeInspector, IconSearch, IconCollection, IconChevronDown } from './Icons';
 
 function EnvGlobalsTabBar() {
   const { state, dispatch } = useApp();
@@ -8,33 +9,36 @@ function EnvGlobalsTabBar() {
     <div className="flex border-b border-slate-700 shrink-0 -mx-4 px-4 mb-2">
       <button
         onClick={() => dispatch({ type: 'SET_VIEW', payload: 'environments' })}
-        className={`mr-4 pb-2 text-xs font-medium transition-colors border-b-2 ${
+        className={`mr-4 pb-2 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 ${
           state.view === 'environments'
             ? 'text-orange-400 border-orange-400'
             : 'text-slate-400 hover:text-slate-200 border-transparent'
         }`}
       >
-        🌍 Environments
+        <IconEnvironments className="w-3.5 h-3.5" />
+        Environments
       </button>
       <button
         onClick={() => dispatch({ type: 'SET_VIEW', payload: 'globals' })}
-        className={`mr-4 pb-2 text-xs font-medium transition-colors border-b-2 ${
+        className={`mr-4 pb-2 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 ${
           state.view === 'globals'
             ? 'text-orange-400 border-orange-400'
             : 'text-slate-400 hover:text-slate-200 border-transparent'
         }`}
       >
-        🌐 Globals
+        <IconGlobals className="w-3.5 h-3.5" />
+        Globals
       </button>
       <button
         onClick={() => dispatch({ type: 'SET_VIEW', payload: 'variables' })}
-        className={`pb-2 text-xs font-medium transition-colors border-b-2 ${
+        className={`pb-2 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 ${
           state.view === 'variables'
             ? 'text-orange-400 border-orange-400'
             : 'text-slate-400 hover:text-slate-200 border-transparent'
         }`}
       >
-        🔍 Scope Inspector
+        <IconScopeInspector className="w-3.5 h-3.5" />
+        Scope Inspector
       </button>
     </div>
   );
@@ -63,9 +67,10 @@ interface ScopeSectionProps {
   overriddenKeys: Set<string>;
   filter: string;
   defaultOpen?: boolean;
+  icon?: ReactNode;
 }
 
-function ScopeSection({ title, subtitle, vars, overriddenKeys, filter, defaultOpen = true }: ScopeSectionProps) {
+function ScopeSection({ title, subtitle, vars, overriddenKeys, filter, defaultOpen = true, icon }: ScopeSectionProps) {
   const [open, setOpen] = useState(defaultOpen);
   const entries = Object.entries(vars)
     .filter(([k]) => !filter || k.toLowerCase().includes(filter.toLowerCase()) || vars[k].toLowerCase().includes(filter.toLowerCase()))
@@ -78,11 +83,12 @@ function ScopeSection({ title, subtitle, vars, overriddenKeys, filter, defaultOp
         onClick={() => setOpen(o => !o)}
       >
         <div className="flex items-center gap-2">
+          {icon}
           <span className="text-xs font-semibold text-slate-200">{title}</span>
           {subtitle && <span className="text-xs text-slate-500">{subtitle}</span>}
           <span className="text-[10px] bg-slate-700 text-slate-400 px-1.5 py-0.5 rounded-full">{Object.keys(vars).length}</span>
         </div>
-        <span className="text-slate-500 text-xs">{open ? '▲' : '▼'}</span>
+        <IconChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && (
@@ -185,12 +191,13 @@ export default function VariableScopeInspector() {
       </div>
 
       {/* Filter */}
-      <div className="mb-3 shrink-0">
+      <div className="mb-3 shrink-0 relative">
+        <IconSearch className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 w-4 h-4 pointer-events-none" />
         <input
           value={filter}
           onChange={e => setFilter(e.target.value)}
           placeholder="Filter variables…"
-          className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-orange-500"
+          className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 pl-8 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-orange-500"
         />
       </div>
 
@@ -243,27 +250,30 @@ export default function VariableScopeInspector() {
           <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wide mb-2">By Scope</h3>
 
           <ScopeSection
-            title="🌍 Environment"
+            title="Environment"
             subtitle={activeEnv ? `(${activeEnv.name})` : '(none active)'}
             vars={envVars}
             overriddenKeys={new Set()}
             filter={filter}
+            icon={<IconEnvironments className="w-3.5 h-3.5" />}
           />
 
           <ScopeSection
-            title="📦 Collection Variables"
+            title="Collection Variables"
             subtitle={activeCollection ? `(${activeCollection.info.name})` : '(no active request)'}
             vars={collVars}
             overriddenKeys={collOverridden}
             filter={filter}
+            icon={<IconCollection className="w-3.5 h-3.5" />}
           />
 
           <ScopeSection
-            title="🌐 Globals"
+            title="Globals"
             vars={globals}
             overriddenKeys={globalOverridden}
             filter={filter}
             defaultOpen={false}
+            icon={<IconGlobals className="w-3.5 h-3.5" />}
           />
         </div>
       </div>
