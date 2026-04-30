@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { IconSignal } from './Icons';
 import { API_BASE } from '../api';
 import { useApp, generateId } from '../store';
 import * as StorageDriver from '../utils/storageDriver';
@@ -739,7 +740,7 @@ export default function BrowserCapturePanel() {
 
       {/* ── Toolbar ─────────────────────────────────────────────────────── */}
       <div className="shrink-0 border-b border-slate-700 p-2 flex flex-wrap items-center gap-2">
-        <span className="text-slate-400 text-xs font-medium mr-1">📡 Browser Capture</span>
+        <span className="text-slate-400 text-xs font-medium mr-1 flex items-center gap-1"><IconSignal className="w-3.5 h-3.5" /> Browser Capture</span>
 
         {isElectron && (
           <div className="flex items-center gap-1 flex-1 min-w-48">

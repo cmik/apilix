@@ -31,6 +31,7 @@ import {
   IconSearch,
   IconClose,
   IconDownload,
+  IconEmptyMailbox,
 } from './Icons';
 
 const ItemSettingsModal = lazy(() => import('./ItemSettingsModal'));
@@ -1524,7 +1525,7 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
         onDragLeave={handleFilesDragLeave}
         onDrop={handleFilesDrop}
       >
-        <div className="text-4xl mb-3">📭</div>
+        <IconEmptyMailbox className="w-16 h-16 mb-3 text-slate-500 mx-auto" />
         <p className="text-slate-400 text-sm">
           {fileDropActive ? 'Drop to import' : 'No collections yet'}
         </p>
