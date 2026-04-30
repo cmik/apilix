@@ -18,8 +18,8 @@ export function IconRequests({ className = 'w-5 h-5' }: { className?: string }) 
 
 export function IconCollection({ className = 'w-4 h-4' }: { className?: string }) {
   return (
-    <svg className={className} fill="none" viewBox="0 0 17 17" stroke="currentColor" strokeWidth={0.8}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M2.5 3.5a.5.5 0 0 1 0-1h11a.5.5 0 0 1 0 1zm2-2a.5.5 0 0 1 0-1h7a.5.5 0 0 1 0 1zM0 13a1.5 1.5 0 0 0 1.5 1.5h13A1.5 1.5 0 0 0 16 13V6a1.5 1.5 0 0 0-1.5-1.5h-13A1.5 1.5 0 0 0 0 6zm1.5.5A.5.5 0 0 1 1 13V6a.5.5 0 0 1 .5-.5h13a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-.5.5z" />
+    <svg className={className} fill="none" viewBox="0 0 17 17" stroke="currentColor" strokeWidth={0.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" fill="currentColor" d="M2.5 3.15a.15.15 0 0 1 0-.3h11a.15.15 0 0 1 0 .3zm2-1.95a.15.15 0 0 1 0-.3h7a.15.15 0 0 1 0 .3zM0 12.65a1.15 1.15 0 0 0 1.15 1.15h13.7A1.15 1.15 0 0 0 16 12.65V6.35A1.15 1.15 0 0 0 14.85 5.2H1.15A1.15 1.15 0 0 0 0 6.35zm1.15.15a.15.15 0 0 1-.15-.15V6.35a.15.15 0 0 1 .15-.15h13.7a.15.15 0 0 1 .15.15v6.3a.15.15 0 0 1-.15.15z" />
     </svg>
   );
 }
@@ -224,7 +224,7 @@ export function IconFile({ className = 'w-4 h-4' }: { className?: string }) {
 
 export function IconFolder({ className = 'w-4 h-4' }: { className?: string }) {
   return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
     </svg>
   );
