@@ -228,7 +228,7 @@ jobs:
             }
           }
           if (-not $ready) {
-            Stop-Process -Id $server.Id -Force
+            Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
             throw "Smoke server did not become ready on port $port"
           }
 
