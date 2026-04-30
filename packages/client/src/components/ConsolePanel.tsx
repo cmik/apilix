@@ -6,6 +6,18 @@ import { maskSecrets } from '../utils/secretMask';
 const MIN_HEIGHT = 120;
 const MAX_HEIGHT = 600;
 const BROADCAST_CHANNEL = 'apilix-console-v1';
+const INTEGRATED_DETAIL_MODE_KEY = 'apilix_console_integrated_detail_mode';
+
+type DetailMode = 'compact' | 'focus';
+
+function loadDetailMode(storageKey: string): DetailMode {
+  try {
+    const value = localStorage.getItem(storageKey);
+    return value === 'focus' ? 'focus' : 'compact';
+  } catch {
+    return 'compact';
+  }
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -55,7 +67,21 @@ const LOG_LEVEL_COLOR: Record<string, string> = {
   error: 'text-red-400',
 };
 
-function EntryDetail({ entry, mask }: { entry: ConsoleEntry; mask: (v: string) => string }) {
+function EntryDetail({
+  entry,
+  mask,
+  detailMode,
+  onToggleDetailMode,
+  detailMaxHeight,
+  bodyMaxHeight,
+}: {
+  entry: ConsoleEntry;
+  mask: (v: string) => string;
+  detailMode: DetailMode;
+  onToggleDetailMode: () => void;
+  detailMaxHeight: number;
+  bodyMaxHeight: number;
+}) {
   const logCount = entry.scriptLogs?.length ?? 0;
   const testResults = entry.response?.testResults ?? [];
   const skippedCount = testResults.filter(t => t.skipped).length;
@@ -115,9 +141,22 @@ function EntryDetail({ entry, mask }: { entry: ConsoleEntry; mask: (v: string) =
             </span>
           )}
         </button>
+
+        <div className="ml-auto flex items-center pr-2">
+          <button
+            onClick={e => {
+              e.stopPropagation();
+              onToggleDetailMode();
+            }}
+            className="text-[11px] text-slate-500 hover:text-orange-300 px-2 py-1 rounded hover:bg-slate-800 transition-colors"
+            title={detailMode === 'focus' ? 'Use compact detail view' : 'Use focus detail view'}
+          >
+            {detailMode === 'focus' ? 'Compact view' : 'Focus view'}
+          </button>
+        </div>
       </div>
 
-      <div className="p-3 overflow-auto max-h-44 font-mono">
+      <div className="p-3 overflow-auto font-mono" style={{ maxHeight: detailMaxHeight }}>
         {tab === 'request' && (
           <div className="space-y-2.5">
             <div>
@@ -182,7 +221,10 @@ function EntryDetail({ entry, mask }: { entry: ConsoleEntry; mask: (v: string) =
                 {entry.response.body && (
                   <div>
                     <p className="text-slate-500 mb-1">Body</p>
-                    <pre className="bg-slate-800/60 rounded p-2 text-slate-300 whitespace-pre-wrap break-all max-h-36 overflow-auto">
+                    <pre
+                      className="bg-slate-800/60 rounded p-2 text-slate-300 whitespace-pre-wrap break-all overflow-auto"
+                      style={{ maxHeight: bodyMaxHeight }}
+                    >
                       {tryFormat(entry.response.body)}
                     </pre>
                   </div>
@@ -260,6 +302,8 @@ function buildHtml(logs: ConsoleEntry[], theme: 'dark' | 'light'): string {
   --text:#cbd5e1;--text-dim:#64748b;--text-dimmer:#334155;--text-title:#94a3b8;
   --text-input:#cbd5e1;--text-ph:#475569;--text-btn-hover:#e2e8f0;
   --scrollbar:#334155;--scrollbar-h:#475569;
+  --detail-max-height:min(42vh,320px);
+  --detail-body-max-height:min(28vh,220px);
 }
 html.light{
   --bg:#ffffff;--bg-hdr:#f8fafc;--bg-row-hover:#f8fafc;--bg-row-sel:#f1f5f9;
@@ -268,6 +312,10 @@ html.light{
   --text:#1e293b;--text-dim:#64748b;--text-dimmer:#94a3b8;--text-title:#64748b;
   --text-input:#1e293b;--text-ph:#94a3b8;--text-btn-hover:#1e293b;
   --scrollbar:#cbd5e1;--scrollbar-h:#94a3b8;
+}
+body.focus-detail{
+  --detail-max-height:max(220px,calc(100vh - 210px));
+  --detail-body-max-height:max(180px,calc(100vh - 300px));
 }
 body{font-family:ui-monospace,'Cascadia Code',Consolas,monospace;background:var(--bg);color:var(--text);font-size:12px;display:flex;flex-direction:column;height:100vh;overflow:hidden}
 #hdr{display:flex;align-items:center;gap:8px;padding:5px 12px;border-bottom:1px solid var(--border);background:var(--bg-hdr);flex-shrink:0;user-select:none}
@@ -278,6 +326,8 @@ body{font-family:ui-monospace,'Cascadia Code',Consolas,monospace;background:var(
 #filter::placeholder{color:var(--text-ph)}
 #clearBtn{background:transparent;border:1px solid var(--border-input);color:var(--text-dim);font-size:11px;padding:3px 10px;border-radius:4px;cursor:pointer;font-family:inherit;flex-shrink:0}
 #clearBtn:hover{color:var(--text-btn-hover);border-color:var(--text-dim)}
+#focusBtn{background:transparent;border:1px solid var(--border-input);color:var(--text-dim);font-size:11px;padding:3px 10px;border-radius:4px;cursor:pointer;font-family:inherit;flex-shrink:0}
+#focusBtn:hover{color:#fdba74;border-color:#f97316}
 #list{flex:1;overflow-y:auto;min-height:0}
 .empty{display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-dimmer);font-style:italic;font-size:12px;user-select:none}
 .row{border-bottom:1px solid var(--border-row);cursor:pointer}
@@ -307,7 +357,7 @@ body{font-family:ui-monospace,'Cascadia Code',Consolas,monospace;background:var(
 .dtab{padding:5px 14px;font-size:11px;cursor:pointer;border:none;border-bottom:2px solid transparent;color:var(--text-dim);background:transparent;font-family:inherit;text-transform:capitalize}
 .dtab:hover{color:var(--text)}
 .dtab.act{color:#f97316;border-bottom-color:#f97316}
-.dbody{padding:10px 12px;overflow:auto;max-height:220px;font-size:11px;line-height:1.7}
+.dbody{padding:10px 12px;overflow:auto;max-height:var(--detail-max-height);font-size:11px;line-height:1.7}
 .dlabel{color:var(--text-dim);margin-bottom:4px}
 .dsect{margin-bottom:10px}
 .kv{display:flex;gap:8px}
@@ -316,7 +366,7 @@ body{font-family:ui-monospace,'Cascadia Code',Consolas,monospace;background:var(
 .meta{display:flex;gap:20px;flex-wrap:wrap;margin-bottom:10px}
 .metai{color:var(--text)}
 .mlab{color:var(--text-dim)}
-pre.bp{background:var(--bg-pre);border-radius:4px;padding:8px;color:var(--text);white-space:pre-wrap;word-break:break-all;max-height:140px;overflow:auto;font-family:inherit;font-size:11px;margin:0}
+pre.bp{background:var(--bg-pre);border-radius:4px;padding:8px;color:var(--text);white-space:pre-wrap;word-break:break-all;max-height:var(--detail-body-max-height);overflow:auto;font-family:inherit;font-size:11px;margin:0}
 .err-text{color:#f87171}
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:transparent}
@@ -332,6 +382,7 @@ pre.bp{background:var(--bg-pre);border-radius:4px;padding:8px;color:var(--text);
   <span id="title">Console</span>
   <span id="cnt">0</span>
   <input id="filter" type="text" placeholder="Filter by URL or method\u2026">
+  <button id="focusBtn">Focus view</button>
   <button id="clearBtn">Clear</button>
 </div>
 <div id="list"></div>
@@ -340,6 +391,36 @@ var logs = ${initialData};
 var selId = null;
 var dtab = {};
 var filterText = '';
+var DETAIL_MODE_STORAGE_KEY = 'apilix_console_windowed_detail_mode';
+var detailMode = 'compact';
+
+function loadDetailMode() {
+  try {
+    var stored = localStorage.getItem(DETAIL_MODE_STORAGE_KEY);
+    return stored === 'focus' ? 'focus' : 'compact';
+  } catch (e) {
+    return 'compact';
+  }
+}
+
+function saveDetailMode() {
+  try {
+    localStorage.setItem(DETAIL_MODE_STORAGE_KEY, detailMode);
+  } catch (e) {
+    // Ignore storage errors in detached window.
+  }
+}
+
+function applyDetailMode() {
+  var btn = document.getElementById('focusBtn');
+  if (detailMode === 'focus') {
+    document.body.classList.add('focus-detail');
+    if (btn) btn.textContent = 'Compact view';
+  } else {
+    document.body.classList.remove('focus-detail');
+    if (btn) btn.textContent = 'Focus view';
+  }
+}
 
 function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -564,6 +645,11 @@ function render() {
 document.getElementById('filter').addEventListener('input', function(ev) {
   filterText = ev.target.value; render();
 });
+document.getElementById('focusBtn').addEventListener('click', function() {
+  detailMode = detailMode === 'focus' ? 'compact' : 'focus';
+  saveDetailMode();
+  applyDetailMode();
+});
 document.getElementById('clearBtn').addEventListener('click', function() {
   logs = []; selId = null; dtab = {}; render();
   ch.postMessage({ type: 'CLEAR' });
@@ -578,6 +664,8 @@ ch.onmessage = function(ev) {
   }
 };
 
+detailMode = loadDetailMode();
+applyDetailMode();
 render();
 <\/script>
 </body>
@@ -596,6 +684,7 @@ interface ConsolePanelProps {
 export default function ConsolePanel({ height, onHeightChange, onClose, theme }: ConsolePanelProps) {
   const { state, dispatch, secretSet } = useApp();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detailMode, setDetailMode] = useState<DetailMode>(() => loadDetailMode(INTEGRATED_DETAIL_MODE_KEY));
   const logs = state.consoleLogs;
 
   const shouldMask = state.settings?.maskSecrets !== false;
@@ -623,6 +712,14 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme }:
   useEffect(() => {
     if (selectedId && !logs.find(l => l.id === selectedId)) setSelectedId(null);
   }, [logs, selectedId]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(INTEGRATED_DETAIL_MODE_KEY, detailMode);
+    } catch {
+      // Ignore storage write failures.
+    }
+  }, [detailMode]);
 
   // Broadcast live updates to the detached window
   useEffect(() => {
@@ -712,6 +809,18 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme }:
   function toggleEntry(id: string) {
     setSelectedId(prev => (prev === id ? null : id));
   }
+
+  function toggleDetailMode() {
+    setDetailMode(prev => (prev === 'focus' ? 'compact' : 'focus'));
+  }
+
+  const detailMaxHeight = detailMode === 'focus'
+    ? Math.max(220, Math.min(height - 90, 480))
+    : Math.max(160, Math.min(Math.floor(height * 0.45), 280));
+
+  const bodyMaxHeight = detailMode === 'focus'
+    ? Math.max(180, Math.min(Math.floor(detailMaxHeight * 0.72), detailMaxHeight - 30))
+    : Math.max(120, Math.min(Math.floor(detailMaxHeight * 0.55), detailMaxHeight - 30));
 
   return (
     <div
@@ -823,7 +932,16 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme }:
               </div>
 
               {/* Expanded detail */}
-              {selectedId === entry.id && <EntryDetail entry={entry} mask={mask} />}
+              {selectedId === entry.id && (
+                <EntryDetail
+                  entry={entry}
+                  mask={mask}
+                  detailMode={detailMode}
+                  onToggleDetailMode={toggleDetailMode}
+                  detailMaxHeight={detailMaxHeight}
+                  bodyMaxHeight={bodyMaxHeight}
+                />
+              )}
             </div>
           ))
         )}
