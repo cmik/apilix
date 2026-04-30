@@ -1,7 +1,9 @@
-import { useState, type ReactNode } from 'react';
+import { useState, useMemo, useEffect, type ReactNode } from 'react';
 import { useApp } from '../store';
 import { buildVarMap } from '../utils/variableResolver';
-import { IconEnvironments, IconGlobals, IconScopeInspector, IconSearch, IconCollection, IconChevronDown } from './Icons';
+import { IconEnvironments, IconGlobals, IconScopeInspector, IconSearch, IconCollection, IconChevronDown, IconEye, IconEyeOff } from './Icons';
+
+const SECRET_MASK = '••••••••';
 
 function EnvGlobalsTabBar() {
   const { state, dispatch } = useApp();
@@ -68,17 +70,42 @@ interface ScopeSectionProps {
   filter: string;
   defaultOpen?: boolean;
   icon?: ReactNode;
+  /** Keys in this section whose values should be masked by default */
+  secretKeys?: Set<string>;
 }
 
-function ScopeSection({ title, subtitle, vars, overriddenKeys, filter, defaultOpen = true, icon }: ScopeSectionProps) {
+function ScopeSection({ title, subtitle, vars, overriddenKeys, filter, defaultOpen = true, icon, secretKeys }: ScopeSectionProps) {
   const [open, setOpen] = useState(defaultOpen);
+  const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
+
+  // Reset revealed state when the secret key set or variable set changes (e.g. environment switch)
+  useEffect(() => {
+    setRevealedKeys(new Set());
+  }, [secretKeys, vars]);
+
+  function toggleReveal(key: string) {
+    setRevealedKeys(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
   const entries = Object.entries(vars)
-    .filter(([k]) => !filter || k.toLowerCase().includes(filter.toLowerCase()) || vars[k].toLowerCase().includes(filter.toLowerCase()))
+    .filter(([k, v]) => {
+      if (!filter) return true;
+      const lc = filter.toLowerCase();
+      if (k.toLowerCase().includes(lc)) return true;
+      // Don't leak secret values via filter match
+      if (secretKeys?.has(k)) return false;
+      return v.toLowerCase().includes(lc);
+    })
     .sort(([a], [b]) => a.localeCompare(b));
 
   return (
     <div className="mb-3 rounded-lg border border-slate-700 overflow-hidden">
       <button
+        type="button"
         className="w-full flex items-center justify-between px-3 py-2 bg-slate-800 hover:bg-slate-750 text-left"
         onClick={() => setOpen(o => !o)}
       >
@@ -100,6 +127,8 @@ function ScopeSection({ title, subtitle, vars, overriddenKeys, filter, defaultOp
               <tbody>
                 {entries.map(([key, value]) => {
                   const overridden = overriddenKeys.has(key);
+                  const isSecret = secretKeys?.has(key) ?? false;
+                  const revealed = revealedKeys.has(key);
                   return (
                     <tr
                       key={key}
@@ -108,10 +137,23 @@ function ScopeSection({ title, subtitle, vars, overriddenKeys, filter, defaultOp
                       <td className="pl-3 pr-2 py-1.5 font-mono text-slate-300 w-1/3 truncate">
                         {key}
                       </td>
-                      <td className="pr-2 py-1.5 font-mono text-slate-400 truncate max-w-0 w-full">
-                        {value}
+                      <td className="pr-1 py-1.5 font-mono text-slate-400 truncate max-w-0 w-full">
+                        {isSecret && !revealed ? SECRET_MASK : value}
                       </td>
                       <td className="pr-3 py-1.5 text-right whitespace-nowrap">
+                        {isSecret && (
+                          <button
+                            type="button"
+                            onClick={() => toggleReveal(key)}
+                            aria-label={revealed ? 'Hide value' : 'Reveal value'}
+                            title={revealed ? 'Hide value' : 'Reveal value'}
+                            className="mr-1 p-0.5 rounded text-slate-500 hover:text-slate-300 transition-colors"
+                          >
+                            {revealed
+                              ? <IconEyeOff className="w-3.5 h-3.5" />
+                              : <IconEye className="w-3.5 h-3.5" />}
+                          </button>
+                        )}
                         {overridden && (
                           <span className="text-[10px] text-amber-600 font-medium">overridden</span>
                         )}
@@ -131,9 +173,25 @@ function ScopeSection({ title, subtitle, vars, overriddenKeys, filter, defaultOp
 export default function VariableScopeInspector() {
   const { state, getEnvironmentVars, getActiveEnvironment } = useApp();
   const [filter, setFilter] = useState('');
+  const [revealedResolved, setRevealedResolved] = useState<Set<string>>(new Set());
 
   const activeEnv = getActiveEnvironment();
   const envVars = getEnvironmentVars();
+
+  // Set of env keys whose values are marked secret
+  const secretEnvKeys = useMemo<Set<string>>(() => {
+    if (!activeEnv) return new Set();
+    return new Set(
+      activeEnv.values
+        .filter(v => v.secret && v.enabled !== false)
+        .map(v => v.key)
+    );
+  }, [activeEnv]);
+
+  // Reset resolved reveal state when active environment or its secret keys change
+  useEffect(() => {
+    setRevealedResolved(new Set());
+  }, [activeEnv, secretEnvKeys]);
 
   const activeCollectionId = state.activeRequest?.collectionId ?? null;
   const activeCollection = activeCollectionId
@@ -166,8 +224,27 @@ export default function VariableScopeInspector() {
     return sources > 1;
   }
 
+  function isResolvedSecret(key: string): boolean {
+    return winningScope(key) === 'ENV' && secretEnvKeys.has(key);
+  }
+
+  function toggleResolvedReveal(key: string) {
+    setRevealedResolved(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
   const resolvedEntries = [...allKeys]
-    .filter(k => !filter || k.toLowerCase().includes(filter.toLowerCase()) || resolved[k]?.toLowerCase().includes(filter.toLowerCase()))
+    .filter(k => {
+      if (!filter) return true;
+      const lc = filter.toLowerCase();
+      if (k.toLowerCase().includes(lc)) return true;
+      // Don't leak secret ENV values via filter match
+      if (isResolvedSecret(k)) return false;
+      return resolved[k]?.toLowerCase().includes(lc);
+    })
     .sort((a, b) => a.localeCompare(b));
 
   return (
@@ -221,7 +298,10 @@ export default function VariableScopeInspector() {
                   </tr>
                 </thead>
                 <tbody>
-                  {resolvedEntries.map(key => (
+                  {resolvedEntries.map(key => {
+                    const secret = isResolvedSecret(key);
+                    const revealed = revealedResolved.has(key);
+                    return (
                     <tr key={key} className="border-t border-slate-800 hover:bg-slate-800/40 transition-colors">
                       <td className="pl-3 pr-2 py-1.5 font-mono text-slate-200 truncate">
                         <span className="flex items-center gap-1.5">
@@ -231,14 +311,30 @@ export default function VariableScopeInspector() {
                           {key}
                         </span>
                       </td>
-                      <td className="pr-2 py-1.5 font-mono text-slate-400 truncate max-w-0 w-full">
-                        {resolved[key]}
+                      <td className="pr-1 py-1.5 font-mono text-slate-400 truncate max-w-0 w-full">
+                        {secret && !revealed ? SECRET_MASK : resolved[key]}
                       </td>
-                      <td className="pr-3 py-1.5 text-right">
-                        <ScopeTag scope={winningScope(key)} />
+                      <td className="pr-3 py-1.5 text-right whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1.5">
+                          {secret && (
+                            <button
+                              type="button"
+                              onClick={() => toggleResolvedReveal(key)}
+                              aria-label={revealed ? 'Hide value' : 'Reveal value'}
+                              title={revealed ? 'Hide value' : 'Reveal value'}
+                              className="p-0.5 rounded text-slate-500 hover:text-slate-300 transition-colors"
+                            >
+                              {revealed
+                                ? <IconEyeOff className="w-3.5 h-3.5" />
+                                : <IconEye className="w-3.5 h-3.5" />}
+                            </button>
+                          )}
+                          <ScopeTag scope={winningScope(key)} />
+                        </span>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -256,6 +352,7 @@ export default function VariableScopeInspector() {
             overriddenKeys={new Set()}
             filter={filter}
             icon={<IconEnvironments className="w-3.5 h-3.5" />}
+            secretKeys={secretEnvKeys}
           />
 
           <ScopeSection
