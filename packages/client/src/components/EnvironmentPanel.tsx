@@ -3,6 +3,7 @@ import { useApp, generateId } from '../store';
 import type { AppEnvironment } from '../types';
 import ConfirmModal from './ConfirmModal';
 import { normalizeVariableName, storageKeyError } from '../utils/variableUtils';
+import { IconEnvironments, IconGlobals, IconScopeInspector, IconSearch, IconClose, IconPlus, IconDownload, IconDelete } from './Icons';
 
 interface EnvEditorProps {
   env: AppEnvironment;
@@ -136,7 +137,9 @@ function EnvEditor({ env, onSave, onCancel }: EnvEditorProps) {
                   </button>
                 </td>
                 <td className="py-1">
-                  <button onClick={() => removeRow(i)} className="text-slate-600 hover:text-red-400 text-lg leading-none">×</button>
+                  <button onClick={() => removeRow(i)} className="text-slate-600 hover:text-red-400 transition-colors">
+                    <IconDelete className="w-4 h-4" />
+                  </button>
                 </td>
               </tr>
             ))}
@@ -144,9 +147,10 @@ function EnvEditor({ env, onSave, onCancel }: EnvEditorProps) {
         </table>
         <button
           onClick={addRow}
-          className="mt-2 text-xs text-slate-500 hover:text-orange-400 transition-colors"
+          className="mt-2 text-xs text-slate-500 hover:text-orange-400 transition-colors flex items-center gap-1.5"
         >
-          + Add variable
+          <IconPlus className="w-3.5 h-3.5" />
+          Add variable
         </button>
       </div>
     </div>
@@ -159,33 +163,36 @@ function EnvGlobalsTabBar() {
     <div className="flex border-b border-slate-700 shrink-0 -mx-4 px-4 mb-2">
       <button
         onClick={() => dispatch({ type: 'SET_VIEW', payload: 'environments' })}
-        className={`mr-4 pb-2 text-xs font-medium transition-colors border-b-2 ${
+        className={`mr-4 pb-2 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 ${
           state.view === 'environments'
             ? 'text-orange-400 border-orange-400'
             : 'text-slate-400 hover:text-slate-200 border-transparent'
         }`}
       >
-        🌍 Environments
+        <IconEnvironments className="w-3.5 h-3.5" />
+        Environments
       </button>
       <button
         onClick={() => dispatch({ type: 'SET_VIEW', payload: 'globals' })}
-        className={`mr-4 pb-2 text-xs font-medium transition-colors border-b-2 ${
+        className={`mr-4 pb-2 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 ${
           state.view === 'globals'
             ? 'text-orange-400 border-orange-400'
             : 'text-slate-400 hover:text-slate-200 border-transparent'
         }`}
       >
-        🌐 Globals
+        <IconGlobals className="w-3.5 h-3.5" />
+        Globals
       </button>
       <button
         onClick={() => dispatch({ type: 'SET_VIEW', payload: 'variables' })}
-        className={`pb-2 text-xs font-medium transition-colors border-b-2 ${
+        className={`pb-2 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 ${
           state.view === 'variables'
             ? 'text-orange-400 border-orange-400'
             : 'text-slate-400 hover:text-slate-200 border-transparent'
         }`}
       >
-        🔍 Scope Inspector
+        <IconScopeInspector className="w-3.5 h-3.5" />
+        Scope Inspector
       </button>
     </div>
   );
@@ -266,16 +273,17 @@ export default function EnvironmentPanel() {
           </button>
           <button
             onClick={() => setCreating(true)}
-            className="px-3 py-1.5 bg-orange-600 hover:bg-orange-500 text-white text-sm rounded font-medium transition-colors"
+            className="px-3 py-1.5 bg-orange-600 hover:bg-orange-500 text-white text-sm rounded font-medium transition-colors flex items-center gap-1.5"
           >
-            + New
+            <IconPlus className="w-4 h-4" />
+            New
           </button>
         </div>
       </div>
 
       {state.environments.length > 0 && (
         <div className="relative">
-          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 text-xs pointer-events-none">🔍</span>
+          <IconSearch className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 w-4 h-4 pointer-events-none" />
           <input
             value={filter}
             onChange={e => setFilter(e.target.value)}
@@ -285,9 +293,9 @@ export default function EnvironmentPanel() {
           {filter && (
             <button
               onClick={() => setFilter('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 text-sm leading-none"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
             >
-              ×
+              <IconClose className="w-4 h-4" />
             </button>
           )}
         </div>
@@ -295,7 +303,7 @@ export default function EnvironmentPanel() {
 
       {state.environments.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center text-center">
-          <div className="text-5xl mb-3">🌍</div>
+          <IconEnvironments className="w-16 h-16 mb-3 text-slate-500" />
           <p className="text-slate-400 text-sm">No environments yet</p>
           <p className="text-slate-600 text-xs mt-1">Import one or create a new one</p>
         </div>
@@ -303,7 +311,7 @@ export default function EnvironmentPanel() {
         <div className="flex flex-col gap-2 overflow-y-auto flex-1">
           {state.environments.filter(e => e.name.toLowerCase().includes(filter.toLowerCase())).length === 0 ? (
             <div className="flex flex-col items-center justify-center text-center py-8">
-              <div className="text-3xl mb-2">🔍</div>
+              <IconSearch className="w-10 h-10 mb-2 text-slate-500" />
               <p className="text-slate-400 text-sm">No environments match</p>
               <p className="text-slate-600 text-xs mt-1">"{filter}"</p>
             </div>
@@ -359,13 +367,13 @@ export default function EnvironmentPanel() {
                   className="px-2 py-1 text-xs text-slate-400 hover:text-white bg-slate-700 hover:bg-slate-600 rounded transition-colors"
                   title="Export environment"
                 >
-                  ⬇
+                  <IconDownload className="w-4 h-4" />
                 </button>
                 <button
                   onClick={() => handleDelete(env._id)}
                   className="px-2 py-1 text-xs text-slate-500 hover:text-red-400 border border-slate-600 hover:border-red-500 rounded transition-colors"
                 >
-                  ×
+                  <IconDelete className="w-4 h-4" />
                 </button>
               </div>
             );

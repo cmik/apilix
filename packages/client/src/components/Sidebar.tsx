@@ -2,6 +2,7 @@ import { useEffect, useState, lazy, Suspense } from 'react';
 import { useApp, generateId } from '../store';
 import CollectionTree from './CollectionTree';
 import WorkspaceSwitcher from './WorkspaceSwitcher';
+import { IconSearch } from './Icons';
 
 const ImportModal = lazy(() => import('./ImportModal'));
 const ExportModal = lazy(() => import('./ExportModal'));
@@ -118,7 +119,7 @@ export default function Sidebar() {
       </div>
       <div className="px-3 py-1.5 border-b border-slate-700 shrink-0">
         <div className="relative">
-          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500 text-xs pointer-events-none">🔍</span>
+          <IconSearch className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500 w-3.5 h-3.5 pointer-events-none" />
           <input
             type="text"
             value={filter}

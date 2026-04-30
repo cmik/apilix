@@ -13,6 +13,7 @@ import StatusBar from './components/StatusBar';
 import TabBar from './components/TabBar';
 import GlobalVariablesPanel from './components/GlobalVariablesPanel';
 import ConfirmModal from './components/ConfirmModal';
+import { IconEye } from './components/Icons';
 
 const RunnerPanel = lazy(() => import('./components/RunnerPanel'));
 const MockServerPanel = lazy(() => import('./components/MockServerPanel'));
@@ -1100,6 +1101,8 @@ export default function App() {
       {/* Activity bar – vertical main menu */}
       <ActivityBar
         settingsTheme={settingsTheme}
+        cookieManagerOpen={cookieManagerOpen}
+        onToggleCookieManager={() => setCookieManagerOpen(open => !open)}
         onToggleTheme={() => {
           const next = settingsTheme === 'light' ? 'dark' : settingsTheme === 'dark' ? 'system' : 'light';
           dispatch({ type: 'UPDATE_SETTINGS', payload: { theme: next } });
@@ -1156,18 +1159,6 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Cookie manager button */}
-            <button
-              onClick={() => setCookieManagerOpen(o => !o)}
-              title="Cookie Manager"
-              className={`px-2 py-1 rounded text-xs transition-colors border ${
-                cookieManagerOpen
-                  ? 'bg-orange-600 border-orange-600 text-white'
-                  : 'bg-slate-700 border-slate-600 text-slate-400 hover:text-white hover:border-orange-500'
-              }`}
-            >
-              🍪
-            </button>
             <span className="text-slate-500 text-xs">Environment:</span>
             <EnvironmentSelector />
             {state.activeEnvironmentId && (
@@ -1180,7 +1171,7 @@ export default function App() {
                     : 'bg-slate-700 border-slate-600 text-slate-400 hover:text-white hover:border-orange-500'
                 }`}
               >
-                👁
+                <IconEye className="w-4 h-4" />
               </button>
             )}
           </div>

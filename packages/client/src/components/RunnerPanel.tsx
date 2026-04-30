@@ -4,6 +4,7 @@ import { runCollectionStream, pauseRun, resumeRun, stopRun } from '../api';
 import type { RunnerIteration, RunnerIterationResult, CollectionItem, ConditionalFlowRecord, SavedRunnerRun, RunnerRunSummary, RunnerRunConfig } from '../types';
 import { applyInheritedAuth, getAllRequestIds, exportWorkflowCollection } from '../utils/treeHelpers';
 import { useToast } from './Toast';
+import { IconFile } from './Icons';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -1331,9 +1332,16 @@ export default function RunnerPanel() {
               />
               <button
                 onClick={() => csvRef.current?.click()}
-                className="flex-1 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 border border-slate-600 rounded text-slate-300 transition-colors text-left px-3"
+                className="flex-1 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 border border-slate-600 rounded text-slate-300 transition-colors text-left px-3 flex items-center gap-2"
               >
-                {csvFile ? `📄 ${csvFile.name}` : '+ Select data file'}
+                {csvFile ? (
+                  <>
+                    <IconFile className="w-4 h-4 shrink-0" />
+                    <span className="truncate">{csvFile.name}</span>
+                  </>
+                ) : (
+                  '+ Select data file'
+                )}
               </button>
               {csvFile && (
                 <button

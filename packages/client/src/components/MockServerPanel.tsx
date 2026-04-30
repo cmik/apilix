@@ -6,6 +6,7 @@ import ScriptEditor from './ScriptEditor';
 import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
 import ConfirmModal from './ConfirmModal';
 import { useToast } from './Toast';
+import { IconMock } from './Icons';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', '*'];
 const STATUS_CODES = [200, 201, 204, 301, 302, 400, 401, 403, 404, 409, 422, 500, 502, 503];
@@ -1436,7 +1437,7 @@ export default function MockServerPanel() {
           <div className="flex-1 overflow-y-auto px-5 py-3">
             {!hasContent ? (
               <div className="flex flex-col items-center justify-center h-full text-center pb-16">
-                <p className="text-3xl mb-3">🎭</p>
+                <IconMock className="w-16 h-16 mb-3 text-slate-500 mx-auto" />
                 <p className="text-sm font-medium text-slate-300 mb-1">No mock routes yet</p>
                 <p className="text-xs text-slate-500 mb-4 max-w-xs">Add routes to intercept HTTP requests and return custom responses — or import from a collection or HAR file.</p>
                 <div className="flex gap-2">

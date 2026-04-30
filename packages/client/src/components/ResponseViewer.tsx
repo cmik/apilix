@@ -7,6 +7,7 @@ import { buildSaveToVarSnippet } from '../utils/testSnippetUtils';
 import { INJECT_TEST_SNIPPET } from '../utils/appEvents';
 import type { InjectTestSnippetDetail } from '../utils/appEvents';
 import { buildSuggestedFilename, saveResponseToFile } from '../utils/responseFileSave';
+import { IconSearch } from './Icons';
 
 type RespTab = 'Body' | 'Headers' | 'Test Results' | 'TLS' | 'Timeline' | 'Redirects';
 
@@ -1037,7 +1038,7 @@ export default function ResponseViewer() {
               }`}
               title="Search in body (⌘F)"
             >
-              🔍
+              <IconSearch className="w-3.5 h-3.5" />
             </button>
           </div>
         )}
