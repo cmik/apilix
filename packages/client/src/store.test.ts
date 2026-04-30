@@ -667,6 +667,38 @@ describe('DELETE_SAVED_RUN', () => {
   });
 });
 
+describe('UPDATE_SAVED_RUN', () => {
+  it('replaces the matching saved run in place', () => {
+    const s = stateWithRuns([], [makeRun('s1', 'Original'), makeRun('s2')]);
+    const updated = { ...makeRun('s1'), name: 'Renamed' };
+    const next = appReducer(s, { type: 'UPDATE_SAVED_RUN', payload: updated });
+    expect(next.savedRuns).toHaveLength(2);
+    expect(next.savedRuns[0].name).toBe('Renamed');
+    expect(next.savedRuns[1].id).toBe('s2');
+  });
+
+  it('preserves array order after update', () => {
+    const s = stateWithRuns([], [makeRun('s1'), makeRun('s2'), makeRun('s3')]);
+    const updated = { ...makeRun('s2'), name: 'Middle updated' };
+    const next = appReducer(s, { type: 'UPDATE_SAVED_RUN', payload: updated });
+    expect(next.savedRuns.map(r => r.id)).toEqual(['s1', 's2', 's3']);
+  });
+
+  it('is a no-op for an unknown id', () => {
+    const s = stateWithRuns([], [makeRun('s1')]);
+    const next = appReducer(s, { type: 'UPDATE_SAVED_RUN', payload: makeRun('nope') });
+    expect(next.savedRuns).toHaveLength(1);
+    expect(next.savedRuns[0].id).toBe('s1');
+  });
+
+  it('does not mutate recentRuns', () => {
+    const recent = [makeRun('r1')];
+    const s = stateWithRuns(recent, [makeRun('s1')]);
+    const next = appReducer(s, { type: 'UPDATE_SAVED_RUN', payload: { ...makeRun('s1'), name: 'New name' } });
+    expect(next.recentRuns).toBe(recent);
+  });
+});
+
 describe('LOAD_RUNNER_RUN', () => {
   it('sets runnerLoadedRun to the given run', () => {
     const run = makeRun('r1');

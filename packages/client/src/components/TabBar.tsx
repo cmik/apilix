@@ -607,6 +607,7 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
           onClick={handleScrollLeft}
           disabled={!canScrollLeft}
           className="absolute left-0 top-0 bottom-0 z-10 w-7 flex items-center justify-center
+            tab-scroll-fade-left
             bg-gradient-to-r from-slate-900 via-slate-900/80 to-transparent
             text-slate-400 hover:text-orange-400 disabled:text-slate-700
             transition-colors duration-150"
@@ -684,6 +685,7 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
           onClick={handleScrollRight}
           disabled={!canScrollRight}
           className="absolute right-0 top-0 bottom-0 z-10 w-7 flex items-center justify-center
+            tab-scroll-fade-right
             bg-gradient-to-l from-slate-900 via-slate-900/80 to-transparent
             text-slate-400 hover:text-orange-400 disabled:text-slate-700
             transition-colors duration-150"

@@ -762,6 +762,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'SAVE_RUNNER_RUN':
       return { ...state, savedRuns: [action.payload, ...state.savedRuns] };
 
+    case 'UPDATE_SAVED_RUN':
+      return { ...state, savedRuns: state.savedRuns.map(r => r.id === action.payload.id ? action.payload : r) };
+
     case 'DELETE_SAVED_RUN':
       return { ...state, savedRuns: state.savedRuns.filter(r => r.id !== action.payload) };
 

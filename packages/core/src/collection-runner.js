@@ -67,13 +67,46 @@ function parseRunDataRows(payload, { csvText, jsonRows } = {}) {
   return iterCount > 1 ? Array.from({ length: iterCount }, () => ({})) : [{}];
 }
 
+function collectOrderedRequestIds(items) {
+  const ids = [];
+  function walk(nodes) {
+    for (const item of (nodes || [])) {
+      if (item.item) {
+        walk(item.item);
+      } else if (item.request && item.id) {
+        ids.push(item.id);
+      }
+    }
+  }
+  walk(items);
+  return ids;
+}
+
 function prepareCollectionRun(payload, options = {}) {
   if (!payload?.collection || !payload.collection.item) {
     throw new InputError('Missing collection in body');
   }
 
   const dataRows = parseRunDataRows(payload, { csvText: options.csvText, jsonRows: options.jsonRows });
-  const requests = flattenItemsWithScripts(payload.collection.item, payload.collection.event);
+  const baseItems = Array.isArray(payload.allCollectionItems) && payload.allCollectionItems.length > 0
+    ? payload.allCollectionItems
+    : payload.collection.item;
+
+  const mergedRequests = flattenItemsWithScripts(baseItems, payload.collection.event);
+  const orderedIds = collectOrderedRequestIds(payload.collection.item);
+
+  let requests = mergedRequests;
+  if (orderedIds.length > 0) {
+    const byId = new Map(mergedRequests.map(req => [req.id, req]));
+    // Build the ordered list of ID-bearing requests the caller selected.
+    const orderedById = orderedIds
+      .map(id => byId.get(id))
+      .filter(req => req !== undefined);
+    // Preserve any ID-less requests (uncommon, but valid in hand-crafted
+    // Postman collections) by appending them after the ordered set.
+    const noIdRequests = mergedRequests.filter(req => !req.id);
+    requests = [...orderedById, ...noIdRequests];
+  }
 
   return {
     payload,

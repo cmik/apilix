@@ -33,6 +33,13 @@ async function withServer(handler, fn) {
   finally { await new Promise((res, rej) => server.close(err => err ? rej(err) : res())); }
 }
 
+function getEventScript(item, listen) {
+  const event = (item.event || []).find(ev => ev.listen === listen);
+  if (!event || !event.script) return '';
+  const exec = event.script.exec;
+  return Array.isArray(exec) ? exec.join('\n') : (exec || '');
+}
+
 // ─── InputError ───────────────────────────────────────────────────────────────
 
 test('InputError is an Error subclass with name "InputError"', () => {
@@ -76,6 +83,102 @@ test('prepareCollectionRun - generates unique runId on successive calls', () => 
   const a = prepareCollectionRun(makePayload());
   const b = prepareCollectionRun(makePayload());
   assert.notEqual(a.runId, b.runId);
+});
+
+test('prepareCollectionRun - preserves ancestor scripts from full tree while keeping selected order', () => {
+  const fullTree = [
+    {
+      id: 'folder-1',
+      name: 'Folder',
+      event: [{ listen: 'prerequest', script: { exec: ['folderPrerequest();'] } }],
+      item: [
+        {
+          id: 'r1',
+          name: 'Request 1',
+          request: { method: 'GET', url: 'http://localhost/r1' },
+          event: [{ listen: 'test', script: { exec: ['requestOneTest();'] } }],
+        },
+        {
+          id: 'r2',
+          name: 'Request 2',
+          request: { method: 'GET', url: 'http://localhost/r2' },
+        },
+      ],
+    },
+  ];
+
+  const payload = makePayload({
+    collection: {
+      info: { name: 'Ordered' },
+      event: [{ listen: 'prerequest', script: { exec: ['collectionPrerequest();'] } }],
+      // Simulates RunnerPanel payload: selected requests as flat ordered list
+      item: [
+        { id: 'r2', name: 'Request 2', request: { method: 'GET', url: 'http://localhost/r2' } },
+        { id: 'r1', name: 'Request 1', request: { method: 'GET', url: 'http://localhost/r1' } },
+      ],
+    },
+    allCollectionItems: fullTree,
+  });
+
+  const prepared = prepareCollectionRun(payload);
+
+  assert.deepEqual(prepared.requests.map(r => r.id), ['r2', 'r1']);
+  assert.equal(getEventScript(prepared.requests[1], 'prerequest'), 'collectionPrerequest();\n\nfolderPrerequest();');
+  assert.equal(getEventScript(prepared.requests[1], 'test'), 'requestOneTest();');
+});
+
+test('prepareCollectionRun - excludes requests absent from collection.item (deselected) when allCollectionItems is provided', () => {
+  const fullTree = [
+    {
+      id: 'folder-1',
+      name: 'Folder',
+      item: [
+        { id: 'r1', name: 'Selected', request: { method: 'GET', url: 'http://localhost/r1' } },
+        { id: 'r2', name: 'Deselected', request: { method: 'GET', url: 'http://localhost/r2' } },
+        { id: 'r3', name: 'Also Selected', request: { method: 'GET', url: 'http://localhost/r3' } },
+      ],
+    },
+  ];
+
+  const payload = makePayload({
+    collection: {
+      info: { name: 'Partial' },
+      // Only r1 and r3 are selected; r2 is deselected
+      item: [
+        { id: 'r3', name: 'Also Selected', request: { method: 'GET', url: 'http://localhost/r3' } },
+        { id: 'r1', name: 'Selected', request: { method: 'GET', url: 'http://localhost/r1' } },
+      ],
+    },
+    allCollectionItems: fullTree,
+  });
+
+  const prepared = prepareCollectionRun(payload);
+
+  assert.deepEqual(prepared.requests.map(r => r.id), ['r3', 'r1']);
+  assert.ok(!prepared.requests.some(r => r.id === 'r2'), 'deselected request r2 must not appear');
+});
+
+test('prepareCollectionRun - preserves ID-less requests from allCollectionItems after ordered set', () => {
+  const noIdRequest = { name: 'No ID', request: { method: 'GET', url: 'http://localhost/noid' } };
+  const fullTree = [
+    { id: 'r1', name: 'Has ID', request: { method: 'GET', url: 'http://localhost/r1' } },
+    noIdRequest,
+  ];
+
+  const payload = makePayload({
+    collection: {
+      info: { name: 'Mixed' },
+      item: [{ id: 'r1', name: 'Has ID', request: { method: 'GET', url: 'http://localhost/r1' } }],
+    },
+    allCollectionItems: fullTree,
+  });
+
+  const prepared = prepareCollectionRun(payload);
+
+  assert.equal(prepared.requests.length, 2);
+  assert.equal(prepared.requests[0].id, 'r1');
+  assert.equal(prepared.requests[1].name, 'No ID');
+  assert.ok(!prepared.requests[1].id, 'ID-less request should have no id');
 });
 
 // ─── parseRunDataRows via prepareCollectionRun ────────────────────────────────
@@ -640,5 +743,101 @@ test('executePreparedCollectionRun - circular setNextRequest detected and aborts
     const run = await executePreparedCollectionRun(prepared);
     assert.ok(run.errors.length > 0, 'should record a loop error');
     assert.ok(/circular/i.test(run.errors[0]));
+  });
+});
+
+// ─── ancestor script execution (folder + collection scripts) ──────────────────
+
+test('executePreparedCollectionRun - folder pre-request script runs before request', async () => {
+  // The folder pre-request script sets an env variable.
+  // The request test script asserts the variable was set.
+  await withServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end('{}');
+  }, async (baseUrl) => {
+    const fullTree = [
+      {
+        id: 'folder-1',
+        name: 'Folder',
+        event: [
+          {
+            listen: 'prerequest',
+            script: { type: 'text/javascript', exec: ["apx.environment.set('fromFolder', 'yes');"] },
+          },
+        ],
+        item: [
+          {
+            id: 'r1',
+            name: 'Request',
+            request: { method: 'GET', url: `${baseUrl}/` },
+            event: [
+              {
+                listen: 'test',
+                script: { type: 'text/javascript', exec: [
+                  "apx.test('folder prerequest ran', () => {",
+                  "  apx.expect(apx.environment.get('fromFolder')).to.equal('yes');",
+                  "});",
+                ] },
+              },
+            ],
+          },
+        ],
+      },
+    ];
+
+    const payload = makePayload({
+      collection: {
+        info: { name: 'Folder Script Test' },
+        // flat selected items (simulating RunnerPanel behaviour)
+        item: [{ id: 'r1', name: 'Request', request: { method: 'GET', url: `${baseUrl}/` } }],
+      },
+      allCollectionItems: fullTree,
+      environment: {},
+    });
+
+    const prepared = prepareCollectionRun(payload);
+    const run = await executePreparedCollectionRun(prepared);
+
+    assert.equal(run.iterations[0].results[0].testResults[0].passed, true,
+      'folder pre-request script must have run and set the env variable');
+  });
+});
+
+test('executePreparedCollectionRun - collection-level test script runs after request', async () => {
+  await withServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end('{}');
+  }, async (baseUrl) => {
+    const fullTree = [
+      {
+        id: 'r1',
+        name: 'Request',
+        request: { method: 'GET', url: `${baseUrl}/` },
+      },
+    ];
+
+    const payload = makePayload({
+      collection: {
+        info: { name: 'Collection Script Test' },
+        event: [
+          {
+            listen: 'test',
+            script: { type: 'text/javascript', exec: [
+              "apx.test('collection test ran', () => {",
+              "  apx.expect(apx.response.code).to.equal(200);",
+              "});",
+            ] },
+          },
+        ],
+        item: [{ id: 'r1', name: 'Request', request: { method: 'GET', url: `${baseUrl}/` } }],
+      },
+      allCollectionItems: fullTree,
+    });
+
+    const prepared = prepareCollectionRun(payload);
+    const run = await executePreparedCollectionRun(prepared);
+
+    assert.equal(run.iterations[0].results[0].testResults[0].passed, true,
+      'collection-level test script must have run');
   });
 });

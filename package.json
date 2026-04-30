@@ -29,7 +29,7 @@
     "build": "npm run build -w @apilix/client",
     "electron": "electron .",
     "electron:dev": "concurrently -k -p \"[{name}]\" -n \"SERVER,CLIENT,ELECTRON\" -c \"bgYellow.bold,bgCyan.bold,bgMagenta.bold\" \"npm run server\" \"npm run client\" \"wait-on http://localhost:5173 && electron .\"",
-    "dist:prepare:server": "npm install --prefix packages/server --omit=dev --install-links",
+    "dist:prepare:server": "npm install --prefix packages/server --omit=dev --install-links && rsync -a --delete packages/core/ packages/server/node_modules/@apilix/core/",
     "dist": "npm run dist:prepare:server && npm run build && electron-builder",
     "dist:mac": "npm run dist:prepare:server && npm run build && electron-builder --mac",
     "dist:win": "npm run dist:prepare:server && npm run build && electron-builder --win",

@@ -240,6 +240,9 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
   let runId = null;
   try {
     const payload = JSON.parse(req.body.data || '{}');
+    if (payload.allCollectionItems !== undefined && !Array.isArray(payload.allCollectionItems)) {
+      return res.status(400).json({ error: 'allCollectionItems must be an array' });
+    }
     let csvText = null;
     let jsonRows = null;
     if (req.file) {
