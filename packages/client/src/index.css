@@ -206,6 +206,7 @@ html.light .bg-slate-600 { background-color: #cbd5e1; }
 
 /* Opacity-variant backgrounds */
 html.light .bg-slate-900\/50 { background-color: rgb(248 250 252 / 0.5); }
+html.light .bg-slate-900\/40 { background-color: rgb(248 250 252 / 0.7); }
 html.light .bg-slate-800\/50 { background-color: rgb(241 245 249 / 0.5); }
 html.light .bg-slate-800\/60 { background-color: rgb(226 232 240 / 0.6); }
 html.light .bg-slate-800\/70 { background-color: rgb(241 245 249 / 0.7); }
@@ -261,6 +262,15 @@ html.light .bg-slate-900.border-b { background-color: #f1f5f9; }
 
 /* Inactive tab hover */
 html.light .hover\:bg-slate-800\/60:hover { background-color: rgb(226 232 240 / 0.6); }
+
+/* Tab scroll button fade overlays */
+html.light .tab-scroll-fade-left {
+  background-image: linear-gradient(to right, #f1f5f9 0%, rgb(241 245 249 / 0.8) 65%, transparent 100%);
+}
+
+html.light .tab-scroll-fade-right {
+  background-image: linear-gradient(to left, #f1f5f9 0%, rgb(241 245 249 / 0.8) 65%, transparent 100%);
+}
 
 /* ─── Light mode: Runner panel ───────────────────────────────────────────── */
 
