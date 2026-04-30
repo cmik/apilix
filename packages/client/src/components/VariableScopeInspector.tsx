@@ -253,12 +253,13 @@ export default function VariableScopeInspector() {
       </div>
 
       {/* Filter */}
-      <div className="mb-3 shrink-0">
+      <div className="mb-3 shrink-0 relative">
+        <IconSearch className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 w-4 h-4 pointer-events-none" />
         <input
           value={filter}
           onChange={e => setFilter(e.target.value)}
           placeholder="Filter variables…"
-          className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-orange-500"
+          className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 pl-8 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-orange-500"
         />
       </div>
 

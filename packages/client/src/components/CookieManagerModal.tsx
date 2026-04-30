@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useApp, generateId } from '../store';
 import type { Cookie } from '../types';
+import { IconClose, IconDelete, IconPlus } from './Icons';
 
 interface EditingCookie extends Cookie {
   _tempId: string;
@@ -114,9 +115,9 @@ export default function CookieManagerModal({ onClose }: { onClose: () => void })
           </div>
           <button
             onClick={onClose}
-            className="text-slate-500 hover:text-slate-200 text-xl leading-none px-1"
+            className="text-slate-500 hover:text-slate-200 px-1"
           >
-            ×
+            <IconClose className="w-5 h-5" />
           </button>
         </div>
 
@@ -148,9 +149,9 @@ export default function CookieManagerModal({ onClose }: { onClose: () => void })
                   <button
                     title="Clear domain cookies"
                     onClick={e => { e.stopPropagation(); clearDomain(domain); }}
-                    className="ml-1 text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity text-sm leading-none shrink-0"
+                    className="ml-1 text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
                   >
-                    ×
+                    <IconDelete className="w-3.5 h-3.5" />
                   </button>
                 </div>
               ))}
@@ -177,9 +178,10 @@ export default function CookieManagerModal({ onClose }: { onClose: () => void })
               ) : (
                 <button
                   onClick={() => setAddingDomain(true)}
-                  className="text-xs text-slate-500 hover:text-orange-400 transition-colors"
+                  className="text-xs text-slate-500 hover:text-orange-400 transition-colors flex items-center gap-1.5"
                 >
-                  + Add domain
+                  <IconPlus className="w-3.5 h-3.5" />
+                  Add domain
                 </button>
               )}
             </div>
@@ -248,9 +250,9 @@ export default function CookieManagerModal({ onClose }: { onClose: () => void })
                       </div>
                       <button
                         onClick={() => deleteRow(row._tempId)}
-                        className="text-slate-600 hover:text-red-400 text-base leading-none opacity-0 group-hover:opacity-100 transition-opacity text-center"
+                        className="text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity text-center"
                       >
-                        ×
+                        <IconDelete className="w-4 h-4" />
                       </button>
                     </div>
                   ))}
@@ -260,9 +262,10 @@ export default function CookieManagerModal({ onClose }: { onClose: () => void })
                 <div className="flex items-center justify-between px-3 py-2 border-t border-slate-700 shrink-0">
                   <button
                     onClick={addRow}
-                    className="text-xs text-slate-500 hover:text-orange-400 transition-colors"
+                    className="text-xs text-slate-500 hover:text-orange-400 transition-colors flex items-center gap-1.5"
                   >
-                    + Add cookie
+                    <IconPlus className="w-3.5 h-3.5" />
+                    Add cookie
                   </button>
                   <button
                     onClick={saveRows}

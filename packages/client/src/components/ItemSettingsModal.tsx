@@ -8,6 +8,7 @@ import { API_BASE } from '../api';
 import { openAuthorizationWindow } from '../utils/oauth';
 import VarInput from './VarInput';
 import type { VariableSuggestion } from '../utils/variableAutocomplete';
+import { IconFolder, IconCollection, IconClose, IconDelete, IconPlus } from './Icons';
 import { normalizeVariableName, storageKeyError } from '../utils/variableUtils';
 
 type AuthType = CollectionAuth['type'];
@@ -246,12 +247,25 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700 shrink-0">
           <div>
-            <p className="text-xs text-slate-500 uppercase tracking-wider font-medium">
-              {kind === 'collection' ? '📚 Collection' : '📁 Folder'} · Settings
+            <p className="text-xs text-slate-500 uppercase tracking-wider font-medium flex items-center gap-2">
+              {kind === 'collection' ? (
+                <>
+                  <IconCollection className="w-3.5 h-3.5" />
+                  Collection
+                </>
+              ) : (
+                <>
+                  <IconFolder className="w-3.5 h-3.5" />
+                  Folder
+                </>
+              )}
+              · Settings
             </p>
             <h2 className="text-slate-100 font-semibold text-base mt-0.5 truncate">{name}</h2>
           </div>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-300 text-2xl leading-none ml-4 p-1">×</button>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-300 ml-4 p-1">
+            <IconClose className="w-5 h-5" />
+          </button>
         </div>
 
         {/* Tabs */}
@@ -400,9 +414,11 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
                         />
                         <button
                           onClick={() => setVars(prev => prev.filter((_, j) => j !== i))}
-                          className="text-slate-600 hover:text-red-400 transition-colors px-1 text-lg leading-none shrink-0"
+                          className="text-slate-600 hover:text-red-400 transition-colors px-1 shrink-0"
                           title="Remove"
-                        >×</button>
+                        >
+                          <IconDelete className="w-4 h-4" />
+                        </button>
                       </div>
                       {keyErr && (
                         <p className="text-xs text-red-400 pl-5">{keyErr}</p>
@@ -412,9 +428,10 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
                 })}
                 <button
                   onClick={() => setVars(prev => [...prev, { key: '', value: '' }])}
-                  className="self-start mt-1 text-xs text-orange-400 hover:text-orange-300 transition-colors"
+                  className="self-start mt-1 text-xs text-orange-400 hover:text-orange-300 transition-colors flex items-center gap-1.5"
                 >
-                  + Add variable
+                  <IconPlus className="w-3.5 h-3.5" />
+                  Add variable
                 </button>
               </div>
             </div>

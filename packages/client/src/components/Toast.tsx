@@ -91,11 +91,13 @@ export function useToast(): ToastContextValue {
 
 // ── Individual toast item ────────────────────────────────────────────────────
 
-const STYLES: Record<ToastType, { bar: string; icon: string; label: string }> = {
-  success: { bar: 'bg-green-500',  icon: '✓', label: 'bg-green-500/15 border-green-600/40 text-green-300' },
-  error:   { bar: 'bg-red-500',    icon: '✕', label: 'bg-red-500/15   border-red-600/40   text-red-300'   },
-  warning: { bar: 'bg-amber-500',  icon: '!', label: 'bg-amber-500/15 border-amber-600/40 text-amber-300' },
-  info:    { bar: 'bg-blue-500',   icon: 'i', label: 'bg-blue-500/15  border-blue-600/40  text-blue-300'  },
+import { IconSuccess, IconError, IconWarning, IconInfo } from './Icons';
+
+const STYLES: Record<ToastType, { bar: string; icon: React.ComponentType<{ className?: string }>; label: string }> = {
+  success: { bar: 'bg-green-500',  icon: IconSuccess, label: 'bg-green-500/15 border-green-600/40 text-green-300' },
+  error:   { bar: 'bg-red-500',    icon: IconError, label: 'bg-red-500/15   border-red-600/40   text-red-300'   },
+  warning: { bar: 'bg-amber-500',  icon: IconWarning, label: 'bg-amber-500/15 border-amber-600/40 text-amber-300' },
+  info:    { bar: 'bg-blue-500',   icon: IconInfo, label: 'bg-blue-500/15  border-blue-600/40  text-blue-300'  },
 };
 
 function ToastItem({
@@ -151,9 +153,9 @@ function ToastItem({
 
       <div className="flex items-start gap-2.5 px-3 py-2.5 pr-8">
         {/* Icon */}
-        <span className={`shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-xs font-bold ${s.bar} text-white`}>
-          {s.icon}
-        </span>
+        <div className={`shrink-0 w-5 h-5 flex items-center justify-center rounded-full ${s.bar} text-white`}>
+          <s.icon className="w-3 h-3" />
+        </div>
 
         {/* Message — support multi-line (newline separated) */}
         <p className="text-xs leading-relaxed whitespace-pre-wrap break-words flex-1 min-w-0">

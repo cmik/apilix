@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useApp } from '../store';
 import { normalizeVariableName, storageKeyError } from '../utils/variableUtils';
+import { IconEnvironments, IconGlobals, IconScopeInspector, IconSearch, IconClose, IconPlus, IconDelete, IconSuccess } from './Icons';
 
 function EnvGlobalsTabBar() {
   const { state, dispatch } = useApp();
@@ -8,33 +9,36 @@ function EnvGlobalsTabBar() {
     <div className="flex border-b border-slate-700 shrink-0 -mx-4 px-4 mb-2">
       <button
         onClick={() => dispatch({ type: 'SET_VIEW', payload: 'environments' })}
-        className={`mr-4 pb-2 text-xs font-medium transition-colors border-b-2 ${
+        className={`mr-4 pb-2 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 ${
           state.view === 'environments'
             ? 'text-orange-400 border-orange-400'
             : 'text-slate-400 hover:text-slate-200 border-transparent'
         }`}
       >
-        🌍 Environments
+        <IconEnvironments className="w-3.5 h-3.5" />
+        Environments
       </button>
       <button
         onClick={() => dispatch({ type: 'SET_VIEW', payload: 'globals' })}
-        className={`mr-4 pb-2 text-xs font-medium transition-colors border-b-2 ${
+        className={`mr-4 pb-2 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 ${
           state.view === 'globals'
             ? 'text-orange-400 border-orange-400'
             : 'text-slate-400 hover:text-slate-200 border-transparent'
         }`}
       >
-        🌐 Globals
+        <IconGlobals className="w-3.5 h-3.5" />
+        Globals
       </button>
       <button
         onClick={() => dispatch({ type: 'SET_VIEW', payload: 'variables' })}
-        className={`pb-2 text-xs font-medium transition-colors border-b-2 ${
+        className={`pb-2 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 ${
           state.view === 'variables'
             ? 'text-orange-400 border-orange-400'
             : 'text-slate-400 hover:text-slate-200 border-transparent'
         }`}
       >
-        🔍 Scope Inspector
+        <IconScopeInspector className="w-3.5 h-3.5" />
+        Scope Inspector
       </button>
     </div>
   );
@@ -169,11 +173,12 @@ export default function GlobalVariablesPanel() {
           <button
             onClick={save}
             disabled={rows.some(r => storageKeyError(r.key) !== null)}
-            className={`px-4 py-1.5 text-white text-sm rounded font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+            className={`px-4 py-1.5 text-white text-sm rounded font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 ${
               saved ? 'bg-green-600 hover:bg-green-500' : 'bg-orange-600 hover:bg-orange-500'
             }`}
           >
-            {saved ? '✓ Saved' : 'Save'}
+            {saved && <IconSuccess className="w-4 h-4" />}
+            {saved ? 'Saved' : 'Save'}
           </button>
         </div>
       </div>
@@ -186,7 +191,7 @@ export default function GlobalVariablesPanel() {
       {/* Filter */}
       {rows.length > 3 && (
         <div className="relative shrink-0">
-          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 text-xs pointer-events-none">🔍</span>
+          <IconSearch className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 w-4 h-4 pointer-events-none" />
           <input
             value={filter}
             onChange={e => setFilter(e.target.value)}
@@ -196,9 +201,9 @@ export default function GlobalVariablesPanel() {
           {filter && (
             <button
               onClick={() => setFilter('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 text-sm leading-none"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
             >
-              ×
+              <IconClose className="w-4 h-4" />
             </button>
           )}
         </div>
@@ -208,16 +213,17 @@ export default function GlobalVariablesPanel() {
       <div className="flex-1 overflow-y-auto min-h-0">
         {rows.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center">
-            <div className="text-5xl mb-3">🌐</div>
+            <IconGlobals className="w-16 h-16 mb-3 text-slate-500" />
             <p className="text-slate-400 text-sm">No global variables yet</p>
             <p className="text-slate-600 text-xs mt-1">
               Add variables below or import from a Postman globals file
             </p>
             <button
               onClick={addRow}
-              className="mt-4 px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white text-sm rounded font-medium transition-colors"
+              className="mt-4 px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white text-sm rounded font-medium transition-colors flex items-center gap-1.5"
             >
-              + Add variable
+              <IconPlus className="w-4 h-4" />
+              Add variable
             </button>
           </div>
         ) : (
@@ -257,10 +263,10 @@ export default function GlobalVariablesPanel() {
                       <td className="py-1">
                         <button
                           onClick={() => removeRow(i)}
-                          className="text-slate-600 hover:text-red-400 text-lg leading-none opacity-0 group-hover:opacity-100 transition-opacity"
+                          className="text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
                           title="Remove variable"
                         >
-                          ×
+                          <IconDelete className="w-4 h-4" />
                         </button>
                       </td>
                     </tr>
@@ -282,9 +288,10 @@ export default function GlobalVariablesPanel() {
         <div className="shrink-0 flex items-center justify-between border-t border-slate-700 pt-2">
           <button
             onClick={addRow}
-            className="text-xs text-slate-500 hover:text-orange-400 transition-colors"
+            className="text-xs text-slate-500 hover:text-orange-400 transition-colors flex items-center gap-1.5"
           >
-            + Add variable
+            <IconPlus className="w-3.5 h-3.5" />
+            Add variable
           </button>
           {rows.length > 0 && (
             <span className="text-xs text-slate-600">
