@@ -28,6 +28,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   cdpKillChrome: () => ipcRenderer.invoke('cdp-kill-chrome'),
   // ── DevTools ──────────────────────────────────────────────────────────────
   openDevTools: () => ipcRenderer.invoke('open-devtools'),
+  // ── Terminal ──────────────────────────────────────────────────────────────
+  terminalStart: (opts) => ipcRenderer.invoke('terminal-start', opts),
+  terminalInput: (sessionId, data) => ipcRenderer.invoke('terminal-input', { sessionId, data }),
+  terminalResize: (sessionId, cols, rows) => ipcRenderer.invoke('terminal-resize', { sessionId, cols, rows }),
+  terminalStop: (sessionId) => ipcRenderer.invoke('terminal-stop', { sessionId }),
+  terminalOnData: (cb) => {
+    const listener = (_event, sessionId, data) => cb(sessionId, data);
+    ipcRenderer.on('terminal-data', listener);
+    return () => ipcRenderer.removeListener('terminal-data', listener);
+  },
+  terminalOnExit: (cb) => {
+    const listener = (_event, sessionId, code) => cb(sessionId, code);
+    ipcRenderer.on('terminal-exit', listener);
+    return () => ipcRenderer.removeListener('terminal-exit', listener);
+  },
   // Close guard: main process notifies renderer before closing the window.
   onWillClose: (cb) => ipcRenderer.on('app:will-close', () => cb()),
   respondClose: (confirmed) => ipcRenderer.send('app:close-response', { confirmed }),

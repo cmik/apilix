@@ -16,6 +16,7 @@ Open it by clicking the gear icon (⚙️) in the bottom-left corner of the Acti
   - [Client Certificates (mTLS)](#client-certificates-mtls)
   - [Proxy](#proxy)
   - [CORS](#cors)
+  - [Terminal](#terminal)
   - [About](#about)
   - [Settings Reference](#settings-reference)
 
@@ -128,6 +129,20 @@ This is useful when you run Apilix in web mode (e.g. `http://localhost:3001`) an
 
 ---
 
+## Terminal
+
+Configure the [Integrated Terminal](Integrated-Terminal.md) that is embedded in the bottom panel of the desktop app.
+
+> These settings only apply in the **Electron desktop app**. They have no effect in browser/web mode.
+
+| Setting | Default | Description |
+|---|---|---|
+| **Shell path** | System default | Absolute path to the shell executable. Leave blank to use `$SHELL` (macOS/Linux) or `%COMSPEC%` (Windows). Invalid or non-absolute paths silently fall back to the system default. |
+| **Font size (px)** | `13` | Font size for terminal output and input. Range: 8–24 px. |
+| **Scrollback limit (lines)** | `2000` | Maximum lines kept in the output viewport before older lines are trimmed. Range: 100–10 000. |
+
+---
+
 ## About
 
 ![Settings — About tab](images/settings-about.png)
@@ -167,5 +182,8 @@ Click **Check for update** to query the [GitHub Releases API](https://api.github
 | `corsAllowedOrigins` | `string` | `''` | CORS tab; extra allowed origins for the local server |
 | `customCAs` | `string` | `''` | Custom CA Certificate tab; PEM CA bundle appended to the system trust store |
 | `clientCertificates` | `ClientCertificate[]` | `[]` | Client Certificates tab; per-host mTLS certificate entries |
+| `terminalShellPath` | `string \| undefined` | system default | Terminal tab; absolute path to shell executable |
+| `terminalFontSize` | `number` | `13` | Terminal tab; output font size in pixels |
+| `terminalScrollbackLimit` | `number` | `2000` | Terminal tab; maximum scrollback lines retained in memory |
 
 All settings are stored in the active workspace and persist across sessions.

@@ -4,7 +4,7 @@ import type { AppSettings, ClientCertificate } from '../types';
 import apilixLogo from '../assets/apilix1.svg';
 import { fetchLatestGitHubVersion, isVersionGreater } from '../utils/versionUtils';
 
-export type SettingsTab = 'appearance' | 'requests' | 'proxy' | 'cors' | 'shortcuts' | 'about';
+export type SettingsTab = 'appearance' | 'requests' | 'proxy' | 'cors' | 'shortcuts' | 'terminal' | 'about';
 
 const TABS: { key: SettingsTab; label: string }[] = [
   { key: 'appearance', label: 'Appearance' },
@@ -12,6 +12,7 @@ const TABS: { key: SettingsTab; label: string }[] = [
   { key: 'proxy',      label: 'Proxy'      },
   { key: 'cors',       label: 'CORS'       },
   { key: 'shortcuts',  label: 'Shortcuts'  },
+  { key: 'terminal',   label: 'Terminal'   },
   { key: 'about',      label: 'About'      },
 ];
 
@@ -171,11 +172,59 @@ function AppearanceTab({ s, u }: { s: AppSettings; u: (p: Partial<AppSettings>) 
     </div>
   );
 }
+// ─── Terminal Tab ──────────────────────────────────────────────────────────────
 
+function TerminalTab({ s, u }: { s: AppSettings; u: (p: Partial<AppSettings>) => void }) {
+  return (
+    <div className="space-y-5">
+      <Section title="Shell">
+        <Row label="Shell path">
+          <input
+            type="text"
+            value={(s.terminalShellPath as string | undefined) ?? ''}
+            onChange={e => u({ terminalShellPath: e.target.value || undefined })}
+            placeholder="Default (system shell)"
+            className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs text-slate-200 font-mono focus:outline-none focus:border-orange-500"
+          />
+        </Row>
+        <p className="text-xs text-slate-600">
+          Leave blank to use the default shell (<code className="font-mono">$SHELL</code> on macOS/Linux, <code className="font-mono">%COMSPEC%</code> on Windows).
+        </p>
+      </Section>
+
+      <Section title="Appearance">
+        <Row label="Font size (px)">
+          <input
+            type="number"
+            min={8}
+            max={24}
+            value={(s.terminalFontSize as number | undefined) ?? 13}
+            onChange={e => u({ terminalFontSize: Number(e.target.value) })}
+            className="w-20 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs text-slate-200 font-mono focus:outline-none focus:border-orange-500"
+          />
+        </Row>
+      </Section>
+
+      <Section title="History">
+        <Row label="Scrollback limit (lines)">
+          <input
+            type="number"
+            min={100}
+            max={10000}
+            step={100}
+            value={(s.terminalScrollbackLimit as number | undefined) ?? 2000}
+            onChange={e => u({ terminalScrollbackLimit: Number(e.target.value) })}
+            className="w-24 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs text-slate-200 font-mono focus:outline-none focus:border-orange-500"
+          />
+        </Row>
+      </Section>
+    </div>
+  );
+}
 function RequestsTab({ s, u }: { s: AppSettings; u: (p: Partial<AppSettings>) => void }) {
-  const caFileInputRef = useRef<HTMLInputElement>(null);
   const certFileInputRef = useRef<HTMLInputElement>(null);
   const keyFileInputRef = useRef<HTMLInputElement>(null);
+  const caFileInputRef = useRef<HTMLInputElement>(null);
   const [pendingLoad, setPendingLoad] = useState<{ idx: number; field: 'cert' | 'key' } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const eAPI = (window as any).electronAPI ?? null;
@@ -776,6 +825,7 @@ export default function SettingsModal({ onClose, initialTab }: Props) {
           {activeTab === 'proxy'      && <ProxyTab      s={settings} u={update} />}
           {activeTab === 'cors'       && <CorsTab       s={settings} u={update} />}
           {activeTab === 'shortcuts'  && <ShortcutsTab />}
+          {activeTab === 'terminal'   && <TerminalTab   s={settings} u={update} />}
           {activeTab === 'about'      && <AboutTab />}
         </div>
       </div>

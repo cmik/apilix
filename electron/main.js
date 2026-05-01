@@ -4,6 +4,9 @@ const { app, BrowserWindow, shell, ipcMain, dialog, safeStorage, Menu } = requir
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
+const { spawn } = require('child_process');
+const os = require('os');
+const crypto = require('crypto');
 
 const isDev = !app.isPackaged;
 // DevTools are always available in dev. In packaged builds they are disabled  
@@ -466,6 +469,109 @@ ipcMain.handle('cdp-kill-chrome', async () => {
   return { ok: true };
 });
 
+// ─── Terminal IPC ─────────────────────────────────────────────────────────────
+
+
+/** Map of sessionId -> { proc, shell, cwd, pid } */
+const terminalSessions = new Map();
+
+function getDefaultShell() {
+  if (process.platform === 'win32') return process.env.COMSPEC || 'cmd.exe';
+  return process.env.SHELL || '/bin/zsh';
+}
+
+function resolveTerminalCwd(requestedCwd) {
+  const homedir = os.homedir();
+  if (!requestedCwd) return homedir;
+  try {
+    const stats = fs.statSync(requestedCwd);
+    if (stats.isDirectory()) return requestedCwd;
+  } catch (_) {}
+  return homedir;
+}
+
+ipcMain.handle('terminal-start', async (_event, opts = {}) => {
+  // Validate shellPath: must be an absolute path to an existing file.
+  const shell = (() => {
+    const candidate = opts.shellPath;
+    if (candidate && typeof candidate === 'string' && path.isAbsolute(candidate)) {
+      try { if (fs.statSync(candidate).isFile()) return candidate; } catch (_) {}
+    }
+    return getDefaultShell();
+  })();
+  const workingDir = resolveTerminalCwd(opts.cwd);
+  const sessionId = crypto.randomUUID();
+
+  const proc = spawn(shell, [], {
+    cwd: workingDir,
+    env: { ...process.env, TERM: 'xterm-256color' },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  if (!proc.pid) throw new Error('Failed to start terminal session');
+
+  terminalSessions.set(sessionId, { proc, shell, cwd: workingDir, pid: proc.pid });
+
+  proc.stdout.on('data', (chunk) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('terminal-data', sessionId, chunk.toString('utf8'));
+    }
+  });
+
+  proc.stderr.on('data', (chunk) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('terminal-data', sessionId, chunk.toString('utf8'));
+    }
+  });
+
+  proc.on('exit', (code) => {
+    terminalSessions.delete(sessionId);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('terminal-exit', sessionId, code ?? null);
+    }
+  });
+
+  proc.on('error', (err) => {
+    writeLog('Terminal spawn error: ' + err.message);
+    terminalSessions.delete(sessionId);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('terminal-exit', sessionId, null);
+    }
+  });
+
+  return { sessionId, pid: proc.pid, cwd: workingDir, shell };
+});
+
+ipcMain.handle('terminal-input', async (_event, { sessionId, data }) => {
+  if (typeof data !== 'string' && !Buffer.isBuffer(data)) return { ok: false };
+  const session = terminalSessions.get(sessionId);
+  if (session && session.proc.stdin && !session.proc.stdin.destroyed) {
+    session.proc.stdin.write(data);
+  }
+  return { ok: true };
+});
+
+// Placeholder — full PTY resize requires node-pty; this is a no-op for now.
+ipcMain.handle('terminal-resize', async (_event, _args) => {
+  return { ok: true };
+});
+
+ipcMain.handle('terminal-stop', async (_event, { sessionId }) => {
+  const session = terminalSessions.get(sessionId);
+  if (session) {
+    try { session.proc.kill('SIGTERM'); } catch (_) {}
+    terminalSessions.delete(sessionId);
+  }
+  return { ok: true };
+});
+
+function killAllTerminalSessions() {
+  for (const [, session] of terminalSessions) {
+    try { session.proc.kill('SIGTERM'); } catch (_) {}
+  }
+  terminalSessions.clear();
+}
+
 // Renderer confirmed it is safe to close.
 ipcMain.on('app:close-response', (_, { confirmed }) => {
   if (closeGuardTimeout) {
@@ -478,6 +584,7 @@ ipcMain.on('app:close-response', (_, { confirmed }) => {
 });
 
 app.on('window-all-closed', () => {
+  killAllTerminalSessions();
   if (serverProcess) {
     serverProcess.kill();
     serverProcess = null;
@@ -486,6 +593,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  killAllTerminalSessions();
   if (serverProcess) {
     serverProcess.kill();
     serverProcess = null;

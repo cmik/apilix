@@ -455,6 +455,7 @@ export default function App() {
   const [envQuickOpen, setEnvQuickOpen] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [consoleHeight, setConsoleHeight] = useState(DEFAULT_CONSOLE_HEIGHT);
+  const [consolePanelMode, setConsolePanelMode] = useState<'console' | 'terminal'>('console');
   const [responsePanelHeight, setResponsePanelHeight] = useState(() => {
     const saved = Number(localStorage.getItem('apilix_response_panel_height'));
     return Number.isFinite(saved) && saved > 0 ? saved : DEFAULT_RESPONSE_PANEL_HEIGHT;
@@ -1269,6 +1270,8 @@ export default function App() {
             onHeightChange={setConsoleHeight}
             onClose={() => setConsoleOpen(false)}
             theme={theme}
+            mode={consolePanelMode}
+            onModeChange={setConsolePanelMode}
           />
         </div>
       </div>
@@ -1283,6 +1286,8 @@ export default function App() {
         serverStatus={serverStatus}
         updateAvailable={updateAvailable}
         latestVersion={latestVersion}
+        terminalSessionActive={state.terminalSession.connected}
+        onSwitchToTerminal={() => { setConsoleOpen(true); setConsolePanelMode('terminal'); }}
       />
 
       {/* Env quick panel */}

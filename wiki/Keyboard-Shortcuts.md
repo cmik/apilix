@@ -15,6 +15,7 @@ All global shortcuts use **⌘** (Cmd) on macOS and **Ctrl** on Windows/Linux. S
   - [Modal and Panel Shortcuts](#modal-and-panel-shortcuts)
   - [Script Editor Shortcuts](#script-editor-shortcuts)
   - [Body Editor Shortcuts](#body-editor-shortcuts)
+  - [Integrated Terminal Shortcuts](#integrated-terminal-shortcuts)
 
 ---
 
@@ -112,3 +113,16 @@ The raw body editors (Raw, GraphQL query, XML) support an inline find bar and a 
 | **Escape** | Close the Find / Find & Replace bar |
 
 > Pressing **⌘ F** or **⌘ H** again while the bar is already open in the same mode **closes** it. Switch between Find and Replace via the **Find / Replace** tabs inside the bar.
+
+---
+
+## Integrated Terminal Shortcuts
+
+These shortcuts are active when the cursor is inside the terminal **input bar** at the bottom of the terminal pane.
+
+| Shortcut | Action |
+|---|---|
+| **Enter** | Send the typed command to the shell |
+| **Ctrl C** | Send an interrupt signal (`\x03`) to the running process |
+
+> The terminal is only available in the **Electron desktop app**. See [Integrated Terminal](Integrated-Terminal.md) for full documentation.

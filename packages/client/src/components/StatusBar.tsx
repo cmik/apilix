@@ -10,6 +10,8 @@ interface StatusBarProps {
   serverStatus: ServerStatus;
   updateAvailable?: boolean;
   latestVersion?: string | null;
+  terminalSessionActive?: boolean;
+  onSwitchToTerminal?: () => void;
 }
 
 function statusColor(status: number): string {
@@ -28,6 +30,8 @@ export default function StatusBar({
   serverStatus,
   updateAvailable,
   latestVersion,
+  terminalSessionActive,
+  onSwitchToTerminal,
 }: StatusBarProps) {
   const serverDot =
     serverStatus === 'online'
@@ -72,6 +76,21 @@ export default function StatusBar({
 
       {/* Separator */}
       <span className="w-px h-3.5 bg-slate-700 mx-1" />
+
+      {/* Terminal session active indicator */}
+      {terminalSessionActive && (
+        <>
+          <button
+            onClick={onSwitchToTerminal}
+            title="Terminal session running — click to open"
+            className="flex items-center gap-1 h-full px-2 text-green-400 hover:text-green-300 hover:bg-slate-800 rounded transition-colors"
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse shrink-0" />
+            <span>Terminal</span>
+          </button>
+          <span className="w-px h-3.5 bg-slate-700 mx-1" />
+        </>
+      )}
 
       {/* App version */}
       <span className="font-mono text-slate-500 px-1.5" title="App version">

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { useApp } from '../store';
+import { useApp, generateId } from '../store';
 import type { ConsoleEntry } from '../types';
 import { maskSecrets } from '../utils/secretMask';
 
@@ -7,6 +7,22 @@ const MIN_HEIGHT = 120;
 const MAX_HEIGHT = 600;
 const BROADCAST_CHANNEL = 'apilix-console-v1';
 const INTEGRATED_DETAIL_MODE_KEY = 'apilix_console_integrated_detail_mode';
+
+// ─── Electron terminal API (stable reference — set once by preload) ───────────
+
+type ElectronTerminalAPI = {
+  terminalStart: (opts: { shellPath?: string; cwd?: string }) => Promise<{ sessionId: string; pid: number; cwd: string; shell: string }>;
+  terminalInput: (sessionId: string, data: string) => Promise<void>;
+  terminalStop: (sessionId: string) => Promise<void>;
+  terminalOnData: (cb: (sessionId: string, data: string) => void) => () => void;
+  terminalOnExit: (cb: (sessionId: string, exitCode: number | null) => void) => () => void;
+};
+
+function getElectronTerminalAPI(): ElectronTerminalAPI | null {
+  const api = (window as unknown as { electronAPI?: Record<string, unknown> }).electronAPI;
+  if (api && typeof api.terminalStart === 'function') return api as unknown as ElectronTerminalAPI;
+  return null;
+}
 
 type DetailMode = 'compact' | 'focus';
 
@@ -689,13 +705,137 @@ interface ConsolePanelProps {
   onHeightChange: (h: number) => void;
   onClose: () => void;
   theme: 'dark' | 'light';
+  /** Active bottom-panel mode: 'console' (default) or 'terminal'. */
+  mode: 'console' | 'terminal';
+  onModeChange: (m: 'console' | 'terminal') => void;
 }
 
-export default function ConsolePanel({ height, onHeightChange, onClose, theme }: ConsolePanelProps) {
+export default function ConsolePanel({ height, onHeightChange, onClose, theme, mode, onModeChange }: ConsolePanelProps) {
   const { state, dispatch, secretSet } = useApp();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailMode, setDetailMode] = useState<DetailMode>(() => loadDetailMode(INTEGRATED_DETAIL_MODE_KEY));
   const logs = state.consoleLogs;
+
+  // Terminal state
+  const terminalSession = state.terminalSession;
+  const [termInput, setTermInput] = useState('');
+  const [termStopping, setTermStopping] = useState(false);
+  const termOutputRef = useRef<HTMLDivElement | null>(null);
+  const termInputRef = useRef<HTMLInputElement | null>(null);
+  // Use a ref so data-listener callbacks always see the current sessionId
+  // without being torn down and re-registered on every state change (fix for
+  // the stale-closure bug that dropped the shell's initial prompt).
+  const sessionIdRef = useRef<string | null>(null);
+  sessionIdRef.current = terminalSession.sessionId;
+
+  const eAPI = getElectronTerminalAPI();
+  const isElectron = eAPI !== null;
+
+  // Register terminal data / exit listeners once on mount.
+  // Callbacks read sessionIdRef.current so they are never stale.
+  useEffect(() => {
+    if (!eAPI) return;
+
+    const removeData = eAPI.terminalOnData((sessionId, data) => {
+      if (sessionId !== sessionIdRef.current) return;
+      // Split into logical lines, strip ANSI escape sequences
+      const text = data.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      const lines = text.split('\n');
+      lines.forEach((line, i) => {
+        // Skip the empty token produced by a trailing newline
+        if (i === lines.length - 1 && line === '') return;
+        const stripped = line.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
+        dispatch({
+          type: 'TERMINAL_APPEND_OUTPUT',
+          payload: { id: generateId(), stream: 'stdout', text: stripped, ts: Date.now() },
+        });
+      });
+    });
+
+    const removeExit = eAPI.terminalOnExit((sessionId, exitCode) => {
+      if (sessionId !== sessionIdRef.current) return;
+      dispatch({ type: 'TERMINAL_SESSION_ENDED', payload: { exitCode } });
+      dispatch({
+        type: 'TERMINAL_APPEND_OUTPUT',
+        payload: { id: generateId(), stream: 'system', text: `Process exited with code ${exitCode ?? '?'}`, ts: Date.now() },
+      });
+    });
+
+    return () => {
+      removeData();
+      removeExit();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally empty — eAPI is stable; sessionId read via ref
+
+  // Auto-scroll terminal output to bottom when lines change
+  useEffect(() => {
+    if (mode === 'terminal' && termOutputRef.current) {
+      termOutputRef.current.scrollTop = termOutputRef.current.scrollHeight;
+    }
+  }, [terminalSession.lines, mode]);
+
+  // Focus input when switching to terminal mode
+  useEffect(() => {
+    if (mode === 'terminal' && termInputRef.current) {
+      termInputRef.current.focus();
+    }
+  }, [mode]);
+
+  async function handleTerminalStart() {
+    if (!eAPI) return;
+    try {
+      dispatch({ type: 'TERMINAL_CLEAR_OUTPUT' });
+      const shellPath = state.settings?.terminalShellPath as string | undefined;
+      const result = await eAPI.terminalStart({ shellPath });
+      dispatch({ type: 'TERMINAL_SESSION_STARTED', payload: result });
+      dispatch({
+        type: 'TERMINAL_APPEND_OUTPUT',
+        payload: { id: generateId(), stream: 'system', text: `Shell: ${result.shell}  CWD: ${result.cwd}`, ts: Date.now() },
+      });
+    } catch (err) {
+      dispatch({
+        type: 'TERMINAL_APPEND_OUTPUT',
+        payload: { id: generateId(), stream: 'system', text: `Failed to start terminal: ${(err as Error).message}`, ts: Date.now() },
+      });
+    }
+  }
+
+  async function handleTerminalStop() {
+    if (!eAPI || !terminalSession.sessionId || termStopping) return;
+    setTermStopping(true);
+    try {
+      await eAPI.terminalStop(terminalSession.sessionId);
+      dispatch({ type: 'TERMINAL_SESSION_ENDED', payload: { exitCode: null } });
+      dispatch({
+        type: 'TERMINAL_APPEND_OUTPUT',
+        payload: { id: generateId(), stream: 'system', text: 'Session stopped.', ts: Date.now() },
+      });
+    } finally {
+      setTermStopping(false);
+    }
+  }
+
+  function handleTerminalInputKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (!eAPI || !terminalSession.sessionId) return;
+      const line = termInput + '\n';
+      // Echo the typed command (no PTY so the shell won't echo it back)
+      dispatch({
+        type: 'TERMINAL_APPEND_OUTPUT',
+        payload: { id: generateId(), stream: 'system', text: '$ ' + termInput, ts: Date.now() },
+      });
+      setTermInput('');
+      eAPI.terminalInput(terminalSession.sessionId, line).catch(() => {});
+    } else if (e.key === 'c' && e.ctrlKey) {
+      e.preventDefault();
+      if (!eAPI || !terminalSession.sessionId) return;
+      eAPI.terminalInput(terminalSession.sessionId, '\x03').catch(() => {});
+    }
+  }
+
+  const termFontSize = (state.settings?.terminalFontSize as number | undefined) ?? 13;
 
   const shouldMask = state.settings?.maskSecrets !== false;
   const mask = (v: string) => shouldMask ? maskSecrets(v, secretSet) : v;
@@ -854,29 +994,80 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme }:
           <polyline points="4 17 10 11 4 5" />
           <line x1="12" y1="19" x2="20" y2="19" />
         </svg>
-        <span className="text-xs font-semibold text-slate-300 uppercase tracking-wide">Console</span>
-        <span className="text-xs text-slate-600">{logs.length}</span>
+
+        {/* Mode tabs */}
+        <button
+          onClick={() => onModeChange('console')}
+          className={`text-xs px-2 py-0.5 rounded transition-colors ${mode === 'console' ? 'text-orange-400 bg-orange-900/20' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800'}`}
+        >
+          Console
+          {mode === 'console' && <span className="ml-1 text-slate-600">{logs.length}</span>}
+        </button>
+        <button
+          onClick={() => onModeChange('terminal')}
+          className={`text-xs px-2 py-0.5 rounded transition-colors ${mode === 'terminal' ? 'text-orange-400 bg-orange-900/20' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800'}`}
+        >
+          Terminal
+          {mode === 'terminal' && terminalSession.connected && (
+            <span className="ml-1.5 w-1.5 h-1.5 rounded-full bg-green-400 inline-block" />
+          )}
+        </button>
 
         <div className="flex-1" />
 
-        <button
-          onClick={() => { dispatch({ type: 'CLEAR_CONSOLE_LOGS' }); }}
-          className="text-xs text-slate-500 hover:text-slate-200 px-2 py-0.5 rounded hover:bg-slate-800 transition-colors"
-          title="Clear"
-        >
-          Clear
-        </button>
+        {mode === 'console' && (
+          <>
+            <button
+              onClick={() => { dispatch({ type: 'CLEAR_CONSOLE_LOGS' }); }}
+              className="text-xs text-slate-500 hover:text-slate-200 px-2 py-0.5 rounded hover:bg-slate-800 transition-colors"
+              title="Clear"
+            >
+              Clear
+            </button>
 
-        <button
-          onClick={openInNewWindow}
-          className="flex items-center gap-1 text-xs text-slate-500 hover:text-orange-400 px-2 py-0.5 rounded hover:bg-slate-800 transition-colors"
-          title="Open in new window"
-        >
-          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-          </svg>
-          <span>New window</span>
-        </button>
+            <button
+              onClick={openInNewWindow}
+              className="flex items-center gap-1 text-xs text-slate-500 hover:text-orange-400 px-2 py-0.5 rounded hover:bg-slate-800 transition-colors"
+              title="Open in new window"
+            >
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+              <span>New window</span>
+            </button>
+          </>
+        )}
+
+        {mode === 'terminal' && (
+          <>
+            {terminalSession.connected ? (
+              <button
+                onClick={handleTerminalStop}
+                disabled={termStopping}
+                className="text-xs text-red-400 hover:text-red-300 px-2 py-0.5 rounded hover:bg-slate-800 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                title="Stop terminal session"
+              >
+                {termStopping ? 'Stopping…' : 'Stop'}
+              </button>
+            ) : (
+              <button
+                onClick={handleTerminalStart}
+                disabled={!isElectron}
+                className="text-xs text-green-400 hover:text-green-300 px-2 py-0.5 rounded hover:bg-slate-800 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                title={isElectron ? 'Start terminal session' : 'Terminal only available in the desktop app'}
+              >
+                Start
+              </button>
+            )}
+            <button
+              onClick={() => dispatch({ type: 'TERMINAL_CLEAR_OUTPUT' })}
+              className="text-xs text-slate-500 hover:text-slate-200 px-2 py-0.5 rounded hover:bg-slate-800 transition-colors"
+              title="Clear output"
+            >
+              Clear
+            </button>
+          </>
+        )}
 
         <button
           onClick={onClose}
@@ -887,7 +1078,74 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme }:
         </button>
       </div>
 
+      {/* Terminal pane */}
+      {mode === 'terminal' && (
+        <div className="flex-1 flex flex-col min-h-0 bg-slate-950">
+          {!isElectron ? (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center px-6 py-8 max-w-sm">
+                <svg className="w-8 h-8 text-slate-600 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <polyline points="4 17 10 11 4 5" />
+                  <line x1="12" y1="19" x2="20" y2="19" />
+                </svg>
+                <p className="text-sm font-medium text-slate-400 mb-1">Terminal not available</p>
+                <p className="text-xs text-slate-600">The integrated terminal is only available in the Apilix desktop app.</p>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Output */}
+              <div
+                ref={termOutputRef}
+                className="flex-1 overflow-y-auto min-h-0 px-3 py-2 font-mono"
+                style={{ fontSize: termFontSize }}
+              >
+                {terminalSession.lines.length === 0 && !terminalSession.connected && (
+                  <span className="text-slate-700 italic text-xs">Press Start to open a terminal session.</span>
+                )}
+                {terminalSession.lines.map(line => (
+                  <div
+                    key={line.id}
+                    className={
+                      line.stream === 'stderr'
+                        ? 'text-red-400 whitespace-pre-wrap break-all'
+                        : line.stream === 'system'
+                        ? 'text-slate-500 italic whitespace-pre-wrap break-all'
+                        : 'text-slate-200 whitespace-pre-wrap break-all'
+                    }
+                  >
+                    {line.text}
+                  </div>
+                ))}
+              </div>
+
+              {/* Input bar */}
+              <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-t border-slate-800">
+                <span className="text-slate-600 font-mono text-xs select-none">
+                  {terminalSession.cwd ? terminalSession.cwd.replace(/^.*\/([^/]+)$/, '$1') : '$'}
+                </span>
+                <input
+                  ref={termInputRef}
+                  type="text"
+                  value={termInput}
+                  onChange={e => setTermInput(e.target.value)}
+                  onKeyDown={handleTerminalInputKeyDown}
+                  disabled={!terminalSession.connected}
+                  placeholder={terminalSession.connected ? 'Type a command… (Enter to run, Ctrl+C to interrupt)' : 'Start a session to type commands'}
+                  className="flex-1 bg-transparent border-none outline-none font-mono text-slate-200 placeholder:text-slate-700 disabled:opacity-40"
+                  style={{ fontSize: termFontSize }}
+                  spellCheck={false}
+                  autoComplete="off"
+                  autoCapitalize="off"
+                />
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Log list */}
+      {mode === 'console' && (
       <div className="flex-1 overflow-y-auto min-h-0">
         {logs.length === 0 ? (
           <div className="h-full flex items-center justify-center text-xs text-slate-700 italic select-none">
@@ -956,6 +1214,7 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme }:
           ))
         )}
       </div>
+      )}
     </div>
   );
 }

@@ -26,6 +26,13 @@ interface ElectronAPI {
   decryptString: (encrypted: string) => Promise<string | null>;
   onWillClose: (cb: () => void) => void;
   respondClose: (confirmed: boolean) => void;
+  // Terminal
+  terminalStart: (opts: { shellPath?: string; cwd?: string }) => Promise<{ sessionId: string; pid: number; cwd: string; shell: string }>;
+  terminalInput: (sessionId: string, data: string) => Promise<void>;
+  terminalResize: (sessionId: string, cols: number, rows: number) => Promise<void>;
+  terminalStop: (sessionId: string) => Promise<void>;
+  terminalOnData: (cb: (sessionId: string, data: string) => void) => () => void;
+  terminalOnExit: (cb: (sessionId: string, exitCode: number | null) => void) => () => void;
 }
 
 function eAPI(): ElectronAPI | null {

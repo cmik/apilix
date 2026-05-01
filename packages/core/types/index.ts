@@ -344,7 +344,34 @@ export interface AppSettings {
   cdpPort?: number;
   // Capture panel view preferences (persisted across restarts)
   captureViewState?: CaptureViewState;
+  // Terminal
+  /** Override the default shell path used by the integrated terminal. */
+  terminalShellPath?: string;
+  /** Font size in the terminal pane (px). Default 13. */
+  terminalFontSize?: number;
+  /** Maximum number of terminal output lines to keep in memory. Default 2000. */
+  terminalScrollbackLimit?: number;
   [key: string]: unknown;
+}
+
+// ── Terminal ──────────────────────────────────────────────────────────────────
+
+export interface TerminalLine {
+  id: string;
+  /** 'stdout' | 'stderr' | 'system' — used for color coding */
+  stream: 'stdout' | 'stderr' | 'system';
+  text: string;
+  ts: number;
+}
+
+export interface TerminalSessionState {
+  connected: boolean;
+  sessionId: string | null;
+  cwd: string | null;
+  shell: string | null;
+  pid: number | null;
+  lines: TerminalLine[];
+  exitCode: number | null;
 }
 
 export interface CaptureCookieAttribute {
@@ -749,6 +776,7 @@ export interface AppState {
   recentRuns: SavedRunnerRun[];
   savedRuns: SavedRunnerRun[];
   runnerLoadedRun: SavedRunnerRun | null;
+  terminalSession: TerminalSessionState;
 }
 
 export interface RequestTab {
@@ -856,4 +884,9 @@ export type AppAction =
   | { type: 'LOAD_RUNNER_RUN'; payload: SavedRunnerRun }
   | { type: 'CLEAR_LOADED_RUNNER_RUN' }
   // ── Tab session actions ──────────────────────────────────────────────────
-  | { type: 'RESTORE_TAB_SESSION'; payload: { tabs: Array<{ id: string; collectionId: string; itemId: string }>; activeTabId: string | null } };
+  | { type: 'RESTORE_TAB_SESSION'; payload: { tabs: Array<{ id: string; collectionId: string; itemId: string }>; activeTabId: string | null } }
+  // ── Terminal ──────────────────────────────────────────────────────────────
+  | { type: 'TERMINAL_SESSION_STARTED'; payload: { sessionId: string; pid: number; cwd: string; shell: string } }
+  | { type: 'TERMINAL_SESSION_ENDED'; payload: { exitCode: number | null } }
+  | { type: 'TERMINAL_APPEND_OUTPUT'; payload: TerminalLine }
+  | { type: 'TERMINAL_CLEAR_OUTPUT' };

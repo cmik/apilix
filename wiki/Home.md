@@ -34,6 +34,7 @@ Apilix is a lightweight, open-source API development and testing tool built for 
 | 🕸️ | GraphQL with schema introspection | 🏷️ | Network timeline, TLS chain, redirect chain |
 | 🍪 | Cookie manager | 🕐 | Request History with snapshot re-open |
 | ⚡ | Keyboard shortcuts & dark/light theme | 🖥️ | Headless CLI runner — JSON & JUnit reporters, CSV data |
+| 💻 | Integrated Terminal (Electron) | | |
 
 ---
 
