@@ -177,7 +177,12 @@ function RequestsTab({ s, u }: { s: AppSettings; u: (p: Partial<AppSettings>) =>
   const certFileInputRef = useRef<HTMLInputElement>(null);
   const keyFileInputRef = useRef<HTMLInputElement>(null);
   const [pendingLoad, setPendingLoad] = useState<{ idx: number; field: 'cert' | 'key' } | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const eAPI = (window as any).electronAPI ?? null;
+
+  function showLoadError(msg: string) {
+    setLoadError(msg);
+  }
 
   // ── Custom CA loaders ──────────────────────────────────────────────────────
 
@@ -190,10 +195,10 @@ function RequestsTab({ s, u }: { s: AppSettings; u: (p: Partial<AppSettings>) =>
         ]);
         if (!filePath) return;
         const content: string = await eAPI.readTextFile(filePath);
+        setLoadError(null);
         u({ customCAs: content });
-      } catch (error) {
-        console.error('Failed to load certificate file:', error);
-        window.alert('Failed to load the certificate file. Please check the file permissions/size and try again.');
+      } catch (err: unknown) {
+        showLoadError(`Failed to load CA certificate: ${err instanceof Error ? err.message : String(err)}`);
       }
     } else {
       caFileInputRef.current?.click();
@@ -204,7 +209,11 @@ function RequestsTab({ s, u }: { s: AppSettings; u: (p: Partial<AppSettings>) =>
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = ev => { u({ customCAs: ev.target?.result as string ?? '' }); };
+    reader.onload = ev => {
+      setLoadError(null);
+      u({ customCAs: ev.target?.result as string ?? '' });
+    };
+    reader.onerror = () => showLoadError(`Failed to read file: ${reader.error?.message ?? 'unknown error'}`);
     reader.readAsText(file);
     e.target.value = '';
   }
@@ -220,13 +229,18 @@ function RequestsTab({ s, u }: { s: AppSettings; u: (p: Partial<AppSettings>) =>
 
   async function handleLoadClientFile(idx: number, field: 'cert' | 'key') {
     if (eAPI?.openFileDialog) {
-      const filePath: string | null = await eAPI.openFileDialog([
-        { name: 'PEM files', extensions: ['pem', 'crt', 'cer', 'key', 'txt'] },
-        { name: 'All files', extensions: ['*'] },
-      ]);
-      if (!filePath) return;
-      const content: string = await eAPI.readTextFile(filePath);
-      updateCertEntry(idx, { [field]: content });
+      try {
+        const filePath: string | null = await eAPI.openFileDialog([
+          { name: 'PEM files', extensions: ['pem', 'crt', 'cer', 'key', 'txt'] },
+          { name: 'All files', extensions: ['*'] },
+        ]);
+        if (!filePath) return;
+        const content: string = await eAPI.readTextFile(filePath);
+        setLoadError(null);
+        updateCertEntry(idx, { [field]: content });
+      } catch (err: unknown) {
+        showLoadError(`Failed to load ${field === 'cert' ? 'certificate' : 'key'}: ${err instanceof Error ? err.message : String(err)}`);
+      }
     } else {
       setPendingLoad({ idx, field });
       if (field === 'cert') certFileInputRef.current?.click();
@@ -239,7 +253,11 @@ function RequestsTab({ s, u }: { s: AppSettings; u: (p: Partial<AppSettings>) =>
     if (!file || !pendingLoad) return;
     const { idx, field } = pendingLoad;
     const reader = new FileReader();
-    reader.onload = ev => { updateCertEntry(idx, { [field]: ev.target?.result as string ?? '' }); };
+    reader.onload = ev => {
+      setLoadError(null);
+      updateCertEntry(idx, { [field]: ev.target?.result as string ?? '' });
+    };
+    reader.onerror = () => showLoadError(`Failed to read file: ${reader.error?.message ?? 'unknown error'}`);
     reader.readAsText(file);
     e.target.value = '';
     setPendingLoad(null);
@@ -330,6 +348,25 @@ function RequestsTab({ s, u }: { s: AppSettings; u: (p: Partial<AppSettings>) =>
           />
         </div>
       </Section>
+
+      {loadError && (
+        <div className="flex items-start gap-2 px-3 py-2 rounded bg-red-900/40 border border-red-700/60">
+          <svg className="w-3.5 h-3.5 text-red-400 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+          </svg>
+          <span className="text-xs text-red-300 break-all">{loadError}</span>
+          <button
+            type="button"
+            onClick={() => setLoadError(null)}
+            className="ml-auto shrink-0 text-red-500 hover:text-red-300 transition-colors"
+            aria-label="Dismiss"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+      )}
 
       <Section title="Client Certificates (mTLS)">
         <p className="text-xs text-slate-400 leading-relaxed">

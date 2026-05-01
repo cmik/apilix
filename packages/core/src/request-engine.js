@@ -49,16 +49,33 @@ function matchesHost(pattern, hostname) {
 }
 
 /**
+ * Return a numeric specificity score for a pattern that is already known to
+ * match a given hostname.  Higher score = higher precedence.
+ *   exact match  → 2
+ *   *.wildcard   → 1 + (suffix length / large constant)  so longer suffix wins
+ *   bare *       → 0
+ */
+function matchSpecificity(pattern) {
+  if (pattern === '*') return 0;
+  if (pattern.startsWith('*.')) return 1 + pattern.length / 1e6;
+  return 2;
+}
+
+/**
  * Build extra https.Agent options for a given URL.
  * Merges customCAs (CA trust) and any matching client certificate (mTLS).
+ *
+ * When multiple entries match the hostname, the most-specific pattern wins:
+ *   exact host  >  *.wildcard (longer suffix first)  >  bare *
+ * This makes selection deterministic regardless of list order.
  */
 function buildAgentExtra(url) {
   const extra = {};
   if (executorConfig.customCAs) extra.ca = executorConfig.customCAs;
   const hostname = (() => { try { return new URL(url).hostname; } catch { return ''; } })();
-  const match = (executorConfig.clientCertificates ?? []).find(
-    c => c.enabled !== false && matchesHost(c.host, hostname),
-  );
+  const match = (executorConfig.clientCertificates ?? [])
+    .filter(c => c.enabled !== false && matchesHost(c.host, hostname))
+    .sort((a, b) => matchSpecificity(b.host) - matchSpecificity(a.host))[0];
   if (match) {
     extra.cert = match.cert;
     extra.key  = match.key;
