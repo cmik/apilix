@@ -2,7 +2,7 @@ import { useEffect, useState, lazy, Suspense } from 'react';
 import { useApp, generateId } from '../store';
 import CollectionTree from './CollectionTree';
 import WorkspaceSwitcher from './WorkspaceSwitcher';
-import { IconSearch } from './Icons';
+import { IconSearch, IconSortAZ } from './Icons';
 
 const ImportModal = lazy(() => import('./ImportModal'));
 const ExportModal = lazy(() => import('./ExportModal'));
@@ -95,9 +95,9 @@ export default function Sidebar() {
             onClick={() => setSortAZ(s => !s)}
             title={sortAZ ? 'Custom order (drag to reorder)' : 'Sort A→Z'}
             disabled={state.collections.length === 0}
-            className={`text-xs leading-none transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${sortAZ ? 'text-orange-400 hover:text-orange-300' : 'text-slate-500 hover:text-slate-300'}`}
+            className={`transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${sortAZ ? 'text-orange-400 hover:text-orange-300' : 'text-slate-500 hover:text-slate-300'}`}
           >
-            A↓Z
+            <IconSortAZ className="w-4 h-4" />
           </button>
           <button
             onClick={() => setExpandSignal(s => s + 1)}
