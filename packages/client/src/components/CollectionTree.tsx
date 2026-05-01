@@ -9,7 +9,7 @@ import {
   moveItemInTree, extractItemById, insertItemInTree, isDescendantOf, getAllRequestIds,
   flattenRequestNames, flattenRequestItems, sortChildrenByName,
   removeItemsByIds, getCollectionLevelCandidates, getItemLevelCandidates,
-  getAncestorItemIds,
+  getAncestorItemIds, REVEAL_IN_TREE_EVENT,
   type BulkDeleteCandidate,
 } from '../utils/treeHelpers';
 import { generateHurlFromItems } from '../utils/hurlUtils';
@@ -1391,20 +1391,34 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
 
   // ── Reveal state (Show in tree view) ─────────────────────────────────────────
   const [revealState, setRevealState] = useState<RevealState | null>(null);
+  // Track the active highlight timeout so rapid re-fires don't clear a newer highlight early
+  // collectionsRef is declared below (shared with drag-drop logic) and always kept current
+  const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     function onReveal(e: Event) {
       const { collectionId, itemId } = (e as CustomEvent<{ collectionId: string; itemId: string }>).detail;
-      const col = state.collections.find(c => c._id === collectionId);
+      const col = collectionsRef.current.find(c => c._id === collectionId);
       if (!col) return;
       const ids = getAncestorItemIds(col.item, itemId);
       if (ids === null) return;
+      // Cancel any pending clear from a previous reveal
+      if (revealTimerRef.current !== null) clearTimeout(revealTimerRef.current);
       setRevealState({ collectionId, itemId, ancestorIds: new Set(ids) });
-      setTimeout(() => setRevealState(null), 1500);
+      revealTimerRef.current = setTimeout(() => {
+        setRevealState(null);
+        revealTimerRef.current = null;
+      }, 1500);
     }
-    document.addEventListener('apilix:reveal-in-tree', onReveal);
-    return () => document.removeEventListener('apilix:reveal-in-tree', onReveal);
-  }, [state.collections]);
+    document.addEventListener(REVEAL_IN_TREE_EVENT, onReveal);
+    return () => {
+      document.removeEventListener(REVEAL_IN_TREE_EVENT, onReveal);
+      // Clean up timer on unmount to prevent setState on unmounted component
+      if (revealTimerRef.current !== null) clearTimeout(revealTimerRef.current);
+    };
+  // Intentionally empty: listener is registered once; collectionsRef stays current via mutation
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function isFileDrag(e: React.DragEvent): boolean {
     return Array.from(e.dataTransfer.types).includes('Files');
