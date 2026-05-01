@@ -92,7 +92,6 @@ export const initialState: AppState = {
     cwd: null,
     shell: null,
     pid: null,
-    lines: [],
     exitCode: null,
   },
   captureViewState: {
@@ -545,7 +544,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         mockCollections: data.mockCollections ?? [],
         mockRoutes: data.mockRoutes ?? [],
         mockPort: data.mockPort ?? 3002,
-        terminalSession: { connected: false, sessionId: null, cwd: null, shell: null, pid: null, lines: [], exitCode: null },
+        terminalSession: { connected: false, sessionId: null, cwd: null, shell: null, pid: null, exitCode: null },
       };
     }
 
@@ -576,7 +575,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         recentRuns: [],
         savedRuns: [],
         runnerLoadedRun: null,
-        terminalSession: { connected: false, sessionId: null, cwd: null, shell: null, pid: null, lines: [], exitCode: null },
+        terminalSession: { connected: false, sessionId: null, cwd: null, shell: null, pid: null, exitCode: null },
       };
 
     case 'SWITCH_WORKSPACE': {
@@ -610,7 +609,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         recentRuns: [],
         savedRuns: [],
         runnerLoadedRun: null,
-        terminalSession: { connected: false, sessionId: null, cwd: null, shell: null, pid: null, lines: [], exitCode: null },
+        terminalSession: { connected: false, sessionId: null, cwd: null, shell: null, pid: null, exitCode: null },
       };
     }
 
@@ -668,7 +667,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         recentRuns: [],
         savedRuns: [],
         runnerLoadedRun: null,
-        terminalSession: { connected: false, sessionId: null, cwd: null, shell: null, pid: null, lines: [], exitCode: null },
+        terminalSession: { connected: false, sessionId: null, cwd: null, shell: null, pid: null, exitCode: null },
       };
     }
 
@@ -698,7 +697,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         mockCollections: data.mockCollections ?? [],
         mockRoutes: data.mockRoutes ?? [],
         mockPort: data.mockPort ?? 3002,
-        terminalSession: { connected: false, sessionId: null, cwd: null, shell: null, pid: null, lines: [], exitCode: null },
+        terminalSession: { connected: false, sessionId: null, cwd: null, shell: null, pid: null, exitCode: null },
       };
     }
 
@@ -817,16 +816,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           exitCode: action.payload.exitCode,
         },
       };
-
-    case 'TERMINAL_APPEND_OUTPUT': {
-      const scrollback = (state.settings?.terminalScrollbackLimit as number | undefined) ?? 2000;
-      const next = [...state.terminalSession.lines, action.payload];
-      const trimmed = next.length > scrollback ? next.slice(next.length - scrollback) : next;
-      return { ...state, terminalSession: { ...state.terminalSession, lines: trimmed } };
-    }
-
-    case 'TERMINAL_CLEAR_OUTPUT':
-      return { ...state, terminalSession: { ...state.terminalSession, lines: [] } };
 
     default:
       return state;

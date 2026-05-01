@@ -125,6 +125,12 @@ npm run setup          # install all dependencies
 npm run electron:dev   # start server + client + Electron shell
 ```
 
+> **Native modules:** The Integrated Terminal feature uses `node-pty`, a native Node.js addon. After `npm run setup` (or after upgrading the Electron version), rebuild native modules against the Electron headers:
+> ```bash
+> npm run rebuild:native
+> ```
+> Skip this step if you do not need the Integrated Terminal, or if you are running in web mode only.
+
 ---
 
 ## Helper Scripts

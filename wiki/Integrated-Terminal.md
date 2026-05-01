@@ -52,27 +52,23 @@ Click the red **Stop** button to terminate the running shell. The button shows *
 
 ## Sending input
 
-Type a command in the input bar at the bottom of the terminal pane and press **Enter** to send it to the shell.
+Type directly in the terminal surface and press **Enter** to send the command to the shell.
 
 | Key | Action |
 |---|---|
-| **Enter** | Send the typed command to the shell (a newline is appended automatically) |
-| **Ctrl C** | Send an interrupt signal (`\x03`) to the running process |
+| **Enter** | Send the typed command to the shell |
+| **Ctrl C** | Interrupt the foreground process |
 
-> **Echo:** Because the terminal runs without a PTY, the shell does not echo typed characters back. Apilix echoes each submitted command as a `$`-prefixed system line so you can trace what was sent.
+Because the terminal uses a real PTY, normal shell editing and history/navigation keys work as expected (for example arrow keys, backspace, tab completion where supported by your shell).
 
 ---
 
 ## Output display
 
-Shell output (both stdout and stderr) is captured and rendered as lines in the output viewport. ANSI color/cursor escape sequences are stripped before display, so the output is readable plain text.
+Terminal output is rendered by an xterm-compatible emulator, so ANSI color/cursor escape sequences are displayed correctly.
 
-- **`stdout` / `stderr`** — rendered as white text on dark background.
-- **System messages** — rendered in a dimmed slate color (e.g. session started/stopped notices, echoed commands, error messages from Apilix itself).
-
-The viewport auto-scrolls to the latest line whenever new output arrives while the Terminal tab is active.
-
-The number of lines retained is controlled by the **Scrollback limit** setting (default 2 000). Once the limit is reached, the oldest lines are trimmed automatically.
+- Colored output, cursor movement, and full-screen terminal programs are supported.
+- Scrollback is handled by the terminal emulator and controlled by the **Scrollback limit** setting (default `2000`).
 
 ---
 
@@ -98,8 +94,6 @@ Open **Settings → Terminal** (⚙️ gear icon or **⌘,** / **Ctrl+,**) to co
 
 | Limitation | Detail |
 |---|---|
-| **No PTY** | The shell runs as a plain `child_process` piped subprocess, not a full pseudo-terminal. Interactive programs (editors like `vim` / `nano`, `ssh` prompts, `less`, programs that rely on cursor movement or raw mode) will not render correctly. Use the terminal primarily for non-interactive commands. |
-| **No terminal resize** | Window/pane resize events are not forwarded to the shell. `tput cols` / `tput lines` will report defaults. This is a known limitation pending a future upgrade to node-pty. |
+| **Native module dependency** | The terminal backend relies on `node-pty`, which is a native addon. If you're building from source, run `npm run rebuild:native` after install (or after Electron version upgrades). |
 | **Single session** | Only one terminal session can be active at a time per app instance. |
 | **Electron only** | Not available in browser (web) mode. |
-| **ANSI stripping** | Color and cursor-movement escape sequences are stripped. Output is plain text. |

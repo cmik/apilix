@@ -354,23 +354,12 @@ export interface AppSettings {
   [key: string]: unknown;
 }
 
-// ── Terminal ──────────────────────────────────────────────────────────────────
-
-export interface TerminalLine {
-  id: string;
-  /** 'stdout' | 'stderr' | 'system' — used for color coding */
-  stream: 'stdout' | 'stderr' | 'system';
-  text: string;
-  ts: number;
-}
-
 export interface TerminalSessionState {
   connected: boolean;
   sessionId: string | null;
   cwd: string | null;
   shell: string | null;
   pid: number | null;
-  lines: TerminalLine[];
   exitCode: number | null;
 }
 
@@ -887,6 +876,4 @@ export type AppAction =
   | { type: 'RESTORE_TAB_SESSION'; payload: { tabs: Array<{ id: string; collectionId: string; itemId: string }>; activeTabId: string | null } }
   // ── Terminal ──────────────────────────────────────────────────────────────
   | { type: 'TERMINAL_SESSION_STARTED'; payload: { sessionId: string; pid: number; cwd: string; shell: string } }
-  | { type: 'TERMINAL_SESSION_ENDED'; payload: { exitCode: number | null } }
-  | { type: 'TERMINAL_APPEND_OUTPUT'; payload: TerminalLine }
-  | { type: 'TERMINAL_CLEAR_OUTPUT' };
+  | { type: 'TERMINAL_SESSION_ENDED'; payload: { exitCode: number | null } };

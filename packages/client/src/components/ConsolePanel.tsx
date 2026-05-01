@@ -1,7 +1,10 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { useApp, generateId } from '../store';
+import { useApp } from '../store';
 import type { ConsoleEntry } from '../types';
 import { maskSecrets } from '../utils/secretMask';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import '@xterm/xterm/css/xterm.css';
 
 const MIN_HEIGHT = 120;
 const MAX_HEIGHT = 600;
@@ -11,8 +14,9 @@ const INTEGRATED_DETAIL_MODE_KEY = 'apilix_console_integrated_detail_mode';
 // ─── Electron terminal API (stable reference — set once by preload) ───────────
 
 type ElectronTerminalAPI = {
-  terminalStart: (opts: { shellPath?: string; cwd?: string }) => Promise<{ sessionId: string; pid: number; cwd: string; shell: string }>;
+  terminalStart: (opts: { shellPath?: string; cwd?: string; cols?: number; rows?: number }) => Promise<{ sessionId: string; pid: number; cwd: string; shell: string }>;
   terminalInput: (sessionId: string, data: string) => Promise<void>;
+  terminalResize: (sessionId: string, cols: number, rows: number) => Promise<void>;
   terminalStop: (sessionId: string) => Promise<void>;
   terminalOnData: (cb: (sessionId: string, data: string) => void) => () => void;
   terminalOnExit: (cb: (sessionId: string, exitCode: number | null) => void) => () => void;
@@ -33,6 +37,23 @@ function loadDetailMode(storageKey: string): DetailMode {
   } catch {
     return 'compact';
   }
+}
+
+function getXtermTheme(theme: 'dark' | 'light') {
+  if (theme === 'light') {
+    return {
+      background: '#f8fafc',
+      foreground: '#0f172a',
+      cursor: '#ea580c',
+      selectionBackground: '#cbd5e1',
+    };
+  }
+  return {
+    background: '#020617',
+    foreground: '#e2e8f0',
+    cursor: '#fb923c',
+    selectionBackground: '#334155',
+  };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -718,18 +739,57 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme, m
 
   // Terminal state
   const terminalSession = state.terminalSession;
-  const [termInput, setTermInput] = useState('');
   const [termStopping, setTermStopping] = useState(false);
-  const termOutputRef = useRef<HTMLDivElement | null>(null);
-  const termInputRef = useRef<HTMLInputElement | null>(null);
+  const xtermContainerRef = useRef<HTMLDivElement | null>(null);
+  const termRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
   // Use a ref so data-listener callbacks always see the current sessionId
   // without being torn down and re-registered on every state change (fix for
   // the stale-closure bug that dropped the shell's initial prompt).
   const sessionIdRef = useRef<string | null>(null);
   sessionIdRef.current = terminalSession.sessionId;
 
+  const termFontSize = (state.settings?.terminalFontSize as number | undefined) ?? 13;
+  const termScrollback = (state.settings?.terminalScrollbackLimit as number | undefined) ?? 2000;
+
   const eAPI = getElectronTerminalAPI();
   const isElectron = eAPI !== null;
+
+  // Create xterm when Terminal mode is shown.
+  // This avoids the default Console-mode mount race where the container ref is
+  // absent on first render and initialization would otherwise never run.
+  useEffect(() => {
+    if (!isElectron || mode !== 'terminal' || !xtermContainerRef.current || termRef.current) return;
+
+    const term = new Terminal({
+      cursorBlink: true,
+      fontSize: termFontSize,
+      scrollback: termScrollback,
+      theme: getXtermTheme(theme),
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+    });
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(xtermContainerRef.current);
+    fitAddon.fit();
+    term.writeln('\x1b[90mPress Start to open a terminal session.\x1b[0m');
+
+    const keyboardSub = term.onData((data) => {
+      if (!eAPI || !sessionIdRef.current) return;
+      eAPI.terminalInput(sessionIdRef.current, data).catch(() => {});
+    });
+
+    termRef.current = term;
+    fitAddonRef.current = fitAddon;
+
+    return () => {
+      keyboardSub.dispose();
+      term.dispose();
+      termRef.current = null;
+      fitAddonRef.current = null;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isElectron, mode, eAPI]);
 
   // Register terminal data / exit listeners once on mount.
   // Callbacks read sessionIdRef.current so they are never stale.
@@ -738,27 +798,13 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme, m
 
     const removeData = eAPI.terminalOnData((sessionId, data) => {
       if (sessionId !== sessionIdRef.current) return;
-      // Split into logical lines, strip ANSI escape sequences
-      const text = data.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-      const lines = text.split('\n');
-      lines.forEach((line, i) => {
-        // Skip the empty token produced by a trailing newline
-        if (i === lines.length - 1 && line === '') return;
-        const stripped = line.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
-        dispatch({
-          type: 'TERMINAL_APPEND_OUTPUT',
-          payload: { id: generateId(), stream: 'stdout', text: stripped, ts: Date.now() },
-        });
-      });
+      termRef.current?.write(data);
     });
 
     const removeExit = eAPI.terminalOnExit((sessionId, exitCode) => {
       if (sessionId !== sessionIdRef.current) return;
       dispatch({ type: 'TERMINAL_SESSION_ENDED', payload: { exitCode } });
-      dispatch({
-        type: 'TERMINAL_APPEND_OUTPUT',
-        payload: { id: generateId(), stream: 'system', text: `Process exited with code ${exitCode ?? '?'}`, ts: Date.now() },
-      });
+      termRef.current?.write(`\r\n\x1b[90mProcess exited with code ${exitCode ?? '?'}\x1b[0m\r\n`);
     });
 
     return () => {
@@ -768,36 +814,60 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme, m
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally empty — eAPI is stable; sessionId read via ref
 
-  // Auto-scroll terminal output to bottom when lines change
+  // Update terminal appearance when settings/theme change.
   useEffect(() => {
-    if (mode === 'terminal' && termOutputRef.current) {
-      termOutputRef.current.scrollTop = termOutputRef.current.scrollHeight;
-    }
-  }, [terminalSession.lines, mode]);
+    if (!termRef.current) return;
+    termRef.current.options.fontSize = termFontSize;
+    fitAddonRef.current?.fit();
+  }, [termFontSize]);
 
-  // Focus input when switching to terminal mode
   useEffect(() => {
-    if (mode === 'terminal' && termInputRef.current) {
-      termInputRef.current.focus();
+    if (!termRef.current) return;
+    termRef.current.options.scrollback = termScrollback;
+  }, [termScrollback]);
+
+  useEffect(() => {
+    if (!termRef.current) return;
+    termRef.current.options.theme = getXtermTheme(theme);
+  }, [theme]);
+
+  // Keep xterm focused/fitted when the panel becomes active.
+  useEffect(() => {
+    if (mode === 'terminal') {
+      fitAddonRef.current?.fit();
+      termRef.current?.focus();
     }
   }, [mode]);
+
+  // Resize PTY when terminal viewport changes size.
+  useEffect(() => {
+    if (!isElectron || !xtermContainerRef.current) return;
+
+    const ro = new ResizeObserver(() => {
+      fitAddonRef.current?.fit();
+      if (eAPI && sessionIdRef.current && termRef.current) {
+        eAPI.terminalResize(sessionIdRef.current, termRef.current.cols, termRef.current.rows).catch(() => {});
+      }
+    });
+
+    ro.observe(xtermContainerRef.current);
+    return () => ro.disconnect();
+  }, [isElectron, eAPI]);
 
   async function handleTerminalStart() {
     if (!eAPI) return;
     try {
-      dispatch({ type: 'TERMINAL_CLEAR_OUTPUT' });
+      termRef.current?.clear();
+      fitAddonRef.current?.fit();
       const shellPath = state.settings?.terminalShellPath as string | undefined;
-      const result = await eAPI.terminalStart({ shellPath });
+      const cols = termRef.current?.cols ?? 80;
+      const rows = termRef.current?.rows ?? 24;
+      const result = await eAPI.terminalStart({ shellPath, cols, rows });
       dispatch({ type: 'TERMINAL_SESSION_STARTED', payload: result });
-      dispatch({
-        type: 'TERMINAL_APPEND_OUTPUT',
-        payload: { id: generateId(), stream: 'system', text: `Shell: ${result.shell}  CWD: ${result.cwd}`, ts: Date.now() },
-      });
+      termRef.current?.write(`\x1b[90mShell: ${result.shell}  CWD: ${result.cwd}\x1b[0m\r\n`);
+      termRef.current?.focus();
     } catch (err) {
-      dispatch({
-        type: 'TERMINAL_APPEND_OUTPUT',
-        payload: { id: generateId(), stream: 'system', text: `Failed to start terminal: ${(err as Error).message}`, ts: Date.now() },
-      });
+      termRef.current?.write(`\x1b[31mFailed to start terminal: ${(err as Error).message}\x1b[0m\r\n`);
     }
   }
 
@@ -807,35 +877,11 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme, m
     try {
       await eAPI.terminalStop(terminalSession.sessionId);
       dispatch({ type: 'TERMINAL_SESSION_ENDED', payload: { exitCode: null } });
-      dispatch({
-        type: 'TERMINAL_APPEND_OUTPUT',
-        payload: { id: generateId(), stream: 'system', text: 'Session stopped.', ts: Date.now() },
-      });
+      termRef.current?.write('\r\n\x1b[90mSession stopped.\x1b[0m\r\n');
     } finally {
       setTermStopping(false);
     }
   }
-
-  function handleTerminalInputKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      if (!eAPI || !terminalSession.sessionId) return;
-      const line = termInput + '\n';
-      // Echo the typed command (no PTY so the shell won't echo it back)
-      dispatch({
-        type: 'TERMINAL_APPEND_OUTPUT',
-        payload: { id: generateId(), stream: 'system', text: '$ ' + termInput, ts: Date.now() },
-      });
-      setTermInput('');
-      eAPI.terminalInput(terminalSession.sessionId, line).catch(() => {});
-    } else if (e.key === 'c' && e.ctrlKey) {
-      e.preventDefault();
-      if (!eAPI || !terminalSession.sessionId) return;
-      eAPI.terminalInput(terminalSession.sessionId, '\x03').catch(() => {});
-    }
-  }
-
-  const termFontSize = (state.settings?.terminalFontSize as number | undefined) ?? 13;
 
   const shouldMask = state.settings?.maskSecrets !== false;
   const mask = (v: string) => shouldMask ? maskSecrets(v, secretSet) : v;
@@ -1060,7 +1106,12 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme, m
               </button>
             )}
             <button
-              onClick={() => dispatch({ type: 'TERMINAL_CLEAR_OUTPUT' })}
+              onClick={() => {
+                termRef.current?.clear();
+                if (!terminalSession.connected) {
+                  termRef.current?.writeln('\x1b[90mPress Start to open a terminal session.\x1b[0m');
+                }
+              }}
               className="text-xs text-slate-500 hover:text-slate-200 px-2 py-0.5 rounded hover:bg-slate-800 transition-colors"
               title="Clear output"
             >
@@ -1094,50 +1145,8 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme, m
             </div>
           ) : (
             <>
-              {/* Output */}
-              <div
-                ref={termOutputRef}
-                className="flex-1 overflow-y-auto min-h-0 px-3 py-2 font-mono"
-                style={{ fontSize: termFontSize }}
-              >
-                {terminalSession.lines.length === 0 && !terminalSession.connected && (
-                  <span className="text-slate-700 italic text-xs">Press Start to open a terminal session.</span>
-                )}
-                {terminalSession.lines.map(line => (
-                  <div
-                    key={line.id}
-                    className={
-                      line.stream === 'stderr'
-                        ? 'text-red-400 whitespace-pre-wrap break-all'
-                        : line.stream === 'system'
-                        ? 'text-slate-500 italic whitespace-pre-wrap break-all'
-                        : 'text-slate-200 whitespace-pre-wrap break-all'
-                    }
-                  >
-                    {line.text}
-                  </div>
-                ))}
-              </div>
-
-              {/* Input bar */}
-              <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-t border-slate-800">
-                <span className="text-slate-600 font-mono text-xs select-none">
-                  {terminalSession.cwd ? terminalSession.cwd.replace(/^.*\/([^/]+)$/, '$1') : '$'}
-                </span>
-                <input
-                  ref={termInputRef}
-                  type="text"
-                  value={termInput}
-                  onChange={e => setTermInput(e.target.value)}
-                  onKeyDown={handleTerminalInputKeyDown}
-                  disabled={!terminalSession.connected}
-                  placeholder={terminalSession.connected ? 'Type a command… (Enter to run, Ctrl+C to interrupt)' : 'Start a session to type commands'}
-                  className="flex-1 bg-transparent border-none outline-none font-mono text-slate-200 placeholder:text-slate-700 disabled:opacity-40"
-                  style={{ fontSize: termFontSize }}
-                  spellCheck={false}
-                  autoComplete="off"
-                  autoCapitalize="off"
-                />
+              <div className="flex-1 min-h-0 p-2">
+                <div ref={xtermContainerRef} className="w-full h-full overflow-hidden" />
               </div>
             </>
           )}

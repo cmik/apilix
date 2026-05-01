@@ -35,9 +35,14 @@
     "dist:win": "npm run dist:prepare:server && npm run build && electron-builder --win",
     "dist:prod": "npm run dist:prepare:server && npm run build && DISABLE_DEVTOOLS=1 electron-builder",
     "dist:prod:mac": "npm run dist:prepare:server && npm run build && DISABLE_DEVTOOLS=1 electron-builder --mac",
-    "dist:prod:win": "npm run dist:prepare:server && npm run build && DISABLE_DEVTOOLS=1 electron-builder --win"
+    "dist:prod:win": "npm run dist:prepare:server && npm run build && DISABLE_DEVTOOLS=1 electron-builder --win",
+    "rebuild:native": "electron-rebuild -f -w node-pty"
+  },
+  "dependencies": {
+    "node-pty": "^1.0.0"
   },
   "devDependencies": {
+    "@electron/rebuild": "^3.7.2",
     "@yao-pkg/pkg": "^6.18.2",
     "@apilix/server": "*",
     "concurrently": "^8.2.2",
@@ -70,7 +75,9 @@
       "!node_modules/@apilix",
       "node_modules/**/*"
     ],
-    "asarUnpack": [],
+    "asarUnpack": [
+      "**/node_modules/node-pty/**/*"
+    ],
     "extraResources": [
       {
         "from": "packages/server",

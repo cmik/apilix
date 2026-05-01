@@ -118,11 +118,20 @@ The raw body editors (Raw, GraphQL query, XML) support an inline find bar and a 
 
 ## Integrated Terminal Shortcuts
 
-These shortcuts are active when the cursor is inside the terminal **input bar** at the bottom of the terminal pane.
+The integrated terminal uses a real PTY and renders via xterm.js, so **all standard terminal key sequences are passed directly to the shell**. The table below lists the most commonly referenced shortcuts; any key combination your shell or terminal program recognises will work.
 
 | Shortcut | Action |
 |---|---|
-| **Enter** | Send the typed command to the shell |
-| **Ctrl C** | Send an interrupt signal (`\x03`) to the running process |
+| Any printable character | Input sent to the shell |
+| **Enter** | Execute the current command |
+| **Ctrl C** | Interrupt / send SIGINT to the foreground process |
+| **Ctrl D** | Send EOF (exit interactive shell or program) |
+| **Ctrl Z** | Suspend the foreground process (send SIGTSTP) |
+| **Ctrl L** | Clear the terminal screen (same as `clear`) |
+| **↑ / ↓** | Shell history navigation (handled by the shell) |
+| **Tab** | Shell autocomplete (handled by the shell) |
+| **Ctrl A / Ctrl E** | Jump to beginning / end of line (readline shells) |
+
+> Because all keys are forwarded to the PTY, standard Apilix app shortcuts (**⌘ Enter**, **⌘ S**, etc.) are **inactive** while the terminal pane has keyboard focus. Click outside the terminal surface to restore global shortcuts.
 
 > The terminal is only available in the **Electron desktop app**. See [Integrated Terminal](Integrated-Terminal.md) for full documentation.

@@ -27,7 +27,7 @@ interface ElectronAPI {
   onWillClose: (cb: () => void) => void;
   respondClose: (confirmed: boolean) => void;
   // Terminal
-  terminalStart: (opts: { shellPath?: string; cwd?: string }) => Promise<{ sessionId: string; pid: number; cwd: string; shell: string }>;
+  terminalStart: (opts: { shellPath?: string; cwd?: string; cols?: number; rows?: number }) => Promise<{ sessionId: string; pid: number; cwd: string; shell: string }>;
   terminalInput: (sessionId: string, data: string) => Promise<void>;
   terminalResize: (sessionId: string, cols: number, rows: number) => Promise<void>;
   terminalStop: (sessionId: string) => Promise<void>;

@@ -4,7 +4,7 @@ const { app, BrowserWindow, shell, ipcMain, dialog, safeStorage, Menu } = requir
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
-const { spawn } = require('child_process');
+const pty = require('node-pty');
 const os = require('os');
 const crypto = require('crypto');
 
@@ -490,7 +490,8 @@ function resolveTerminalCwd(requestedCwd) {
   return homedir;
 }
 
-ipcMain.handle('terminal-start', async (_event, opts = {}) => {
+ipcMain.handle('terminal-start', async (_event, rawOpts = {}) => {
+  const opts = rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
   // Validate shellPath: must be an absolute path to an existing file.
   const shell = (() => {
     const candidate = opts.shellPath;
@@ -501,65 +502,66 @@ ipcMain.handle('terminal-start', async (_event, opts = {}) => {
   })();
   const workingDir = resolveTerminalCwd(opts.cwd);
   const sessionId = crypto.randomUUID();
+  const cols = Number.isFinite(opts.cols) && opts.cols > 0 ? Math.floor(opts.cols) : 80;
+  const rows = Number.isFinite(opts.rows) && opts.rows > 0 ? Math.floor(opts.rows) : 24;
 
-  const proc = spawn(shell, [], {
+  const proc = pty.spawn(shell, [], {
+    name: 'xterm-256color',
+    cols,
+    rows,
     cwd: workingDir,
-    env: { ...process.env, TERM: 'xterm-256color' },
-    stdio: ['pipe', 'pipe', 'pipe'],
+    env: process.env,
   });
-
-  if (!proc.pid) throw new Error('Failed to start terminal session');
 
   terminalSessions.set(sessionId, { proc, shell, cwd: workingDir, pid: proc.pid });
 
-  proc.stdout.on('data', (chunk) => {
+  proc.onData((data) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('terminal-data', sessionId, chunk.toString('utf8'));
+      mainWindow.webContents.send('terminal-data', sessionId, data);
     }
   });
 
-  proc.stderr.on('data', (chunk) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('terminal-data', sessionId, chunk.toString('utf8'));
-    }
-  });
-
-  proc.on('exit', (code) => {
+  proc.onExit(({ exitCode }) => {
     terminalSessions.delete(sessionId);
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('terminal-exit', sessionId, code ?? null);
-    }
-  });
-
-  proc.on('error', (err) => {
-    writeLog('Terminal spawn error: ' + err.message);
-    terminalSessions.delete(sessionId);
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('terminal-exit', sessionId, null);
+      mainWindow.webContents.send('terminal-exit', sessionId, exitCode ?? null);
     }
   });
 
   return { sessionId, pid: proc.pid, cwd: workingDir, shell };
 });
 
-ipcMain.handle('terminal-input', async (_event, { sessionId, data }) => {
-  if (typeof data !== 'string' && !Buffer.isBuffer(data)) return { ok: false };
+ipcMain.handle('terminal-input', async (_event, payload = {}) => {
+  if (!payload || typeof payload !== 'object') return { ok: false };
+  const { sessionId, data } = payload;
+  if (!sessionId || typeof sessionId !== 'string') return { ok: false };
+  if (typeof data !== 'string') return { ok: false };
   const session = terminalSessions.get(sessionId);
-  if (session && session.proc.stdin && !session.proc.stdin.destroyed) {
-    session.proc.stdin.write(data);
+  if (session) {
+    session.proc.write(data);
   }
   return { ok: true };
 });
 
-// Placeholder — full PTY resize requires node-pty; this is a no-op for now.
-ipcMain.handle('terminal-resize', async (_event, _args) => {
+ipcMain.handle('terminal-resize', async (_event, payload = {}) => {
+  if (!payload || typeof payload !== 'object') return { ok: false };
+  const { sessionId, cols, rows } = payload;
+  if (!sessionId || typeof sessionId !== 'string') return { ok: false };
+  if (!Number.isFinite(cols) || !Number.isFinite(rows)) return { ok: false };
+  const session = terminalSessions.get(sessionId);
+  if (session) {
+    session.proc.resize(Math.max(1, Math.floor(cols)), Math.max(1, Math.floor(rows)));
+  }
   return { ok: true };
 });
 
-ipcMain.handle('terminal-stop', async (_event, { sessionId }) => {
+ipcMain.handle('terminal-stop', async (_event, payload = {}) => {
+  if (!payload || typeof payload !== 'object') return { ok: false };
+  const { sessionId } = payload;
+  if (!sessionId || typeof sessionId !== 'string') return { ok: false };
   const session = terminalSessions.get(sessionId);
   if (session) {
-    try { session.proc.kill('SIGTERM'); } catch (_) {}
+    try { session.proc.kill(); } catch (_) {}
     terminalSessions.delete(sessionId);
   }
   return { ok: true };
@@ -567,7 +569,7 @@ ipcMain.handle('terminal-stop', async (_event, { sessionId }) => {
 
 function killAllTerminalSessions() {
   for (const [, session] of terminalSessions) {
-    try { session.proc.kill('SIGTERM'); } catch (_) {}
+    try { session.proc.kill(); } catch (_) {}
   }
   terminalSessions.clear();
 }
