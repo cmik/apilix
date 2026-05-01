@@ -183,13 +183,18 @@ function RequestsTab({ s, u }: { s: AppSettings; u: (p: Partial<AppSettings>) =>
 
   async function handleLoadCertFile() {
     if (eAPI?.openFileDialog) {
-      const filePath: string | null = await eAPI.openFileDialog([
-        { name: 'Certificate files', extensions: ['pem', 'crt', 'cer', 'ca-bundle', 'txt'] },
-        { name: 'All files', extensions: ['*'] },
-      ]);
-      if (!filePath) return;
-      const content: string = await eAPI.readTextFile(filePath);
-      u({ customCAs: content });
+      try {
+        const filePath: string | null = await eAPI.openFileDialog([
+          { name: 'Certificate files', extensions: ['pem', 'crt', 'cer', 'ca-bundle', 'txt'] },
+          { name: 'All files', extensions: ['*'] },
+        ]);
+        if (!filePath) return;
+        const content: string = await eAPI.readTextFile(filePath);
+        u({ customCAs: content });
+      } catch (error) {
+        console.error('Failed to load certificate file:', error);
+        window.alert('Failed to load the certificate file. Please check the file permissions/size and try again.');
+      }
     } else {
       caFileInputRef.current?.click();
     }
