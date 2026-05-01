@@ -208,6 +208,7 @@ function RequestsTab({ s, u }: { s: AppSettings; u: (p: Partial<AppSettings>) =>
 
   function updateCertEntry(idx: number, patch: Partial<ClientCertificate>) {
     const list = [...(s.clientCertificates ?? [])];
+    if (idx < 0 || idx >= list.length || !list[idx]) return;
     list[idx] = { ...list[idx], ...patch };
     u({ clientCertificates: list });
   }
