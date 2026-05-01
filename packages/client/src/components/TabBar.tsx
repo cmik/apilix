@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../store';
 import type { RequestTab } from '../types';
-import { renameItemById, findItemInTree } from '../utils/treeHelpers';
+import { renameItemById, findItemInTree, REVEAL_IN_TREE_EVENT } from '../utils/treeHelpers';
 import ConfirmModal from './ConfirmModal';
 
 const METHOD_COLORS: Record<string, string> = {
@@ -536,7 +536,7 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
     if (!tab?.collectionId || !tab?.item.id) return;
     dispatch({ type: 'SET_VIEW', payload: 'request' });
     document.dispatchEvent(
-      new CustomEvent('apilix:reveal-in-tree', { detail: { collectionId: tab.collectionId, itemId: tab.item.id } })
+      new CustomEvent(REVEAL_IN_TREE_EVENT, { detail: { collectionId: tab.collectionId, itemId: tab.item.id } })
     );
   }
 
@@ -645,7 +645,10 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
 
   function isOrphanTab(tab: typeof menuTab) {
     if (!tab?.collectionId || !tab?.item.id) return true;
-    return !state.collections.some(c => c._id === tab.collectionId);
+    const col = state.collections.find(c => c._id === tab.collectionId);
+    if (!col) return true;
+    // Item may have been deleted from the collection while the tab is still open
+    return findItemInTree(col.item, tab.item.id) === null;
   }
 
   return (

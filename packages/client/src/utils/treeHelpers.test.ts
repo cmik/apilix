@@ -22,6 +22,7 @@ import {
   getRequestBreadcrumb,
   getRequestBreadcrumbPrefix,
   getAncestorItemIds,
+  REVEAL_IN_TREE_EVENT,
 } from './treeHelpers';
 import type { AppCollection } from '../types';
 
@@ -830,5 +831,13 @@ describe('getAncestorItemIds', () => {
 
   it('returns null for an empty items array', () => {
     expect(getAncestorItemIds([], 'r1')).toBeNull();
+  });
+});
+
+// ─── REVEAL_IN_TREE_EVENT ──────────────────────────────────────────────────
+
+describe('REVEAL_IN_TREE_EVENT', () => {
+  it('is the expected event name string', () => {
+    expect(REVEAL_IN_TREE_EVENT).toBe('apilix:reveal-in-tree');
   });
 });

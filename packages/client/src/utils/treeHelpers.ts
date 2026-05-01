@@ -390,6 +390,9 @@ export function getRequestBreadcrumbPrefix(
   return walk(col.item, [col.info.name]);
 }
 
+/** Custom event name dispatched by TabBar when "Show in tree view" is triggered. */
+export const REVEAL_IN_TREE_EVENT = 'apilix:reveal-in-tree';
+
 /**
  * Return the IDs of ancestor folders on the path to targetId within `items`.
  * Returns [] if the item is at the root level (no folder ancestors).
