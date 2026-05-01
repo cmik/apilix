@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../store';
 import type { RequestTab } from '../types';
-import { renameItemById, findItemInTree } from '../utils/treeHelpers';
+import { renameItemById, findItemInTree, REVEAL_IN_TREE_EVENT } from '../utils/treeHelpers';
 import ConfirmModal from './ConfirmModal';
 
 const METHOD_COLORS: Record<string, string> = {
@@ -71,6 +71,10 @@ interface TabContextMenuProps {
   onCloseSaved: () => void;
   onCloseAllToRight: () => void;
   onCloseOthers: () => void;
+  onShowInTree: () => void;
+  onCloseAll: () => void;
+  hasCloseAllTarget: boolean;
+  isOrphan: boolean;
 }
 
 function TabContextMenu({
@@ -89,10 +93,14 @@ function TabContextMenu({
   onCloseSaved,
   onCloseAllToRight,
   onCloseOthers,
+  onShowInTree,
+  onCloseAll,
+  hasCloseAllTarget,
+  isOrphan,
 }: TabContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const menuWidth = 224;
-  const menuHeight = 280; // approximate: 3 save items + divider + 2 items + divider + 3 close items at ~32px each
+  const menuHeight = 340; // approximate height including new items
   const adjustedX = Math.min(pos.x, window.innerWidth - menuWidth - 8);
   const adjustedY = Math.min(pos.y, window.innerHeight - menuHeight - 8);
 
@@ -169,6 +177,16 @@ function TabContextMenu({
         label="Duplicate"
         onClick={onDuplicate}
       />
+      <MenuItem
+        icon={
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+          </svg>
+        }
+        label="Show in tree view"
+        onClick={onShowInTree}
+        disabled={isOrphan}
+      />
       <div className="my-1 border-t border-slate-700" />
       <MenuItem
         icon={
@@ -176,7 +194,7 @@ function TabContextMenu({
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
           </svg>
         }
-        label={closeSavedDisabled ? 'Close saved (activate tab first)' : 'Close saved'}
+        label={closeSavedDisabled ? 'Save and close (activate tab first)' : 'Save and close'}
         onClick={onCloseSaved}
         disabled={closeSavedDisabled}
       />
@@ -199,6 +217,16 @@ function TabContextMenu({
         label="Close others"
         onClick={onCloseOthers}
         disabled={totalTabs <= 1}
+      />
+      <MenuItem
+        icon={
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9 3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5 5.25 5.25" />
+          </svg>
+        }
+        label="Close all saved"
+        onClick={onCloseAll}
+        disabled={!hasCloseAllTarget}
       />
     </div>,
     document.body
@@ -502,6 +530,22 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
       .forEach(t => dispatch({ type: 'CLOSE_TAB', payload: t.id }));
   }
 
+  function handleMenuShowInTree(tabId: string) {
+    setMenuState(null);
+    const tab = tabs.find(t => t.id === tabId);
+    if (!tab?.collectionId || !tab?.item.id) return;
+    dispatch({ type: 'SET_VIEW', payload: 'request' });
+    document.dispatchEvent(
+      new CustomEvent(REVEAL_IN_TREE_EVENT, { detail: { collectionId: tab.collectionId, itemId: tab.item.id } })
+    );
+  }
+
+  function handleMenuCloseAll() {
+    setMenuState(null);
+    tabs.filter(t => !dirtyIds.has(t.id))
+      .forEach(t => dispatch({ type: 'CLOSE_TAB', payload: t.id }));
+  }
+
   function handleMenuSave(tabId: string) {
     setMenuState(null);
     const tab = tabs.find(t => t.id === tabId);
@@ -597,6 +641,15 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
   const menuTab = menuState ? tabs.find(t => t.id === menuState.tabId) ?? null : null;
   const menuTabIndex = menuState ? tabs.findIndex(t => t.id === menuState.tabId) : -1;
   const hasDirtyTabs = dirtyIds.size > 0;
+  const hasCloseAllTarget = tabs.some(t => !dirtyIds.has(t.id));
+
+  function isOrphanTab(tab: typeof menuTab) {
+    if (!tab?.collectionId || !tab?.item.id) return true;
+    const col = state.collections.find(c => c._id === tab.collectionId);
+    if (!col) return true;
+    // Item may have been deleted from the collection while the tab is still open
+    return findItemInTree(col.item, tab.item.id) === null;
+  }
 
   return (
     <div className="relative h-8 bg-slate-900 border-b border-slate-800 shrink-0">
@@ -607,7 +660,6 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
           onClick={handleScrollLeft}
           disabled={!canScrollLeft}
           className="absolute left-0 top-0 bottom-0 z-10 w-7 flex items-center justify-center
-            tab-scroll-fade-left
             bg-gradient-to-r from-slate-900 via-slate-900/80 to-transparent
             text-slate-400 hover:text-orange-400 disabled:text-slate-700
             transition-colors duration-150"
@@ -685,7 +737,6 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
           onClick={handleScrollRight}
           disabled={!canScrollRight}
           className="absolute right-0 top-0 bottom-0 z-10 w-7 flex items-center justify-center
-            tab-scroll-fade-right
             bg-gradient-to-l from-slate-900 via-slate-900/80 to-transparent
             text-slate-400 hover:text-orange-400 disabled:text-slate-700
             transition-colors duration-150"
@@ -716,6 +767,10 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
           onCloseSaved={() => handleMenuCloseSaved(menuState.tabId)}
           onCloseAllToRight={() => handleMenuCloseAllToRight(menuState.tabId)}
           onCloseOthers={() => handleMenuCloseOthers(menuState.tabId)}
+          onShowInTree={() => handleMenuShowInTree(menuState.tabId)}
+          onCloseAll={handleMenuCloseAll}
+          hasCloseAllTarget={hasCloseAllTarget}
+          isOrphan={isOrphanTab(menuTab)}
         />
       )}
 

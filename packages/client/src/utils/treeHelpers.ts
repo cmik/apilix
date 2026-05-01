@@ -344,6 +344,74 @@ export function flattenRequestItems(items: CollectionItem[]): Array<{ id: string
   return result;
 }
 
+/**
+ * Return the full display breadcrumb for a request:
+ * "Collection Name > Folder A > … > Request Name"
+ * Returns null if the collection or item cannot be found.
+ */
+export function getRequestBreadcrumb(
+  collections: AppCollection[],
+  collectionId: string,
+  itemId: string,
+): string | null {
+  const prefix = getRequestBreadcrumbPrefix(collections, collectionId, itemId);
+  if (!prefix) return null;
+  const col = collections.find(c => c._id === collectionId);
+  const item = col ? findItemInTree(col.item, itemId) : null;
+  if (!item) return null;
+  return [...prefix, item.name].join(' > ');
+}
+
+/**
+ * Return the ancestor path segments for a request (collection name + folder names),
+ * NOT including the request name itself.
+ * Returns null if the collection or item cannot be found.
+ * e.g. ["My API", "Users"] for a request inside the Users folder.
+ */
+export function getRequestBreadcrumbPrefix(
+  collections: AppCollection[],
+  collectionId: string,
+  itemId: string,
+): string[] | null {
+  const col = collections.find(c => c._id === collectionId);
+  if (!col) return null;
+
+  function walk(items: CollectionItem[], path: string[]): string[] | null {
+    for (const item of items) {
+      if (item.id === itemId) return path;
+      if (item.item) {
+        const found = walk(item.item, [...path, item.name]);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  return walk(col.item, [col.info.name]);
+}
+
+/** Custom event name dispatched by TabBar when "Show in tree view" is triggered. */
+export const REVEAL_IN_TREE_EVENT = 'apilix:reveal-in-tree';
+
+/**
+ * Return the IDs of ancestor folders on the path to targetId within `items`.
+ * Returns [] if the item is at the root level (no folder ancestors).
+ * Returns null if targetId is not found anywhere in the tree.
+ */
+export function getAncestorItemIds(items: CollectionItem[], targetId: string): string[] | null {
+  function walk(nodes: CollectionItem[], path: string[]): string[] | null {
+    for (const node of nodes) {
+      if (node.id === targetId) return path;
+      if (node.item) {
+        const found = walk(node.item, [...path, node.id]);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+  return walk(items, []);
+}
+
 /** Sort a flat array of CollectionItems by name (locale-aware, stable). */
 export function sortItemsByName(items: CollectionItem[]): CollectionItem[] {
   return items

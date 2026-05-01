@@ -19,6 +19,10 @@ import {
   removeItemsByIds,
   getCollectionLevelCandidates,
   getItemLevelCandidates,
+  getRequestBreadcrumb,
+  getRequestBreadcrumbPrefix,
+  getAncestorItemIds,
+  REVEAL_IN_TREE_EVENT,
 } from './treeHelpers';
 import type { AppCollection } from '../types';
 
@@ -713,5 +717,127 @@ describe('getItemLevelCandidates', () => {
     const items = [folder('f1', 'Outer', [req('r1', 'R1'), req('r2', 'R2')])];
     const result = getItemLevelCandidates(items, 'r1', 'c1', 'Col');
     result.forEach(c => expect(c.path).toBe('Outer'));
+  });
+});
+
+// ─── getRequestBreadcrumb ─────────────────────────────────────────────────────
+
+describe('getRequestBreadcrumb', () => {
+  function makeCollection(id: string, name: string, items: CollectionItem[] = []): AppCollection {
+    return { _id: id, info: { name, schema: '' }, item: items };
+  }
+
+  it('returns collection name and request name for a root-level request', () => {
+    const cols = [makeCollection('c1', 'My API', [req('r1', 'Get Users')])];
+    expect(getRequestBreadcrumb(cols, 'c1', 'r1')).toBe('My API > Get Users');
+  });
+
+  it('includes folder name for a request inside one folder', () => {
+    const cols = [makeCollection('c1', 'My API', [
+      folder('f1', 'Users', [req('r1', 'Get User')]),
+    ])];
+    expect(getRequestBreadcrumb(cols, 'c1', 'r1')).toBe('My API > Users > Get User');
+  });
+
+  it('includes all ancestor folder names for a deeply nested request', () => {
+    const cols = [makeCollection('c1', 'My API', [
+      folder('f1', 'Auth', [
+        folder('f2', 'OAuth', [req('r1', 'Exchange Token')]),
+      ]),
+    ])];
+    expect(getRequestBreadcrumb(cols, 'c1', 'r1')).toBe('My API > Auth > OAuth > Exchange Token');
+  });
+
+  it('returns null when the item id is not found in the tree', () => {
+    const cols = [makeCollection('c1', 'My API', [req('r1', 'Get Users')])];
+    expect(getRequestBreadcrumb(cols, 'c1', 'nonexistent')).toBeNull();
+  });
+
+  it('returns null when the collection id is not found', () => {
+    const cols = [makeCollection('c1', 'My API', [req('r1', 'Get Users')])];
+    expect(getRequestBreadcrumb(cols, 'wrong-id', 'r1')).toBeNull();
+  });
+
+  it('returns null for an empty collections array', () => {
+    expect(getRequestBreadcrumb([], 'c1', 'r1')).toBeNull();
+  });
+});
+
+// ─── getRequestBreadcrumbPrefix ───────────────────────────────────────────────
+
+describe('getRequestBreadcrumbPrefix', () => {
+  function makeCollection(id: string, name: string, items: CollectionItem[] = []): AppCollection {
+    return { _id: id, info: { name, schema: '' }, item: items };
+  }
+
+  it('returns [collectionName] for a root-level request', () => {
+    const cols = [makeCollection('c1', 'My API', [req('r1', 'Get Users')])];
+    expect(getRequestBreadcrumbPrefix(cols, 'c1', 'r1')).toEqual(['My API']);
+  });
+
+  it('returns [collectionName, folderName] for a request inside one folder', () => {
+    const cols = [makeCollection('c1', 'My API', [
+      folder('f1', 'Users', [req('r1', 'Get User')]),
+    ])];
+    expect(getRequestBreadcrumbPrefix(cols, 'c1', 'r1')).toEqual(['My API', 'Users']);
+  });
+
+  it('includes all ancestor folder names in order for a deeply nested request', () => {
+    const cols = [makeCollection('c1', 'My API', [
+      folder('f1', 'Auth', [
+        folder('f2', 'OAuth', [req('r1', 'Exchange Token')]),
+      ]),
+    ])];
+    expect(getRequestBreadcrumbPrefix(cols, 'c1', 'r1')).toEqual(['My API', 'Auth', 'OAuth']);
+  });
+
+  it('returns null when the item id is not found in the tree', () => {
+    const cols = [makeCollection('c1', 'My API', [req('r1', 'Get Users')])];
+    expect(getRequestBreadcrumbPrefix(cols, 'c1', 'nonexistent')).toBeNull();
+  });
+
+  it('returns null when the collection id is not found', () => {
+    const cols = [makeCollection('c1', 'My API', [req('r1', 'Get Users')])];
+    expect(getRequestBreadcrumbPrefix(cols, 'wrong-id', 'r1')).toBeNull();
+  });
+
+  it('returns null for an empty collections array', () => {
+    expect(getRequestBreadcrumbPrefix([], 'c1', 'r1')).toBeNull();
+  });
+});
+
+// ─── getAncestorItemIds ───────────────────────────────────────────────────────
+
+describe('getAncestorItemIds', () => {
+  it('returns [] for a root-level item', () => {
+    const items = [req('r1', 'Get Users')];
+    expect(getAncestorItemIds(items, 'r1')).toEqual([]);
+  });
+
+  it('returns [folderId] for a directly nested item', () => {
+    const items = [folder('f1', 'Users', [req('r1', 'Get Users')])];
+    expect(getAncestorItemIds(items, 'r1')).toEqual(['f1']);
+  });
+
+  it('returns ancestor ids outermost-first for deeply nested item', () => {
+    const items = [folder('f1', 'Auth', [folder('f2', 'OAuth', [req('r1', 'Token')])])];
+    expect(getAncestorItemIds(items, 'r1')).toEqual(['f1', 'f2']);
+  });
+
+  it('returns null when targetId is not found', () => {
+    const items = [req('r1', 'Get Users')];
+    expect(getAncestorItemIds(items, 'nonexistent')).toBeNull();
+  });
+
+  it('returns null for an empty items array', () => {
+    expect(getAncestorItemIds([], 'r1')).toBeNull();
+  });
+});
+
+// ─── REVEAL_IN_TREE_EVENT ──────────────────────────────────────────────────
+
+describe('REVEAL_IN_TREE_EVENT', () => {
+  it('is the expected event name string', () => {
+    expect(REVEAL_IN_TREE_EVENT).toBe('apilix:reveal-in-tree');
   });
 });

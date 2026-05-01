@@ -5,7 +5,7 @@ import type { CollectionItem, CollectionRequest, CollectionHeader, CollectionQue
 import { useApp, generateId } from '../store';
 import { executeRequest, API_BASE } from '../api';
 import { getUrlDisplay, buildCollectionDefinitionVarMap, buildVarMap, resolveVariables } from '../utils/variableResolver';
-import { updateItemById, renameItemById, resolveInheritedAuth, resolveInheritedAuthWithSource, findItemInTree, flattenRequestNames, flattenRequestItems, collectAncestorScripts } from '../utils/treeHelpers';
+import { updateItemById, renameItemById, resolveInheritedAuth, resolveInheritedAuthWithSource, findItemInTree, flattenRequestNames, flattenRequestItems, collectAncestorScripts, getRequestBreadcrumb, getRequestBreadcrumbPrefix } from '../utils/treeHelpers';
 import { parseCurlCommand } from '../utils/curlUtils';
 import { parseHurlFile } from '../utils/hurlUtils';
 import { openAuthorizationWindow } from '../utils/oauth';
@@ -661,14 +661,14 @@ function RenamableTitle({ name, onRename }: { name: string; onRename: (n: string
           if (e.key === 'Enter') { e.preventDefault(); commit(); }
           if (e.key === 'Escape') { e.preventDefault(); setRenaming(false); }
         }}
-        className="w-full bg-slate-700 border border-orange-500 rounded px-2 py-0.5 text-xs text-slate-100 font-medium uppercase tracking-wide focus:outline-none mb-1"
+        className="w-full bg-slate-700 border border-orange-500 rounded px-2 py-0.5 text-xs text-slate-100 font-medium focus:outline-none mb-1"
       />
     );
   }
 
   return (
     <div className="group flex items-center gap-1 mb-1">
-      <p className="text-slate-400 text-xs font-medium uppercase tracking-wide truncate">{name}</p>
+      <p className="text-slate-400 text-xs font-medium truncate">{name}</p>
       <button
         onClick={() => { setVal(name); setRenaming(true); }}
         className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-600 hover:text-slate-300 shrink-0"
@@ -1719,24 +1719,39 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
 
   const urlBarSection = (
     <div className="px-4 pt-3 pb-1 border-b border-slate-700 bg-slate-900">
-      {/* Request name */}
-        <RenamableTitle
-          name={activeReq.item.name}
-          onRename={newName => {
-            const col = state.collections.find(c => c._id === activeTab?.collectionId);
-            const itemId = activeTab?.item.id;
-            if (col && itemId && activeTab) {
-              dispatch({
-                type: 'UPDATE_COLLECTION',
-                payload: { ...col, item: renameItemById(col.item, itemId, newName) },
-              });
-              dispatch({
-                type: 'UPDATE_TAB_ITEM',
-                payload: { tabId: activeTab.id, item: { ...activeTab.item, name: newName } },
-              });
-            }
-          }}
-        />
+      {/* Request name with breadcrumb prefix */}
+        <div className="flex items-center gap-0 mb-1 min-w-0">
+          {activeTab?.item.id && col && (() => {
+            const prefix = getRequestBreadcrumbPrefix(state.collections, activeReq.collectionId, activeTab.item.id);
+            if (!prefix) return null;
+            const prefixStr = prefix.join(' > ');
+            return (
+              <span
+                className="text-slate-600 text-[10px] shrink-0 mb-1 truncate max-w-[50%]"
+                title={prefixStr}
+              >
+                {prefixStr}&nbsp;&gt;&nbsp;
+              </span>
+            );
+          })()}
+          <RenamableTitle
+            name={activeReq.item.name}
+            onRename={newName => {
+              const col = state.collections.find(c => c._id === activeTab?.collectionId);
+              const itemId = activeTab?.item.id;
+              if (col && itemId && activeTab) {
+                dispatch({
+                  type: 'UPDATE_COLLECTION',
+                  payload: { ...col, item: renameItemById(col.item, itemId, newName) },
+                });
+                dispatch({
+                  type: 'UPDATE_TAB_ITEM',
+                  payload: { tabId: activeTab.id, item: { ...activeTab.item, name: newName } },
+                });
+              }
+            }}
+          />
+        </div>
         {/* URL bar */}
         <div className="flex gap-2">
           <select
