@@ -345,6 +345,38 @@ test('parseArgs supports --bail flag', () => {
   assert.equal(argsWithoutBail.bail, false);
 });
 
+// parseArgs — certificate flags
+
+test('parseArgs captures --ca-cert flag', () => {
+  const args = parseArgs(['run', 'col.json', '--ca-cert', 'ca.pem']);
+  assert.equal(args.caCertPath, 'ca.pem');
+});
+
+test('parseArgs captures --client-cert and --client-key flags', () => {
+  const args = parseArgs(['run', 'col.json', '--client-cert', 'cert.pem', '--client-key', 'key.pem']);
+  assert.equal(args.clientCertPath, 'cert.pem');
+  assert.equal(args.clientKeyPath, 'key.pem');
+});
+
+test('parseArgs captures --client-key-passphrase flag', () => {
+  const args = parseArgs(['run', 'col.json', '--client-key-passphrase', 'secret']);
+  assert.equal(args.clientKeyPassphrase, 'secret');
+});
+
+test('parseArgs captures --client-cert-host flag', () => {
+  const args = parseArgs(['run', 'col.json', '--client-cert-host', '*.internal.corp']);
+  assert.equal(args.clientCertHost, '*.internal.corp');
+});
+
+test('parseArgs defaults cert fields to null / empty / *', () => {
+  const args = parseArgs(['run', 'col.json']);
+  assert.equal(args.caCertPath, null);
+  assert.equal(args.clientCertPath, null);
+  assert.equal(args.clientKeyPath, null);
+  assert.equal(args.clientKeyPassphrase, '');
+  assert.equal(args.clientCertHost, '*');
+});
+
 // --bail integration
 
 test('runCli --bail stops after first test assertion failure and exits 1', async () => {
@@ -877,6 +909,64 @@ test('--retry with JUnit output annotates retried test classname', async () => {
       assert.equal(exitCode, 0);
       const xml = await fs.readFile(path.join(dir, 'report.xml'), 'utf8');
       assert.match(xml, /retried ×1/);
+    });
+  });
+});
+
+// Certificate flag integration
+
+test('runCli exits 2 when --client-cert given without --client-key', async () => {
+  await withTempDir(async (dir) => {
+    const certPath = path.join(dir, 'cert.pem');
+    await fs.writeFile(certPath, '-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n');
+    const collection = {
+      info: { name: 'C', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
+      item: [{ id: 'r1', name: 'R', request: { method: 'GET', url: { raw: 'http://localhost:9' } } }],
+    };
+    await fs.writeFile(path.join(dir, 'col.json'), JSON.stringify(collection));
+
+    const io = makeIo(dir);
+    const exitCode = await runCli(['run', 'col.json', '--client-cert', certPath], io);
+    assert.equal(exitCode, 2);
+    assert.match(io.readStderr(), /--client-cert and --client-key must be used together/i);
+  });
+});
+
+test('runCli exits 2 when --client-key given without --client-cert', async () => {
+  await withTempDir(async (dir) => {
+    const keyPath = path.join(dir, 'client.key');
+    await fs.writeFile(keyPath, '-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----\n');
+    const collection = {
+      info: { name: 'C', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
+      item: [{ id: 'r1', name: 'R', request: { method: 'GET', url: { raw: 'http://localhost:9' } } }],
+    };
+    await fs.writeFile(path.join(dir, 'col.json'), JSON.stringify(collection));
+
+    const io = makeIo(dir);
+    const exitCode = await runCli(['run', 'col.json', '--client-key', keyPath], io);
+    assert.equal(exitCode, 2);
+    assert.match(io.readStderr(), /--client-cert and --client-key must be used together/i);
+  });
+});
+
+test('runCli emits warning when --ca-cert used without --ssl-verification', async () => {
+  await withServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  }, async (baseUrl) => {
+    await withTempDir(async (dir) => {
+      const caPath = path.join(dir, 'ca.pem');
+      await fs.writeFile(caPath, '-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n');
+      const collection = {
+        info: { name: 'C', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
+        item: [{ id: 'r1', name: 'R', request: { method: 'GET', url: { raw: `${baseUrl}/ok` } } }],
+      };
+      await fs.writeFile(path.join(dir, 'col.json'), JSON.stringify(collection));
+
+      const io = makeIo(dir);
+      const exitCode = await runCli(['run', 'col.json', '--ca-cert', caPath], io);
+      assert.equal(exitCode, 0);
+      assert.match(io.readStderr(), /--ca-cert has no effect/i);
     });
   });
 });

@@ -16,6 +16,7 @@ The Collection Runner executes multiple requests from a collection in sequence, 
     - [CLI Examples](#cli-examples)
     - [Standalone Binary Examples](#standalone-binary-examples)
     - [CLI Flags Reference](#cli-flags-reference)
+    - [TLS and Certificates](#tls-and-certificates)
     - [Exit Codes](#exit-codes)
   - [Opening the Runner](#opening-the-runner)
   - [Selecting Requests](#selecting-requests)
@@ -220,6 +221,54 @@ npm run cli -- run \
   --reporter json
 ```
 
+Trust a private CA and verify TLS:
+
+```bash
+npm run cli -- run \
+  ./collection.json \
+  -e ./environment.json \
+  --ssl-verification \
+  --ca-cert ./certs/internal-ca.pem \
+  --reporter json
+```
+
+Present a client certificate for mTLS against all hosts:
+
+```bash
+npm run cli -- run \
+  ./collection.json \
+  -e ./environment.json \
+  --ssl-verification \
+  --ca-cert ./certs/internal-ca.pem \
+  --client-cert ./certs/client.pem \
+  --client-key ./certs/client.key \
+  --reporter json
+```
+
+Scope the client certificate to a specific host pattern:
+
+```bash
+npm run cli -- run \
+  ./collection.json \
+  -e ./environment.json \
+  --ssl-verification \
+  --client-cert ./certs/client.pem \
+  --client-key ./certs/client.key \
+  --client-cert-host '*.internal.corp' \
+  --reporter json
+```
+
+Use an encrypted private key:
+
+```bash
+npm run cli -- run \
+  ./collection.json \
+  --client-cert ./certs/client.pem \
+  --client-key ./certs/client.key \
+  --client-key-passphrase 'my-passphrase' \
+  --reporter json
+```
+
 Disable ANSI colors for plain CI logs:
 
 ```bash
@@ -293,8 +342,56 @@ apilix run ./collection.json --reporter junit --out ./artifacts/apilix.junit.xml
 | `--no-conditional-execution` | | Ignore `setNextRequest()` calls; run requests in listed order |
 | `--bail` | | Stop the run on the first test failure or request error |
 | `--ssl-verification` | | Enforce TLS certificate verification (disabled by default) |
+| `--ca-cert <path>` | | PEM CA certificate(s) to add to the trust store (requires `--ssl-verification`) |
+| `--client-cert <path>` | | PEM client certificate for mTLS (must be paired with `--client-key`) |
+| `--client-key <path>` | | PEM private key for `--client-cert` (must be paired with `--client-cert`) |
+| `--client-key-passphrase <pass>` | | Passphrase for an encrypted `--client-key` |
+| `--client-cert-host <pattern>` | | Hostname or `*.wildcard` scope for the client certificate (default: `*` — all hosts) |
 | `--no-follow-redirects` | | Return redirect responses instead of following them automatically |
 | `--no-color` | | Disable ANSI colour sequences — useful for plain CI logs |
+
+### TLS and Certificates
+
+The CLI supports three levels of TLS credential configuration.
+
+#### SSL Verification
+
+By default the CLI does **not** verify TLS certificates — this matches Postman's default and lets you test self-signed services without extra configuration. Pass `--ssl-verification` to enable strict checking.
+
+#### Custom CA Certificate (`--ca-cert`)
+
+Use `--ca-cert <file>` to inject one or more PEM-encoded CA certificates into the trust store. The custom CA is merged with the operating system's system CAs, not replacing them.
+
+- Accepts a single PEM file. To trust multiple CAs, concatenate them into one file.
+- Has **no effect** unless `--ssl-verification` is also passed (the CLI emits a warning if you forget).
+- Equivalent to the **Custom CA Certificate** field in the Settings modal.
+
+```bash
+npm run cli -- run ./collection.json \
+  --ssl-verification \
+  --ca-cert ./certs/internal-ca.pem
+```
+
+#### Client Certificate for mTLS (`--client-cert` / `--client-key`)
+
+Use `--client-cert` and `--client-key` together to present a client certificate during the TLS handshake (mutual TLS). Both flags must always be used together — providing only one produces an exit code `2` error.
+
+| Flag | Description |
+|---|---|
+| `--client-cert <file>` | PEM-encoded client certificate |
+| `--client-key <file>` | PEM-encoded private key for the certificate |
+| `--client-key-passphrase <pass>` | Passphrase to decrypt an encrypted key (optional) |
+| `--client-cert-host <pattern>` | Hostname or `*.wildcard` to scope the certificate; defaults to `*` (all hosts) |
+
+`--client-cert-host` supports three formats:
+
+| Pattern | Matches |
+|---|---|
+| `api.example.com` | That exact hostname only |
+| `*.example.com` | Any subdomain of `example.com` |
+| `*` (default) | Every request in the run |
+
+> `--ssl-verification` is not required for client certificates — mTLS can be used against servers with self-signed certificates. If you also need the server certificate validated against a custom CA, combine `--ssl-verification` with `--ca-cert`.
 
 ### Exit Codes
 

@@ -294,6 +294,19 @@ export type AppView = 'request' | 'runner' | 'environments' | 'globals' | 'varia
 
 // ─── Application Settings ─────────────────────────────────────────────────────────────
 
+export interface ClientCertificate {
+  /** Hostname or wildcard pattern, e.g. "api.example.com" or "*.internal.corp" */
+  host: string;
+  /** PEM-encoded client certificate */
+  cert: string;
+  /** PEM-encoded private key */
+  key: string;
+  /** Optional passphrase for an encrypted private key */
+  passphrase?: string;
+  /** When false the entry is skipped without being deleted */
+  enabled?: boolean;
+}
+
 export interface AppSettings {
   // Appearance
   theme?: 'dark' | 'light' | 'system';
@@ -301,6 +314,16 @@ export interface AppSettings {
   requestTimeout?: number;
   followRedirects?: boolean;
   sslVerification?: boolean;
+  /**
+   * PEM-encoded CA certificate(s) to trust in addition to the system/Mozilla bundle.
+   * Multiple certificates can be concatenated. Only used when sslVerification is true.
+   */
+  customCAs?: string;
+  /**
+   * Per-host client certificates for mutual TLS (mTLS).
+   * Each entry pairs a hostname pattern with a PEM cert + key.
+   */
+  clientCertificates?: ClientCertificate[];
   // Proxy
   proxyEnabled?: boolean;
   httpProxy?: string;

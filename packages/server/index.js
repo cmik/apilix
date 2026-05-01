@@ -26,6 +26,10 @@ const serverConfig = {
   requestTimeout: 30000,
   followRedirects: true,
   sslVerification: false,
+  /** PEM-encoded CA certificate(s) to add to the trust store. Only honoured when sslVerification is true. */
+  customCAs: '',
+  /** Per-host client certificates for mutual TLS (mTLS). */
+  clientCertificates: [],
 };
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
@@ -75,6 +79,30 @@ function validateTokenUrl(url) {
   } catch (_) {
     return false;
   }
+}
+
+function normalizeClientCertificates(input) {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter(entry => entry && typeof entry === 'object')
+    .map((entry) => {
+      const host = typeof entry.host === 'string' ? entry.host.trim() : '';
+      const cert = typeof entry.cert === 'string' ? entry.cert : '';
+      const key = typeof entry.key === 'string' ? entry.key : '';
+      const passphrase = typeof entry.passphrase === 'string' ? entry.passphrase : undefined;
+      const enabled = typeof entry.enabled === 'boolean' ? entry.enabled : true;
+
+      if (!cert || !key) return null;
+
+      return {
+        host: host || '*',
+        cert,
+        key,
+        passphrase,
+        enabled,
+      };
+    })
+    .filter(Boolean);
 }
 
 // ─── Health check ──────────────────────────────────────────────────────────────
@@ -128,6 +156,12 @@ app.post('/api/settings', (req, res) => {
     }
     if (typeof requests.sslVerification === 'boolean') {
       serverConfig.sslVerification = requests.sslVerification;
+    }
+    if (typeof requests.customCAs === 'string') {
+      serverConfig.customCAs = requests.customCAs;
+    }
+    if (Array.isArray(requests.clientCertificates)) {
+      serverConfig.clientCertificates = normalizeClientCertificates(requests.clientCertificates);
     }
   }
   setExecutorConfig(serverConfig);

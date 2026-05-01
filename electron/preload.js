@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteDirectory: (dirPath) => ipcRenderer.invoke('delete-directory', { dirPath }),
   listDir: (dirPath) => ipcRenderer.invoke('list-dir', { dirPath }),
   openFileDialog: (filters) => ipcRenderer.invoke('open-file-dialog', { filters }),
+  readTextFile: (filePath) => ipcRenderer.invoke('read-text-file', { filePath }),
   shellOpenPath: (dirPath) => ipcRenderer.invoke('shell-open-path', { dirPath }),
   encryptString: (value) => ipcRenderer.invoke('encrypt-string', { value }),
   decryptString: (encrypted) => ipcRenderer.invoke('decrypt-string', { encrypted }),

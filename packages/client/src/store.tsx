@@ -1119,20 +1119,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!state.storageReady) return;
     const { proxyEnabled, httpProxy, httpsProxy, noProxy, corsAllowedOrigins,
-            requestTimeout, followRedirects, sslVerification } = state.settings;
+            requestTimeout, followRedirects, sslVerification, customCAs, clientCertificates } = state.settings;
     fetch(`${API_BASE}/settings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         proxy: { enabled: proxyEnabled ?? false, httpProxy: httpProxy ?? '', httpsProxy: httpsProxy ?? '', noProxy: noProxy ?? '' },
         cors: { allowedOrigins: corsAllowedOrigins ?? '' },
-        requests: { timeout: requestTimeout ?? 30000, followRedirects: followRedirects !== false, sslVerification: sslVerification ?? false },
+        requests: { timeout: requestTimeout ?? 30000, followRedirects: followRedirects !== false, sslVerification: sslVerification ?? false, customCAs: customCAs ?? '', clientCertificates: clientCertificates ?? [] },
       }),
     }).catch(() => { /* server may not be up yet; safe to ignore */ });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.settings.proxyEnabled, state.settings.httpProxy, state.settings.httpsProxy, state.settings.noProxy,
       state.settings.corsAllowedOrigins, state.settings.requestTimeout, state.settings.followRedirects,
-      state.settings.sslVerification, state.storageReady]);
+      state.settings.sslVerification, state.settings.customCAs, state.settings.clientCertificates, state.storageReady]);
 
   function getActiveEnvironment(): AppEnvironment | null {
     if (!state.activeEnvironmentId) return null;

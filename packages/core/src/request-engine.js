@@ -25,10 +25,63 @@ const executorConfig = {
   httpProxy: '',
   httpsProxy: '',
   noProxy: '',
+  /** PEM-encoded CA certificate(s) to add to the trust store. Only honoured when sslVerification is true. */
+  customCAs: '',
+  /** Per-host client certificates for mutual TLS (mTLS). */
+  clientCertificates: [],
 };
 
 function setExecutorConfig(cfg) {
   Object.assign(executorConfig, cfg);
+}
+
+/**
+ * Returns true if `pattern` matches `hostname`.
+ * Supports exact match and leading wildcard (*.example.com).
+ */
+function matchesHost(pattern, hostname) {
+  if (!pattern || !hostname) return false;
+  if (pattern === '*') return true;
+  const p = pattern.toLowerCase();
+  const h = hostname.toLowerCase();
+  if (p.startsWith('*.')) return h.endsWith(p.slice(1));
+  return p === h;
+}
+
+/**
+ * Return a numeric specificity score for a pattern that is already known to
+ * match a given hostname.  Higher score = higher precedence.
+ *   exact match  → 2
+ *   *.wildcard   → 1 + (suffix length / large constant)  so longer suffix wins
+ *   bare *       → 0
+ */
+function matchSpecificity(pattern) {
+  if (pattern === '*') return 0;
+  if (pattern.startsWith('*.')) return 1 + pattern.length / 1e6;
+  return 2;
+}
+
+/**
+ * Build extra https.Agent options for a given URL.
+ * Merges customCAs (CA trust) and any matching client certificate (mTLS).
+ *
+ * When multiple entries match the hostname, the most-specific pattern wins:
+ *   exact host  >  *.wildcard (longer suffix first)  >  bare *
+ * This makes selection deterministic regardless of list order.
+ */
+function buildAgentExtra(url) {
+  const extra = {};
+  if (executorConfig.customCAs) extra.ca = executorConfig.customCAs;
+  const hostname = (() => { try { return new URL(url).hostname; } catch { return ''; } })();
+  const match = (executorConfig.clientCertificates ?? [])
+    .filter(c => c.enabled !== false && matchesHost(c.host, hostname))
+    .sort((a, b) => matchSpecificity(b.host) - matchSpecificity(a.host))[0];
+  if (match) {
+    extra.cert = match.cert;
+    extra.key  = match.key;
+    if (match.passphrase) extra.passphrase = match.passphrase;
+  }
+  return extra;
 }
 
 function buildProxyOption(proxyUrl, targetUrl) {
@@ -396,7 +449,7 @@ function serializeCertChain(cert) {
   return chain;
 }
 
-function makeTimingAndCertContext(rejectUnauthorized = false) {
+function makeTimingAndCertContext(rejectUnauthorized = false, url = '') {
   const timings = { dns: 0, tcp: 0, tls: 0 };
   const certHolder = { chain: null };
   let captured = false;
@@ -421,7 +474,7 @@ function makeTimingAndCertContext(rejectUnauthorized = false) {
     }
   }
 
-  const httpsTimingAgent = makeHttpsAgent(rejectUnauthorized);
+  const httpsTimingAgent = makeHttpsAgent(rejectUnauthorized, buildAgentExtra(url || ''));
   const _origHttps = httpsTimingAgent.createConnection.bind(httpsTimingAgent);
   httpsTimingAgent.createConnection = function (opts, cb) {
     const sock = _origHttps(opts, cb);
@@ -583,7 +636,7 @@ async function executeRequest(item, context) {
   }
 
   // Per-request agent with timing and TLS capture
-  const _tc = makeTimingAndCertContext(executorConfig.sslVerification === true);
+  const _tc = makeTimingAndCertContext(executorConfig.sslVerification === true, url);
   const startTime = Date.now();
   let testChildRequests = [];
   let nextRequestSignal = undefined; // set by pm.execution.setNextRequest()
@@ -604,7 +657,7 @@ async function executeRequest(item, context) {
       const _isHopHttps = curUrl.toLowerCase().startsWith('https://');
       // Per-hop HTTPS agent — only build when used (non-initial HTTPS hops).
       const hopHttpsAgent = (hop > 0 && _isHopHttps)
-        ? makeHttpsAgent(rejectUnauthorized)
+        ? makeHttpsAgent(rejectUnauthorized, buildAgentExtra(curUrl))
         : undefined;
       // Only instrument the timing agent on the first hop (timing agent reuses same TLS setting)
       const agentOpts = hop === 0
