@@ -12,6 +12,8 @@ Open it by clicking the gear icon (⚙️) in the bottom-left corner of the Acti
   - [Table of Contents](#table-of-contents)
   - [Appearance](#appearance)
   - [Requests](#requests)
+  - [Custom CA Certificate](#custom-ca-certificate)
+  - [Client Certificates (mTLS)](#client-certificates-mtls)
   - [Proxy](#proxy)
   - [CORS](#cors)
   - [About](#about)
@@ -47,6 +49,46 @@ Controls applied to every request Apilix sends through its local proxy server.
 | **Follow redirects** | On | When enabled, Apilix automatically follows HTTP 3xx redirects. Disable to inspect the raw redirect response. |
 | **SSL certificate verification** | Off | When enabled, the server validates the SSL certificate of the target host. Disable for self-signed certificates in development environments. |
 | **Mask secret variable values in console, logs, and history** | On | Redacts known secret values (from enabled secret rows in the active environment) in Console and Request History UI surfaces. |
+
+---
+
+## Custom CA Certificate
+
+Add a trusted Certificate Authority (CA) so Apilix accepts HTTPS endpoints that use a private or self-signed CA — without disabling SSL verification globally.
+
+| Setting | Description |
+|---|---|
+| **Custom CA certificate (PEM)** | Paste or load the PEM-encoded CA certificate(s) to add to the trust store. Multiple certificates can be concatenated in a single PEM block. |
+
+This setting only takes effect when **SSL certificate verification** (Requests tab) is enabled. Adding a custom CA lets you keep verification on while still reaching internal services that use a private PKI.
+
+> **Tip:** To import from a file, click **Load from file…** in the Settings UI and select a `.pem` or `.crt` file. The file content is pasted directly into the text area.
+
+---
+
+## Client Certificates (mTLS)
+
+Configure per-host client certificates for mutual TLS (mTLS). When a request is sent to a matching hostname, Apilix presents the client certificate alongside the request.
+
+Each entry has the following fields:
+
+| Field | Description |
+|---|---|
+| **Host** | Hostname or `*.wildcard` pattern to match. Use `*` to apply the certificate to all hosts. Example: `api.internal.corp` or `*.internal.corp` |
+| **Certificate (PEM)** | PEM-encoded client certificate. |
+| **Private key (PEM)** | PEM-encoded private key for the certificate. |
+| **Passphrase** | Optional passphrase to decrypt an encrypted private key. |
+| **Enabled** | Toggle switch. Disabled entries are stored but never applied. |
+
+**Managing entries**
+
+1. Click **Add Certificate** to create a new entry.
+2. Fill in the Host, then load or paste the Certificate and Private Key PEM content. Click **Load from file…** next to each field to import from disk.
+3. Optionally enter a Passphrase if the key is encrypted.
+4. Toggle the entry on or off using the enable switch.
+5. Click the trash icon to remove an entry permanently.
+
+> Client certificates are passed directly to the Node.js TLS stack. Apilix never transmits certificate material outside the local machine.
 
 ---
 
@@ -123,5 +165,7 @@ Click **Check for update** to query the [GitHub Releases API](https://api.github
 | `httpsProxy` | `string` | `''` | Proxy tab; proxy URL for HTTPS targets |
 | `noProxy` | `string` | `''` | Proxy tab; bypass list |
 | `corsAllowedOrigins` | `string` | `''` | CORS tab; extra allowed origins for the local server |
+| `customCAs` | `string` | `''` | Custom CA Certificate tab; PEM CA bundle appended to the system trust store |
+| `clientCertificates` | `ClientCertificate[]` | `[]` | Client Certificates tab; per-host mTLS certificate entries |
 
 All settings are stored in the active workspace and persist across sessions.

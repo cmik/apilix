@@ -298,6 +298,14 @@ ipcMain.handle('get-presigned-url', async (_event, payload) => {
   return getSignedUrl(client, commandByOperation[operation], { expiresIn: 60 });
 });
 
+// Read a text file from an arbitrary path selected via open-file-dialog
+// (not restricted to userData — the path came from a user-triggered OS dialog)
+ipcMain.handle('read-text-file', async (_event, { filePath }) => {
+  const stats = fs.statSync(filePath);
+  if (stats.size > 1024 * 1024) throw new Error('File too large (max 1 MB)');
+  return fs.readFileSync(filePath, 'utf8');
+});
+
 // IPC: open DevTools from any build (useful for diagnosing production issues)
 ipcMain.handle('open-devtools', () => {
   if (mainWindow) mainWindow.webContents.openDevTools();

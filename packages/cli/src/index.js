@@ -41,6 +41,11 @@ function usage() {
     '  --retry-backoff <fixed|exponential>  Backoff strategy (default: fixed)',
     '  --retry-on <failures|errors|both>    What triggers a retry (default: both)',
     '  --ssl-verification           Enable TLS certificate verification',
+    '  --ca-cert <file>             PEM CA certificate(s) to add to the trust store',
+    '  --client-cert <file>         PEM client certificate for mTLS',
+    '  --client-key <file>          PEM private key for --client-cert',
+    '  --client-key-passphrase <pass>  Passphrase for an encrypted --client-key',
+    '  --client-cert-host <pattern> Hostname / *.wildcard scope for the client cert (default: * = all hosts)',
     '  --no-follow-redirects        Disable automatic redirect following',
     '  --no-color                   Disable ANSI colors in terminal output',
     '  -h, --help                   Show this help',
@@ -151,6 +156,11 @@ function createProgram(io) {
     httpsProxy: '',
     proxyBypass: '',
     bail: false,
+    caCertPath: null,
+    clientCertPath: null,
+    clientKeyPath: null,
+    clientKeyPassphrase: '',
+    clientCertHost: '*',
   };
 
   const program = new Command();
@@ -190,6 +200,11 @@ function createProgram(io) {
     .option('--retry-backoff <fixed|exponential>', 'Backoff strategy (fixed or exponential)', 'fixed')
     .option('--retry-on <failures|errors|both>', 'What triggers a retry', 'both')
     .option('--ssl-verification', 'Enable TLS certificate verification')
+    .option('--ca-cert <file>', 'PEM CA certificate(s) to add to the trust store')
+    .option('--client-cert <file>', 'PEM client certificate for mTLS')
+    .option('--client-key <file>', 'PEM private key for --client-cert')
+    .option('--client-key-passphrase <pass>', 'Passphrase for an encrypted --client-key')
+    .option('--client-cert-host <pattern>', 'Hostname / *.wildcard scope for the client cert (default: * = all hosts)')
     .option('--no-follow-redirects', 'Disable automatic redirect following')
     .option('--no-color', 'Disable ANSI colors in terminal output')
     .action((collectionPath, opts) => {
@@ -220,6 +235,11 @@ function createProgram(io) {
       parsed.executeChildRequests = opts.executeChildRequests === true;
       parsed.sslVerification = opts.sslVerification === true;
       parsed.color = opts.color !== false;
+      parsed.caCertPath          = opts.caCert             || null;
+      parsed.clientCertPath      = opts.clientCert         || null;
+      parsed.clientKeyPath       = opts.clientKey          || null;
+      parsed.clientKeyPassphrase = opts.clientKeyPassphrase || '';
+      parsed.clientCertHost      = opts.clientCertHost     || '*';
     });
 
   return { program, parsed };
@@ -435,6 +455,24 @@ async function runCli(argv, ioOverrides = {}) {
     const globals = normalizeVariableMap(globalsJson, 'globals');
     const collectionVariables = normalizeVariableMap(collectionVarsJson, 'collection variables');
 
+    const customCAsText = args.caCertPath
+      ? await readTextFile(io, args.caCertPath, 'CA certificate')
+      : '';
+
+    if (!!args.clientCertPath !== !!args.clientKeyPath) {
+      throw new Error('--client-cert and --client-key must be used together');
+    }
+    const clientCertText = args.clientCertPath
+      ? await readTextFile(io, args.clientCertPath, 'client certificate')
+      : '';
+    const clientKeyText = args.clientKeyPath
+      ? await readTextFile(io, args.clientKeyPath, 'client key')
+      : '';
+
+    if (customCAsText && !args.sslVerification) {
+      io.stderr.write('Warning: --ca-cert has no effect unless --ssl-verification is also set.\n');
+    }
+
     const rawTimeout = parseInt(args.timeout, 10);
     const timeout = Number.isNaN(rawTimeout) ? DEFAULT_REQUEST_TIMEOUT : Math.max(0, rawTimeout);
     setExecutorConfig({
@@ -445,6 +483,14 @@ async function runCli(argv, ioOverrides = {}) {
       httpProxy: args.httpProxy || '',
       httpsProxy: args.httpsProxy || '',
       noProxy: args.proxyBypass || '',
+      customCAs: customCAsText,
+      clientCertificates: clientCertText ? [{
+        host: args.clientCertHost || '*',
+        cert: clientCertText,
+        key: clientKeyText,
+        passphrase: args.clientKeyPassphrase || undefined,
+        enabled: true,
+      }] : [],
     });
 
     const payload = {
@@ -519,6 +565,9 @@ async function runCli(argv, ioOverrides = {}) {
         timeout,
         followRedirects: args.followRedirects !== false,
         sslVerification: args.sslVerification === true,
+        caCertPath:     args.caCertPath     ? path.relative(io.cwd, resolvePath(io, args.caCertPath))     : null,
+        clientCertPath: args.clientCertPath ? path.relative(io.cwd, resolvePath(io, args.clientCertPath)) : null,
+        clientKeyPath:  args.clientKeyPath  ? path.relative(io.cwd, resolvePath(io, args.clientKeyPath))  : null,
       },
     });
 

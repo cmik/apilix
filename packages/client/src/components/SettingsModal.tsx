@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useApp } from '../store';
-import type { AppSettings } from '../types';
+import type { AppSettings, ClientCertificate } from '../types';
 import apilixLogo from '../assets/apilix1.svg';
 import { fetchLatestGitHubVersion, isVersionGreater } from '../utils/versionUtils';
 
@@ -173,6 +173,85 @@ function AppearanceTab({ s, u }: { s: AppSettings; u: (p: Partial<AppSettings>) 
 }
 
 function RequestsTab({ s, u }: { s: AppSettings; u: (p: Partial<AppSettings>) => void }) {
+  const caFileInputRef = useRef<HTMLInputElement>(null);
+  const certFileInputRef = useRef<HTMLInputElement>(null);
+  const keyFileInputRef = useRef<HTMLInputElement>(null);
+  const [pendingLoad, setPendingLoad] = useState<{ idx: number; field: 'cert' | 'key' } | null>(null);
+  const eAPI = (window as any).electronAPI ?? null;
+
+  // ── Custom CA loaders ──────────────────────────────────────────────────────
+
+  async function handleLoadCertFile() {
+    if (eAPI?.openFileDialog) {
+      const filePath: string | null = await eAPI.openFileDialog([
+        { name: 'Certificate files', extensions: ['pem', 'crt', 'cer', 'ca-bundle', 'txt'] },
+        { name: 'All files', extensions: ['*'] },
+      ]);
+      if (!filePath) return;
+      const content: string = await eAPI.readTextFile(filePath);
+      u({ customCAs: content });
+    } else {
+      caFileInputRef.current?.click();
+    }
+  }
+
+  function handleBrowserFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => { u({ customCAs: ev.target?.result as string ?? '' }); };
+    reader.readAsText(file);
+    e.target.value = '';
+  }
+
+  // ── Client certificate loaders ─────────────────────────────────────────────
+
+  function updateCertEntry(idx: number, patch: Partial<ClientCertificate>) {
+    const list = [...(s.clientCertificates ?? [])];
+    list[idx] = { ...list[idx], ...patch };
+    u({ clientCertificates: list });
+  }
+
+  async function handleLoadClientFile(idx: number, field: 'cert' | 'key') {
+    if (eAPI?.openFileDialog) {
+      const filePath: string | null = await eAPI.openFileDialog([
+        { name: 'PEM files', extensions: ['pem', 'crt', 'cer', 'key', 'txt'] },
+        { name: 'All files', extensions: ['*'] },
+      ]);
+      if (!filePath) return;
+      const content: string = await eAPI.readTextFile(filePath);
+      updateCertEntry(idx, { [field]: content });
+    } else {
+      setPendingLoad({ idx, field });
+      if (field === 'cert') certFileInputRef.current?.click();
+      else keyFileInputRef.current?.click();
+    }
+  }
+
+  function handleClientBrowserFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !pendingLoad) return;
+    const { idx, field } = pendingLoad;
+    const reader = new FileReader();
+    reader.onload = ev => { updateCertEntry(idx, { [field]: ev.target?.result as string ?? '' }); };
+    reader.readAsText(file);
+    e.target.value = '';
+    setPendingLoad(null);
+  }
+
+  function addCertEntry() {
+    const list = [...(s.clientCertificates ?? [])];
+    list.push({ host: '*', cert: '', key: '', passphrase: '', enabled: true });
+    u({ clientCertificates: list });
+  }
+
+  function removeCertEntry(idx: number) {
+    const list = (s.clientCertificates ?? []).filter((_, i) => i !== idx);
+    u({ clientCertificates: list });
+  }
+
+  const clientCerts = s.clientCertificates ?? [];
+
   return (
     <div className="space-y-5">
       <Section title="Defaults">
@@ -191,6 +270,180 @@ function RequestsTab({ s, u }: { s: AppSettings; u: (p: Partial<AppSettings>) =>
         <Row label="SSL certificate verification">
           <Toggle checked={s.sslVerification === true} onChange={v => u({ sslVerification: v })} />
         </Row>
+      </Section>
+
+      <Section title="Custom CA Certificates">
+        <p className="text-xs text-slate-400 leading-relaxed">
+          Paste or load one or more PEM-encoded CA certificates to trust when SSL verification is enabled.
+          Useful for corporate / self-signed root CAs not present in the system store.
+          Multiple certificates can be concatenated.
+        </p>
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <Label>PEM certificate(s)</Label>
+            <div className="flex gap-2 mb-1">
+              <button
+                type="button"
+                onClick={handleLoadCertFile}
+                className="px-2 py-0.5 text-xs rounded bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 transition-colors"
+              >
+                Load from file…
+              </button>
+              {(s.customCAs ?? '').trim() && (
+                <button
+                  type="button"
+                  onClick={() => u({ customCAs: '' })}
+                  className="px-2 py-0.5 text-xs rounded bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-400 hover:text-red-400 transition-colors"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+          <textarea
+            value={s.customCAs ?? ''}
+            onChange={e => u({ customCAs: e.target.value })}
+            placeholder={'-----BEGIN CERTIFICATE-----\n…\n-----END CERTIFICATE-----'}
+            rows={6}
+            spellCheck={false}
+            className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-xs font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-orange-500 transition-colors resize-y"
+          />
+          {(s.customCAs ?? '').trim() && (
+            <p className="mt-1 text-[10px] text-green-400">
+              {(s.customCAs!.match(/-----BEGIN CERTIFICATE-----/g) ?? []).length} certificate(s) loaded
+              {!s.sslVerification && <span className="text-yellow-400"> — enable SSL verification for these CAs to take effect</span>}
+            </p>
+          )}
+          {/* Hidden file input for browser mode */}
+          <input
+            ref={caFileInputRef}
+            type="file"
+            accept=".pem,.crt,.cer,.ca-bundle,.txt"
+            onChange={handleBrowserFileChange}
+            className="hidden"
+          />
+        </div>
+      </Section>
+
+      <Section title="Client Certificates (mTLS)">
+        <p className="text-xs text-slate-400 leading-relaxed">
+          Client certificates authenticate this application to servers that require mutual TLS.
+          Entries are matched by hostname (exact or <span className="font-mono">*.wildcard</span>).
+          Certificate and key must be PEM-encoded.
+        </p>
+
+        {/* Hidden file inputs for browser fallback */}
+        <input ref={certFileInputRef} type="file" accept=".pem,.crt,.cer,.txt" onChange={handleClientBrowserFileChange} className="hidden" />
+        <input ref={keyFileInputRef}  type="file" accept=".pem,.key,.txt"      onChange={handleClientBrowserFileChange} className="hidden" />
+
+        {clientCerts.length > 0 && (
+          <div className="flex flex-col gap-3">
+            {clientCerts.map((entry, idx) => (
+              <div key={idx} className="border border-slate-700 rounded-md overflow-hidden">
+                {/* Header row */}
+                <div className="flex items-center gap-2 px-3 py-2 bg-slate-800 border-b border-slate-700">
+                  <button
+                    type="button"
+                    onClick={() => updateCertEntry(idx, { enabled: entry.enabled === false })}
+                    className={`relative inline-flex w-8 h-4 items-center rounded-full transition-colors shrink-0 ${
+                      entry.enabled !== false ? 'bg-orange-500' : 'bg-slate-600'
+                    }`}
+                    title={entry.enabled !== false ? 'Enabled' : 'Disabled'}
+                  >
+                    <span className={`inline-block w-3 h-3 bg-white rounded-full shadow transition-transform ${
+                      entry.enabled !== false ? 'translate-x-4' : 'translate-x-0.5'
+                    }`} />
+                  </button>
+                  <input
+                    type="text"
+                    value={entry.host}
+                    onChange={e => updateCertEntry(idx, { host: e.target.value })}
+                    placeholder="api.example.com or *.internal.corp"
+                    className="flex-1 bg-transparent text-xs text-slate-200 placeholder-slate-500 focus:outline-none min-w-0"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeCertEntry(idx)}
+                    title="Remove entry"
+                    className="text-slate-500 hover:text-red-400 transition-colors shrink-0"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                  </button>
+                </div>
+
+                {/* Fields */}
+                <div className="px-3 py-2 space-y-2">
+                  {/* Certificate */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-slate-500 w-14 shrink-0">CERT</span>
+                    <span className={`text-[10px] flex-1 font-mono truncate ${entry.cert.trim() ? 'text-green-400' : 'text-slate-600'}`}>
+                      {entry.cert.trim()
+                        ? `${(entry.cert.match(/-----BEGIN[^-]+-----/g) ?? []).length} cert block(s) loaded`
+                        : 'not set'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleLoadClientFile(idx, 'cert')}
+                      className="px-2 py-0.5 text-[10px] rounded bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 transition-colors shrink-0"
+                    >
+                      Load…
+                    </button>
+                    {entry.cert.trim() && (
+                      <button type="button" onClick={() => updateCertEntry(idx, { cert: '' })} className="text-slate-500 hover:text-red-400 transition-colors">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Key */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-slate-500 w-14 shrink-0">KEY</span>
+                    <span className={`text-[10px] flex-1 font-mono truncate ${entry.key.trim() ? 'text-green-400' : 'text-slate-600'}`}>
+                      {entry.key.trim() ? 'loaded' : 'not set'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleLoadClientFile(idx, 'key')}
+                      className="px-2 py-0.5 text-[10px] rounded bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 transition-colors shrink-0"
+                    >
+                      Load…
+                    </button>
+                    {entry.key.trim() && (
+                      <button type="button" onClick={() => updateCertEntry(idx, { key: '' })} className="text-slate-500 hover:text-red-400 transition-colors">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Passphrase */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-slate-500 w-14 shrink-0">PASS</span>
+                    <input
+                      type="password"
+                      value={entry.passphrase ?? ''}
+                      onChange={e => updateCertEntry(idx, { passphrase: e.target.value })}
+                      placeholder="Key passphrase (optional)"
+                      className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-0.5 text-xs font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-orange-500"
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={addCertEntry}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 transition-colors"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+            <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+          Add entry
+        </button>
       </Section>
 
       <Section title="Security">
