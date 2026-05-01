@@ -403,7 +403,8 @@ export function getAncestorItemIds(items: CollectionItem[], targetId: string): s
     for (const node of nodes) {
       if (node.id === targetId) return path;
       if (node.item) {
-        const found = walk(node.item, [...path, node.id]);
+        const nextPath = node.id ? [...path, node.id] : path;
+        const found = walk(node.item, nextPath);
         if (found) return found;
       }
     }
