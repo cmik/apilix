@@ -9,6 +9,7 @@ import {
   moveItemInTree, extractItemById, insertItemInTree, isDescendantOf, getAllRequestIds,
   flattenRequestNames, flattenRequestItems, sortChildrenByName,
   removeItemsByIds, getCollectionLevelCandidates, getItemLevelCandidates,
+  getAncestorItemIds,
   type BulkDeleteCandidate,
 } from '../utils/treeHelpers';
 import { generateHurlFromItems } from '../utils/hurlUtils';
@@ -203,6 +204,14 @@ function useDragCtx() { return useContext(DragCtx); }
 // ─── Collapse/Expand-all contexts ───────────────────────────────────────────────
 const CollapseCtx = createContext<number>(0);
 const ExpandCtx = createContext<number>(0);
+
+interface RevealState {
+  collectionId: string;
+  itemId: string;
+  ancestorIds: Set<string>;
+}
+
+const RevealCtx = createContext<RevealState | null>(null);
 
 const METHOD_COLORS: Record<string, string> = {
   GET: 'text-green-400',
@@ -535,6 +544,7 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
   const dragCtx = useDragCtx();
   const collapseSignal = useContext(CollapseCtx);
   const expandSignal = useContext(ExpandCtx);
+  const revealCtx = useContext(RevealCtx);
   const [open, setOpen] = useState(() => expandSignal >= collapseSignal);
 
   useEffect(() => {
@@ -543,6 +553,10 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
   useEffect(() => {
     if (expandSignal > 0 && Array.isArray(item.item)) setOpen(true);
   }, [expandSignal]);
+  // Auto-open this folder when it is an ancestor of the revealed item
+  useEffect(() => {
+    if (item.id && Array.isArray(item.item) && revealCtx?.ancestorIds.has(item.id)) setOpen(true);
+  }, [revealCtx]);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState(!!startRenaming);
   const [renameVal, setRenameVal] = useState(item.name);
@@ -560,6 +574,18 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
     (item.id
       ? state.activeRequest?.item.id === item.id
       : state.activeRequest?.item.name === item.name);
+  const isRevealed =
+    !isFolder &&
+    !!item.id &&
+    revealCtx?.collectionId === collectionId &&
+    revealCtx?.itemId === item.id;
+
+  // Scroll the revealed request row into view
+  useEffect(() => {
+    if (isRevealed && rowRef.current) {
+      rowRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [isRevealed]);
 
   function openMenu(e: React.MouseEvent) {
     e.preventDefault();
@@ -889,7 +915,7 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
         onDrop={handleDrop}
         className={`flex items-center group rounded text-sm transition-colors select-none ${
           isActive ? 'bg-slate-600' : 'hover:bg-slate-700/50'
-        } ${isBeingDragged ? 'opacity-40' : ''}`}
+        } ${isBeingDragged ? 'opacity-40' : ''} ${isRevealed ? 'ring-2 ring-inset ring-orange-500' : ''}`}
         style={{ paddingLeft: indentPx, cursor: renaming ? 'default' : 'grab' }}
       >
         <button
@@ -979,6 +1005,7 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
   const variableSuggestions = buildVariableSuggestions(varMap);
   const collapseSignal = useContext(CollapseCtx);
   const expandSignal = useContext(ExpandCtx);
+  const revealCtx = useContext(RevealCtx);
   const [open, setOpen] = useState(() => expandSignal >= collapseSignal);
 
   useEffect(() => {
@@ -987,6 +1014,10 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
   useEffect(() => {
     if (expandSignal > 0) setOpen(true);
   }, [expandSignal]);
+  // Auto-open this collection when it contains the revealed item
+  useEffect(() => {
+    if (revealCtx?.collectionId === collection._id) setOpen(true);
+  }, [revealCtx]);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState(!!startRenaming);
   const [renameVal, setRenameVal] = useState(startRenaming ? '' : collection.info.name);
@@ -1358,6 +1389,23 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
   // ── File drag-and-drop import state ─────────────────────────────────────────
   const [fileDropActive, setFileDropActive] = useState(false);
 
+  // ── Reveal state (Show in tree view) ─────────────────────────────────────────
+  const [revealState, setRevealState] = useState<RevealState | null>(null);
+
+  useEffect(() => {
+    function onReveal(e: Event) {
+      const { collectionId, itemId } = (e as CustomEvent<{ collectionId: string; itemId: string }>).detail;
+      const col = state.collections.find(c => c._id === collectionId);
+      if (!col) return;
+      const ids = getAncestorItemIds(col.item, itemId);
+      if (ids === null) return;
+      setRevealState({ collectionId, itemId, ancestorIds: new Set(ids) });
+      setTimeout(() => setRevealState(null), 1500);
+    }
+    document.addEventListener('apilix:reveal-in-tree', onReveal);
+    return () => document.removeEventListener('apilix:reveal-in-tree', onReveal);
+  }, [state.collections]);
+
   function isFileDrag(e: React.DragEvent): boolean {
     return Array.from(e.dataTransfer.types).includes('Files');
   }
@@ -1599,6 +1647,7 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
   // -- Normal tree view --
   return (
     <DragCtx.Provider value={dragCtxValue}>
+      <RevealCtx.Provider value={revealState}>
       <CollapseCtx.Provider value={collapseSignal}>
       <ExpandCtx.Provider value={expandSignal}>
       <div
@@ -1654,6 +1703,7 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
       </div>
       </ExpandCtx.Provider>
       </CollapseCtx.Provider>
+      </RevealCtx.Provider>
     </DragCtx.Provider>
   );
 }
