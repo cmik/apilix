@@ -9,6 +9,7 @@ The Collection Runner executes multiple requests from a collection in sequence, 
 - [Collection Runner](#collection-runner)
   - [Table of Contents](#table-of-contents)
   - [Overview](#overview)
+  - [MongoDB Requests in the Runner](#mongodb-requests-in-the-runner)
   - [Run Collections from the CLI](#run-collections-from-the-cli)
     - [Before You Start](#before-you-start)
     - [Basic Workflow](#basic-workflow)
@@ -78,6 +79,7 @@ Key capabilities:
 | **Performance metrics** | Min/avg/max/P50/P95/P99 response time statistics with a live bar chart |
 | **Live streaming** | Results appear as each request completes — no waiting for the full run |
 | **Child requests** | Requests triggered by `apx.executeRequest()` inside scripts are shown nested under their parent |
+| **MongoDB requests** | MongoDB operations (find, insert, update, delete, aggregate, …) run in the same sequence as HTTP requests; status shown as `MONGO:FIND`, `MONGO_SUCCESS`, etc. |
 
 ![Collection Runner overview](images/runner-overview.png)
 
@@ -334,6 +336,8 @@ apilix run ./collection.json --reporter junit --out ./artifacts/apilix.junit.xml
 | `--retry-delay <ms>` | | Base delay between retries in ms (default: `1000`) |
 | `--retry-backoff <type>` | | Backoff strategy: `fixed` (default) or `exponential` |
 | `--retry-on <target>` | | What triggers a retry: `both` (default), `failures`, or `errors` |
+| `--mongo-uri <uri>` | | Override MongoDB connection URI for all MongoDB requests in the collection |
+| `--mongo-db <db>` | | Override MongoDB database name for all MongoDB requests |
 | `--reporter <type>` | | Output format: `table` (default), `json`, `junit`, or `both` |
 | `--out <path>` | | Write `json` or `junit` output to this file instead of stdout |
 | `--out-dir <path>` | | Write both report files here (required for `--reporter both`) |
@@ -400,6 +404,28 @@ Use `--client-cert` and `--client-key` together to present a client certificate 
 | `0` | Successful run — no failed assertions and no request errors |
 | `1` | One or more failed assertions, request errors, or runner flow errors |
 | `2` | Invalid CLI usage or unreadable / invalid input file (collection, environment, CSV, JSON data) |
+
+---
+
+## MongoDB Requests in the Runner
+
+Collections can contain any mix of HTTP and MongoDB requests. The runner processes them in sequence — each MongoDB request receives the current environment and collection variable state, and any variables captured by its test script are immediately available to the next request.
+
+**Status column:** MongoDB requests show their `mongoStatus` label (`MONGO_SUCCESS`, `MONGO_PARTIAL`, or `MONGO_ERROR`) in the status column instead of an HTTP status code. The method column shows the operation name prefixed with `MONGO:` (e.g., `MONGO:FIND`, `MONGO:INSERT`).
+
+**Retry:** The retry setting does **not** apply to MongoDB requests. Each MongoDB request executes exactly once per iteration. This prevents accidental duplicate writes on transient errors.
+
+**Timeout:** The per-run maximum of 1800 seconds applies across all requests (HTTP and MongoDB combined). Long-running aggregate pipelines or slow connections consume from this shared budget.
+
+**Variables propagate normally:** Capture values from MongoDB results in test scripts and use them in subsequent HTTP or MongoDB requests in the same iteration:
+
+```js
+// In test script of a MONGO:INSERT request
+const result = apx.response.json();
+apx.environment.set('newUserId', String(result.insertedId));
+```
+
+See [MongoDB Requests](MongoDB-Requests) for the complete reference.
 
 ---
 
@@ -932,3 +958,4 @@ The retry behaviour:
 - [Variables & Environments](Variables-and-Environments) — scope hierarchy and data row variables
 - [Mock Server](Mock-Server) — run the collection against mock responses
 - [Collections & Requests](Collections-and-Requests) — managing collections and request scripts
+- [MongoDB Requests](MongoDB-Requests) — MongoDB operations, CLI flags, and mixed-collection patterns

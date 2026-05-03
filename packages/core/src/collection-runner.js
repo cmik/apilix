@@ -12,6 +12,8 @@ try {
 const { executeRequest, flattenItemsWithScripts } = require('./request-engine');
 const { createScriptContext } = require('./script-runtime');
 
+const MAX_RUN_RUNTIME_MS = 1800 * 1000;
+
 /**
  * Represents a client input error that should map to HTTP 400.
  * Thrown by prepareCollectionRun for missing/invalid payload fields.
@@ -117,10 +119,16 @@ function prepareCollectionRun(payload, options = {}) {
 }
 
 function toResultData(item, result, iteration) {
+  const isMongo = result.protocol === 'mongodb' || item.request?.requestType === 'mongodb' || !!item.request?.mongodb;
+  const mongoOperation = item.request?.mongodb?.operation || result.mongoOperation;
+  const methodLabel = isMongo ? `MONGO:${String(mongoOperation || 'op').toUpperCase()}` : (item.request?.method || 'GET');
   return {
     iteration,
     name: item.name,
-    method: item.request?.method || 'GET',
+    method: methodLabel,
+    protocol: isMongo ? 'mongodb' : 'http',
+    mongoOperation,
+    mongoStatus: result.mongoStatus,
     url: typeof item.request?.url === 'string'
       ? item.request.url
       : item.request?.url?.raw || '',
@@ -146,6 +154,7 @@ function toResultData(item, result, iteration) {
 
 async function executePreparedCollectionRun(prepared, options = {}) {
   const { payload, dataRows, requests, runId } = prepared;
+  const runStart = Date.now();
   const {
     collection,
     environment,
@@ -158,6 +167,7 @@ async function executePreparedCollectionRun(prepared, options = {}) {
     bail,
     allCollectionItems,
     mockBase,
+    mongoConnections,
   } = payload;
   const maxRetries = Math.max(0, Math.min(10, parseInt(payload.maxRetries, 10) || 0));
   const _rawRetryDelay = parseInt(payload.retryDelay, 10);
@@ -181,6 +191,12 @@ async function executePreparedCollectionRun(prepared, options = {}) {
 
   let stopped = false;
   outer: for (let i = 0; i < dataRows.length; i++) {
+    if (Date.now() - runStart > MAX_RUN_RUNTIME_MS) {
+      errors.push(`Run timed out after ${MAX_RUN_RUNTIME_MS}ms`);
+      sendEvent('error', { error: `Run timed out after ${MAX_RUN_RUNTIME_MS}ms` });
+      stopped = true;
+      break;
+    }
     const dataRow = dataRows[i];
     let currentEnv = { ...(environment || {}) };
     let currentCollVars = { ...(collectionVariables || {}) };
@@ -199,6 +215,12 @@ async function executePreparedCollectionRun(prepared, options = {}) {
     const maxPerRequest = requests.length + 1;
 
     while (reqIdx < requests.length) {
+      if (Date.now() - runStart > MAX_RUN_RUNTIME_MS) {
+        errors.push(`Run timed out after ${MAX_RUN_RUNTIME_MS}ms`);
+        sendEvent('error', { error: `Run timed out after ${MAX_RUN_RUNTIME_MS}ms` });
+        stopped = true;
+        break outer;
+      }
       perRequestCount[reqIdx]++;
       if (perRequestCount[reqIdx] > maxPerRequest) {
         const loopName = requests[reqIdx].name;
@@ -227,6 +249,7 @@ async function executePreparedCollectionRun(prepared, options = {}) {
         iteration: i + 1,
         requestId: item.id || '',
         vmContext,
+        mongoConnections: mongoConnections || {},
       });
 
       if (result.updatedEnvironment) currentEnv = result.updatedEnvironment;
@@ -235,7 +258,7 @@ async function executePreparedCollectionRun(prepared, options = {}) {
       if (result.updatedCookies) currentCookies = result.updatedCookies;
 
       let retryAttempts = 0;
-      if (maxRetries > 0) {
+      if (maxRetries > 0 && result.protocol !== 'mongodb') {
         while (retryAttempts < maxRetries) {
           const hasError = !!result.error;
           const hasFailed = Array.isArray(result.testResults)
@@ -266,6 +289,7 @@ async function executePreparedCollectionRun(prepared, options = {}) {
             iteration: i + 1,
             requestId: item.id || '',
             vmContext,
+            mongoConnections: mongoConnections || {},
           });
           if (result.updatedEnvironment) currentEnv = result.updatedEnvironment;
           if (result.updatedCollectionVariables) currentCollVars = result.updatedCollectionVariables;

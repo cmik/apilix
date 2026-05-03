@@ -377,6 +377,18 @@ test('parseArgs defaults cert fields to null / empty / *', () => {
   assert.equal(args.clientCertHost, '*');
 });
 
+test('parseArgs captures --mongo-uri and --mongo-db flags', () => {
+  const args = parseArgs(['run', 'col.json', '--mongo-uri', 'mongodb://localhost:27017', '--mongo-db', 'sample']);
+  assert.equal(args.mongoUri, 'mongodb://localhost:27017');
+  assert.equal(args.mongoDb, 'sample');
+});
+
+test('parseArgs defaults Mongo override flags to empty strings', () => {
+  const args = parseArgs(['run', 'col.json']);
+  assert.equal(args.mongoUri, '');
+  assert.equal(args.mongoDb, '');
+});
+
 // --bail integration
 
 test('runCli --bail stops after first test assertion failure and exits 1', async () => {

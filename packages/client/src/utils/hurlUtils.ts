@@ -552,6 +552,10 @@ function collectHurlEntries(items: CollectionItem[], out: string[]): void {
       collectHurlEntries(item.item, out);
     } else if (item.request) {
       const req = item.request;
+
+      // MongoDB requests are not HTTP — skip them in Hurl export
+      if (req.requestType === 'mongodb' || req.method === 'MONGO') continue;
+
       const method = req.method?.toUpperCase() ?? 'GET';
       const url = typeof req.url === 'string' ? req.url : (req.url?.raw ?? '');
       const headers = req.header ?? [];

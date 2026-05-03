@@ -561,36 +561,76 @@ export function exportWorkflowCollection(
   // Flatten all iterations and their results in order
   for (const iteration of iterations) {
     for (const result of iteration.results) {
-      // Determine the URL to use (prefer resolvedUrl with fallback)
-      const urlValue = result.resolvedUrl || result.url || '';
+      const isMongo = result.protocol === 'mongodb' || result.method?.startsWith('MONGO');
 
-      // Convert requestHeaders Record to header array format
-      const headerArray = result.requestHeaders
-        ? Object.entries(result.requestHeaders).map(([key, value]) => ({
-            key,
-            value,
-          }))
-        : [];
+      if (isMongo) {
+        // Build a MongoDB collection item
+        // Try to restore mongodb config from request body (it stores the JSON config blob)
+        let mongoConfig: Record<string, unknown> | undefined;
+        try {
+          if (result.requestBody) {
+            const parsed = JSON.parse(result.requestBody);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              mongoConfig = parsed as Record<string, unknown>;
+            }
+          }
+        } catch {
+          // ignore — fallback to operation-only config
+        }
 
-      // Build the collection item
-      const item: CollectionItem = {
-        id: `${Math.random().toString(36).slice(2, 10)}`, // Generate unique ID
-        name: result.name,
-        request: {
-          method: result.method,
-          url: urlValue, // Can be string or parsed URL object, Postman accepts both
-          header: headerArray,
-          body:
-            result.requestBody !== undefined && result.requestBody !== null
-              ? {
-                  mode: 'raw',
-                  raw: result.requestBody,
-                }
-              : undefined,
-        },
-      };
+        // Derive operation from method label ('MONGO:FIND' → 'find') or mongoOperation
+        const op = result.mongoOperation
+          ?? (result.method?.includes(':') ? result.method.split(':')[1].toLowerCase() : 'find');
 
-      items.push(item);
+        const item: CollectionItem = {
+          id: `${Math.random().toString(36).slice(2, 10)}`,
+          name: result.name,
+          request: {
+            method: 'MONGO',
+            url: '', // MongoDB requests don't have HTTP URLs
+            header: [],
+            requestType: 'mongodb',
+            mongodb: (mongoConfig as import('../types').MongoRequestConfig | undefined) ?? {
+                operation: op as import('../types').MongoRequestOperation,
+                connection: { mode: 'direct', uri: '' },
+                database: '',
+              },
+          },
+        };
+
+        items.push(item);
+      } else {
+        // Determine the URL to use (prefer resolvedUrl with fallback)
+        const urlValue = result.resolvedUrl || result.url || '';
+
+        // Convert requestHeaders Record to header array format
+        const headerArray = result.requestHeaders
+          ? Object.entries(result.requestHeaders).map(([key, value]) => ({
+              key,
+              value,
+            }))
+          : [];
+
+        // Build the collection item
+        const item: CollectionItem = {
+          id: `${Math.random().toString(36).slice(2, 10)}`, // Generate unique ID
+          name: result.name,
+          request: {
+            method: result.method,
+            url: urlValue, // Can be string or parsed URL object, Postman accepts both
+            header: headerArray,
+            body:
+              result.requestBody !== undefined && result.requestBody !== null
+                ? {
+                    mode: 'raw',
+                    raw: result.requestBody,
+                  }
+                : undefined,
+          },
+        };
+
+        items.push(item);
+      }
     }
   }
 

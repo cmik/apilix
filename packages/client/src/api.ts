@@ -21,6 +21,7 @@ export interface ExecutePayload {
   collectionItems?: CollectionItem[];
   /** When set, the server rewrites the request URL to this base after variable resolution. */
   mockBase?: string;
+  mongoConnections?: Record<string, { uri: string; database?: string }>;
 }
 
 export interface ChildRequestLog {
@@ -68,6 +69,7 @@ export interface RunPayload {
   retryDelay?: number;
   retryBackoff?: 'fixed' | 'exponential';
   retryOn?: 'failures' | 'errors' | 'both';
+  mongoConnections?: Record<string, { uri: string; database?: string }>;
 }
 
 export async function runCollection(
@@ -268,4 +270,44 @@ export async function fetchWsdl(url: string): Promise<string> {
     responseType: 'text',
   });
   return response.data;
+}
+
+/** Extract a human-readable message from an axios error, preferring the server's error body. */
+function extractApiError(err: unknown): Error {
+  if (
+    err !== null &&
+    typeof err === 'object' &&
+    'isAxiosError' in err &&
+    (err as { isAxiosError: boolean }).isAxiosError
+  ) {
+    const axErr = err as { response?: { data?: { error?: string }; status?: number } };
+    const msg = axErr.response?.data?.error;
+    if (msg) return new Error(msg);
+  }
+  return err instanceof Error ? err : new Error('Request failed');
+}
+
+export interface MongoAuthOverride {
+  mode?: string;
+  username?: string;
+  password?: string;
+  authSource?: string;
+}
+
+export async function listMongoDatabases(uri?: string, connectionId?: string, auth?: MongoAuthOverride): Promise<string[]> {
+  try {
+    const res = await api.post<{ databases: string[] }>('/mongo/introspect/databases', { uri, connectionId, auth });
+    return res.data.databases;
+  } catch (err) {
+    throw extractApiError(err);
+  }
+}
+
+export async function listMongoCollections(uri: string | undefined, database: string, connectionId?: string, auth?: MongoAuthOverride): Promise<string[]> {
+  try {
+    const res = await api.post<{ collections: string[] }>('/mongo/introspect/collections', { uri, database, connectionId, auth });
+    return res.data.collections;
+  } catch (err) {
+    throw extractApiError(err);
+  }
 }

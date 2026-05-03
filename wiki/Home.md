@@ -29,7 +29,8 @@ Apilix is a lightweight, open-source API development and testing tool built for 
 | 📁 | Collections, folders & tabbed editing | 🔁 | Collection Runner with CSV data-driven testing |
 | 🌍 | Environments & variable scopes | 🎭 | Built-in Mock Server with WebSocket support |
 | ✍️ | Pre-request & test scripts (`pm.*` compatible) | 🔄 | Sync via Git, S3, HTTP, or Team server |
-| 📥 | Import: Postman, OpenAPI, cURL, HAR, Hurl | 🌊 | Chrome CDP browser traffic capture |
+| 🍃 | MongoDB requests (find, insert, aggregate, script…) | 🌊 | Chrome CDP browser traffic capture |
+| 📥 | Import: Postman, OpenAPI, cURL, HAR, Hurl | 📊 | Mixed HTTP + MongoDB collections in the runner |
 | 📤 | Export: Postman, cURL, Hurl, Code Snippets | 🔍 | Response search, JSONPath/JMESPath tester |
 | 🕸️ | GraphQL with schema introspection | 🏷️ | Network timeline, TLS chain, redirect chain |
 | 🍪 | Cookie manager | 🕐 | Request History with snapshot re-open |

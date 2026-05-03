@@ -118,6 +118,7 @@ const METHOD_COLORS: Record<string, string> = {
   DELETE: 'text-red-400',
   HEAD: 'text-purple-400',
   OPTIONS: 'text-slate-400',
+  MONGO: 'text-emerald-400',
 };
 
 interface SelectionNodeProps {
@@ -220,6 +221,11 @@ function SelectionNode({ item, depth, selectedIds, onToggleRequest, onToggleFold
 // ─── Status helper ────────────────────────────────────────────────────────────
 
 function statusColor(status: number): string {
+  // MongoDB status codes
+  if (status === 2200) return 'text-green-400';   // MongoDB success
+  if (status === 2400) return 'text-yellow-400'; // MongoDB partial/truncated
+  if (status === 0) return 'text-red-400';       // Error (could be MongoDB or other)
+  // HTTP status codes
   if (status >= 500) return 'text-red-400';
   if (status >= 400) return 'text-yellow-400';
   if (status >= 300) return 'text-blue-400';
@@ -294,6 +300,8 @@ function ResultRow({ result }: { result: RunnerIterationResult }) {
     ...(result.testChildRequests ?? []).map(c => ({ tag: 'test' as const, name: c.name, method: c.method, result: c.result })),
   ];
   const hasChildren = children.length > 0;
+  const hasMongoBody = result.protocol === 'mongodb' && result.body;
+  const canExpand = total > 0 || hasChildren || hasMongoBody;
 
   return (
     <div className="border-b border-slate-700">
@@ -301,7 +309,7 @@ function ResultRow({ result }: { result: RunnerIterationResult }) {
         className={`flex items-center gap-3 px-4 py-2 text-sm cursor-pointer hover:bg-slate-700/30 transition-colors ${
           result.error ? 'bg-red-900/10' : ''
         }`}
-        onClick={() => (total > 0 || hasChildren) && setExpanded(e => !e)}
+        onClick={() => canExpand && setExpanded(e => !e)}
       >
         <span className={`font-bold w-16 shrink-0 ${statusColor(result.status)}`}>
           {result.error ? 'ERR' : result.status}
@@ -324,7 +332,7 @@ function ResultRow({ result }: { result: RunnerIterationResult }) {
             {passed}/{total}
           </span>
         )}
-        {(total > 0 || hasChildren) && (
+        {canExpand && (
           <span className="text-slate-600 text-xs ml-1">{expanded ? '▴' : '▾'}</span>
         )}
       </div>
@@ -344,6 +352,15 @@ function ResultRow({ result }: { result: RunnerIterationResult }) {
                   )}
                 </div>
               ))}
+            </div>
+          )}
+          {/* MongoDB response body viewer */}
+          {result.protocol === 'mongodb' && result.body && (
+            <div className="px-4 pb-2 bg-slate-900/40">
+              <div className="text-xs text-slate-400 font-medium mb-1.5">Response</div>
+              <pre className="bg-slate-900 border border-slate-700 rounded p-2 text-xs font-mono text-slate-300 overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-words">
+                {typeof result.body === 'string' ? result.body : JSON.stringify(result.body, null, 2)}
+              </pre>
             </div>
           )}
           {/* Child requests with tree connector */}

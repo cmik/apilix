@@ -338,6 +338,69 @@ apx.sendRequest(
       },
     ],
   },
+  {
+    label: 'MongoDB',
+    snippets: [
+      {
+        id: 'mongo-timestamp-window',
+        name: 'MongoDB Timestamp Window',
+        description: 'Calculate a time window for MongoDB range queries ($gte, $lt)',
+        code: `// Calculate timestamp window for MongoDB range queries
+const now = Date.now();
+const pastMs = 24 * 60 * 60 * 1000; // 24 hours
+const startTime = new Date(now - pastMs);
+const endTime = new Date(now);
+
+apx.environment.set('mongoStartTime', startTime.toISOString());
+apx.environment.set('mongoEndTime', endTime.toISOString());`,
+      },
+      {
+        id: 'mongo-objectid',
+        name: 'Generate MongoDB ObjectId',
+        description: 'Create a new MongoDB ObjectId (client-side)',
+        code: `// Generate a MongoDB-like ObjectId (24-char hex string)
+function generateObjectId() {
+  const timestamp = Math.floor(Date.now() / 1000).toString(16).padStart(8, '0');
+  const random = Math.random().toString(16).slice(2).padStart(16, '0');
+  return timestamp + random.slice(0, 16);
+}
+
+const newId = generateObjectId();
+apx.environment.set('newObjectId', newId);`,
+      },
+      {
+        id: 'mongo-set-filter',
+        name: 'Set MongoDB Filter from Env',
+        description: 'Build a MongoDB query filter from environment variables',
+        code: `// Build a MongoDB filter from environment variables
+const filter = {
+  status: apx.environment.get('filterStatus') ?? 'active',
+  createdAt: {
+    $gte: apx.environment.get('mongoStartTime') ?? '2024-01-01T00:00:00.000Z',
+    $lt: apx.environment.get('mongoEndTime') ?? new Date().toISOString(),
+  },
+};
+
+// Store as JSON string for use in MongoDB request body
+apx.environment.set('mongoFilter', JSON.stringify(filter));`,
+      },
+      {
+        id: 'mongo-set-update',
+        name: 'Set MongoDB Update from Env',
+        description: 'Build a MongoDB update document from environment variables',
+        code: `// Build a MongoDB update document
+const updateDoc = {
+  $set: {
+    status: apx.environment.get('updateStatus') ?? 'updated',
+    updatedAt: new Date().toISOString(),
+    updatedBy: apx.environment.get('userId') ?? 'system',
+  },
+};
+
+apx.environment.set('mongoUpdate', JSON.stringify(updateDoc));`,
+      },
+    ],
+  },
 ];
 
 const TEST_CATEGORIES: SnippetCategory[] = [
@@ -801,6 +864,82 @@ apx.environment.set('userId', userId);
 const statusNode = xpath.select1('//user/@status', doc);
 const status = statusNode ? statusNode.value : null;
 apx.expect(status).to.equal('active');`,
+      },
+    ],
+  },
+  {
+    label: 'MongoDB',
+    snippets: [
+      {
+        id: 'mongo-status-success',
+        name: 'MongoDB Status is 2200',
+        description: 'Assert the MongoDB request succeeded with status 2200',
+        code: `apx.test("MongoDB status is 2200", () => {
+  apx.expect(apx.response.status).to.equal(2200);
+});`,
+      },
+      {
+        id: 'mongo-response-not-empty',
+        name: 'MongoDB Response Not Empty',
+        description: 'Assert the MongoDB operation returned documents',
+        code: `apx.test("MongoDB response is not empty", () => {
+  const json = apx.response.json();
+  apx.expect(json).to.be.an('array');
+  apx.expect(json.length).to.be.greaterThan(0);
+});`,
+      },
+      {
+        id: 'mongo-response-count',
+        name: 'MongoDB Response Count',
+        description: 'Assert the number of documents returned',
+        code: `apx.test("MongoDB returned expected document count", () => {
+  const json = apx.response.json();
+  const expected = parseInt(apx.environment.get('expectedCount') ?? '1', 10);
+  apx.expect(json.length).to.equal(expected);
+});`,
+      },
+      {
+        id: 'mongo-document-has-field',
+        name: 'MongoDB Document Has Field',
+        description: 'Assert a specific field exists in the returned documents',
+        code: `apx.test("MongoDB documents have required fields", () => {
+  const json = apx.response.json();
+  apx.expect(json.length).to.be.greaterThan(0);
+  const doc = json[0];
+  apx.expect(doc).to.have.property('_id');
+  apx.expect(doc).to.have.property('name');
+});`,
+      },
+      {
+        id: 'mongo-store-id',
+        name: 'Store MongoDB Document ID',
+        description: 'Extract the first document ID from MongoDB response',
+        code: `apx.test("Capture MongoDB document ID", () => {
+  const json = apx.response.json();
+  apx.expect(json.length).to.be.greaterThan(0);
+  const docId = json[0]._id?.toString() ?? json[0]._id ?? '';
+  apx.expect(docId).to.not.be.empty;
+  apx.environment.set('lastDocumentId', docId);
+});`,
+      },
+      {
+        id: 'mongo-partial-response',
+        name: 'MongoDB Response Truncated',
+        description: 'Check if the MongoDB response was truncated (status 2400)',
+        code: `apx.test("MongoDB response is complete (not truncated)", () => {
+  const status = apx.response.status;
+  apx.expect(status).to.not.equal(2400);
+  apx.expect([2200, 2300]).to.include(status);
+});`,
+      },
+      {
+        id: 'mongo-error-check',
+        name: 'Check for MongoDB Error',
+        description: 'Assert the MongoDB operation did not error',
+        code: `apx.test("MongoDB operation succeeded", () => {
+  apx.expect(apx.response.status).to.not.equal(0);
+  apx.expect(apx.response.statusText).to.not.include('ERROR');
+});`,
       },
     ],
   },
