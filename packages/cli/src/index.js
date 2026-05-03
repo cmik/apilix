@@ -40,6 +40,8 @@ function usage() {
     '  --retry-delay <ms>           Base delay between retries in ms (default 1000)',
     '  --retry-backoff <fixed|exponential>  Backoff strategy (default: fixed)',
     '  --retry-on <failures|errors|both>    What triggers a retry (default: both)',
+    '  --mongo-uri <uri>            Override MongoDB URI for mongodb requests',
+    '  --mongo-db <db>              Override MongoDB database for mongodb requests',
     '  --ssl-verification           Enable TLS certificate verification',
     '  --ca-cert <file>             PEM CA certificate(s) to add to the trust store',
     '  --client-cert <file>         PEM client certificate for mTLS',
@@ -161,6 +163,8 @@ function createProgram(io) {
     clientKeyPath: null,
     clientKeyPassphrase: '',
     clientCertHost: '*',
+    mongoUri: '',
+    mongoDb: '',
   };
 
   const program = new Command();
@@ -199,6 +203,8 @@ function createProgram(io) {
     .option('--retry-delay <ms>', 'Base delay between retries in ms', '1000')
     .option('--retry-backoff <fixed|exponential>', 'Backoff strategy (fixed or exponential)', 'fixed')
     .option('--retry-on <failures|errors|both>', 'What triggers a retry', 'both')
+    .option('--mongo-uri <uri>', 'Override MongoDB URI for mongodb requests')
+    .option('--mongo-db <db>', 'Override MongoDB database for mongodb requests')
     .option('--ssl-verification', 'Enable TLS certificate verification')
     .option('--ca-cert <file>', 'PEM CA certificate(s) to add to the trust store')
     .option('--client-cert <file>', 'PEM client certificate for mTLS')
@@ -221,6 +227,8 @@ function createProgram(io) {
       parsed.retryDelay = opts.retryDelay;
       parsed.retryBackoff = opts.retryBackoff;
       parsed.retryOn = opts.retryOn;
+      parsed.mongoUri = opts.mongoUri || '';
+      parsed.mongoDb = opts.mongoDb || '';
       parsed.delay = opts.delay;
       parsed.reporter = opts.reporter;
       parsed.outPath = opts.out;
@@ -281,9 +289,10 @@ function assertionStatus(result) {
 }
 
 function pushRows(rows, result, namePrefix) {
+  const isMongo = result.protocol === 'mongodb' || String(result.method || '').startsWith('MONGO:');
   rows.push({
     requestName: `${namePrefix}${result.name}`,
-    statusCode: result.status,
+    statusCode: isMongo ? (result.mongoStatus || result.statusText || 'MONGO') : result.status,
     responseTime: `${Math.max(0, Number(result.responseTime) || 0)} ms`,
     assertion: assertionStatus(result),
   });
@@ -348,9 +357,9 @@ function formatTable(rows, chalk) {
       ? chalk.green(row.assertion)
       : (row.assertion === 'FAIL' ? chalk.red(row.assertion) : chalk.yellow(row.assertion));
 
-    const statusCode = Number(row.statusCode) >= 400
-      ? chalk.red(String(row.statusCode))
-      : chalk.green(String(row.statusCode));
+    const statusCode = Number.isFinite(Number(row.statusCode))
+      ? (Number(row.statusCode) >= 400 ? chalk.red(String(row.statusCode)) : chalk.green(String(row.statusCode)))
+      : chalk.cyan(String(row.statusCode));
 
     lines.push(
       `| ${String(row.requestName).padEnd(widths.requestName)} | ${statusCode.padEnd(widths.statusCode + (statusCode.length - String(row.statusCode).length))} | ${String(row.responseTime).padEnd(widths.responseTime)} | ${assertionText.padEnd(widths.assertion + (assertionText.length - String(row.assertion).length))} |`
@@ -510,7 +519,32 @@ async function runCli(argv, ioOverrides = {}) {
       retryOn: ['failures', 'errors', 'both'].includes(args.retryOn) ? args.retryOn : 'both',
       allCollectionItems: collection.item,
       mockBase: null,
+      mongoConnections: {},
     };
+
+    if (args.mongoUri) {
+      payload.mongoConnections.__cli = {
+        uri: args.mongoUri,
+        database: args.mongoDb || '',
+      };
+      const applyMongoOverrides = (items) => {
+        for (const item of (items || [])) {
+          if (item.item) {
+            applyMongoOverrides(item.item);
+            continue;
+          }
+          if (item.request?.requestType === 'mongodb' || item.request?.mongodb) {
+            item.request = item.request || {};
+            item.request.requestType = 'mongodb';
+            item.request.mongodb = item.request.mongodb || {};
+            item.request.mongodb.connection = { mode: 'named', connectionId: '__cli' };
+            if (args.mongoDb) item.request.mongodb.database = args.mongoDb;
+          }
+        }
+      };
+      applyMongoOverrides(payload.collection.item);
+      applyMongoOverrides(payload.allCollectionItems);
+    }
 
     const startedAt = new Date().toISOString();
     const prepared = prepareCollectionRun(payload, { csvText, jsonRows });

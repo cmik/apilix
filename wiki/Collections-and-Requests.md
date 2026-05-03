@@ -225,6 +225,23 @@ Open the **Settings** tab on a request to add a **Markdown description**. Descri
 
 ---
 
+### MongoDB Requests
+
+In addition to standard HTTP methods, Apilix supports **MongoDB** as a request type. Select `MONGO` from the method dropdown to switch the request into MongoDB mode.
+
+- The **URL bar** is hidden — the panel switches to a dedicated MongoDB editor.
+- The editor is organised into five tabs: **Query**, **Connection**, **Pre-request**, **Tests**, and **Docs**.
+  - **Query** — database, collection, operation selector, and all operation-specific fields.
+  - **Connection** — URI (direct or named connection) and optional auth override.
+  - **Pre-request / Tests** — standard scripting tabs, identical to HTTP requests.
+  - **Docs** — Markdown notes for this request.
+- The **Database** and **Collection** fields include fetch buttons that query the live server and let you pick names from a dropdown, so you never have to type them manually.
+- MongoDB requests can coexist with HTTP requests inside the same collection and run seamlessly in the Collection Runner.
+
+See [MongoDB Requests](MongoDB-Requests) for a full reference on operations, connections, and scripting patterns.
+
+---
+
 ## Sending a Request
 
 Once the request is configured, send it by:

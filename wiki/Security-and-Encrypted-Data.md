@@ -263,6 +263,42 @@ The `noProxy` list lets you exclude specific hostnames (e.g., `localhost, .inter
 
 ---
 
+## MongoDB Connection Registry
+
+Named MongoDB connections are stored in an AES-256-GCM encrypted file on disk:
+
+- **Path:** `~/.apilix/mongo-connections.enc.json`
+- **Encryption key:** Derived from the `APILIX_MONGO_SETTINGS_KEY` environment variable if set, otherwise derived from the system hostname. Set `APILIX_MONGO_SETTINGS_KEY` to a stable secret in production environments to survive hostname changes.
+- **Auth tag:** Each record includes a 12-byte random IV and a GCM authentication tag, ensuring integrity verification on read.
+
+### What is encrypted
+
+| Field | Encrypted? |
+|---|---|
+| Connection URI (may contain password) | ✅ Yes — entire file is encrypted at rest |
+| Connection name / alias | ✅ Yes |
+| Database default | ✅ Yes |
+| Connection list (names only, no URIs) returned by `GET /api/mongo/connections` | ❌ No — only metadata; URIs are never returned over the API |
+
+### Introspect endpoints
+
+The `POST /api/mongo/introspect/databases` and `POST /api/mongo/introspect/collections` endpoints accept a MongoDB URI as input and contact the target server on behalf of the Apilix server process. To limit misuse as an SSRF vector, both endpoints enforce:
+
+- The URI **must** use the `mongodb://` or `mongodb+srv://` scheme. Requests with any other scheme (e.g. `http://`, `file://`) are rejected with HTTP 400.
+- These endpoints are intended for use only by the Apilix UI on `localhost`. Do **not** expose the Apilix server port (`3001`) to the public internet.
+
+### Rotating the encryption key
+
+1. Export your connections by calling `GET /api/mongo/connections` and noting the IDs and names (URIs are not included).
+2. Re-add each connection via `POST /api/mongo/connections` with the new `APILIX_MONGO_SETTINGS_KEY` set.
+3. The old encrypted file is overwritten with the new key on the first write.
+
+### Browser mode
+
+Named MongoDB connections are stored via the same server-side API in both Electron and browser (web app) mode. The encryption key derivation is the same; however, in browser mode the key is derived from the server's hostname, not the user's OS keychain.
+
+---
+
 ## Security Best Practices
 
 | Recommendation | Why |

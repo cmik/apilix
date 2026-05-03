@@ -13,6 +13,8 @@ type RespTab = 'Body' | 'Headers' | 'Test Results' | 'TLS' | 'Timeline' | 'Redir
 
 function StatusBadge({ status }: { status: number }) {
   const color =
+    status === 2200 ? 'bg-green-700 text-green-100' :
+    status === 2400 ? 'bg-yellow-700 text-yellow-100' :
     status >= 500 ? 'bg-red-700 text-red-100' :
     status >= 400 ? 'bg-yellow-700 text-yellow-100' :
     status >= 300 ? 'bg-blue-700 text-blue-100' :
@@ -36,6 +38,8 @@ function RedirectChainView({ chain, finalUrl, finalStatus }: { chain: RedirectHo
     { url: finalUrl ?? '', status: finalStatus, isFinal: true },
   ];
   const statusColor = (s: number) =>
+    s === 2200 ? 'bg-green-700 text-green-100' :
+    s === 2400 ? 'bg-yellow-700 text-yellow-100' :
     s >= 500 ? 'bg-red-700 text-red-100' :
     s >= 400 ? 'bg-yellow-700 text-yellow-100' :
     s >= 300 ? 'bg-blue-700 text-blue-100' :

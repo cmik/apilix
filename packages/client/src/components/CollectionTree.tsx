@@ -43,7 +43,11 @@ function flattenMockItems(items: CollectionItem[]): CollectionItem[] {
   const result: CollectionItem[] = [];
   for (const item of items) {
     if (Array.isArray(item.item)) result.push(...flattenMockItems(item.item));
-    else if (item.request) result.push(item);
+    else if (item.request) {
+      // Skip MongoDB requests — they don't have HTTP semantics the mock server can handle
+      if (item.request.requestType === 'mongodb' || item.request.method === 'MONGO') continue;
+      result.push(item);
+    }
   }
   return result;
 }
@@ -754,7 +758,8 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
       label: 'Add to Mock Server',
       icon: IconMock,
       onClick: () => {
-        const items = isFolder ? flattenMockItems(item.item || []) : (item.request ? [item] : []);
+        const isMongo = item.request?.requestType === 'mongodb' || item.request?.method === 'MONGO';
+        const items = isFolder ? flattenMockItems(item.item || []) : (item.request && !isMongo ? [item] : []);
         if (items.length > 0) setMockItems(items);
       },
     },

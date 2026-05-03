@@ -26,6 +26,8 @@ module.exports = {
   applyAuth: requestEngine.applyAuth,
   resolveHeaderPairs: requestEngine.resolveHeaderPairs,
   resolveParamPairs: requestEngine.resolveParamPairs,
+  executeMongoTest: requestEngine.executeMongoTest,
+  executeMongoIntrospect: requestEngine.executeMongoIntrospect,
 
   // script runtime
   runScript: scriptRuntime.runScript,

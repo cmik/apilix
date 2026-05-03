@@ -11,9 +11,11 @@ import { parseHurlFile } from '../utils/hurlUtils';
 import { openAuthorizationWindow } from '../utils/oauth';
 import GraphQLPanel from './GraphQLPanel';
 import SoapPanel from './SoapPanel';
+import MongoRequestPanel from './MongoRequestPanel';
 import CodeEditor from './CodeEditor';
 import type { CodeLanguage } from './CodeEditor';
 import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
+import ScriptTab from './ScriptTab';
 import ScriptEditor from './ScriptEditor';
 import OAuthConfigPanel from './OAuthConfigPanel';
 import { IconRequests } from './Icons';
@@ -27,7 +29,7 @@ import type { InjectTestSnippetDetail } from '../utils/appEvents';
 const CodeGenModal = lazy(() => import('./CodeGenModal'));
 const ItemSettingsModal = lazy(() => import('./ItemSettingsModal'));
 
-const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'WS'];
+const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'WS', 'MONGO'];
 
 const METHOD_COLORS: Record<string, string> = {
   GET: 'text-green-400',
@@ -38,6 +40,7 @@ const METHOD_COLORS: Record<string, string> = {
   HEAD: 'text-purple-400',
   OPTIONS: 'text-slate-400',
   WS: 'text-cyan-400',
+  MONGO: 'text-emerald-400',
 };
 
 const TABS = ['Params', 'Auth', 'Headers', 'Body', 'Pre-request', 'Tests', 'Docs'] as const;
@@ -103,14 +106,22 @@ function itemToEditState(item: CollectionItem) {
   const storedMap = new Map(urlVars.map(v => [v.key ?? '', v.value ?? '']));
   // Headers can be a raw string in v2.0 — drop them in that case
   const headerArr = Array.isArray(req.header) ? req.header : [];
+  const isMongo = req.requestType === 'mongodb' || !!req.mongodb;
   return {
-    method: req.method?.toUpperCase() ?? 'GET',
+    method: isMongo ? 'MONGO' : (req.method?.toUpperCase() ?? 'GET'),
     url: urlRaw,
     headers: headerArr.map(h => ({ ...h })),
     queryParams: extractQueryParams(urlRaw),
     pathParams: detectedNames.map(k => ({ key: k, value: storedMap.get(k) ?? '' })),
-    bodyMode: req.body?.soap ? 'soap' : (req.body?.mode ?? 'none'),
-    bodyRaw: req.body?.raw ?? '',
+    bodyMode: isMongo ? 'raw' : (req.body?.soap ? 'soap' : (req.body?.mode ?? 'none')),
+    bodyRaw: isMongo ? JSON.stringify(req.mongodb ?? {
+      connection: { mode: 'direct', uri: '{{mongoUri}}' },
+      database: '{{mongoDb}}',
+      collection: '',
+      operation: 'find',
+      filter: '{}',
+      limit: 50,
+    }, null, 2) : (req.body?.raw ?? ''),
     bodyRawLang: req.body?.options?.raw?.language ?? 'json',
     bodyFormData: Array.isArray(req.body?.formdata) ? req.body!.formdata! : [],
     bodyUrlEncoded: Array.isArray(req.body?.urlencoded) ? req.body!.urlencoded! : [],
@@ -201,6 +212,37 @@ function injectSoapHeaders(headers: CollectionHeader[], action: string, version:
 }
 
 function buildUpdatedRequestItem(item: CollectionItem, edit: EditState): CollectionItem {
+  if (edit.method === 'MONGO') {
+    let mongoCfg: unknown = null;
+    try { mongoCfg = JSON.parse(edit.bodyRaw || '{}'); } catch { mongoCfg = null; }
+    return {
+      ...item,
+      description: edit.description || undefined,
+      request: {
+        method: 'MONGO',
+        url: { raw: '' },
+        requestType: 'mongodb',
+        mongodb: (mongoCfg && typeof mongoCfg === 'object') ? (mongoCfg as CollectionRequest['mongodb']) : {
+          connection: { mode: 'direct', uri: '{{mongoUri}}' },
+          database: '{{mongoDb}}',
+          collection: '',
+          operation: 'find',
+          filter: '{}',
+          limit: 50,
+        },
+      },
+      event: [
+        {
+          listen: 'prerequest',
+          script: { type: 'text/javascript', exec: edit.preRequestScript ? edit.preRequestScript.split('\n') : [] },
+        },
+        {
+          listen: 'test',
+          script: { type: 'text/javascript', exec: edit.testScript ? edit.testScript.split('\n') : [] },
+        },
+      ],
+    };
+  }
   const isSoap = edit.bodyMode === 'soap';
   return {
     ...item,
@@ -224,63 +266,6 @@ function buildUpdatedRequestItem(item: CollectionItem, edit: EditState): Collect
     },
     event: buildEvents(edit),
   };
-}
-
-// ─── Script tab with snippet library ─────────────────────────────────────────
-
-interface ScriptTabProps {
-  label: React.ReactNode;
-  value: string;
-  onChange: (v: string) => void;
-  placeholder: string;
-  target: 'prerequest' | 'test';
-  requestNames?: string[];
-  requestItems?: Array<{ id: string; name: string }>;
-  onSyntaxCheck?: (hasError: boolean) => void;
-}
-
-function ScriptTab({ label, value, onChange, placeholder, target, requestNames, requestItems, onSyntaxCheck }: ScriptTabProps) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  const handleInsert = useCallback((code: string) => {
-    const el = textareaRef.current;
-    if (!el) {
-      onChange(value ? value + '\n\n' + code : code);
-      return;
-    }
-    const start = el.selectionStart;
-    const end = el.selectionEnd;
-    const separator = (value.length > 0 && !value.endsWith('\n')) ? '\n\n' : (value.length > 0 ? '\n' : '');
-    const before = value.slice(0, start);
-    const after = value.slice(end);
-    const newValue = before + (start === end && start === value.length ? separator : '') + code + after;
-    onChange(newValue);
-    // Restore focus and move cursor after inserted snippet
-    requestAnimationFrame(() => {
-      const insertPos = start + (start === end && start === value.length ? separator.length : 0) + code.length;
-      el.focus();
-      el.setSelectionRange(insertPos, insertPos);
-    });
-  }, [value, onChange]);
-
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-slate-500 text-xs">{label}</p>
-        <ScriptSnippetsLibrary target={target} onInsert={handleInsert} />
-      </div>
-      <ScriptEditor
-        textareaRef={textareaRef}
-        value={value}
-        onChange={onChange}
-        onSyntaxCheck={onSyntaxCheck}
-        rows={14}
-        placeholder={placeholder}
-        requestNames={requestNames}
-        requestItems={requestItems}
-      />
-    </div>
-  );
 }
 
 // ─── Key/value table component ───────────────────────────────────────────────
@@ -1160,13 +1145,15 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     // Build the item from current edit state
     const resolvedUrl = applyPathParams(edit.url, edit.pathParams, allVars);
     const ancestorScripts = collectAncestorScripts(col?.item ?? [], activeReq.item.id ?? '', col?.event);
+    const isMongo = edit.method === 'MONGO';
     const item: CollectionItem = {
       ...activeReq.item,
       request: {
-        method: edit.method,
-        url: { raw: resolvedUrl, variable: edit.pathParams.filter(p => p.key).map(p => ({ key: p.key, value: p.value })) },
-        header: edit.headers.filter(h => !h.disabled),
-        body: edit.bodyMode !== 'none' ? (
+        method: isMongo ? 'MONGO' : edit.method,
+        requestType: isMongo ? 'mongodb' : 'http',
+        url: isMongo ? { raw: '' } : { raw: resolvedUrl, variable: edit.pathParams.filter(p => p.key).map(p => ({ key: p.key, value: p.value })) },
+        header: isMongo ? [] : edit.headers.filter(h => !h.disabled),
+        body: (!isMongo && edit.bodyMode !== 'none') ? (
           edit.bodyMode === 'soap' ? buildSoapBody(edit) : {
             mode: edit.bodyMode as NonNullable<NonNullable<CollectionItem['request']>['body']>['mode'],
             raw: edit.bodyMode === 'raw' ? edit.bodyRaw : edit.bodyMode === 'file' ? (binaryBase64 ?? '') : undefined,
@@ -1176,7 +1163,10 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as RawLanguage } } : undefined,
           }
         ) : undefined,
-        auth: resolvedAuth,
+        auth: isMongo ? undefined : resolvedAuth,
+        mongodb: isMongo ? (() => {
+          try { return JSON.parse(edit.bodyRaw || '{}'); } catch { return undefined; }
+        })() : undefined,
       },
       event: buildMergedEvents(edit, ancestorScripts),
     };
@@ -1350,6 +1340,10 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
 
   async function handleSendToMock() {
     if (!edit || !activeReq || !activeTab) return;
+    if (edit.method === 'MONGO') {
+      window.alert('MongoDB requests cannot be sent to the mock server.');
+      return;
+    }
     if (!state.mockServerRunning) {
       window.alert('Mock server is not running. Start the mock server and try again.');
       return;
@@ -1756,7 +1750,11 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
         <div className="flex gap-2">
           <select
             value={edit.method}
-            onChange={e => setEdit(x => x ? { ...x, method: e.target.value } : x)}
+            onChange={e => setEdit(x => x ? {
+              ...x,
+              method: e.target.value,
+              bodyMode: e.target.value === 'MONGO' ? 'raw' : x.bodyMode,
+            } : x)}
             className={`bg-slate-700 border border-slate-600 rounded px-2 py-2 text-sm font-bold focus:outline-none ${METHOD_COLORS[edit.method] || 'text-slate-300'}`}
           >
             {METHODS.map(m => (
@@ -1764,6 +1762,11 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             ))}
           </select>
           <div className="relative flex-1">
+          {edit.method === 'MONGO' ? (
+            <div className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-emerald-400 font-mono italic opacity-60 select-none">
+              MongoDB — configure connection in the Body tab
+            </div>
+          ) : (
           <input
             ref={urlInputRef}
             type="text"
@@ -1774,7 +1777,8 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             placeholder="https://api.example.com/endpoint"
             className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-orange-500"
           />
-          {urlAcSuggestions.length > 0 && (
+          )}
+          {urlAcSuggestions.length > 0 && edit.method !== 'MONGO' && (
             <div className="absolute top-full mt-1 z-50 bg-slate-800 border border-slate-600 rounded shadow-xl min-w-52 max-h-52 overflow-y-auto" style={{ left: urlAcLeft }}>
               {urlAcSuggestions.map((name, i) => (
                 <button
@@ -1843,8 +1847,8 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
                   <div className="absolute right-0 top-full mt-1 z-50 bg-slate-800 border border-slate-600 rounded-md shadow-2xl py-1 min-w-[190px]">
                     <button
                       onClick={() => { setShowSendMenu(false); handleSendToMock(); }}
-                      disabled={!state.mockServerRunning}
-                      title={state.mockServerRunning ? `Send to mock server on port ${state.mockPort}` : 'Start the mock server first'}
+                      disabled={!state.mockServerRunning || edit.method === 'MONGO'}
+                      title={edit.method === 'MONGO' ? 'MongoDB requests cannot be sent to mock server' : (state.mockServerRunning ? `Send to mock server on port ${state.mockPort}` : 'Start the mock server first')}
                       className="w-full text-left flex items-center gap-2.5 px-3 py-1.5 text-xs transition-colors hover:bg-slate-700 text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                     >
                       <span className="w-4 shrink-0 text-center">🎭</span>
@@ -1866,8 +1870,32 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     <div className="flex flex-col flex-1 overflow-hidden">
       {urlBarPortalTarget ? createPortal(urlBarSection, urlBarPortalTarget) : urlBarSection}
 
-      {/* Tabs (HTTP only) */}
-      {edit.method !== 'WS' && (
+      {/* MongoDB dedicated panel */}
+      {edit.method === 'MONGO' && (
+        <MongoRequestPanel
+          key={activeTabId ?? 'mongo'}
+          bodyRaw={edit.bodyRaw}
+          preRequestScript={edit.preRequestScript}
+          testScript={edit.testScript}
+          description={edit.description}
+          variableSuggestions={variableSuggestions}
+          preRequestHasError={preRequestHasError}
+          testHasError={testHasError}
+          activeTabId={activeTabId}
+          requestNames={flattenRequestNames(col?.item ?? [])}
+          requestItems={flattenRequestItems(col?.item ?? [])}
+          resolvedVars={allVars}
+          onBodyChange={v => setEdit(x => x ? { ...x, bodyRaw: v } : x)}
+          onPreRequestChange={v => setEdit(x => x ? { ...x, preRequestScript: v } : x)}
+          onTestChange={v => setEdit(x => x ? { ...x, testScript: v } : x)}
+          onDescriptionChange={v => setEdit(x => x ? { ...x, description: v } : x)}
+          onPreRequestSyntaxCheck={setPreRequestHasError}
+          onTestSyntaxCheck={setTestHasError}
+        />
+      )}
+
+      {/* Tabs (HTTP only — not WS, not MONGO) */}
+      {edit.method !== 'WS' && edit.method !== 'MONGO' && (
         <div className="flex border-b border-slate-700 bg-slate-800 shrink-0">
           {TABS.map(t => {
             const hasErr =
@@ -1902,8 +1930,8 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
         />
       )}
 
-      {/* Tab content (HTTP only) */}
-      {edit.method !== 'WS' && <div className="flex-1 overflow-y-auto p-3 bg-slate-800/50 min-h-0">
+      {/* Tab content (HTTP only — not WS, not MONGO) */}
+      {edit.method !== 'WS' && edit.method !== 'MONGO' && <div className="flex-1 overflow-y-auto p-3 bg-slate-800/50 min-h-0">
         {activeRequestTab === 'Params' && (
           <div className="flex flex-col gap-4">
             <KvTable

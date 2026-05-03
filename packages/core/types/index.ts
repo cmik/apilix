@@ -56,6 +56,62 @@ export interface CollectionBody {
   };
 }
 
+export interface MongoNamedConnectionRef {
+  mode: 'named';
+  connectionId: string;
+}
+
+export interface MongoDirectConnectionRef {
+  mode: 'direct';
+  /** May be a raw URI or a template containing variables like {{mongoUri}}. */
+  uri: string;
+}
+
+export type MongoConnectionRef = MongoNamedConnectionRef | MongoDirectConnectionRef;
+
+export interface MongoRequestAuth {
+  mode?: 'scram' | 'x509' | 'ldap-plain' | 'oidc';
+  username?: string;
+  password?: string;
+  authSource?: string;
+  oidcAccessToken?: string;
+}
+
+export type MongoRequestOperation =
+  | 'find'
+  | 'aggregate'
+  | 'insert'
+  | 'update'
+  | 'delete'
+  | 'count'
+  | 'distinct'
+  | 'script';
+
+export interface MongoRequestConfig {
+  connection: MongoConnectionRef;
+  database: string;
+  collection?: string;
+  operation: MongoRequestOperation;
+  limit?: number;
+  filter?: string;
+  projection?: string;
+  sort?: string;
+  skip?: number;
+  pipeline?: string;
+  documents?: string;
+  update?: string;
+  updates?: string;
+  deleteMode?: 'one' | 'many';
+  updateMode?: 'one' | 'many';
+  distinctField?: string;
+  script?: string;
+  scriptContextCollection?: string;
+  maxTimeMS?: number;
+  useTransaction?: boolean;
+  sessionId?: string;
+  auth?: MongoRequestAuth;
+}
+
 export interface CollectionEvent {
   listen: 'prerequest' | 'test';
   script: {
@@ -77,11 +133,13 @@ export interface CollectionItem {
 }
 
 export interface CollectionRequest {
+  requestType?: 'http' | 'mongodb';
   method: string;
   url: CollectionUrl | string;
   header?: CollectionHeader[];
   body?: CollectionBody;
   auth?: CollectionAuth;
+  mongodb?: MongoRequestConfig;
   description?: string;
 }
 
@@ -184,8 +242,11 @@ export interface NetworkTimings {
 }
 
 export interface RequestResponse {
+  protocol?: 'http' | 'mongodb';
   status: number;
   statusText: string;
+  mongoStatus?: 'success' | 'partial' | 'error';
+  mongoOperation?: MongoRequestOperation;
   responseTime: number;
   resolvedUrl?: string;
   headers: Record<string, string>;
@@ -202,6 +263,9 @@ export interface RequestResponse {
 export interface RunnerIterationResult {
   name: string;
   method: string;
+  protocol?: 'http' | 'mongodb';
+  mongoOperation?: MongoRequestOperation;
+  mongoStatus?: 'success' | 'partial' | 'error';
   url: string;
   resolvedUrl?: string;
   requestHeaders?: Record<string, string>;

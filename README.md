@@ -11,6 +11,7 @@ A lightweight, open-source alternative API testing tool — available as a **des
 - **Import** Postman collections (v2.1) and environments
 - **Browser Capture** — attach to Chrome via CDP, inspect live network traffic, filter/sort requests, review headers/cookies, and import selected requests into a collection
 - **Send HTTP requests** (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS)
+- **MongoDB requests** — query, insert, update, delete, aggregate, and run scripts against MongoDB databases directly from a collection; mixed HTTP + MongoDB collections supported in the runner
 - **Query params, Headers, Body** (raw JSON/text, form-data, url-encoded)
 - **Authentication** (Bearer, Basic, API Key)
 - **Pre-request & Test scripts** (`apx.*` Postman-compatible API, including `apx.sendRequest()`)

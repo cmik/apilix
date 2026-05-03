@@ -37,6 +37,7 @@ Apilix has a built-in JavaScript scripting engine that lets you automate work be
   - [Console Output](#console-output)
   - [Test Results Display](#test-results-display)
   - [Snippet Library](#snippet-library)
+  - [MongoDB Request Scripts](#mongodb-request-scripts)
   - [Common Patterns](#common-patterns)
   - [See Also](#see-also)
 
@@ -890,9 +891,61 @@ if (node) {
 
 ---
 
+## MongoDB Request Scripts
+
+Pre-request and test scripts work exactly the same way for MongoDB requests as for HTTP requests. The `apx.response` object in test scripts contains the MongoDB operation result as the response body.
+
+**Assert returned documents:**
+
+```js
+apx.test('Returns active users', () => {
+  const docs = apx.response.json();
+  apx.expect(docs).to.be.an('array');
+  apx.expect(docs.every(d => d.status === 'active')).to.be.true;
+});
+```
+
+**Capture inserted document ID:**
+
+```js
+const result = apx.response.json();
+apx.environment.set('newDocumentId', String(result.insertedId));
+```
+
+**Assert count result:**
+
+```js
+apx.test('Has records', () => {
+  apx.expect(apx.response.json().count).to.be.above(0);
+});
+```
+
+**Assert operation status:**
+
+```js
+// MongoDB success status code is 2200 (MONGO_SUCCESS)
+apx.test('Operation succeeded', () => {
+  apx.expect(apx.response.status).to.equal(2200);
+});
+```
+
+**Pre-request: compute dynamic filter values:**
+
+```js
+// Set a timestamp window for the filter in the MongoDB request body
+const now = Date.now();
+apx.environment.set('now', now.toString());
+apx.environment.set('yesterday', (now - 86400000).toString());
+```
+
+See [MongoDB Requests](MongoDB-Requests#scripting-for-mongodb-requests) for the full scripting reference specific to MongoDB operations.
+
+---
+
 ## See Also
 
 - [Variables & Environments](Variables-and-Environments) — variable stores and scope hierarchy
 - [Authentication](Authentication) — `apx.sendRequest()` for scripted token flows
 - [Collection Runner](Collection-Runner) — `apx.execution.setNextRequest()` and CSV iteration data
 - [Collections & Requests](Collections-and-Requests) — where scripts are attached (collection, folder, request)
+- [MongoDB Requests](MongoDB-Requests#scripting-for-mongodb-requests) — scripting patterns for MongoDB operations

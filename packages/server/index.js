@@ -7,10 +7,13 @@ const vm = require('vm');
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+const crypto = require('crypto');
 const {
   executeRequest, setExecutorConfig,
   prepareCollectionRun, executePreparedCollectionRun, InputError,
   refreshOAuth2Token, exchangeAuthorizationCodeForToken,
+  executeMongoTest, executeMongoIntrospect,
 } = require('@apilix/core');
 
 const app = express();
@@ -67,6 +70,78 @@ app.use(express.urlencoded({ extended: true }));
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
+const MONGO_SETTINGS_PATH = path.join(os.homedir(), '.apilix', 'mongo-connections.enc.json');
+
+function ensureDirFor(filePath) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+}
+
+function settingsKey() {
+  return crypto
+    .createHash('sha256')
+    .update(String(process.env.APILIX_MONGO_SETTINGS_KEY || `${os.hostname()}:apilix:mongo:settings`))
+    .digest();
+}
+
+function encryptJson(payload) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', settingsKey(), iv);
+  const plaintext = Buffer.from(JSON.stringify(payload), 'utf8');
+  const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return {
+    v: 1,
+    iv: iv.toString('base64'),
+    tag: tag.toString('base64'),
+    data: encrypted.toString('base64'),
+  };
+}
+
+function decryptJson(blob) {
+  if (!blob || typeof blob !== 'object' || !blob.iv || !blob.tag || !blob.data) return { connections: {} };
+  try {
+    const decipher = crypto.createDecipheriv(
+      'aes-256-gcm',
+      settingsKey(),
+      Buffer.from(blob.iv, 'base64'),
+    );
+    decipher.setAuthTag(Buffer.from(blob.tag, 'base64'));
+    const decrypted = Buffer.concat([
+      decipher.update(Buffer.from(blob.data, 'base64')),
+      decipher.final(),
+    ]);
+    return JSON.parse(decrypted.toString('utf8'));
+  } catch {
+    return { connections: {} };
+  }
+}
+
+function readMongoSettings() {
+  try {
+    const raw = fs.readFileSync(MONGO_SETTINGS_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    const data = decryptJson(parsed);
+    if (!data || typeof data !== 'object') return { connections: {} };
+    return { connections: data.connections && typeof data.connections === 'object' ? data.connections : {} };
+  } catch {
+    return { connections: {} };
+  }
+}
+
+function writeMongoSettings(data) {
+  ensureDirFor(MONGO_SETTINGS_PATH);
+  const payload = encryptJson({ connections: data.connections || {} });
+  fs.writeFileSync(MONGO_SETTINGS_PATH, JSON.stringify(payload, null, 2), 'utf8');
+}
+
+function getMergedMongoConnections(runtimeConnections) {
+  const stored = readMongoSettings().connections;
+  return {
+    ...(stored || {}),
+    ...(runtimeConnections || {}),
+  };
+}
+
 /**
  * Validate that a URL is a safe http/https URL to use as an OAuth token endpoint.
  * Rejects non-http(s) protocols to prevent SSRF via dangerous schemes.
@@ -109,6 +184,175 @@ function normalizeClientCertificates(input) {
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', version: '1.0.0' });
+});
+
+app.get('/api/mongo/connections', (_req, res) => {
+  const settings = readMongoSettings();
+  const entries = Object.entries(settings.connections || {}).map(([id, value]) => ({
+    id,
+    name: value.name || id,
+    database: value.database || '',
+    authMode: value.authMode || 'scram',
+    hasUri: !!value.uri,
+  }));
+  res.json({ connections: entries });
+});
+
+app.post('/api/mongo/connections', (req, res) => {
+  const { id, name, uri, database, authMode } = req.body || {};
+  if (!id || typeof id !== 'string') {
+    return res.status(400).json({ error: 'id is required' });
+  }
+  if (!/^[a-z0-9_-]{1,64}$/i.test(id)) {
+    return res.status(400).json({ error: 'id must be 1–64 alphanumeric, dash, or underscore characters' });
+  }
+  if (!uri || typeof uri !== 'string') {
+    return res.status(400).json({ error: 'uri is required' });
+  }
+  const settings = readMongoSettings();
+  settings.connections[id] = {
+    name: typeof name === 'string' && name.trim() ? name.trim() : id,
+    uri,
+    database: typeof database === 'string' ? database : '',
+    authMode: typeof authMode === 'string' ? authMode : 'scram',
+    updatedAt: new Date().toISOString(),
+  };
+  writeMongoSettings(settings);
+  return res.json({ ok: true });
+});
+
+app.delete('/api/mongo/connections/:id', (req, res) => {
+  const id = req.params.id;
+  if (!/^[a-z0-9_-]{1,64}$/i.test(id)) {
+    return res.status(400).json({ error: 'Invalid connection id' });
+  }
+  const settings = readMongoSettings();
+  if (settings.connections[id]) delete settings.connections[id];
+  writeMongoSettings(settings);
+  return res.json({ ok: true });
+});
+
+app.post('/api/mongo/connections/:id/test', async (req, res) => {
+  const id = req.params.id;
+  const settings = readMongoSettings();
+  const conn = settings.connections[id];
+  if (!conn) return res.status(404).json({ error: 'Connection not found' });
+  try {
+    const result = await executeMongoTest(conn.uri, conn.database || 'admin');
+    return res.json(result);
+  } catch (err) {
+    return res.status(200).json({ ok: false, error: err.message });
+  }
+});
+
+// ─── MongoDB introspect ────────────────────────────────────────────────────────
+
+/**
+ * Validate that a URI uses the mongodb:// or mongodb+srv:// scheme.
+ * Prevents misuse of the introspect endpoints as an SSRF vector against
+ * non-MongoDB services or private infrastructure.
+ */
+function validateMongoUri(uri) {
+  if (!uri || typeof uri !== 'string') return false;
+  try {
+    const parsed = new URL(uri);
+    return parsed.protocol === 'mongodb:' || parsed.protocol === 'mongodb+srv:';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Apply auth override options to a MongoDB URI.
+ * Mirrors the applyMongoAuthOptions function in @apilix/core/request-engine.
+ * The caller is responsible for resolving {{variables}} in auth fields
+ * before passing them here.
+ */
+function applyMongoAuthToUri(uri, auth) {
+  if (!auth || !auth.mode) return uri;
+  try {
+    const parsed = new URL(uri);
+    if (auth.username) parsed.username = auth.username;
+    if (auth.password) parsed.password = auth.password;
+    if (auth.authSource) parsed.searchParams.set('authSource', auth.authSource);
+    if (auth.mode === 'x509') parsed.searchParams.set('authMechanism', 'MONGODB-X509');
+    if (auth.mode === 'ldap-plain') parsed.searchParams.set('authMechanism', 'PLAIN');
+    if (auth.mode === 'oidc') parsed.searchParams.set('authMechanism', 'MONGODB-OIDC');
+    return parsed.toString();
+  } catch {
+    return uri;
+  }
+}
+
+/**
+ * Resolve an introspection URI from either an explicit URI or a saved
+ * connection ID, then apply any auth override.
+ *
+ * Returns an object of shape:
+ *   { uri: string } on success
+ *   { errorStatus: number, error: string } on failure
+ */
+function resolveIntrospectUri(input) {
+  const uri = typeof input?.uri === 'string' ? input.uri.trim() : '';
+  const connectionId = typeof input?.connectionId === 'string' ? input.connectionId.trim() : '';
+  // auth fields must already have {{variables}} resolved by the client
+  const auth = input?.auth && typeof input.auth === 'object' ? input.auth : null;
+
+  let resolvedUri;
+
+  if (uri) {
+    if (!validateMongoUri(uri)) {
+      return { errorStatus: 400, error: 'uri must use the mongodb:// or mongodb+srv:// scheme' };
+    }
+    resolvedUri = uri;
+  } else {
+    if (!connectionId) {
+      return { errorStatus: 400, error: 'uri or connectionId is required' };
+    }
+    if (!/^[a-z0-9_-]{1,64}$/i.test(connectionId)) {
+      return { errorStatus: 400, error: 'Invalid connection id' };
+    }
+
+    const settings = readMongoSettings();
+    const conn = settings.connections?.[connectionId];
+    if (!conn || typeof conn.uri !== 'string' || !conn.uri.trim()) {
+      return { errorStatus: 404, error: 'Connection not found' };
+    }
+    if (!validateMongoUri(conn.uri)) {
+      return { errorStatus: 400, error: 'stored connection URI must use the mongodb:// or mongodb+srv:// scheme' };
+    }
+    resolvedUri = conn.uri;
+  }
+
+  return { uri: applyMongoAuthToUri(resolvedUri, auth) };
+}
+
+app.post('/api/mongo/introspect/databases', async (req, res) => {
+  const resolved = resolveIntrospectUri(req.body || {});
+  if (!resolved.uri) return res.status(resolved.errorStatus).json({ error: resolved.error });
+  try {
+    const result = await executeMongoIntrospect(resolved.uri, 'databases');
+    // result.error means the driver could not connect — treat as a gateway error
+    // (the request was valid; the upstream server was unavailable or rejected us)
+    if (result.error) return res.status(502).json({ error: result.error });
+    return res.json({ databases: result.databases });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/mongo/introspect/collections', async (req, res) => {
+  const { database } = req.body || {};
+  if (!database || typeof database !== 'string') return res.status(400).json({ error: 'database is required' });
+  const resolved = resolveIntrospectUri(req.body || {});
+  if (!resolved.uri) return res.status(resolved.errorStatus).json({ error: resolved.error });
+  try {
+    const result = await executeMongoIntrospect(resolved.uri, 'collections', database);
+    if (result.error) return res.status(502).json({ error: result.error });
+    return res.json({ collections: result.collections });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── WSDL proxy ────────────────────────────────────────────────────────────────
@@ -172,7 +416,7 @@ app.post('/api/settings', (req, res) => {
 
 app.post('/api/execute', async (req, res) => {
   try {
-    const { item, environment, collectionVariables, globals, dataRow, collVars, cookies, collectionItems, mockBase } = req.body;
+    const { item, environment, collectionVariables, globals, dataRow, collVars, cookies, collectionItems, mockBase, mongoConnections } = req.body;
     if (!item || !item.request) {
       return res.status(400).json({ error: 'Missing item.request in body' });
     }
@@ -185,6 +429,7 @@ app.post('/api/execute', async (req, res) => {
       cookies: cookies || {},
       collectionItems: collectionItems || [],
       mockBase: mockBase || null,
+      mongoConnections: getMergedMongoConnections(mongoConnections || {}),
     });
     return res.json(result);
   } catch (err) {
@@ -290,6 +535,7 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
         csvText = content;
       }
     }
+    payload.mongoConnections = getMergedMongoConnections(payload.mongoConnections || {});
     const prepared = prepareCollectionRun(payload, { csvText, jsonRows });
 
     if (prepared.requests.length === 0) {

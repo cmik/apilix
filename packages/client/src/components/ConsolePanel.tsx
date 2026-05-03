@@ -35,6 +35,8 @@ function methodBadge(method: string): string {
 }
 
 function statusBadge(status: number): string {
+  if (status === 2200) return 'text-green-400 bg-green-400/15';
+  if (status === 2400) return 'text-yellow-400 bg-yellow-400/15';
   if (status >= 500) return 'text-red-400 bg-red-400/15';
   if (status >= 400) return 'text-yellow-400 bg-yellow-400/15';
   if (status >= 300) return 'text-sky-400 bg-sky-400/15';
@@ -447,6 +449,8 @@ function mCls(m) {
 }
 function sCls(status, err) {
   if (err || !status) return 'sE';
+  if (status === 2200) return 's2';
+  if (status === 2400) return 's4';
   if (status >= 500) return 's5';
   if (status >= 400) return 's4';
   if (status >= 300) return 's3';
