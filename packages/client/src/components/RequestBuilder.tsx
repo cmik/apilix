@@ -1764,7 +1764,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
           <div className="relative flex-1">
           {edit.method === 'MONGO' ? (
             <div className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-emerald-400 font-mono italic opacity-60 select-none">
-              MongoDB — configure connection in the Body tab
+              MongoDB — configure request in the Connection and Body tabs
             </div>
           ) : (
           <input

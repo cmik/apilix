@@ -55,7 +55,7 @@ export default function MongoRequestPanel({
   onPreRequestSyntaxCheck,
   onTestSyntaxCheck,
 }: MongoRequestPanelProps) {
-  const [activeTab, setActiveTab] = useState<MainTab>('Connection');
+  const [activeTab, setActiveTab] = useState<MainTab>('Query');
   const [docsMode, setDocsMode] = useState<'edit' | 'preview'>('edit');
 
   // ── Connection tab state ──────────────────────────────────────────────────
