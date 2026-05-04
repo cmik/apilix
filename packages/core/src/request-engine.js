@@ -5,6 +5,7 @@ const http = require('http');
 const https = require('https');
 const FormData = require('form-data');
 const vm = require('vm');
+const JSON5 = require('json5');
 const { MongoClient, ObjectId } = require('mongodb');
 const { runScript } = require('./script-runtime');
 const { refreshOAuth2Token } = require('./oauth');
@@ -17,8 +18,8 @@ const DEFAULT_MONGO_LIMIT = 50;
 function parseJsonObject(text, fallback = {}) {
   if (!text || !String(text).trim()) return fallback;
   try {
-    const parsed = JSON.parse(String(text));
-    return parsed && typeof parsed === 'object' ? parsed : fallback;
+    const parsed = JSON5.parse(String(text));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : fallback;
   } catch {
     return fallback;
   }
@@ -27,7 +28,7 @@ function parseJsonObject(text, fallback = {}) {
 function parseJsonArray(text, fallback = []) {
   if (!text || !String(text).trim()) return fallback;
   try {
-    const parsed = JSON.parse(String(text));
+    const parsed = JSON5.parse(String(text));
     return Array.isArray(parsed) ? parsed : fallback;
   } catch {
     return fallback;
@@ -150,6 +151,22 @@ async function executeMongoOperation(mongoCfg, vars, context) {
             ObjectId,
             result: null,
             console: { log() {}, warn() {}, error() {}, info() {} },
+            // ECMAScript built-ins — not present in a blank vm.runInNewContext context by default
+            Date,
+            Math,
+            JSON,
+            Array,
+            Object,
+            Number,
+            String,
+            Boolean,
+            RegExp,
+            Error,
+            Buffer,
+            parseInt,
+            parseFloat,
+            isNaN,
+            isFinite,
           };
           const script = new vm.Script(String(mongoCfg.script || ''), { filename: 'apilix-mongo-script.js' });
           // Limit synchronous CPU time to 30 s regardless of maxTimeMS to avoid

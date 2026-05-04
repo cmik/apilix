@@ -539,6 +539,12 @@ Resolve the query first:
 | `ObjectId` | BSON `ObjectId` constructor |
 | `BSON.ObjectId` | Alias for `ObjectId` |
 | `result` | Output variable — set this to the value you want returned |
+| `Date` | JavaScript `Date` constructor — use `new Date('2024-01-01')` for BSON date comparisons |
+| `Math` | Standard `Math` object (`Math.floor`, `Math.random`, etc.) |
+| `JSON` | Standard `JSON` object for serialization (`JSON.stringify`, `JSON.parse`) |
+| `Array`, `Object`, `Number`, `String`, `Boolean`, `RegExp`, `Error` | Standard ECMAScript constructors |
+| `parseInt`, `parseFloat`, `isNaN`, `isFinite` | Standard numeric helpers |
+| `Buffer` | Node.js `Buffer` for binary data |
 
 > **Note:** The script runs in a Node.js `vm` sandbox. `require`, `process`, and file-system access are not available. Network calls outside MongoDB are not permitted.
 
