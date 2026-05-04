@@ -428,11 +428,104 @@ Run arbitrary JavaScript in a server-side VM sandbox with access to the MongoDB 
   "database": "mydb",
   "collection": "",
   "operation": "script",
-  "script": "const users = await db.collection('users').find({ active: true }).toArray(); result = users.map(u => u.email);"
+  "script": "(async () => { const users = await db.collection('users').find({ active: true }).toArray(); return users.map(u => u.email); })()"
 }
 ```
 
-The `result` variable is what gets returned as the response body. Set it at the end of your script.
+The response body is the resolved value returned by the script. If the script does not explicitly return a value, Apilix falls back to the `result` variable.
+
+### Writing async Mongo scripts
+
+MongoDB scripts run in a Node.js `vm` sandbox. Top-level `await` is not available, so wrap async work in an async IIFE or return a Promise chain.
+
+**Return a value from an async wrapper:**
+
+```js
+(async () => {
+  const users = await db.collection('users')
+    .find({ active: true })
+    .toArray();
+
+  return users.map(user => user.email);
+})()
+```
+
+**Use the `result` output variable from an async wrapper:**
+
+```js
+(async () => {
+  const users = await db.collection('users')
+    .find({ active: true })
+    .toArray();
+
+  result = users.map(user => user.email);
+})()
+```
+
+**Equivalent Promise-chain form:**
+
+```js
+db.collection('users')
+  .find({ active: true })
+  .toArray()
+  .then(users => users.map(user => user.email))
+```
+
+### Multiple queries in one script
+
+You can run multiple queries against the same configured database and combine them into one returned object.
+
+```js
+(async () => {
+  const account = await db.collection('accounts')
+    .find({ _id: 'VI_41833' })
+    .limit(1)
+    .toArray();
+
+  const contacts = await db.collection('contacts')
+    .find({ accountId: 'VI_41833' })
+    .toArray();
+
+  return {
+    account,
+    contacts,
+    summary: {
+      accountCount: account.length,
+      contactCount: contacts.length,
+    },
+  };
+})()
+```
+
+The `db` object is already bound to the request's configured database. To query a different database, use a separate MongoDB request.
+
+### Promise values inside returned objects
+
+Do not place unresolved Promises directly inside `result` or another returned object. Apilix awaits the script's top-level returned Promise, but it does not recursively await Promise values nested inside an object.
+
+This returns an empty object for `query` because `query` is still a Promise:
+
+```js
+const query = db.collection('accounts')
+  .find({ _id: 'VI_41833' })
+  .limit(1)
+  .toArray();
+
+result = { query };
+```
+
+Resolve the query first:
+
+```js
+(async () => {
+  const query = await db.collection('accounts')
+    .find({ _id: 'VI_41833' })
+    .limit(1)
+    .toArray();
+
+  result = { query };
+})()
+```
 
 **Available globals inside `script`:**
 
