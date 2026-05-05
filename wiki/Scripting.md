@@ -895,6 +895,34 @@ if (node) {
 
 Pre-request and test scripts work exactly the same way for MongoDB requests as for HTTP requests. The `apx.response` object in test scripts contains the MongoDB operation result as the response body.
 
+MongoDB `operation: "script"` requests run inside a Node.js `vm` sandbox. Top-level `await` is not available in that script body. For async MongoDB calls, return an async IIFE (or a Promise chain). The resolved return value becomes the response body; if nothing is returned, Apilix falls back to the `result` variable.
+
+**Mongo `script`: async wrapper pattern:**
+
+```js
+(async () => {
+  const account = await db.collection('accounts')
+    .find({ _id: 'VI_41833' })
+    .limit(1)
+    .toArray();
+
+  const contacts = await db.collection('contacts')
+    .find({ accountId: 'VI_41833' })
+    .toArray();
+
+  return {
+    account,
+    contacts,
+    summary: {
+      accountCount: account.length,
+      contactCount: contacts.length,
+    },
+  };
+})()
+```
+
+**Important:** Avoid placing unresolved Promises inside objects (for example `result = { query }` where `query` is still `toArray()` Promise), because nested Promises are not recursively awaited.
+
 **Assert returned documents:**
 
 ```js
