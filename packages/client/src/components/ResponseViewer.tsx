@@ -861,14 +861,28 @@ export default function ResponseViewer() {
 
   const closeSearch = () => { setSearchOpen(false); setSearchQuery(''); setMatchIndex(0); };
 
+  const navigateSearch = useCallback((direction: 'prev' | 'next') => {
+    if (totalMatches === 0) return;
+    // In tree mode, make sure folded branches are visible before navigating.
+    if (!rawMode && (isJson || isXml)) {
+      setCollapseSignal(0);
+      setExpandSignal(n => n + 1);
+    }
+    setMatchIndex(i => (
+      direction === 'prev'
+        ? (i - 1 + totalMatches) % totalMatches
+        : (i + 1) % totalMatches
+    ));
+  }, [totalMatches, rawMode, isJson, isXml]);
+
   const handleSearchKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Escape') {
       closeSearch();
     } else if (e.key === 'Enter' && totalMatches > 0) {
       if (e.shiftKey) {
-        setMatchIndex(i => (i - 1 + totalMatches) % totalMatches);
+        navigateSearch('prev');
       } else {
-        setMatchIndex(i => (i + 1) % totalMatches);
+        navigateSearch('next');
       }
     }
   };
@@ -1107,13 +1121,13 @@ export default function ResponseViewer() {
             </span>
           )}
           <button
-            onClick={() => totalMatches > 0 && setMatchIndex(i => (i - 1 + totalMatches) % totalMatches)}
+            onClick={() => navigateSearch('prev')}
             disabled={totalMatches === 0}
             className="text-slate-400 hover:text-slate-200 disabled:opacity-30 px-1 text-sm"
             title="Previous match (Shift+Enter)"
           >↑</button>
           <button
-            onClick={() => totalMatches > 0 && setMatchIndex(i => (i + 1) % totalMatches)}
+            onClick={() => navigateSearch('next')}
             disabled={totalMatches === 0}
             className="text-slate-400 hover:text-slate-200 disabled:opacity-30 px-1 text-sm"
             title="Next match (Enter)"
