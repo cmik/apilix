@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Tests for the MongoDB introspect HTTP routes and the underlying
+ * Tests for MongoDB introspection route validation and the underlying
  * executeMongoIntrospect core function.
  *
  * Route logic is replicated in a standalone http.createServer so we do not
@@ -19,6 +19,9 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 
 const { executeMongoIntrospect } = require('@apilix/core');
+
+const MONGO_CONNECTION_ID_RE = /^[a-z0-9_-]{1,64}$/i;
+const MONGO_RESERVED_CONNECTION_IDS = new Set(['__proto__', 'prototype', 'constructor']);
 
 // ─── Minimal HTTP helpers ─────────────────────────────────────────────────────
 
@@ -42,11 +45,85 @@ function readBody(req) {
   });
 }
 
+function isReservedMongoConnectionId(id) {
+  return MONGO_RESERVED_CONNECTION_IDS.has(String(id || '').toLowerCase());
+}
+
+function isValidMongoConnectionId(id) {
+  return typeof id === 'string'
+    && MONGO_CONNECTION_ID_RE.test(id)
+    && !isReservedMongoConnectionId(id);
+}
+
+function validateMongoUri(uri) {
+  if (!uri || typeof uri !== 'string') return false;
+  try {
+    const parsed = new URL(uri);
+    return parsed.protocol === 'mongodb:' || parsed.protocol === 'mongodb+srv:';
+  } catch {
+    return false;
+  }
+}
+
+function applyMongoAuthToUri(uri, auth) {
+  if (!auth || !auth.mode) return uri;
+  try {
+    const parsed = new URL(uri);
+    if (auth.username) parsed.username = auth.username;
+    if (auth.password) parsed.password = auth.password;
+    if (auth.authSource) parsed.searchParams.set('authSource', auth.authSource);
+    if (auth.mode === 'x509') parsed.searchParams.set('authMechanism', 'MONGODB-X509');
+    if (auth.mode === 'ldap-plain') parsed.searchParams.set('authMechanism', 'PLAIN');
+    if (auth.mode === 'oidc') parsed.searchParams.set('authMechanism', 'MONGODB-OIDC');
+    return parsed.toString();
+  } catch {
+    return uri;
+  }
+}
+
+function resolveIntrospectUri(input) {
+  const uri = typeof input?.uri === 'string' ? input.uri.trim() : '';
+  const connectionId = typeof input?.connectionId === 'string' ? input.connectionId.trim() : '';
+  const databases = Array.isArray(input?.databases) ? input.databases : [];
+  const auth = input?.auth && typeof input.auth === 'object' ? input.auth : null;
+
+  let resolvedUri;
+
+  if (uri) {
+    if (!validateMongoUri(uri)) {
+      return { errorStatus: 400, error: 'uri must use the mongodb:// or mongodb+srv:// scheme' };
+    }
+    resolvedUri = uri;
+  } else {
+    if (!connectionId) {
+      return { errorStatus: 400, error: 'uri or connectionId is required' };
+    }
+    if (!isValidMongoConnectionId(connectionId)) {
+      return { errorStatus: 400, error: 'Invalid connection id' };
+    }
+    const conn = databases.find(d => d && d.type === 'mongodb' && d._id === connectionId);
+    if (!conn || typeof conn.connectionUri !== 'string' || !conn.connectionUri.trim()) {
+      return { errorStatus: 404, error: 'Connection not found' };
+    }
+    if (!validateMongoUri(conn.connectionUri)) {
+      return { errorStatus: 400, error: 'stored connection URI must use the mongodb:// or mongodb+srv:// scheme' };
+    }
+    resolvedUri = conn.connectionUri;
+  }
+
+  return { uri: applyMongoAuthToUri(resolvedUri, auth) };
+}
+
 /**
  * Standalone server that replicates the two introspect route handlers from
  * packages/server/index.js exactly.
  */
 function createTestServer() {
+  const databases = [
+    { _id: 'validConn', type: 'mongodb', connectionUri: 'mongodb://127.0.0.1:1', database: 'mydb' },
+    { _id: 'badSchemeConn', type: 'mongodb', connectionUri: 'https://127.0.0.1:1', database: 'mydb' },
+  ];
+
   return http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     const pathname = url.pathname;
@@ -54,11 +131,11 @@ function createTestServer() {
     if (req.method === 'POST' && pathname === '/api/mongo/introspect/databases') {
       let body;
       try { body = await readBody(req); } catch { return sendJson(res, 400, { error: 'Invalid JSON body' }); }
-      const { uri } = body;
-      if (!uri || typeof uri !== 'string') return sendJson(res, 400, { error: 'uri is required' });
+      const resolved = resolveIntrospectUri({ ...(body || {}), databases });
+      if (!resolved.uri) return sendJson(res, resolved.errorStatus, { error: resolved.error });
       try {
-        const result = await executeMongoIntrospect(uri, 'databases');
-        if (result.error) return sendJson(res, 400, { error: result.error });
+        const result = await executeMongoIntrospect(resolved.uri, 'databases');
+        if (result.error) return sendJson(res, 502, { error: result.error });
         return sendJson(res, 200, { databases: result.databases });
       } catch (err) {
         return sendJson(res, 500, { error: err.message });
@@ -68,12 +145,13 @@ function createTestServer() {
     if (req.method === 'POST' && pathname === '/api/mongo/introspect/collections') {
       let body;
       try { body = await readBody(req); } catch { return sendJson(res, 400, { error: 'Invalid JSON body' }); }
-      const { uri, database } = body;
-      if (!uri || typeof uri !== 'string') return sendJson(res, 400, { error: 'uri is required' });
+      const { database } = body;
       if (!database || typeof database !== 'string') return sendJson(res, 400, { error: 'database is required' });
+      const resolved = resolveIntrospectUri({ ...(body || {}), databases });
+      if (!resolved.uri) return sendJson(res, resolved.errorStatus, { error: resolved.error });
       try {
-        const result = await executeMongoIntrospect(uri, 'collections', database);
-        if (result.error) return sendJson(res, 400, { error: result.error });
+        const result = await executeMongoIntrospect(resolved.uri, 'collections', database);
+        if (result.error) return sendJson(res, 502, { error: result.error });
         return sendJson(res, 200, { collections: result.collections });
       } catch (err) {
         return sendJson(res, 500, { error: err.message });
@@ -161,42 +239,73 @@ test('executeMongoIntrospect returns { error } for a completely invalid URI', as
 
 // ─── POST /api/mongo/introspect/databases — route validation ──────────────────
 
-test('POST /api/mongo/introspect/databases returns 400 when uri is missing', async () => {
+test('POST /api/mongo/introspect/databases returns 400 when uri and connectionId are missing', async () => {
   const res = await httpPost(server, '/api/mongo/introspect/databases', {});
   assert.equal(res.status, 400);
   assert.equal(typeof res.body.error, 'string');
-  assert.match(res.body.error, /uri is required/i);
+  assert.match(res.body.error, /uri or connectionId is required/i);
 });
 
-test('POST /api/mongo/introspect/databases returns 400 when uri is not a string', async () => {
-  const res = await httpPost(server, '/api/mongo/introspect/databases', { uri: 42 });
+test('POST /api/mongo/introspect/databases returns 400 when explicit uri scheme is invalid', async () => {
+  const res = await httpPost(server, '/api/mongo/introspect/databases', { uri: 'https://127.0.0.1:1' });
   assert.equal(res.status, 400);
-  assert.match(res.body.error, /uri is required/i);
+  assert.match(res.body.error, /mongodb/i);
 });
 
-test('POST /api/mongo/introspect/databases returns 400 with error body for unreachable host', async () => {
+test('POST /api/mongo/introspect/databases returns 400 when connectionId is invalid', async () => {
+  const res = await httpPost(server, '/api/mongo/introspect/databases', { connectionId: 'bad.id' });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /invalid connection id/i);
+});
+
+test('POST /api/mongo/introspect/databases returns 400 when connectionId is reserved', async () => {
+  const res = await httpPost(server, '/api/mongo/introspect/databases', { connectionId: '__proto__' });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /invalid connection id/i);
+});
+
+test('POST /api/mongo/introspect/databases returns 404 when connectionId does not exist', async () => {
+  const res = await httpPost(server, '/api/mongo/introspect/databases', { connectionId: 'missing' });
+  assert.equal(res.status, 404);
+  assert.match(res.body.error, /connection not found/i);
+});
+
+test('POST /api/mongo/introspect/databases returns 400 when stored connection uri scheme is invalid', async () => {
+  const res = await httpPost(server, '/api/mongo/introspect/databases', { connectionId: 'badSchemeConn' });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /stored connection uri/i);
+});
+
+test('POST /api/mongo/introspect/databases returns 502 with error body for unreachable host via explicit uri', async () => {
   const res = await httpPost(server, '/api/mongo/introspect/databases', {
     uri: 'mongodb://127.0.0.1:1',
   });
-  assert.equal(res.status, 400);
+  assert.equal(res.status, 502);
+  assert.equal(typeof res.body.error, 'string');
+  assert.ok(res.body.error.length > 0);
+});
+
+test('POST /api/mongo/introspect/databases returns 502 with error body for unreachable host via connectionId', async () => {
+  const res = await httpPost(server, '/api/mongo/introspect/databases', {
+    connectionId: 'validConn',
+  });
+  assert.equal(res.status, 502);
   assert.equal(typeof res.body.error, 'string');
   assert.ok(res.body.error.length > 0);
 });
 
 // ─── POST /api/mongo/introspect/collections — route validation ────────────────
 
-test('POST /api/mongo/introspect/collections returns 400 when uri is missing', async () => {
-  const res = await httpPost(server, '/api/mongo/introspect/collections', { database: 'mydb' });
-  assert.equal(res.status, 400);
-  assert.match(res.body.error, /uri is required/i);
-});
-
-test('POST /api/mongo/introspect/collections returns 400 when database is missing', async () => {
-  const res = await httpPost(server, '/api/mongo/introspect/collections', {
-    uri: 'mongodb://127.0.0.1:27017',
-  });
+test('POST /api/mongo/introspect/collections returns 400 when database is missing even if connectionId is present', async () => {
+  const res = await httpPost(server, '/api/mongo/introspect/collections', { connectionId: 'validConn' });
   assert.equal(res.status, 400);
   assert.match(res.body.error, /database is required/i);
+});
+
+test('POST /api/mongo/introspect/collections returns 400 when uri and connectionId are missing', async () => {
+  const res = await httpPost(server, '/api/mongo/introspect/collections', { database: 'mydb' });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /uri or connectionId is required/i);
 });
 
 test('POST /api/mongo/introspect/collections returns 400 when database is not a string', async () => {
@@ -208,26 +317,30 @@ test('POST /api/mongo/introspect/collections returns 400 when database is not a 
   assert.match(res.body.error, /database is required/i);
 });
 
-test('POST /api/mongo/introspect/collections returns 400 with error body for unreachable host', async () => {
+test('POST /api/mongo/introspect/collections returns 400 when connectionId is invalid', async () => {
+  const res = await httpPost(server, '/api/mongo/introspect/collections', {
+    connectionId: 'bad.id',
+    database: 'mydb',
+  });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /invalid connection id/i);
+});
+
+test('POST /api/mongo/introspect/collections returns 502 with error body for unreachable host', async () => {
   const res = await httpPost(server, '/api/mongo/introspect/collections', {
     uri: 'mongodb://127.0.0.1:1',
     database: 'mydb',
   });
-  assert.equal(res.status, 400);
+  assert.equal(res.status, 502);
   assert.equal(typeof res.body.error, 'string');
   assert.ok(res.body.error.length > 0);
 });
 
-test('POST /api/mongo/introspect/collections returns 400 with "database is required" error when core detects missing database', async () => {
-  // Simulate the internal guard path where uri is given but driver-level error
-  // surfaces the missing-database message (operation='collections', no db arg
-  // passed through the route handler is impossible normally, but verify the
-  // response shape is an error object regardless).
+test('POST /api/mongo/introspect/collections returns 502 with error body for unreachable host via connectionId', async () => {
   const res = await httpPost(server, '/api/mongo/introspect/collections', {
-    uri: 'mongodb://127.0.0.1:1',
-    database: 'test',
+    connectionId: 'validConn',
+    database: 'mydb',
   });
-  // Either a connection error or a "database is required" error — both are 400
-  assert.equal(res.status, 400);
+  assert.equal(res.status, 502);
   assert.ok(typeof res.body.error === 'string' && res.body.error.length > 0);
 });

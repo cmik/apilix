@@ -1010,6 +1010,7 @@ export default function RunnerPanel() {
           collectionVariables: collVars,
           globals: state.globalVariables,
           cookies: state.cookieJar,
+          databases: state.databases,
           delay,
           iterations: csvFile ? undefined : iterations,
           executeChildRequests,

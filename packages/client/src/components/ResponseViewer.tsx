@@ -11,6 +11,58 @@ import { IconSearch } from './Icons';
 
 type RespTab = 'Body' | 'Headers' | 'Test Results' | 'TLS' | 'Timeline' | 'Redirects';
 
+function DbResultTableView({
+  columns,
+  rows,
+  rowCount,
+}: {
+  columns: string[];
+  rows: Array<Record<string, unknown>>;
+  rowCount: number;
+}) {
+  return (
+    <div className="p-3 flex flex-col gap-2">
+      <div className="text-xs text-slate-500">
+        Rows: <span className="text-slate-300 font-medium">{rowCount}</span>
+      </div>
+      {columns.length === 0 ? (
+        <p className="text-slate-500 text-sm">No columns returned.</p>
+      ) : (
+        <div className="overflow-auto border border-slate-700 rounded">
+          <table className="w-full text-xs">
+            <thead className="bg-slate-800 text-slate-400 sticky top-0 z-10">
+              <tr>
+                {columns.map(col => (
+                  <th key={col} className="text-left px-2 py-1.5 font-medium border-b border-slate-700 whitespace-nowrap">{col}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan={Math.max(1, columns.length)} className="px-2 py-3 text-slate-500 text-center">No rows</td>
+                </tr>
+              ) : (
+                rows.map((row, index) => (
+                  <tr key={index} className="border-b border-slate-800">
+                    {columns.map(col => {
+                      const value = row[col];
+                      const text = value == null ? 'null' : (typeof value === 'string' ? value : JSON.stringify(value));
+                      return (
+                        <td key={col} className="px-2 py-1.5 text-slate-200 font-mono align-top break-all">{text}</td>
+                      );
+                    })}
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StatusBadge({ status }: { status: number }) {
   const color =
     status === 2200 ? 'bg-green-700 text-green-100' :
@@ -713,6 +765,7 @@ export default function ResponseViewer() {
   const { state } = useApp();
   const [tab, setTab] = useState<RespTab>('Body');
   const [rawMode, setRawMode] = useState(false);
+  const [dbBodyMode, setDbBodyMode] = useState<'table' | 'json'>('table');
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [matchIndex, setMatchIndex] = useState(0);
@@ -794,6 +847,16 @@ export default function ResponseViewer() {
     const ct = (response.headers?.['content-type'] ?? response.headers?.['Content-Type'] ?? '').toLowerCase();
     return ct.includes('xml') || ct.includes('soap');
   }, [response]);
+
+  const hasDbTable = useMemo(() => {
+    if (!response || !response.resultTable) return false;
+    return Array.isArray(response.resultTable.columns) && Array.isArray(response.resultTable.rows);
+  }, [response]);
+
+  useEffect(() => {
+    if (!response || !hasDbTable) return;
+    setDbBodyMode(response.resultView === 'json' ? 'json' : 'table');
+  }, [response, hasDbTable]);
 
   const totalMatches = useMemo(() => {
     if (!searchQuery.trim() || !response) return 0;
@@ -979,12 +1042,29 @@ export default function ResponseViewer() {
         ))}
         {tab === 'Body' && (
           <div className="ml-auto flex items-center gap-2 pr-3">
+            {hasDbTable && (
+              <div className="flex rounded overflow-hidden border border-slate-600 text-xs">
+                <button
+                  onClick={() => setDbBodyMode('table')}
+                  className={`px-2 py-0.5 transition-colors ${dbBodyMode === 'table' ? 'bg-slate-600 text-slate-100' : 'bg-slate-800 text-slate-400 hover:text-slate-200'}`}
+                >
+                  Table
+                </button>
+                <button
+                  onClick={() => setDbBodyMode('json')}
+                  className={`px-2 py-0.5 transition-colors ${dbBodyMode === 'json' ? 'bg-slate-600 text-slate-100' : 'bg-slate-800 text-slate-400 hover:text-slate-200'}`}
+                >
+                  JSON
+                </button>
+              </div>
+            )}
             <label className="flex items-center gap-1 text-xs text-slate-500 cursor-pointer">
               <input
                 type="checkbox"
                 checked={rawMode}
                 onChange={e => setRawMode(e.target.checked)}
                 className="accent-orange-500"
+                disabled={hasDbTable && dbBodyMode === 'table'}
               />
               Raw
             </label>
@@ -1024,7 +1104,7 @@ export default function ResponseViewer() {
                 </svg>
               )}
             </button>
-            {!rawMode && (isJson || isXml) && (
+            {!rawMode && (!hasDbTable || dbBodyMode === 'json') && (isJson || isXml) && (
               <>
                 <button
                   onClick={() => setExpandSignal(n => n + 1)}
@@ -1038,7 +1118,7 @@ export default function ResponseViewer() {
                 >⊟</button>
               </>
             )}
-            {isJson && (
+            {(!hasDbTable || dbBodyMode === 'json') && isJson && (
               <button
                 onClick={() => { setJsonPathOpen(o => !o); if (!jsonPathOpen) setTimeout(() => jsonPathInputRef.current?.focus(), 50); }}
                 className={`text-xs px-1.5 py-0.5 rounded transition-colors font-mono ${
@@ -1063,7 +1143,7 @@ export default function ResponseViewer() {
       </div>
 
       {/* JSONPath filter bar */}
-      {tab === 'Body' && jsonPathOpen && (
+      {tab === 'Body' && (!hasDbTable || dbBodyMode === 'json') && jsonPathOpen && (
         <div className="flex items-center gap-2 px-3 py-1.5 border-b border-slate-700 bg-slate-800/80 shrink-0">
           <span className="text-xs text-slate-500 font-mono shrink-0">$.</span>
           <input
@@ -1102,7 +1182,7 @@ export default function ResponseViewer() {
       )}
 
       {/* Search bar */}
-      {tab === 'Body' && searchOpen && (
+      {tab === 'Body' && (!hasDbTable || dbBodyMode === 'json') && searchOpen && (
         <div className="flex items-center gap-2 px-3 py-1.5 border-b border-slate-700 bg-slate-800/80 shrink-0">
           <input
             ref={searchInputRef}
@@ -1143,6 +1223,16 @@ export default function ResponseViewer() {
       {/* Content */}
       <div ref={bodyContentRef} className="flex-1 overflow-auto">
         {tab === 'Body' && (() => {
+          if (hasDbTable && dbBodyMode === 'table') {
+            return (
+              <DbResultTableView
+                columns={response.resultTable?.columns || []}
+                rows={response.resultTable?.rows || []}
+                rowCount={response.resultTable?.rowCount || 0}
+              />
+            );
+          }
+
           // JSONPath active and has a result
           if (jsonPathExpr.trim() && jsonPathResult) {
             if (jsonPathResult.error) {

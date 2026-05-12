@@ -73,7 +73,21 @@ function extractMongoConnection(config, vars, context) {
   }
 
   const registry = (context && context.mongoConnections) || {};
-  const found = registry[config.connection.connectionId];
+  const connectionId = config.connection.connectionId;
+  let found = registry[connectionId];
+
+  // Backward-compatible fallback: resolve named Mongo connections from the
+  // unified Settings Databases list when no legacy mongoConnections entry exists.
+  if ((!found || !found.uri) && Array.isArray(context && context.databases)) {
+    const dbEntry = context.databases.find(d => d && d.type === 'mongodb' && d._id === connectionId);
+    if (dbEntry && dbEntry.connectionUri) {
+      found = {
+        uri: dbEntry.connectionUri,
+        database: dbEntry.database || '',
+      };
+    }
+  }
+
   if (!found || !found.uri) {
     throw new Error(`MongoDB named connection "${config.connection.connectionId}" not found`);
   }
@@ -266,6 +280,69 @@ async function executeMongoOperation(mongoCfg, vars, context) {
   }
 }
 
+function inferSqlDialect(sqlCfg, reqMethod, context) {
+  const methodDialect = reqMethod === 'POSTGRESQL' ? 'postgres' : reqMethod === 'MYSQL' ? 'mysql' : null;
+  if (sqlCfg && (sqlCfg.dialect === 'mysql' || sqlCfg.dialect === 'postgres')) return sqlCfg.dialect;
+  if (methodDialect) return methodDialect;
+  const databases = (context && context.databases) || [];
+  const found = databases.find(d => d && d._id === sqlCfg.connectionId);
+  if (found && (found.type === 'mysql' || found.type === 'postgres')) return found.type;
+  return 'mysql';
+}
+
+async function executeSqlOperation(sqlCfg, vars, context, reqMethod) {
+  const opStart = Date.now();
+  const queryFn = context && context.dbQueryFn;
+  if (!queryFn) {
+    throw new Error('SQL execution is not available in this context');
+  }
+
+  const connectionId = resolveVariables(sqlCfg.connectionId || '', vars);
+  if (!connectionId) {
+    throw new Error('SQL request is missing connectionId');
+  }
+
+  const query = resolveVariables(sqlCfg.query || '', vars).trim();
+  if (!query) {
+    throw new Error('SQL query is empty');
+  }
+
+  const paramsText = resolveVariables(sqlCfg.params || '[]', vars);
+  const params = parseJsonArray(paramsText, []);
+  if (!Array.isArray(params)) {
+    throw new Error('SQL params must be a JSON array');
+  }
+
+  const result = await queryFn(connectionId, query, params, context);
+  const table = {
+    columns: Array.isArray(result.columns) ? result.columns : [],
+    rows: Array.isArray(result.rows) ? result.rows : [],
+    rowCount: typeof result.rowCount === 'number'
+      ? result.rowCount
+      : (Array.isArray(result.rows) ? result.rows.length : 0),
+  };
+  const payload = {
+    rowCount: table.rowCount,
+    columns: table.columns,
+    rows: table.rows,
+  };
+  const body = JSON.stringify(payload, null, 2);
+
+  return {
+    protocol: 'sql',
+    status: 2200,
+    statusText: 'SQL_SUCCESS',
+    sqlDialect: inferSqlDialect(sqlCfg, reqMethod, context),
+    sqlConnectionId: connectionId,
+    resultView: sqlCfg.resultView === 'json' ? 'json' : 'table',
+    responseTime: Date.now() - opStart,
+    body,
+    jsonData: payload,
+    size: Buffer.byteLength(body, 'utf8'),
+    resultTable: table,
+  };
+}
+
 const httpClient = axios.create({
   httpsAgent: new https.Agent({ rejectUnauthorized: false }),
   maxRedirects: 10,
@@ -275,8 +352,7 @@ const httpClient = axios.create({
 
 /**
  * Ping a MongoDB server to verify connectivity.
- * Used by the /api/mongo/connections/:id/test endpoint — lives here so that
- * the server package does not need to declare mongodb as a direct dependency.
+ * Used by server-side database connection testing.
  *
  * @param {string} uri - MongoDB connection URI
  * @param {string} [database='admin'] - Database to ping
@@ -869,9 +945,21 @@ async function executeRequest(item, context) {
       const scriptDeps = {
         collectionItems,
         executeRequestFn: executeRequest,
-        context: { environment, collectionVariables, globals, dataRow, collVars, cookies, mockBase, mongoConnections: context.mongoConnections || {} },
+        context: {
+          environment,
+          collectionVariables,
+          globals,
+          dataRow,
+          collVars,
+          cookies,
+          mockBase,
+          mongoConnections: context.mongoConnections || {},
+          databases: context.databases || [],
+        },
         requestId,
         iteration,
+        dbQueryFn: context.dbQueryFn || null,
+        dbMongoQueryFn: context.dbMongoQueryFn || null,
       };
       const result = await runScript(code, null, vars, scriptDeps, vmContext);
       const preUpdatedVars = result.updatedVariables;
@@ -916,16 +1004,29 @@ async function executeRequest(item, context) {
   }
 
   const req = item.request;
-  const isMongo = req?.requestType === 'mongodb' || !!req?.mongodb;
   const method = (req.method || 'GET').toUpperCase();
+  const isMongo = req?.requestType === 'mongodb' || !!req?.mongodb || method === 'MONGO';
+  const isSql = req?.requestType === 'sql' || !!req?.sql || method === 'MYSQL' || method === 'POSTGRESQL';
+  const sqlCfg = isSql
+    ? (req.sql || {
+        connectionId: '',
+        dialect: method === 'POSTGRESQL' ? 'postgres' : 'mysql',
+        query: '',
+        params: '[]',
+        resultView: 'table',
+      })
+    : null;
+  const sqlDialect = isSql ? inferSqlDialect(sqlCfg || {}, method, context) : undefined;
   let url = isMongo
     ? `mongodb://${resolveVariables(req.mongodb?.database || '', vars)}/${resolveVariables(req.mongodb?.collection || '', vars)}`
-    : resolveUrl(req.url, vars);
+    : isSql
+      ? `sql://${resolveVariables(sqlCfg?.connectionId || '', vars) || 'connection'}?dialect=${sqlDialect || 'mysql'}`
+      : resolveUrl(req.url, vars);
 
   // Rewrite to mock server base AFTER variable resolution so that URLs like
   // {{baseUrl}}/path resolve to https://real.host/path first, then become
   // http://localhost:PORT/path — not http://localhost:PORT/https://real.host/path.
-  if (mockBase && !isMongo) {
+  if (mockBase && !isMongo && !isSql) {
     try {
       const parsed = new URL(url);
       url = mockBase.replace(/\/$/, '') + parsed.pathname + parsed.search + parsed.hash;
@@ -939,23 +1040,23 @@ async function executeRequest(item, context) {
 
   const headers = {};
 
-  if (!isMongo) {
+  if (!isMongo && !isSql) {
     Object.assign(headers, resolveHeaderPairs(req.header, vars));
   }
 
   const authWarnings = [];
-  if (!isMongo) {
+  if (!isMongo && !isSql) {
     url = await applyAuth(req.auth, headers, vars, url, authWarnings);
   }
 
   // Inject cookies from cookie jar
-  if (!isMongo) {
+  if (!isMongo && !isSql) {
     const cookieHeader = getCookiesForRequest(cookies, url);
     if (cookieHeader) headers['Cookie'] = cookieHeader;
   }
 
   const buildWarnings = [];
-  const data = isMongo ? undefined : buildBody(req.body, headers, vars, buildWarnings);
+  const data = (isMongo || isSql) ? undefined : buildBody(req.body, headers, vars, buildWarnings);
   const allWarnings = [...authWarnings, ...buildWarnings];
 
   // Capture request body as a loggable string
@@ -974,6 +1075,108 @@ async function executeRequest(item, context) {
   let nextRequestByIdSignal = undefined; // set by pm.execution.setNextRequestById()
 
   try {
+    if (isSql) {
+      const sqlResponse = await executeSqlOperation(sqlCfg || {}, vars, context, method);
+
+      const testScript = (item.event || []).find(e => e.listen === 'test');
+      let testResults = [];
+      let updatedVars = {};
+      let testEnvMutations = {};
+      let testCollVarMutations = {};
+      let testUpdatedGlobals = {};
+
+      if (testScript) {
+        const code = Array.isArray(testScript.script.exec)
+          ? testScript.script.exec.join('\n')
+          : (testScript.script.exec || '');
+        if (code.trim()) {
+          const scriptDeps = {
+            collectionItems,
+            executeRequestFn: executeRequest,
+            context: {
+              environment,
+              collectionVariables,
+              globals,
+              dataRow,
+              collVars,
+              cookies,
+              mockBase,
+              mongoConnections: context.mongoConnections || {},
+              databases: context.databases || [],
+            },
+            requestId,
+            iteration,
+            dbQueryFn: context.dbQueryFn || null,
+            dbMongoQueryFn: context.dbMongoQueryFn || null,
+          };
+          const result = await runScript(code, {
+            code: sqlResponse.status,
+            status: sqlResponse.statusText,
+            responseTime: sqlResponse.responseTime,
+            headers: {},
+            body: sqlResponse.body,
+            jsonData: sqlResponse.jsonData,
+          }, vars, scriptDeps, vmContext);
+          testResults = result.tests;
+          updatedVars = result.updatedVariables;
+          testEnvMutations = result.updatedEnvMutations || {};
+          testCollVarMutations = result.updatedCollVarMutations || {};
+          testUpdatedGlobals = result.updatedGlobalMutations || {};
+          globals = { ...globals, ...testUpdatedGlobals };
+          scriptLogs = [...scriptLogs, ...result.consoleLogs];
+          testChildRequests = result.childRequests || [];
+          if (result.nextRequest !== undefined) nextRequestSignal = result.nextRequest;
+          if (result.nextRequestById !== undefined) nextRequestByIdSignal = result.nextRequestById;
+          vars = { ...vars, ...updatedVars, ...testUpdatedGlobals };
+        }
+      }
+
+      const updatedEnv = { ...environment, ...testEnvMutations };
+      const updatedCollVars = { ...collectionVariables, ...testCollVarMutations };
+      const trackedKeys = new Set([
+        ...Object.keys(testEnvMutations),
+        ...Object.keys(testCollVarMutations),
+        ...Object.keys(testUpdatedGlobals),
+      ]);
+      Object.entries(updatedVars).forEach(([k, v]) => {
+        if (trackedKeys.has(k)) return;
+        if (originalEnvKeys.has(k)) updatedEnv[k] = v;
+        else updatedCollVars[k] = v;
+      });
+
+      return {
+        protocol: 'sql',
+        sqlDialect: sqlResponse.sqlDialect,
+        sqlConnectionId: sqlResponse.sqlConnectionId,
+        resultView: sqlResponse.resultView,
+        resultTable: sqlResponse.resultTable,
+        status: sqlResponse.status,
+        statusText: sqlResponse.statusText,
+        responseTime: sqlResponse.responseTime,
+        resolvedUrl: url,
+        requestHeaders: {},
+        requestBody: sqlCfg ? resolveVariables(sqlCfg.query || '', vars) : '',
+        headers: {},
+        body: sqlResponse.body,
+        size: sqlResponse.size,
+        testResults,
+        scriptLogs,
+        preChildRequests,
+        testChildRequests,
+        updatedEnvironment: updatedEnv,
+        updatedCollectionVariables: updatedCollVars,
+        updatedGlobals: globals,
+        updatedCookies: cookies,
+        networkTimings: null,
+        tlsCertChain: null,
+        redirectChain: [],
+        nextRequest: nextRequestSignal,
+        nextRequestById: nextRequestByIdSignal,
+        warnings: allWarnings,
+        error: null,
+      };
+    }
+
     if (isMongo) {
       const mongoResponse = await executeMongoOperation(req.mongodb || {}, vars, context);
 
@@ -992,9 +1195,21 @@ async function executeRequest(item, context) {
           const scriptDeps = {
             collectionItems,
             executeRequestFn: executeRequest,
-            context: { environment, collectionVariables, globals, dataRow, collVars, cookies, mockBase, mongoConnections: context.mongoConnections || {} },
+            context: {
+              environment,
+              collectionVariables,
+              globals,
+              dataRow,
+              collVars,
+              cookies,
+              mockBase,
+              mongoConnections: context.mongoConnections || {},
+              databases: context.databases || [],
+            },
             requestId,
             iteration,
+            dbQueryFn: context.dbQueryFn || null,
+            dbMongoQueryFn: context.dbMongoQueryFn || null,
           };
           const result = await runScript(code, {
             code: mongoResponse.status,
@@ -1165,9 +1380,21 @@ async function executeRequest(item, context) {
         const scriptDeps = {
           collectionItems,
           executeRequestFn: executeRequest,
-          context: { environment, collectionVariables, globals, dataRow, collVars, cookies, mockBase, mongoConnections: context.mongoConnections || {} },
+          context: {
+            environment,
+            collectionVariables,
+            globals,
+            dataRow,
+            collVars,
+            cookies,
+            mockBase,
+            mongoConnections: context.mongoConnections || {},
+            databases: context.databases || [],
+          },
           requestId,
           iteration,
+          dbQueryFn: context.dbQueryFn || null,
+          dbMongoQueryFn: context.dbMongoQueryFn || null,
         };
         const result = await runScript(code, responseData, vars, scriptDeps, vmContext);
         testResults = result.tests;
@@ -1255,15 +1482,17 @@ async function executeRequest(item, context) {
   } catch (err) {
     const errorResponseTime = Date.now() - startTime;
     return {
-      protocol: isMongo ? 'mongodb' : 'http',
+      protocol: isMongo ? 'mongodb' : isSql ? 'sql' : 'http',
       mongoStatus: isMongo ? 'error' : undefined,
       mongoOperation: isMongo ? (req.mongodb?.operation || 'find') : undefined,
+      sqlDialect: isSql ? sqlDialect : undefined,
+      sqlConnectionId: isSql ? resolveVariables(sqlCfg?.connectionId || '', vars) : undefined,
       status: 0,
-      statusText: isMongo ? 'MONGO_ERROR' : 'Request Failed',
+      statusText: isMongo ? 'MONGO_ERROR' : isSql ? 'SQL_ERROR' : 'Request Failed',
       responseTime: errorResponseTime,
       resolvedUrl: url,
       requestHeaders: headers,
-      requestBody: requestBodyStr,
+      requestBody: isSql ? resolveVariables(sqlCfg?.query || '', vars) : requestBodyStr,
       headers: {},
       body: err.message,
       size: 0,

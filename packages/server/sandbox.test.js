@@ -429,3 +429,145 @@ test('globals.set with padded key trims and stores under trimmed key', async () 
   );
   assert.equal(result.tests[0].passed, true, result.tests[0].error);
 });
+
+test('apx.db.query forwards execution context to dbQueryFn', async () => {
+  let captured = null;
+
+  const result = await runScript(
+    `
+      apx.db.query('main-sql', 'SELECT 1', [123]);
+      apx.test('db query call is issued', () => { apx.expect(true).to.be.true; });
+    `,
+    baseResponse,
+    {},
+    {
+      context: {
+        environment: { dbHost: 'localhost' },
+        collectionVariables: { tenant: 'acme' },
+        globals: { region: 'eu' },
+        dataRow: { rowId: '7' },
+      },
+      dbQueryFn: async (connectionId, sql, params, scriptContext) => {
+        captured = { connectionId, sql, params, scriptContext };
+        return {
+          rows: [{ id: 99 }],
+          columns: ['id'],
+          rowCount: 1,
+        };
+      },
+    },
+  );
+
+  assert.equal(result.tests[0].passed, true, result.tests[0].error);
+  assert.equal(captured.connectionId, 'main-sql');
+  assert.equal(captured.sql, 'SELECT 1');
+  assert.equal(Array.isArray(captured.params), true);
+  assert.equal(captured.params.length, 1);
+  assert.equal(captured.params[0], 123);
+  assert.equal(captured.scriptContext.environment.dbHost, 'localhost');
+  assert.equal(captured.scriptContext.collectionVariables.tenant, 'acme');
+  assert.equal(captured.scriptContext.globals.region, 'eu');
+  assert.equal(captured.scriptContext.dataRow.rowId, '7');
+});
+
+test('apx.db.mongoQuery forwards execution context', async () => {
+  let captured = null;
+
+  const result = await runScript(
+    `
+      apx.db.mongoQuery('main-mongo', 'countDocuments', { database: 'db', collection: 'users' }, {});
+      apx.test('db mongo call is issued', () => { apx.expect(true).to.be.true; });
+    `,
+    baseResponse,
+    {},
+    {
+      context: {
+        environment: { dbHost: 'localhost' },
+        collectionVariables: { tenant: 'acme' },
+        globals: { region: 'eu' },
+        dataRow: { rowId: '8' },
+      },
+      dbMongoQueryFn: async (connectionId, operation, document, options, scriptContext) => {
+        captured = { connectionId, operation, document, options, scriptContext };
+        return { result: 42 };
+      },
+    },
+  );
+
+  assert.equal(result.tests[0].passed, true, result.tests[0].error);
+  assert.equal(captured.connectionId, 'main-mongo');
+  assert.equal(captured.operation, 'countDocuments');
+  assert.equal(captured.document.database, 'db');
+  assert.equal(captured.document.collection, 'users');
+  assert.equal(typeof captured.options, 'object');
+  assert.equal(captured.scriptContext.dataRow.rowId, '8');
+});
+
+test('apx.db.query is callable even when dbQueryFn is unavailable', async () => {
+  const result = await runScript(
+    `
+      apx.db.query('missing', 'SELECT 1');
+      apx.test('callable without provider', () => { apx.expect(true).to.be.true; });
+    `,
+    baseResponse,
+    {},
+    { context: {} },
+  );
+
+  assert.equal(result.tests[0].passed, true, result.tests[0].error);
+});
+
+test('apx.executeRequest forwards mongoConnections and databases into child context', async () => {
+  let capturedContext = null;
+
+  const childItem = {
+    id: 'child-1',
+    name: 'Child Request',
+    request: {
+      method: 'GET',
+      url: { raw: 'https://example.com' },
+    },
+  };
+
+  const result = await runScript(
+    `
+      apx.executeRequest('Child Request', () => {});
+      apx.test('child execution triggered', () => { apx.expect(true).to.be.true; });
+    `,
+    baseResponse,
+    {},
+    {
+      context: {
+        environment: { envKey: 'envVal' },
+        collectionVariables: { collKey: 'collVal' },
+        globals: { globalKey: 'globalVal' },
+        mongoConnections: {
+          atlas: { uri: 'mongodb://localhost:27017', database: 'app' },
+        },
+        databases: [
+          { _id: 'mongo-main', type: 'mongodb', connectionUri: 'mongodb://localhost:27017' },
+        ],
+      },
+      collectionItems: [childItem],
+      executeRequestFn: async (_item, childContext) => {
+        capturedContext = childContext;
+        return {
+          updatedEnvironment: childContext.environment,
+          updatedCollectionVariables: childContext.collectionVariables,
+          updatedGlobals: childContext.globals,
+          status: 200,
+          body: '{}',
+        };
+      },
+    },
+  );
+
+  assert.equal(result.tests[0].passed, true, result.tests[0].error);
+  assert.ok(capturedContext);
+  assert.deepEqual(capturedContext.mongoConnections, {
+    atlas: { uri: 'mongodb://localhost:27017', database: 'app' },
+  });
+  assert.equal(Array.isArray(capturedContext.databases), true);
+  assert.equal(capturedContext.databases.length, 1);
+  assert.equal(capturedContext.databases[0]._id, 'mongo-main');
+});

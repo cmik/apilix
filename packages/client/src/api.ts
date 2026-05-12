@@ -1,5 +1,6 @@
 import axios from 'axios';
 import type { CollectionItem, BaseCollection, RequestResponse, RunnerIteration, RunnerIterationResult, ScriptLog, CookieJar } from './types';
+import type { DatabaseConnection } from './types';
 
 // When loaded via file:// (packaged Electron app), relative /api won't work.
 // The preload script exposes the dynamic server port via window.electronAPI.
@@ -22,6 +23,7 @@ export interface ExecutePayload {
   /** When set, the server rewrites the request URL to this base after variable resolution. */
   mockBase?: string;
   mongoConnections?: Record<string, { uri: string; database?: string }>;
+  databases?: DatabaseConnection[];
 }
 
 export interface ChildRequestLog {
@@ -70,6 +72,34 @@ export interface RunPayload {
   retryBackoff?: 'fixed' | 'exponential';
   retryOn?: 'failures' | 'errors' | 'both';
   mongoConnections?: Record<string, { uri: string; database?: string }>;
+  databases?: DatabaseConnection[];
+}
+
+export interface TestDatabaseConnectionResponse {
+  ok: boolean;
+  latencyMs?: number;
+  error?: string;
+}
+
+export async function testDatabaseConnection(
+  config: Partial<DatabaseConnection>,
+  runtimeVars?: Record<string, string>,
+): Promise<TestDatabaseConnectionResponse> {
+  const response = await api.post<TestDatabaseConnectionResponse>('/databases/test', {
+    ...config,
+    variables: runtimeVars || {},
+  });
+  return response.data;
+}
+
+export async function openDatabasePool(config: DatabaseConnection): Promise<{ ok: boolean; poolId?: string; error?: string }> {
+  const response = await api.post<{ ok: boolean; poolId?: string; error?: string }>('/databases/pool/open', config);
+  return response.data;
+}
+
+export async function closeDatabasePool(poolId: string): Promise<{ ok: boolean; error?: string }> {
+  const response = await api.post<{ ok: boolean; error?: string }>('/databases/pool/close', { poolId });
+  return response.data;
 }
 
 export async function runCollection(
@@ -294,18 +324,18 @@ export interface MongoAuthOverride {
   authSource?: string;
 }
 
-export async function listMongoDatabases(uri?: string, connectionId?: string, auth?: MongoAuthOverride): Promise<string[]> {
+export async function listMongoDatabases(uri?: string, connectionId?: string, auth?: MongoAuthOverride, databases?: DatabaseConnection[]): Promise<string[]> {
   try {
-    const res = await api.post<{ databases: string[] }>('/mongo/introspect/databases', { uri, connectionId, auth });
+    const res = await api.post<{ databases: string[] }>('/mongo/introspect/databases', { uri, connectionId, auth, databases });
     return res.data.databases;
   } catch (err) {
     throw extractApiError(err);
   }
 }
 
-export async function listMongoCollections(uri: string | undefined, database: string, connectionId?: string, auth?: MongoAuthOverride): Promise<string[]> {
+export async function listMongoCollections(uri: string | undefined, database: string, connectionId?: string, auth?: MongoAuthOverride, databases?: DatabaseConnection[]): Promise<string[]> {
   try {
-    const res = await api.post<{ collections: string[] }>('/mongo/introspect/collections', { uri, database, connectionId, auth });
+    const res = await api.post<{ collections: string[] }>('/mongo/introspect/collections', { uri, database, connectionId, auth, databases });
     return res.data.collections;
   } catch (err) {
     throw extractApiError(err);

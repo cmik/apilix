@@ -401,6 +401,51 @@ apx.environment.set('mongoUpdate', JSON.stringify(updateDoc));`,
       },
     ],
   },
+  {
+    label: 'SQL Databases',
+    snippets: [
+      {
+        id: 'sql-date-range-vars',
+        name: 'Set SQL Date Range Variables',
+        description: 'Prepare start/end timestamps for SQL WHERE filters',
+        code: `const now = new Date();
+const start = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+apx.environment.set('sqlStartAt', start.toISOString());
+apx.environment.set('sqlEndAt', now.toISOString());`,
+      },
+      {
+        id: 'sql-pagination-vars',
+        name: 'Set Pagination Variables',
+        description: 'Compute LIMIT/OFFSET placeholders from page + pageSize',
+        code: `const page = Number(apx.environment.get('page') ?? '1');
+const pageSize = Number(apx.environment.get('pageSize') ?? '50');
+const offset = Math.max(0, (page - 1) * pageSize);
+
+apx.environment.set('sqlLimit', String(pageSize));
+apx.environment.set('sqlOffset', String(offset));`,
+      },
+      {
+        id: 'sql-in-clause',
+        name: 'Build IN Clause Fragment',
+        description: 'Generate a quoted CSV fragment for SQL IN (...) clauses',
+        code: `const raw = apx.environment.get('userIds') ?? '1,2,3';
+const ids = raw.split(',').map(x => x.trim()).filter(Boolean);
+      const quoted = ids.map(id => "'" + id.replace(/'/g, "''") + "'").join(', ');
+
+apx.environment.set('sqlInClause', quoted);`,
+      },
+      {
+        id: 'sql-tenant-schema',
+        name: 'Set Tenant Schema/Table',
+        description: 'Compose schema-qualified table names for multi-tenant SQL',
+        code: `const tenant = apx.environment.get('tenant') ?? 'public';
+      const safeTenant = tenant.replace(/[^a-zA-Z0-9_]/g, '');
+      apx.environment.set('tenantSchema', safeTenant);
+      apx.environment.set('tenantUsersTable', safeTenant + '.users');`,
+      },
+    ],
+  },
 ];
 
 const TEST_CATEGORIES: SnippetCategory[] = [
@@ -807,6 +852,54 @@ if (isV2) {
 } else {
   pm.test.skip("New pagination format (v2 only)");
 }`,
+      },
+    ],
+  },
+  {
+    label: 'SQL Result Assertions',
+    snippets: [
+      {
+        id: 'sql-row-count-positive',
+        name: 'Row count > 0',
+        description: 'Assert query returned at least one row',
+        code: `apx.test('SQL query returned rows', () => {
+  const json = apx.response.json();
+  apx.expect(json.rowCount).to.be.above(0);
+});`,
+      },
+      {
+        id: 'sql-column-exists',
+        name: 'Column exists in result',
+        description: 'Assert a specific column is present in the result set',
+        code: `apx.test('Result contains expected column', () => {
+  const json = apx.response.json();
+  apx.expect(Array.isArray(json.columns)).to.be.true;
+  apx.expect(json.columns).to.include('id');
+});`,
+      },
+      {
+        id: 'sql-first-row-to-env',
+        name: 'Store first row field',
+        description: 'Capture first-row id (or field) to environment for next request',
+        code: `const json = apx.response.json();
+if (Array.isArray(json.rows) && json.rows.length > 0) {
+  const first = json.rows[0];
+  apx.environment.set('firstRowId', String(first.id ?? ''));
+}
+
+apx.test('First row id captured', () => {
+  apx.expect(apx.environment.get('firstRowId')).to.exist;
+});`,
+      },
+      {
+        id: 'sql-assert-cell-value',
+        name: 'Assert first row field value',
+        description: 'Validate a specific field value from the first returned row',
+        code: `apx.test('First row status is active', () => {
+  const json = apx.response.json();
+  apx.expect(Array.isArray(json.rows) && json.rows.length > 0).to.be.true;
+  apx.expect(json.rows[0].status).to.equal('active');
+});`,
       },
     ],
   },

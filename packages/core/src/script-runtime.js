@@ -712,6 +712,10 @@ function createApx(response, variables, updatedVariables, updatedGlobalMutations
             cookies: execContext.cookies || {},
             collectionItems,
             mockBase: execContext.mockBase || null,
+            mongoConnections: execContext.mongoConnections || {},
+            databases: execContext.databases || [],
+            dbQueryFn: (deps && deps.dbQueryFn) || null,
+            dbMongoQueryFn: (deps && deps.dbMongoQueryFn) || null,
           });
 
           // Propagate mutations made by the child request (env/collVars/globals set
@@ -760,6 +764,50 @@ function createApx(response, variables, updatedVariables, updatedGlobalMutations
       })();
 
       pendingRequests.push(promise);
+    },
+
+    // ─── Database API ──────────────────────────────────────────────────────
+    db: {
+      /**
+       * Execute a SQL query on a named database connection.
+       * @param {string} connectionId  The _id of a DatabaseConnection
+       * @param {string} sql           SQL statement (supports {{variable}} tokens)
+       * @param {Array}  [params]      Parameterized query values
+       * @returns {Promise<{success: boolean, rows?: object[], columns?: string[], rowCount?: number, error?: string}>}
+       */
+      async query(connectionId, sql, params = []) {
+        const queryFn = deps && deps.dbQueryFn;
+        if (!queryFn) {
+          return { success: false, error: 'apx.db.query: database support not available in this context' };
+        }
+        try {
+          const result = await queryFn(connectionId, sql, params, execContext);
+          return { success: true, ...result };
+        } catch (err) {
+          return { success: false, error: err.message };
+        }
+      },
+
+      /**
+       * Execute a MongoDB operation on a named database connection.
+       * @param {string} connectionId  The _id of a DatabaseConnection
+       * @param {string} operation     e.g. 'findOne', 'find', 'insertOne', 'updateOne', etc.
+       * @param {object} document      Operation descriptor: { database, collection, query?, update?, pipeline?, ... }
+       * @param {object} [options]     Additional driver options (sort, limit, skip, etc.)
+       * @returns {Promise<{success: boolean, data?: any, error?: string}>}
+       */
+      async mongoQuery(connectionId, operation, document, options = {}) {
+        const mongoQueryFn = deps && deps.dbMongoQueryFn;
+        if (!mongoQueryFn) {
+          return { success: false, error: 'apx.db.mongoQuery: database support not available in this context' };
+        }
+        try {
+          const result = await mongoQueryFn(connectionId, operation, document, options, execContext);
+          return { success: true, data: result.result };
+        } catch (err) {
+          return { success: false, error: err.message };
+        }
+      },
     },
   };
 

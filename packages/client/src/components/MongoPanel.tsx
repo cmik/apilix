@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { VariableSuggestion } from '../utils/variableAutocomplete';
+import type { DatabaseConnection } from '../types';
 import VarInput from './VarInput';
 import CodeEditor from './CodeEditor';
 import MongoPipelineSnippets from './MongoPipelineSnippets';
@@ -219,6 +220,7 @@ export interface MongoPanelProps {
   value: string;
   onChange: (value: string) => void;
   variableSuggestions?: VariableSuggestion[];
+  databases?: DatabaseConnection[];
   /** Resolved URI (variables substituted). Used by fetch buttons. Empty/undefined disables them. */
   resolvedUri?: string;
   /** Resolved named connection id (variables substituted). Used by fetch buttons in named mode. */
@@ -229,7 +231,7 @@ export interface MongoPanelProps {
   resolvedAuth?: MongoAuthOverride;
 }
 
-export default function MongoPanel({ value, onChange, variableSuggestions, resolvedUri, resolvedConnectionId, resolvedDatabase, resolvedAuth }: MongoPanelProps) {
+export default function MongoPanel({ value, onChange, variableSuggestions, databases, resolvedUri, resolvedConnectionId, resolvedDatabase, resolvedAuth }: MongoPanelProps) {
   const [cfg, setCfg] = useState<MongoConfig>(() => parseMongoConfig(value) ?? DEFAULT_CONFIG);
   const [parseError, setParseError] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -304,7 +306,7 @@ export default function MongoPanel({ value, onChange, variableSuggestions, resol
             <FetchPicker
               disabled={!canFetchDbs}
               title="Fetch databases from server"
-              fetchItems={() => listMongoDatabases(hasResolvedUri ? resolvedUri : undefined, hasResolvedConnectionId ? resolvedConnectionId : undefined, resolvedAuth)}
+              fetchItems={() => listMongoDatabases(hasResolvedUri ? resolvedUri : undefined, hasResolvedConnectionId ? resolvedConnectionId : undefined, resolvedAuth, databases)}
               onSelect={v => update({ database: v })}
             />
           </div>
@@ -323,7 +325,7 @@ export default function MongoPanel({ value, onChange, variableSuggestions, resol
               <FetchPicker
                 disabled={!canFetchCols}
                 title="Fetch collections from database"
-                fetchItems={() => listMongoCollections(hasResolvedUri ? resolvedUri : undefined, resolvedDatabase ?? '', hasResolvedConnectionId ? resolvedConnectionId : undefined, resolvedAuth)}
+                fetchItems={() => listMongoCollections(hasResolvedUri ? resolvedUri : undefined, resolvedDatabase ?? '', hasResolvedConnectionId ? resolvedConnectionId : undefined, resolvedAuth, databases)}
                 onSelect={v => update({ collection: v })}
               />
             </div>

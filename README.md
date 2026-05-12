@@ -519,6 +519,18 @@ apx.sendRequest({
 }, (err, res) => {
   apx.environment.set("token", res.json().token);
 });
+
+// Database queries (connection IDs from Settings -> Databases)
+const sqlOut = await apx.db.query("main_mysql", "SELECT id FROM users WHERE id = ?", [123]);
+if (!sqlOut.success) throw new Error(sqlOut.error);
+
+const mongoOut = await apx.db.mongoQuery(
+  "main_mongo",
+  "find",
+  { database: "app", collection: "users", query: { status: "active" } },
+  { limit: 10 },
+);
+if (!mongoOut.success) throw new Error(mongoOut.error);
 ```
 
 `apx.sendRequest` accepts a URL string or a Postman-format options object and provides the callback response with `.code`, `.status`, `.headers.get(name)`, `.json()`, and `.text()`.

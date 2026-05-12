@@ -35,6 +35,38 @@ function makeState(body: string) {
   } as any;
 }
 
+function makeSqlState() {
+  const payload = {
+    rowCount: 2,
+    columns: ['id', 'name'],
+    rows: [
+      { id: 1, name: 'Alice' },
+      { id: 2, name: 'Bob' },
+    ],
+  };
+  return {
+    state: {
+      activeTabId: 'tab-1',
+      activeRequest: { collectionId: 'col-1' },
+      isLoading: false,
+      response: {
+        protocol: 'sql',
+        sqlDialect: 'postgres',
+        resultView: 'table',
+        resultTable: payload,
+        status: 2200,
+        statusText: 'SQL_SUCCESS',
+        responseTime: 20,
+        size: JSON.stringify(payload).length,
+        headers: {},
+        body: JSON.stringify(payload),
+        error: null,
+        testResults: [],
+      },
+    },
+  } as any;
+}
+
 describe('ResponseViewer search with folded trees', () => {
   beforeEach(() => {
     mockedUseApp.mockReset();
@@ -91,5 +123,21 @@ describe('ResponseViewer search with folded trees', () => {
     await waitFor(() => {
       expect(container.querySelectorAll('mark.search-match').length).toBeGreaterThan(0);
     });
+  });
+
+  it('renders SQL result as table and switches to JSON mode', async () => {
+    const user = userEvent.setup();
+    mockedUseApp.mockReturnValue(makeSqlState());
+
+    render(<ResponseViewer />);
+
+    expect(screen.getByText('Rows:')).toBeInTheDocument();
+    expect(screen.getByText('Alice')).toBeInTheDocument();
+    expect(screen.getByText('Bob')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'JSON' }));
+
+    expect(screen.queryByText('Alice')).not.toBeInTheDocument();
+    expect(screen.getByText(/rowCount/)).toBeInTheDocument();
   });
 });
