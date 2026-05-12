@@ -90,6 +90,7 @@ export function parseWorkspaceExportPackage(raw: unknown): WorkspaceExportPackag
     collections: Array.isArray(d.collections) ? d.collections as WorkspaceData['collections'] : [],
     environments: Array.isArray(d.environments) ? d.environments as WorkspaceData['environments'] : [],
     activeEnvironmentId: typeof d.activeEnvironmentId === 'string' ? d.activeEnvironmentId : null,
+    databases: Array.isArray(d.databases) ? d.databases as WorkspaceData['databases'] : [],
     collectionVariables: sanitizeNestedStringRecord(d.collectionVariables),
     globalVariables: sanitizeStringRecord(d.globalVariables),
     cookieJar: (d.cookieJar && typeof d.cookieJar === 'object' && !Array.isArray(d.cookieJar))

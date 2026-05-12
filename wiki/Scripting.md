@@ -33,6 +33,7 @@ Apilix has a built-in JavaScript scripting engine that lets you automate work be
   - [Variable Stores](#variable-stores)
   - [Execution Control (Runner)](#execution-control-runner)
   - [`apx.sendRequest()`](#apxsendrequest)
+  - [`apx.db` Database API](#apxdb-database-api)
   - [Modifying the Request from a Script](#modifying-the-request-from-a-script)
   - [Console Output](#console-output)
   - [Test Results Display](#test-results-display)
@@ -647,6 +648,101 @@ apx.sendRequest(
 The callback receives `(err, response)` where `response` exposes the same interface as `apx.response` (`.json()`, `.text()`, `.code`, `.headers`, etc.).
 
 > `apx.sendRequest()` in a **pre-request script** executes before the main request is sent; the callback must complete before the main request fires.
+
+---
+
+## `apx.db` Database API
+
+Use `apx.db` to execute SQL and MongoDB operations against connections configured in **Settings → Databases**.
+
+### `apx.db.query(connectionId, sql, params?)`
+
+Execute a SQL query (MySQL or PostgreSQL).
+
+```js
+const out = await apx.db.query(
+  'main_mysql',
+  'SELECT id, email FROM users WHERE id = ?',
+  [123]
+);
+
+apx.test('SQL query succeeded', () => {
+  apx.expect(out.success).to.equal(true);
+  apx.expect(out.rowCount).to.be.above(0);
+});
+```
+
+Return shape:
+
+| Field | Type | Description |
+|---|---|---|
+| `success` | `boolean` | `true` on success, `false` on error |
+| `rows` | `object[]` | Result rows (on success) |
+| `columns` | `string[]` | Column names (on success) |
+| `rowCount` | `number` | Row count (on success) |
+| `error` | `string` | Error message (on failure) |
+
+### `apx.db.mongoQuery(connectionId, operation, document, options?)`
+
+Execute a MongoDB operation.
+
+```js
+const out = await apx.db.mongoQuery(
+  'main_mongo',
+  'find',
+  {
+    database: 'app',
+    collection: 'users',
+    query: { status: 'active' },
+  },
+  { limit: 10 }
+);
+
+apx.test('Mongo query succeeded', () => {
+  apx.expect(out.success).to.equal(true);
+  apx.expect(Array.isArray(out.data)).to.equal(true);
+});
+```
+
+Return shape:
+
+| Field | Type | Description |
+|---|---|---|
+| `success` | `boolean` | `true` on success, `false` on error |
+| `data` | `any` | Operation result payload (on success) |
+| `error` | `string` | Error message (on failure) |
+
+Supported Mongo operations:
+
+- `findOne`
+- `find`
+- `insertOne`
+- `insertMany`
+- `updateOne`
+- `updateMany`
+- `deleteOne`
+- `deleteMany`
+- `countDocuments`
+- `distinct`
+- `aggregate`
+
+### Variable resolution in DB connections
+
+Connection fields can contain `{{variable}}` tokens.
+
+- Tokens are resolved at execution time using the current script context.
+- In collection runs, runner row values (`iterationData`) are included in resolution.
+
+### Error handling pattern
+
+`apx.db.*` methods return `{ success: false, error }` on errors instead of throwing by default.
+
+```js
+const out = await apx.db.query('main_pg', 'SELECT 1');
+if (!out.success) {
+  throw new Error(`DB error: ${out.error}`);
+}
+```
 
 ---
 

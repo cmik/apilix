@@ -62,6 +62,7 @@ export const initialState: AppState = {
   collections: [],
   environments: [],
   activeEnvironmentId: null,
+  databases: [],
   consoleLogs: [],
   tabs: [],
   activeTabId: null,
@@ -178,6 +179,41 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'SET_ACTIVE_ENV':
       return { ...state, activeEnvironmentId: action.payload };
+
+    case 'SET_DATABASES':
+      return { ...state, databases: action.payload };
+
+    case 'ADD_DATABASE':
+      return { ...state, databases: [...state.databases, action.payload] };
+
+    case 'UPDATE_DATABASE':
+      return {
+        ...state,
+        databases: state.databases.map(d =>
+          d._id === action.payload._id ? action.payload : d
+        ),
+      };
+
+    case 'REMOVE_DATABASE':
+      return {
+        ...state,
+        databases: state.databases.filter(d => d._id !== action.payload),
+      };
+
+    case 'SET_DATABASE_TEST_RESULT':
+      return {
+        ...state,
+        databases: state.databases.map(d =>
+          d._id === action.payload.databaseId
+            ? {
+                ...d,
+                testStatus: action.payload.status,
+                testError: action.payload.error,
+                lastTestedAt: new Date().toISOString(),
+              }
+            : d
+        ),
+      };
 
     case 'SET_ACTIVE_REQUEST':
       return { ...state, activeRequest: action.payload, response: null };
@@ -530,6 +566,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         collections: restoredCollections,
         environments: data.environments ?? [],
         activeEnvironmentId: data.activeEnvironmentId ?? null,
+        databases: data.databases ?? [],
         collectionVariables: data.collectionVariables ?? {},
         globalVariables: data.globalVariables ?? {},
         cookieJar: data.cookieJar ?? {},
@@ -580,6 +617,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         collections: restoredCollections,
         environments: data.environments ?? [],
         activeEnvironmentId: data.activeEnvironmentId ?? null,
+        databases: data.databases ?? [],
         collectionVariables: data.collectionVariables ?? {},
         globalVariables: data.globalVariables ?? {},
         cookieJar: data.cookieJar ?? {},
@@ -637,6 +675,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         collections: restoredCollections,
         environments: data.environments ?? [],
         activeEnvironmentId: data.activeEnvironmentId ?? null,
+        databases: data.databases ?? [],
         collectionVariables: data.collectionVariables ?? {},
         globalVariables: data.globalVariables ?? {},
         cookieJar: data.cookieJar ?? {},
@@ -679,6 +718,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         collections: restoredCollections,
         environments: data.environments ?? [],
         activeEnvironmentId: data.activeEnvironmentId ?? null,
+        databases: data.databases ?? [],
         collectionVariables: data.collectionVariables ?? {},
         globalVariables: data.globalVariables ?? {},
         cookieJar: data.cookieJar ?? {},
@@ -820,6 +860,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             collections: legacy.collections ?? [],
             environments: legacy.environments ?? [],
             activeEnvironmentId: legacy.activeEnvironmentId ?? null,
+            databases: [],
             collectionVariables: legacy.collectionVariables ?? {},
             globalVariables: legacy.globalVariables ?? {},
             cookieJar: legacy.cookieJar ?? {},
@@ -857,6 +898,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             collections: [],
             environments: [],
             activeEnvironmentId: null,
+            databases: [],
             collectionVariables: {},
             globalVariables: {},
             cookieJar: {},
@@ -895,6 +937,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         collections: state.collections,
         environments: state.environments,
         activeEnvironmentId: state.activeEnvironmentId,
+        databases: state.databases,
         collectionVariables: state.collectionVariables,
         globalVariables: state.globalVariables,
         cookieJar: state.cookieJar,

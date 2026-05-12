@@ -112,6 +112,26 @@ export interface MongoRequestConfig {
   auth?: MongoRequestAuth;
 }
 
+export type SqlDialect = 'mysql' | 'postgres';
+
+export interface SqlRequestConfig {
+  connectionId: string;
+  /** Optional explicit dialect; inferred from method/connection when omitted. */
+  dialect?: SqlDialect;
+  /** SQL statement. Supports {{variable}} placeholders. */
+  query: string;
+  /** JSON array string for positional query parameters. Supports placeholders. */
+  params?: string;
+  /** Preferred response rendering mode in UI. */
+  resultView?: 'table' | 'json';
+}
+
+export interface QueryResultTable {
+  columns: string[];
+  rows: Array<Record<string, unknown>>;
+  rowCount: number;
+}
+
 export interface CollectionEvent {
   listen: 'prerequest' | 'test';
   script: {
@@ -133,13 +153,14 @@ export interface CollectionItem {
 }
 
 export interface CollectionRequest {
-  requestType?: 'http' | 'mongodb';
+  requestType?: 'http' | 'mongodb' | 'sql';
   method: string;
   url: CollectionUrl | string;
   header?: CollectionHeader[];
   body?: CollectionBody;
   auth?: CollectionAuth;
   mongodb?: MongoRequestConfig;
+  sql?: SqlRequestConfig;
   description?: string;
 }
 
@@ -242,11 +263,15 @@ export interface NetworkTimings {
 }
 
 export interface RequestResponse {
-  protocol?: 'http' | 'mongodb';
+  protocol?: 'http' | 'mongodb' | 'sql';
   status: number;
   statusText: string;
   mongoStatus?: 'success' | 'partial' | 'error';
   mongoOperation?: MongoRequestOperation;
+  sqlDialect?: SqlDialect;
+  sqlConnectionId?: string;
+  resultView?: 'table' | 'json';
+  resultTable?: QueryResultTable;
   responseTime: number;
   resolvedUrl?: string;
   headers: Record<string, string>;
@@ -263,9 +288,11 @@ export interface RequestResponse {
 export interface RunnerIterationResult {
   name: string;
   method: string;
-  protocol?: 'http' | 'mongodb';
+  protocol?: 'http' | 'mongodb' | 'sql';
   mongoOperation?: MongoRequestOperation;
   mongoStatus?: 'success' | 'partial' | 'error';
+  sqlDialect?: SqlDialect;
+  sqlConnectionId?: string;
   url: string;
   resolvedUrl?: string;
   requestHeaders?: Record<string, string>;
@@ -541,6 +568,49 @@ export interface MockRoute {
   wsMessageHandlers?: WsMessageHandler[];
 }
 
+// ─── Database Connection Types ──────────────────────────────────────────────
+
+export type DatabaseType = 'mysql' | 'postgres' | 'mongodb';
+
+export interface DatabaseConnectionBase {
+  _id: string;           // Unique identifier (generated)
+  name: string;          // Display name
+  type: DatabaseType;    // 'mysql' | 'postgres' | 'mongodb'
+  ssl: boolean;          // Use SSL/TLS
+  connectionTimeout?: number; // ms, default 10000
+  queryTimeout?: number; // ms, default 30000
+  createdAt: string;     // ISO-8601
+  lastTestedAt?: string; // Last successful test timestamp
+  testStatus?: 'success' | 'failed'; // Result of last test
+  testError?: string;    // Error message if test failed
+}
+
+export interface SQLConnectionConfig extends DatabaseConnectionBase {
+  type: 'mysql' | 'postgres';
+  host: string;
+  port: number;
+  username: string;
+  password: string;      // Encrypted on disk; supports {{variables}}
+  database: string;      // Schema/database name
+  sslMode?: 'require' | 'prefer' | 'disable'; // PostgreSQL-specific
+  sslCert?: string;      // Optional PEM certificate
+  sslRejectUnauthorized?: boolean; // Default: true
+  maxConnections?: number; // Pool size, default 5
+}
+
+export interface MongoDBConnectionConfig extends DatabaseConnectionBase {
+  type: 'mongodb';
+  connectionUri: string; // e.g., 'mongodb://user:pass@host:27017/dbname?authSource=admin'; supports {{variables}}
+  authMechanism?: 'SCRAM-SHA-1' | 'SCRAM-SHA-256' | 'MONGODB-X509' | 'MONGODB-CR'; // Default: auto-detect
+  sslCertPath?: string;  // For X509 auth
+  sslKeyPath?: string;   // For X509 auth
+  sslCAPath?: string;    // CA bundle for SSL verification
+  sslRejectUnauthorized?: boolean; // Default: true
+  maxConnections?: number; // Pool size, default 5
+}
+
+export type DatabaseConnection = SQLConnectionConfig | MongoDBConnectionConfig;
+
 // ─── Workspace & Collaboration Types ─────────────────────────────────────────
 
 export type WorkspaceRole = 'owner' | 'editor' | 'viewer';
@@ -566,6 +636,7 @@ export interface WorkspaceData {
   mockCollections: MockCollection[];
   mockRoutes: MockRoute[];
   mockPort: number;
+  databases?: DatabaseConnection[];
 }
 
 export type SyncProvider = 's3' | 'git' | 'http' | 'team' | 'minio';
@@ -787,6 +858,7 @@ export interface AppState {
   collections: AppCollection[];
   environments: AppEnvironment[];
   activeEnvironmentId: string | null;
+  databases: DatabaseConnection[];
   consoleLogs: ConsoleEntry[];
   tabs: RequestTab[];
   activeTabId: string | null;
@@ -844,6 +916,11 @@ export type AppAction =
   | { type: 'REMOVE_ENVIRONMENT'; payload: string }
   | { type: 'UPDATE_ENVIRONMENT'; payload: AppEnvironment }
   | { type: 'SET_ACTIVE_ENV'; payload: string | null }
+  | { type: 'SET_DATABASES'; payload: DatabaseConnection[] }
+  | { type: 'ADD_DATABASE'; payload: DatabaseConnection }
+  | { type: 'UPDATE_DATABASE'; payload: DatabaseConnection }
+  | { type: 'REMOVE_DATABASE'; payload: string }
+  | { type: 'SET_DATABASE_TEST_RESULT'; payload: { databaseId: string; status: 'success' | 'failed'; error?: string } }
   | { type: 'SET_ACTIVE_REQUEST'; payload: ActiveRequest | null }
   | { type: 'SET_RESPONSE'; payload: RequestResponse | null }
   | { type: 'SET_LOADING'; payload: boolean }

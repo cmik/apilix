@@ -12,6 +12,7 @@ import { openAuthorizationWindow } from '../utils/oauth';
 import GraphQLPanel from './GraphQLPanel';
 import SoapPanel from './SoapPanel';
 import MongoRequestPanel from './MongoRequestPanel';
+import SqlRequestPanel from './SqlRequestPanel';
 import CodeEditor from './CodeEditor';
 import type { CodeLanguage } from './CodeEditor';
 import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
@@ -29,7 +30,7 @@ import type { InjectTestSnippetDetail } from '../utils/appEvents';
 const CodeGenModal = lazy(() => import('./CodeGenModal'));
 const ItemSettingsModal = lazy(() => import('./ItemSettingsModal'));
 
-const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'WS', 'MONGO'];
+const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'WS', 'MONGO', 'MYSQL', 'POSTGRESQL'];
 
 const METHOD_COLORS: Record<string, string> = {
   GET: 'text-green-400',
@@ -41,7 +42,19 @@ const METHOD_COLORS: Record<string, string> = {
   OPTIONS: 'text-slate-400',
   WS: 'text-cyan-400',
   MONGO: 'text-emerald-400',
+  MYSQL: 'text-sky-400',
+  POSTGRESQL: 'text-teal-400',
 };
+
+function defaultSqlConfigForMethod(method: 'MYSQL' | 'POSTGRESQL'): NonNullable<CollectionRequest['sql']> {
+  return {
+    connectionId: '',
+    dialect: method === 'POSTGRESQL' ? 'postgres' : 'mysql',
+    query: 'SELECT NOW() AS server_time;',
+    params: '[]',
+    resultView: 'table',
+  };
+}
 
 const TABS = ['Params', 'Auth', 'Headers', 'Body', 'Pre-request', 'Tests', 'Docs'] as const;
 type Tab = typeof TABS[number];
@@ -106,14 +119,17 @@ function itemToEditState(item: CollectionItem) {
   const storedMap = new Map(urlVars.map(v => [v.key ?? '', v.value ?? '']));
   // Headers can be a raw string in v2.0 — drop them in that case
   const headerArr = Array.isArray(req.header) ? req.header : [];
-  const isMongo = req.requestType === 'mongodb' || !!req.mongodb;
+  const methodUpper = (req.method || 'GET').toUpperCase();
+  const isMongo = req.requestType === 'mongodb' || !!req.mongodb || methodUpper === 'MONGO';
+  const isSql = req.requestType === 'sql' || !!req.sql || methodUpper === 'MYSQL' || methodUpper === 'POSTGRESQL';
+  const sqlMethod = methodUpper === 'POSTGRESQL' ? 'POSTGRESQL' : 'MYSQL';
   return {
-    method: isMongo ? 'MONGO' : (req.method?.toUpperCase() ?? 'GET'),
+    method: isMongo ? 'MONGO' : isSql ? methodUpper : (req.method?.toUpperCase() ?? 'GET'),
     url: urlRaw,
     headers: headerArr.map(h => ({ ...h })),
     queryParams: extractQueryParams(urlRaw),
     pathParams: detectedNames.map(k => ({ key: k, value: storedMap.get(k) ?? '' })),
-    bodyMode: isMongo ? 'raw' : (req.body?.soap ? 'soap' : (req.body?.mode ?? 'none')),
+    bodyMode: (isMongo || isSql) ? 'raw' : (req.body?.soap ? 'soap' : (req.body?.mode ?? 'none')),
     bodyRaw: isMongo ? JSON.stringify(req.mongodb ?? {
       connection: { mode: 'direct', uri: '{{mongoUri}}' },
       database: '{{mongoDb}}',
@@ -121,7 +137,7 @@ function itemToEditState(item: CollectionItem) {
       operation: 'find',
       filter: '{}',
       limit: 50,
-    }, null, 2) : (req.body?.raw ?? ''),
+    }, null, 2) : isSql ? JSON.stringify(req.sql ?? defaultSqlConfigForMethod(sqlMethod), null, 2) : (req.body?.raw ?? ''),
     bodyRawLang: req.body?.options?.raw?.language ?? 'json',
     bodyFormData: Array.isArray(req.body?.formdata) ? req.body!.formdata! : [],
     bodyUrlEncoded: Array.isArray(req.body?.urlencoded) ? req.body!.urlencoded! : [],
@@ -230,6 +246,32 @@ function buildUpdatedRequestItem(item: CollectionItem, edit: EditState): Collect
           filter: '{}',
           limit: 50,
         },
+      },
+      event: [
+        {
+          listen: 'prerequest',
+          script: { type: 'text/javascript', exec: edit.preRequestScript ? edit.preRequestScript.split('\n') : [] },
+        },
+        {
+          listen: 'test',
+          script: { type: 'text/javascript', exec: edit.testScript ? edit.testScript.split('\n') : [] },
+        },
+      ],
+    };
+  }
+  if (edit.method === 'MYSQL' || edit.method === 'POSTGRESQL') {
+    let sqlCfg: unknown = null;
+    try { sqlCfg = JSON.parse(edit.bodyRaw || '{}'); } catch { sqlCfg = null; }
+    return {
+      ...item,
+      description: edit.description || undefined,
+      request: {
+        method: edit.method,
+        url: { raw: '' },
+        requestType: 'sql',
+        sql: (sqlCfg && typeof sqlCfg === 'object')
+          ? (sqlCfg as CollectionRequest['sql'])
+          : defaultSqlConfigForMethod(edit.method),
       },
       event: [
         {
@@ -1146,14 +1188,15 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     const resolvedUrl = applyPathParams(edit.url, edit.pathParams, allVars);
     const ancestorScripts = collectAncestorScripts(col?.item ?? [], activeReq.item.id ?? '', col?.event);
     const isMongo = edit.method === 'MONGO';
+    const isSql = edit.method === 'MYSQL' || edit.method === 'POSTGRESQL';
     const item: CollectionItem = {
       ...activeReq.item,
       request: {
-        method: isMongo ? 'MONGO' : edit.method,
-        requestType: isMongo ? 'mongodb' : 'http',
-        url: isMongo ? { raw: '' } : { raw: resolvedUrl, variable: edit.pathParams.filter(p => p.key).map(p => ({ key: p.key, value: p.value })) },
-        header: isMongo ? [] : edit.headers.filter(h => !h.disabled),
-        body: (!isMongo && edit.bodyMode !== 'none') ? (
+        method: (isMongo || isSql) ? edit.method : edit.method,
+        requestType: isMongo ? 'mongodb' : isSql ? 'sql' : 'http',
+        url: (isMongo || isSql) ? { raw: '' } : { raw: resolvedUrl, variable: edit.pathParams.filter(p => p.key).map(p => ({ key: p.key, value: p.value })) },
+        header: (isMongo || isSql) ? [] : edit.headers.filter(h => !h.disabled),
+        body: (!isMongo && !isSql && edit.bodyMode !== 'none') ? (
           edit.bodyMode === 'soap' ? buildSoapBody(edit) : {
             mode: edit.bodyMode as NonNullable<NonNullable<CollectionItem['request']>['body']>['mode'],
             raw: edit.bodyMode === 'raw' ? edit.bodyRaw : edit.bodyMode === 'file' ? (binaryBase64 ?? '') : undefined,
@@ -1163,8 +1206,11 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as RawLanguage } } : undefined,
           }
         ) : undefined,
-        auth: isMongo ? undefined : resolvedAuth,
+        auth: (isMongo || isSql) ? undefined : resolvedAuth,
         mongodb: isMongo ? (() => {
+          try { return JSON.parse(edit.bodyRaw || '{}'); } catch { return undefined; }
+        })() : undefined,
+        sql: isSql ? (() => {
           try { return JSON.parse(edit.bodyRaw || '{}'); } catch { return undefined; }
         })() : undefined,
       },
@@ -1180,6 +1226,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
         collVars: col?.variable ?? [],
         cookies: state.cookieJar,
         collectionItems: col?.item ?? [],
+        databases: state.databases,
       });
 
       dispatch({ type: 'SET_TAB_RESPONSE', payload: { tabId, response: result } });
@@ -1340,8 +1387,8 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
 
   async function handleSendToMock() {
     if (!edit || !activeReq || !activeTab) return;
-    if (edit.method === 'MONGO') {
-      window.alert('MongoDB requests cannot be sent to the mock server.');
+    if (edit.method === 'MONGO' || edit.method === 'MYSQL' || edit.method === 'POSTGRESQL') {
+      window.alert('Database requests cannot be sent to the mock server.');
       return;
     }
     if (!state.mockServerRunning) {
@@ -1398,6 +1445,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
         cookies: state.cookieJar,
         collectionItems: col?.item ?? [],
         mockBase,
+        databases: state.databases,
       });
       dispatch({ type: 'SET_TAB_RESPONSE', payload: { tabId, response: result } });
       dispatch({
@@ -1753,7 +1801,21 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             onChange={e => setEdit(x => x ? {
               ...x,
               method: e.target.value,
-              bodyMode: e.target.value === 'MONGO' ? 'raw' : x.bodyMode,
+              bodyMode: (e.target.value === 'MONGO' || e.target.value === 'MYSQL' || e.target.value === 'POSTGRESQL') ? 'raw' : x.bodyMode,
+              bodyRaw: e.target.value === 'MYSQL'
+                ? JSON.stringify(defaultSqlConfigForMethod('MYSQL'), null, 2)
+                : e.target.value === 'POSTGRESQL'
+                  ? JSON.stringify(defaultSqlConfigForMethod('POSTGRESQL'), null, 2)
+                  : e.target.value === 'MONGO'
+                    ? JSON.stringify({
+                        connection: { mode: 'direct', uri: '{{mongoUri}}' },
+                        database: '{{mongoDb}}',
+                        collection: '',
+                        operation: 'find',
+                        filter: '{}',
+                        limit: 50,
+                      }, null, 2)
+                    : x.bodyRaw,
             } : x)}
             className={`bg-slate-700 border border-slate-600 rounded px-2 py-2 text-sm font-bold focus:outline-none ${METHOD_COLORS[edit.method] || 'text-slate-300'}`}
           >
@@ -1765,6 +1827,10 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
           {edit.method === 'MONGO' ? (
             <div className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-emerald-400 font-mono italic opacity-60 select-none">
               MongoDB — configure request in the Connection and Body tabs
+            </div>
+          ) : edit.method === 'MYSQL' || edit.method === 'POSTGRESQL' ? (
+            <div className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-sky-300 font-mono italic opacity-60 select-none">
+              SQL — configure connection and query in dedicated tabs
             </div>
           ) : (
           <input
@@ -1778,7 +1844,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-orange-500"
           />
           )}
-          {urlAcSuggestions.length > 0 && edit.method !== 'MONGO' && (
+          {urlAcSuggestions.length > 0 && edit.method !== 'MONGO' && edit.method !== 'MYSQL' && edit.method !== 'POSTGRESQL' && (
             <div className="absolute top-full mt-1 z-50 bg-slate-800 border border-slate-600 rounded shadow-xl min-w-52 max-h-52 overflow-y-auto" style={{ left: urlAcLeft }}>
               {urlAcSuggestions.map((name, i) => (
                 <button
@@ -1847,8 +1913,8 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
                   <div className="absolute right-0 top-full mt-1 z-50 bg-slate-800 border border-slate-600 rounded-md shadow-2xl py-1 min-w-[190px]">
                     <button
                       onClick={() => { setShowSendMenu(false); handleSendToMock(); }}
-                      disabled={!state.mockServerRunning || edit.method === 'MONGO'}
-                      title={edit.method === 'MONGO' ? 'MongoDB requests cannot be sent to mock server' : (state.mockServerRunning ? `Send to mock server on port ${state.mockPort}` : 'Start the mock server first')}
+                      disabled={!state.mockServerRunning || edit.method === 'MONGO' || edit.method === 'MYSQL' || edit.method === 'POSTGRESQL'}
+                      title={(edit.method === 'MONGO' || edit.method === 'MYSQL' || edit.method === 'POSTGRESQL') ? 'Database requests cannot be sent to mock server' : (state.mockServerRunning ? `Send to mock server on port ${state.mockPort}` : 'Start the mock server first')}
                       className="w-full text-left flex items-center gap-2.5 px-3 py-1.5 text-xs transition-colors hover:bg-slate-700 text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                     >
                       <span className="w-4 shrink-0 text-center">🎭</span>
@@ -1894,8 +1960,32 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
         />
       )}
 
-      {/* Tabs (HTTP only — not WS, not MONGO) */}
-      {edit.method !== 'WS' && edit.method !== 'MONGO' && (
+      {(edit.method === 'MYSQL' || edit.method === 'POSTGRESQL') && (
+        <SqlRequestPanel
+          key={activeTabId ?? 'sql'}
+          method={edit.method}
+          bodyRaw={edit.bodyRaw}
+          preRequestScript={edit.preRequestScript}
+          testScript={edit.testScript}
+          description={edit.description}
+          variableSuggestions={variableSuggestions}
+          preRequestHasError={preRequestHasError}
+          testHasError={testHasError}
+          activeTabId={activeTabId}
+          requestNames={flattenRequestNames(col?.item ?? [])}
+          requestItems={flattenRequestItems(col?.item ?? [])}
+          databases={state.databases}
+          onBodyChange={v => setEdit(x => x ? { ...x, bodyRaw: v } : x)}
+          onPreRequestChange={v => setEdit(x => x ? { ...x, preRequestScript: v } : x)}
+          onTestChange={v => setEdit(x => x ? { ...x, testScript: v } : x)}
+          onDescriptionChange={v => setEdit(x => x ? { ...x, description: v } : x)}
+          onPreRequestSyntaxCheck={setPreRequestHasError}
+          onTestSyntaxCheck={setTestHasError}
+        />
+      )}
+
+      {/* Tabs (HTTP only — not WS/MONGO/SQL) */}
+      {edit.method !== 'WS' && edit.method !== 'MONGO' && edit.method !== 'MYSQL' && edit.method !== 'POSTGRESQL' && (
         <div className="flex border-b border-slate-700 bg-slate-800 shrink-0">
           {TABS.map(t => {
             const hasErr =
@@ -1930,8 +2020,8 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
         />
       )}
 
-      {/* Tab content (HTTP only — not WS, not MONGO) */}
-      {edit.method !== 'WS' && edit.method !== 'MONGO' && <div className="flex-1 overflow-y-auto p-3 bg-slate-800/50 min-h-0">
+      {/* Tab content (HTTP only — not WS/MONGO/SQL) */}
+      {edit.method !== 'WS' && edit.method !== 'MONGO' && edit.method !== 'MYSQL' && edit.method !== 'POSTGRESQL' && <div className="flex-1 overflow-y-auto p-3 bg-slate-800/50 min-h-0">
         {activeRequestTab === 'Params' && (
           <div className="flex flex-col gap-4">
             <KvTable

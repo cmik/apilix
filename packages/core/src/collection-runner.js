@@ -120,15 +120,23 @@ function prepareCollectionRun(payload, options = {}) {
 
 function toResultData(item, result, iteration) {
   const isMongo = result.protocol === 'mongodb' || item.request?.requestType === 'mongodb' || !!item.request?.mongodb;
+  const isSql = result.protocol === 'sql' || item.request?.requestType === 'sql' || !!item.request?.sql || item.request?.method === 'MYSQL' || item.request?.method === 'POSTGRESQL';
   const mongoOperation = item.request?.mongodb?.operation || result.mongoOperation;
-  const methodLabel = isMongo ? `MONGO:${String(mongoOperation || 'op').toUpperCase()}` : (item.request?.method || 'GET');
+  const sqlDialect = result.sqlDialect || item.request?.sql?.dialect || (item.request?.method === 'POSTGRESQL' ? 'postgres' : item.request?.method === 'MYSQL' ? 'mysql' : undefined);
+  const methodLabel = isMongo
+    ? `MONGO:${String(mongoOperation || 'op').toUpperCase()}`
+    : isSql
+      ? `SQL:${String(sqlDialect || 'dialect').toUpperCase()}`
+      : (item.request?.method || 'GET');
   return {
     iteration,
     name: item.name,
     method: methodLabel,
-    protocol: isMongo ? 'mongodb' : 'http',
+    protocol: isMongo ? 'mongodb' : isSql ? 'sql' : 'http',
     mongoOperation,
     mongoStatus: result.mongoStatus,
+    sqlDialect,
+    sqlConnectionId: result.sqlConnectionId || item.request?.sql?.connectionId,
     url: typeof item.request?.url === 'string'
       ? item.request.url
       : item.request?.url?.raw || '',
@@ -168,6 +176,8 @@ async function executePreparedCollectionRun(prepared, options = {}) {
     allCollectionItems,
     mockBase,
     mongoConnections,
+    dbQueryFn,
+    dbMongoQueryFn,
   } = payload;
   const maxRetries = Math.max(0, Math.min(10, parseInt(payload.maxRetries, 10) || 0));
   const _rawRetryDelay = parseInt(payload.retryDelay, 10);
@@ -250,6 +260,8 @@ async function executePreparedCollectionRun(prepared, options = {}) {
         requestId: item.id || '',
         vmContext,
         mongoConnections: mongoConnections || {},
+        dbQueryFn: dbQueryFn || null,
+        dbMongoQueryFn: dbMongoQueryFn || null,
       });
 
       if (result.updatedEnvironment) currentEnv = result.updatedEnvironment;
@@ -290,6 +302,8 @@ async function executePreparedCollectionRun(prepared, options = {}) {
             requestId: item.id || '',
             vmContext,
             mongoConnections: mongoConnections || {},
+            dbQueryFn: dbQueryFn || null,
+            dbMongoQueryFn: dbMongoQueryFn || null,
           });
           if (result.updatedEnvironment) currentEnv = result.updatedEnvironment;
           if (result.updatedCollectionVariables) currentCollVars = result.updatedCollectionVariables;

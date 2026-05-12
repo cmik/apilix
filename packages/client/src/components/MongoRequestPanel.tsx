@@ -1,12 +1,13 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { marked } from 'marked';
 import MongoPanel from './MongoPanel';
 import type { MongoConfig, ConnectionMode } from './MongoPanel';
 import { parseMongoConfig } from './MongoPanel';
 import ScriptTab from './ScriptTab';
 import VarInput from './VarInput';
+import { useApp } from '../store';
 import type { VariableSuggestion } from '../utils/variableAutocomplete';
-import { listMongoConnections, type MongoConnectionSummary } from '../utils/mongoConnections';
+import type { MongoDBConnectionConfig } from '../types';
 import { resolveVariables } from '../utils/variableResolver';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -55,14 +56,14 @@ export default function MongoRequestPanel({
   onPreRequestSyntaxCheck,
   onTestSyntaxCheck,
 }: MongoRequestPanelProps) {
+  const { state } = useApp();
   const [activeTab, setActiveTab] = useState<MainTab>('Query');
   const [docsMode, setDocsMode] = useState<'edit' | 'preview'>('edit');
 
-  // ── Connection tab state ──────────────────────────────────────────────────
-  const [savedConns, setSavedConns] = useState<MongoConnectionSummary[]>([]);
-  const [loadingConns, setLoadingConns] = useState(false);
-  const [connTabLoaded, setConnTabLoaded] = useState(false);
-  const [connLoadError, setConnLoadError] = useState<string | null>(null);
+  const savedConns = useMemo(
+    () => state.databases.filter((d): d is MongoDBConnectionConfig => d.type === 'mongodb'),
+    [state.databases],
+  );
   const [authOpen, setAuthOpen] = useState(false);
 
   // Parse the shared JSON blob for connection/auth fields
@@ -86,25 +87,17 @@ export default function MongoRequestPanel({
     onBodyChange(JSON.stringify({ ...current, auth: { ...(current.auth ?? {}), ...patch } }, null, 2));
   }, [bodyRaw, onBodyChange]);
 
-  // Lazy-load saved connections when Connection tab is first opened.
-  // connTabLoaded is only set to true on success so a failed first load
-  // can be retried by switching away and back, or via the Refresh button.
-  useEffect(() => {
-    if (activeTab !== 'Connection' || connTabLoaded) return;
-    setLoadingConns(true);
-    setConnLoadError(null);
-    listMongoConnections()
-      .then(list => { setSavedConns(list); setConnTabLoaded(true); })
-      .catch(err => setConnLoadError(err instanceof Error ? err.message : 'Failed to load connections'))
-      .finally(() => setLoadingConns(false));
-  }, [activeTab, connTabLoaded]);
-
   // Compute resolved URI and database for fetch buttons
   const rawUri = parsedCfg?.connection?.uri ?? '';
   const rawConnectionId = parsedCfg?.connection?.connectionId ?? '';
   const rawDatabase = parsedCfg?.database ?? '';
-  const resolvedUri = resolveVariables(rawUri, resolvedVars);
+  const resolvedDirectUri = resolveVariables(rawUri, resolvedVars);
   const resolvedConnectionId = resolveVariables(rawConnectionId, resolvedVars);
+  const matchedNamedConnection = savedConns.find(c => c._id === resolvedConnectionId);
+  const resolvedNamedUri = matchedNamedConnection?.connectionUri
+    ? resolveVariables(matchedNamedConnection.connectionUri, resolvedVars)
+    : '';
+  const resolvedUri = connMode === 'named' ? resolvedNamedUri : resolvedDirectUri;
   const resolvedDatabase = resolveVariables(rawDatabase, resolvedVars);
 
   // Resolve auth override — only pass it if at least mode is set
@@ -155,6 +148,7 @@ export default function MongoRequestPanel({
             value={bodyRaw}
             onChange={onBodyChange}
             variableSuggestions={variableSuggestions}
+            databases={state.databases}
             resolvedUri={resolvedUri}
             resolvedConnectionId={resolvedConnectionId}
             resolvedDatabase={resolvedDatabase}
@@ -212,34 +206,8 @@ export default function MongoRequestPanel({
             {/* Named connection */}
             {connMode === 'named' && (
               <div>
-                {connLoadError && (
-                  <div className="mb-2 rounded bg-red-900/30 border border-red-700 px-3 py-2 text-xs text-red-300">
-                    {connLoadError}
-                  </div>
-                )}
                 <div className="flex items-center justify-between mb-1">
-                  <div className="text-xs text-slate-400">
-                    Named Connection
-                    {loadingConns && <span className="ml-2 text-slate-600 italic">loading…</span>}
-                  </div>
-                  <button
-                    onClick={() => {
-                      setLoadingConns(true);
-                      setConnLoadError(null);
-                      listMongoConnections()
-                        .then(list => { setSavedConns(list); setConnTabLoaded(true); })
-                        .catch(err => setConnLoadError(err instanceof Error ? err.message : 'Failed to load connections'))
-                        .finally(() => setLoadingConns(false));
-                    }}
-                    disabled={loadingConns}
-                    title="Refresh connections"
-                    className="text-xs px-2 py-0.5 rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed border border-slate-600 text-slate-300 hover:text-slate-100 transition-colors flex items-center gap-1"
-                  >
-                    <svg className={`w-3 h-3 ${loadingConns ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-                    </svg>
-                    Refresh
-                  </button>
+                  <div className="text-xs text-slate-400">Named Connection</div>
                 </div>
                 {savedConns.length > 0 ? (
                   <select
@@ -249,8 +217,8 @@ export default function MongoRequestPanel({
                   >
                     <option value="" disabled>— select a connection —</option>
                     {savedConns.map(c => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}{c.database ? ` (${c.database})` : ''}
+                      <option key={c._id} value={c._id}>
+                        {c.name}
                       </option>
                     ))}
                   </select>
@@ -263,11 +231,9 @@ export default function MongoRequestPanel({
                       variableSuggestions={variableSuggestions ?? []}
                       className="font-mono"
                     />
-                    {!loadingConns && (
-                      <div className="mt-1 text-[10px] text-slate-500">
-                        No saved connections found. Add one via <span className="text-slate-400">Settings → MongoDB Connections</span>.
-                      </div>
-                    )}
+                    <div className="mt-1 text-[10px] text-slate-500">
+                      No saved connections found. Add one via <span className="text-slate-400">Settings → Databases</span>.
+                    </div>
                   </>
                 )}
               </div>

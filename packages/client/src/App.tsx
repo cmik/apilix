@@ -728,6 +728,7 @@ export default function App() {
       collections: state.collections,
       environments: state.environments,
       activeEnvironmentId: state.activeEnvironmentId,
+      databases: state.databases,
       collectionVariables: state.collectionVariables,
       globalVariables: state.globalVariables,
       cookieJar: state.cookieJar,

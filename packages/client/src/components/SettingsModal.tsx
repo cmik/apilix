@@ -3,16 +3,16 @@ import { useApp } from '../store';
 import type { AppSettings, ClientCertificate } from '../types';
 import apilixLogo from '../assets/apilix1.svg';
 import { fetchLatestGitHubVersion, isVersionGreater } from '../utils/versionUtils';
-import MongoConnectionManager from './MongoConnectionManager';
+import DatabasesTab from './DatabasesTab';
 
-export type SettingsTab = 'appearance' | 'requests' | 'proxy' | 'cors' | 'mongodb' | 'shortcuts' | 'about';
+export type SettingsTab = 'appearance' | 'requests' | 'proxy' | 'cors' | 'databases' | 'shortcuts' | 'about';
 
 const TABS: { key: SettingsTab; label: string }[] = [
   { key: 'appearance', label: 'Appearance' },
   { key: 'requests',   label: 'Requests'   },
   { key: 'proxy',      label: 'Proxy'      },
   { key: 'cors',       label: 'CORS'       },
-  { key: 'mongodb',    label: 'MongoDB'    },
+  { key: 'databases',  label: 'Databases'  },
   { key: 'shortcuts',  label: 'Shortcuts'  },
   { key: 'about',      label: 'About'      },
 ];
@@ -777,7 +777,7 @@ export default function SettingsModal({ onClose, initialTab }: Props) {
           {activeTab === 'requests'   && <RequestsTab   s={settings} u={update} />}
           {activeTab === 'proxy'      && <ProxyTab      s={settings} u={update} />}
           {activeTab === 'cors'       && <CorsTab       s={settings} u={update} />}
-          {activeTab === 'mongodb'    && <MongoConnectionManager />}
+          {activeTab === 'databases'  && <DatabasesTab />}
           {activeTab === 'shortcuts'  && <ShortcutsTab />}
           {activeTab === 'about'      && <AboutTab />}
         </div>

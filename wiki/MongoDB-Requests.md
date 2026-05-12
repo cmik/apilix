@@ -172,7 +172,13 @@ The file is AES-256-GCM encrypted. See [Security and Encrypted Data](Security-an
 
 ### Managing Named Connections
 
-Named connections are managed via the server REST API. A UI panel is available in the app Settings modal under **MongoDB Connections**.
+Named connections are managed via the server REST API. A UI panel is available in the app Settings modal under **Databases**.
+
+Validation rules for `POST /api/mongo/connections`:
+
+- `id` is required and must match `^[a-z0-9_-]{1,64}$`.
+- Reserved IDs are rejected (`__proto__`, `prototype`, `constructor`).
+- `uri` is required and must use `mongodb://` or `mongodb+srv://`.
 
 **Create or update a connection:**
 
@@ -214,6 +220,16 @@ curl http://localhost:3001/api/mongo/connections
 curl -X DELETE http://localhost:3001/api/mongo/connections/atlas-dev
 ```
 
+If an ID is malformed, delete and test routes return HTTP 400:
+
+```bash
+curl -X POST http://localhost:3001/api/mongo/connections/bad.id/test
+```
+
+```json
+{ "error": "Invalid connection id" }
+```
+
 ### Authentication Override
 
 The **Auth Override** section in the Connection tab (and the corresponding `auth` block in the serialised JSON) lets you inject credentials at send time without modifying the stored URI. This is useful for:
@@ -248,16 +264,40 @@ The **Query** tab provides inline fetch buttons that list available databases an
 
 **Database fetch button**
 
-Click the list icon beside the **Database** field. Apilix sends the resolved URI to the server, which calls `listDatabases()` on the admin database and returns the names. Click any name in the dropdown to populate the field.
+Click the list icon beside the **Database** field. Apilix sends either a resolved `uri` (direct mode) or a `connectionId` (named mode) to the server, which calls `listDatabases()` on the admin database and returns the names. Click any name in the dropdown to populate the field.
 
 - The button is **disabled** if the resolved URI is empty (e.g. the variable `{{mongoUri}}` is not set in the active environment).
 - The button is **active** when running against a direct URI where the variable is resolved, or when a named connection's URI can be resolved server-side.
 
 **Collection fetch button**
 
-Click the list icon beside the **Collection** field. Requires both a resolved URI and a non-empty database name. Returns all collections in the specified database, sorted alphabetically.
+Click the list icon beside the **Collection** field. Requires a non-empty database name plus either a resolved direct URI or a valid named `connectionId`. Returns all collections in the specified database, sorted alphabetically.
 
-> **Security note:** Both fetch endpoints (`POST /api/mongo/introspect/databases` and `POST /api/mongo/introspect/collections`) require the URI to use the `mongodb://` or `mongodb+srv://` scheme. Other schemes are rejected with HTTP 400.
+**Introspect request forms**
+
+Use either a direct URI:
+
+```json
+{ "uri": "mongodb://localhost:27017" }
+```
+
+or a named connection ID:
+
+```json
+{ "connectionId": "atlas-dev" }
+```
+
+For collections, include `database` in the request body:
+
+```json
+{ "connectionId": "atlas-dev", "database": "mydb" }
+```
+
+> **Security note:** Both fetch endpoints (`POST /api/mongo/introspect/databases` and `POST /api/mongo/introspect/collections`) enforce the following:
+> - Invalid input shape (missing `uri` and `connectionId`, malformed `connectionId`, missing `database`) returns HTTP 400.
+> - Unknown `connectionId` returns HTTP 404.
+> - URI scheme must be `mongodb://` or `mongodb+srv://`; other schemes return HTTP 400.
+> - Upstream connectivity/auth failures from MongoDB return HTTP 502.
 
 ---
 

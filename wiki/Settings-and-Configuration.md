@@ -16,6 +16,7 @@ Open it by clicking the gear icon (⚙️) in the bottom-left corner of the Acti
   - [Client Certificates (mTLS)](#client-certificates-mtls)
   - [Proxy](#proxy)
   - [CORS](#cors)
+  - [Databases](#databases)
   - [About](#about)
   - [Settings Reference](#settings-reference)
 
@@ -128,6 +129,69 @@ This is useful when you run Apilix in web mode (e.g. `http://localhost:3001`) an
 
 ---
 
+## Databases
+
+The **Databases** tab centralizes reusable database connections for script usage (`apx.db.query()` and `apx.db.mongoQuery()`).
+
+Supported connection types:
+
+| Type | Engine |
+|---|---|
+| **MySQL** | `mysql2` pool |
+| **PostgreSQL** | `pg` pool |
+| **MongoDB** | `mongodb` MongoClient |
+
+### Add a connection
+
+1. Open **Settings → Databases**.
+2. Click **Add Connection**.
+3. Fill in common fields:
+  - Connection Name
+  - Type
+  - Connection Timeout (ms)
+  - Query Timeout (ms)
+  - Max Connections
+4. Fill type-specific fields:
+  - **MySQL / PostgreSQL**: Host, Port, Username, Password, Database
+  - **MongoDB**: Connection URI, Auth Mechanism, TLS options
+5. Click **Test Connection**.
+6. Click **Save**.
+
+### Manage connections
+
+The table shows:
+
+| Column | Meaning |
+|---|---|
+| **Name** | Display name |
+| **Type** | Connection type badge |
+| **Host / URI** | SQL host/db or Mongo URI |
+| **Last Tested** | Timestamp of latest test |
+| **Status** | Last test status (`ok` / `failed`) |
+
+Actions per row:
+
+- **Test** — test the saved connection
+- **Edit** — update fields
+- **Delete** — remove the connection
+
+### Variables in connection fields
+
+Connection fields support `{{variable}}` placeholders.
+
+- During request execution, placeholders resolve with normal precedence:
+  - environment
+  - collection variables
+  - globals
+  - runner data row
+- During **Test Connection** from Settings, placeholders resolve from active environment + globals.
+
+### Scope and persistence
+
+Database connections are stored in workspace data (`WorkspaceData.databases`) and move with workspace export/sync.
+
+---
+
 ## About
 
 ![Settings — About tab](images/settings-about.png)
@@ -169,3 +233,5 @@ Click **Check for update** to query the [GitHub Releases API](https://api.github
 | `clientCertificates` | `ClientCertificate[]` | `[]` | Client Certificates tab; per-host mTLS certificate entries |
 
 All settings are stored in the active workspace and persist across sessions.
+
+> Database connection entries are tracked separately from `settings` in workspace data (`databases`), and are managed in the **Databases** tab.

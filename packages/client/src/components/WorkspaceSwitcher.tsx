@@ -214,6 +214,7 @@ function emptyWorkspaceData(): WorkspaceData {
     collections: [],
     environments: [],
     activeEnvironmentId: null,
+    databases: [],
     collectionVariables: {},
     globalVariables: {},
     cookieJar: {},

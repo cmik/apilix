@@ -280,11 +280,24 @@ Named MongoDB connections are stored in an AES-256-GCM encrypted file on disk:
 | Database default | ✅ Yes |
 | Connection list (names only, no URIs) returned by `GET /api/mongo/connections` | ❌ No — only metadata; URIs are never returned over the API |
 
+### Connection API validation
+
+`POST /api/mongo/connections` enforces strict input validation before writing to disk:
+
+- `id` must match `^[a-z0-9_-]{1,64}$`.
+- Reserved IDs (`__proto__`, `prototype`, `constructor`) are rejected.
+- `uri` must use `mongodb://` or `mongodb+srv://`.
+
+`DELETE /api/mongo/connections/:id` and `POST /api/mongo/connections/:id/test` reject malformed IDs with HTTP 400.
+
 ### Introspect endpoints
 
-The `POST /api/mongo/introspect/databases` and `POST /api/mongo/introspect/collections` endpoints accept a MongoDB URI as input and contact the target server on behalf of the Apilix server process. To limit misuse as an SSRF vector, both endpoints enforce:
+The `POST /api/mongo/introspect/databases` and `POST /api/mongo/introspect/collections` endpoints accept either a direct MongoDB URI (`uri`) or a named connection reference (`connectionId`) and contact the target server on behalf of the Apilix server process. To limit misuse as an SSRF vector, both endpoints enforce:
 
 - The URI **must** use the `mongodb://` or `mongodb+srv://` scheme. Requests with any other scheme (e.g. `http://`, `file://`) are rejected with HTTP 400.
+- `connectionId` must match `^[a-z0-9_-]{1,64}$`; malformed IDs are rejected with HTTP 400.
+- Unknown named connection IDs return HTTP 404.
+- Upstream MongoDB connectivity/auth errors are mapped to HTTP 502 (input is valid, upstream failed).
 - These endpoints are intended for use only by the Apilix UI on `localhost`. Do **not** expose the Apilix server port (`3001`) to the public internet.
 
 ### Rotating the encryption key

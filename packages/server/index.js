@@ -7,14 +7,15 @@ const vm = require('vm');
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
-const os = require('os');
 const crypto = require('crypto');
 const {
   executeRequest, setExecutorConfig,
   prepareCollectionRun, executePreparedCollectionRun, InputError,
   refreshOAuth2Token, exchangeAuthorizationCodeForToken,
-  executeMongoTest, executeMongoIntrospect,
+  executeMongoIntrospect,
+  resolveVariables,
 } = require('@apilix/core');
+const dbManager = require('./database-manager');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -70,75 +71,153 @@ app.use(express.urlencoded({ extended: true }));
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
-const MONGO_SETTINGS_PATH = path.join(os.homedir(), '.apilix', 'mongo-connections.enc.json');
+const MONGO_CONNECTION_ID_RE = /^[a-z0-9_-]{1,64}$/i;
+const MONGO_RESERVED_CONNECTION_IDS = new Set(['__proto__', 'prototype', 'constructor']);
 
-function ensureDirFor(filePath) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+function resolveDatabaseConfigTemplates(config, runtimeVars) {
+  if (!config || typeof config !== 'object') return config;
+  const vars = runtimeVars || {};
+  const resolved = { ...config };
+  const STRING_FIELDS = [
+    'host', 'username', 'password', 'database', 'sslCert',
+    'connectionUri', 'sslCertPath', 'sslKeyPath', 'sslCAPath',
+  ];
+
+  STRING_FIELDS.forEach((field) => {
+    if (typeof resolved[field] === 'string') {
+      resolved[field] = resolveVariables(resolved[field], vars);
+    }
+  });
+
+  return resolved;
 }
 
-function settingsKey() {
-  return crypto
-    .createHash('sha256')
-    .update(String(process.env.APILIX_MONGO_SETTINGS_KEY || `${os.hostname()}:apilix:mongo:settings`))
-    .digest();
+function isReservedMongoConnectionId(id) {
+  return MONGO_RESERVED_CONNECTION_IDS.has(String(id || '').toLowerCase());
 }
 
-function encryptJson(payload) {
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', settingsKey(), iv);
-  const plaintext = Buffer.from(JSON.stringify(payload), 'utf8');
-  const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
-  const tag = cipher.getAuthTag();
+function isValidMongoConnectionId(id) {
+  return typeof id === 'string'
+    && MONGO_CONNECTION_ID_RE.test(id)
+    && !isReservedMongoConnectionId(id);
+}
+
+function isIntegerInRange(value, min, max) {
+  return Number.isInteger(value) && value >= min && value <= max;
+}
+
+function validateDatabaseConfig(config, requireId = false) {
+  if (!config || typeof config !== 'object') return 'Invalid database config';
+  if (requireId) {
+    if (typeof config._id !== 'string' || !config._id.trim()) return 'Missing required fields: _id, type';
+  }
+  if (typeof config.type !== 'string') return 'Missing required field: type';
+
+  if (config.connectionTimeout !== undefined && !isIntegerInRange(config.connectionTimeout, 100, 120000)) {
+    return 'connectionTimeout must be an integer between 100 and 120000';
+  }
+  if (config.queryTimeout !== undefined && !isIntegerInRange(config.queryTimeout, 100, 600000)) {
+    return 'queryTimeout must be an integer between 100 and 600000';
+  }
+  if (config.maxConnections !== undefined && !isIntegerInRange(config.maxConnections, 1, 50)) {
+    return 'maxConnections must be an integer between 1 and 50';
+  }
+
+  if (config.type === 'mysql' || config.type === 'postgres') {
+    if (typeof config.host !== 'string' || !config.host.trim()) return 'host is required';
+    if (!isIntegerInRange(config.port, 1, 65535)) return 'port must be an integer between 1 and 65535';
+    if (typeof config.username !== 'string' || !config.username.trim()) return 'username is required';
+    if (typeof config.database !== 'string' || !config.database.trim()) return 'database is required';
+  }
+
+  if (config.type === 'mongodb') {
+    if (typeof config.connectionUri !== 'string' || !config.connectionUri.trim()) {
+      return 'connectionUri is required';
+    }
+    if (!validateMongoUri(config.connectionUri)) {
+      return 'connectionUri must use the mongodb:// or mongodb+srv:// scheme';
+    }
+  }
+
+  return null;
+}
+
+function buildRuntimeVarsFromScriptContext(scriptContext) {
+  if (!scriptContext || typeof scriptContext !== 'object') return {};
   return {
-    v: 1,
-    iv: iv.toString('base64'),
-    tag: tag.toString('base64'),
-    data: encrypted.toString('base64'),
+    ...(scriptContext.environment || {}),
+    ...(scriptContext.collectionVariables || {}),
+    ...(scriptContext.globals || {}),
+    ...(scriptContext.dataRow || {}),
   };
 }
 
-function decryptJson(blob) {
-  if (!blob || typeof blob !== 'object' || !blob.iv || !blob.tag || !blob.data) return { connections: {} };
-  try {
-    const decipher = crypto.createDecipheriv(
-      'aes-256-gcm',
-      settingsKey(),
-      Buffer.from(blob.iv, 'base64'),
-    );
-    decipher.setAuthTag(Buffer.from(blob.tag, 'base64'));
-    const decrypted = Buffer.concat([
-      decipher.update(Buffer.from(blob.data, 'base64')),
-      decipher.final(),
-    ]);
-    return JSON.parse(decrypted.toString('utf8'));
-  } catch {
-    return { connections: {} };
-  }
+function buildDatabasePoolKey(connectionId, resolvedConfig) {
+  const hash = crypto
+    .createHash('sha1')
+    .update(JSON.stringify(resolvedConfig || {}))
+    .digest('hex')
+    .slice(0, 12);
+  return `execute_${connectionId}_${hash}`;
 }
 
-function readMongoSettings() {
-  try {
-    const raw = fs.readFileSync(MONGO_SETTINGS_PATH, 'utf8');
-    const parsed = JSON.parse(raw);
-    const data = decryptJson(parsed);
-    if (!data || typeof data !== 'object') return { connections: {} };
-    return { connections: data.connections && typeof data.connections === 'object' ? data.connections : {} };
-  } catch {
-    return { connections: {} };
-  }
+/**
+ * Create a dbQueryFn for use in script sandbox (apx.db.query).
+ * Opens a pool on first use per connectionId; pools are keyed by _id.
+ * @param {Array} databases  DatabaseConnection[] from the workspace
+ */
+function makeDatabaseQueryFn(databases, defaultRuntimeVars = {}) {
+  const activePoolKeyByConnection = new Map();
+  return async function dbQueryFn(connectionId, sql, params, scriptContext) {
+    const config = databases.find(d => d._id === connectionId);
+    if (!config) throw new Error(`Database connection "${connectionId}" not found`);
+
+    const runtimeVars = {
+      ...defaultRuntimeVars,
+      ...buildRuntimeVarsFromScriptContext(scriptContext),
+    };
+    const resolvedConfig = resolveDatabaseConfigTemplates(config, runtimeVars);
+    const poolKey = buildDatabasePoolKey(connectionId, resolvedConfig);
+    const previousKey = activePoolKeyByConnection.get(connectionId);
+
+    if (previousKey && previousKey !== poolKey) {
+      await dbManager.closePool(previousKey);
+    }
+    activePoolKeyByConnection.set(connectionId, poolKey);
+
+    if (!dbManager.hasPool(poolKey)) {
+      await dbManager.createPool(poolKey, resolvedConfig);
+    }
+    return dbManager.executeQuery(poolKey, sql, params);
+  };
 }
 
-function writeMongoSettings(data) {
-  ensureDirFor(MONGO_SETTINGS_PATH);
-  const payload = encryptJson({ connections: data.connections || {} });
-  fs.writeFileSync(MONGO_SETTINGS_PATH, JSON.stringify(payload, null, 2), 'utf8');
-}
+/**
+ * Create a dbMongoQueryFn for use in script sandbox (apx.db.mongoQuery).
+ */
+function makeDatabaseMongoQueryFn(databases, defaultRuntimeVars = {}) {
+  const activePoolKeyByConnection = new Map();
+  return async function dbMongoQueryFn(connectionId, operation, document, options, scriptContext) {
+    const config = databases.find(d => d._id === connectionId);
+    if (!config) throw new Error(`Database connection "${connectionId}" not found`);
 
-function getMergedMongoConnections(runtimeConnections) {
-  const stored = readMongoSettings().connections;
-  return {
-    ...(stored || {}),
-    ...(runtimeConnections || {}),
+    const runtimeVars = {
+      ...defaultRuntimeVars,
+      ...buildRuntimeVarsFromScriptContext(scriptContext),
+    };
+    const resolvedConfig = resolveDatabaseConfigTemplates(config, runtimeVars);
+    const poolKey = buildDatabasePoolKey(connectionId, resolvedConfig);
+    const previousKey = activePoolKeyByConnection.get(connectionId);
+
+    if (previousKey && previousKey !== poolKey) {
+      await dbManager.closePool(previousKey);
+    }
+    activePoolKeyByConnection.set(connectionId, poolKey);
+
+    if (!dbManager.hasPool(poolKey)) {
+      await dbManager.createPool(poolKey, resolvedConfig);
+    }
+    return dbManager.mongoQuery(poolKey, operation, document, options);
   };
 }
 
@@ -184,65 +263,6 @@ function normalizeClientCertificates(input) {
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', version: '1.0.0' });
-});
-
-app.get('/api/mongo/connections', (_req, res) => {
-  const settings = readMongoSettings();
-  const entries = Object.entries(settings.connections || {}).map(([id, value]) => ({
-    id,
-    name: value.name || id,
-    database: value.database || '',
-    authMode: value.authMode || 'scram',
-    hasUri: !!value.uri,
-  }));
-  res.json({ connections: entries });
-});
-
-app.post('/api/mongo/connections', (req, res) => {
-  const { id, name, uri, database, authMode } = req.body || {};
-  if (!id || typeof id !== 'string') {
-    return res.status(400).json({ error: 'id is required' });
-  }
-  if (!/^[a-z0-9_-]{1,64}$/i.test(id)) {
-    return res.status(400).json({ error: 'id must be 1–64 alphanumeric, dash, or underscore characters' });
-  }
-  if (!uri || typeof uri !== 'string') {
-    return res.status(400).json({ error: 'uri is required' });
-  }
-  const settings = readMongoSettings();
-  settings.connections[id] = {
-    name: typeof name === 'string' && name.trim() ? name.trim() : id,
-    uri,
-    database: typeof database === 'string' ? database : '',
-    authMode: typeof authMode === 'string' ? authMode : 'scram',
-    updatedAt: new Date().toISOString(),
-  };
-  writeMongoSettings(settings);
-  return res.json({ ok: true });
-});
-
-app.delete('/api/mongo/connections/:id', (req, res) => {
-  const id = req.params.id;
-  if (!/^[a-z0-9_-]{1,64}$/i.test(id)) {
-    return res.status(400).json({ error: 'Invalid connection id' });
-  }
-  const settings = readMongoSettings();
-  if (settings.connections[id]) delete settings.connections[id];
-  writeMongoSettings(settings);
-  return res.json({ ok: true });
-});
-
-app.post('/api/mongo/connections/:id/test', async (req, res) => {
-  const id = req.params.id;
-  const settings = readMongoSettings();
-  const conn = settings.connections[id];
-  if (!conn) return res.status(404).json({ error: 'Connection not found' });
-  try {
-    const result = await executeMongoTest(conn.uri, conn.database || 'admin');
-    return res.json(result);
-  } catch (err) {
-    return res.status(200).json({ ok: false, error: err.message });
-  }
 });
 
 // ─── MongoDB introspect ────────────────────────────────────────────────────────
@@ -295,6 +315,7 @@ function applyMongoAuthToUri(uri, auth) {
 function resolveIntrospectUri(input) {
   const uri = typeof input?.uri === 'string' ? input.uri.trim() : '';
   const connectionId = typeof input?.connectionId === 'string' ? input.connectionId.trim() : '';
+  const databases = Array.isArray(input?.databases) ? input.databases : [];
   // auth fields must already have {{variables}} resolved by the client
   const auth = input?.auth && typeof input.auth === 'object' ? input.auth : null;
 
@@ -309,19 +330,17 @@ function resolveIntrospectUri(input) {
     if (!connectionId) {
       return { errorStatus: 400, error: 'uri or connectionId is required' };
     }
-    if (!/^[a-z0-9_-]{1,64}$/i.test(connectionId)) {
+    if (!isValidMongoConnectionId(connectionId)) {
       return { errorStatus: 400, error: 'Invalid connection id' };
     }
-
-    const settings = readMongoSettings();
-    const conn = settings.connections?.[connectionId];
-    if (!conn || typeof conn.uri !== 'string' || !conn.uri.trim()) {
+    const conn = databases.find(d => d && d.type === 'mongodb' && d._id === connectionId);
+    if (!conn || typeof conn.connectionUri !== 'string' || !conn.connectionUri.trim()) {
       return { errorStatus: 404, error: 'Connection not found' };
     }
-    if (!validateMongoUri(conn.uri)) {
+    if (!validateMongoUri(conn.connectionUri)) {
       return { errorStatus: 400, error: 'stored connection URI must use the mongodb:// or mongodb+srv:// scheme' };
     }
-    resolvedUri = conn.uri;
+    resolvedUri = conn.connectionUri;
   }
 
   return { uri: applyMongoAuthToUri(resolvedUri, auth) };
@@ -416,10 +435,17 @@ app.post('/api/settings', (req, res) => {
 
 app.post('/api/execute', async (req, res) => {
   try {
-    const { item, environment, collectionVariables, globals, dataRow, collVars, cookies, collectionItems, mockBase, mongoConnections } = req.body;
+    const { item, environment, collectionVariables, globals, dataRow, collVars, cookies, collectionItems, mockBase, mongoConnections, databases } = req.body;
     if (!item || !item.request) {
       return res.status(400).json({ error: 'Missing item.request in body' });
     }
+    const dbList = Array.isArray(databases) ? databases : [];
+    const runtimeVars = {
+      ...(environment || {}),
+      ...(collectionVariables || {}),
+      ...(globals || {}),
+      ...(dataRow || {}),
+    };
     const result = await executeRequest(item, {
       environment: environment || {},
       collectionVariables: collectionVariables || {},
@@ -429,7 +455,10 @@ app.post('/api/execute', async (req, res) => {
       cookies: cookies || {},
       collectionItems: collectionItems || [],
       mockBase: mockBase || null,
-      mongoConnections: getMergedMongoConnections(mongoConnections || {}),
+      mongoConnections: mongoConnections || {},
+      databases: dbList,
+      dbQueryFn: makeDatabaseQueryFn(dbList, runtimeVars),
+      dbMongoQueryFn: makeDatabaseMongoQueryFn(dbList, runtimeVars),
     });
     return res.json(result);
   } catch (err) {
@@ -535,7 +564,16 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
         csvText = content;
       }
     }
-    payload.mongoConnections = getMergedMongoConnections(payload.mongoConnections || {});
+    payload.mongoConnections = payload.mongoConnections || {};
+    const dbList = Array.isArray(payload.databases) ? payload.databases : [];
+    const runtimeVars = {
+      ...(payload.environment || {}),
+      ...(payload.collectionVariables || {}),
+      ...(payload.globals || {}),
+    };
+    payload.databases = dbList;
+    payload.dbQueryFn = makeDatabaseQueryFn(dbList, runtimeVars);
+    payload.dbMongoQueryFn = makeDatabaseMongoQueryFn(dbList, runtimeVars);
     const prepared = prepareCollectionRun(payload, { csvText, jsonRows });
 
     if (prepared.requests.length === 0) {
@@ -2248,6 +2286,119 @@ app.get('/api/cdp/stream', _cdpLoopbackOnly, (req, res) => {
 // POST /api/cdp/disconnect — close CDP connection
 app.post('/api/cdp/disconnect', _cdpLoopbackOnly, (_req, res) => {
   _cdpDisconnect();
+  res.json({ ok: true });
+});
+
+// ─── Database connection routes ────────────────────────────────────────────────
+
+async function handleDatabaseTestConnection(req, res) {
+  const payload = req.body || {};
+  const { variables, ...rawConfig } = payload;
+  const config = resolveDatabaseConfigTemplates(rawConfig, variables || {});
+  if (!config || !config.type) {
+    return res.status(400).json({ error: 'Missing required field: type' });
+  }
+  const VALID_TYPES = ['mysql', 'postgres', 'mongodb'];
+  if (!VALID_TYPES.includes(config.type)) {
+    return res.status(400).json({ error: `Invalid database type: "${config.type}". Must be one of: ${VALID_TYPES.join(', ')}` });
+  }
+  const validationError = validateDatabaseConfig(config, false);
+  if (validationError) {
+    return res.status(400).json({ error: validationError });
+  }
+  try {
+    const result = await dbManager.testConnection(config);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+}
+
+/**
+ * POST /api/databases/test
+ * Body: DatabaseConnection config (no _id required)
+ * Response: { ok: boolean, error?: string, latencyMs?: number }
+ */
+app.post('/api/databases/test', handleDatabaseTestConnection);
+
+// Backward-compatible alias
+app.post('/api/databases/test-connection', handleDatabaseTestConnection);
+
+/**
+ * POST /api/databases/query
+ * Execute a SQL or MongoDB query against an established pool.
+ * Body (SQL):     { connectionId, sql, params? }
+ * Body (MongoDB): { connectionId, operation, document, options? }
+ * Internal scripting uses injected db function hooks; this endpoint is for
+ * explicit external callers that need direct query execution.
+ */
+app.post('/api/databases/query', async (req, res) => {
+  const { connectionId, sql, params, operation, document: doc, options } = req.body;
+  if (typeof connectionId !== 'string' || !connectionId.trim()) {
+    return res.status(400).json({ error: 'connectionId is required' });
+  }
+
+  try {
+    if (sql !== undefined) {
+      if (typeof sql !== 'string') {
+        return res.status(400).json({ error: 'sql must be a string' });
+      }
+      if (params !== undefined && !Array.isArray(params)) {
+        return res.status(400).json({ error: 'params must be an array when provided' });
+      }
+      const result = await dbManager.executeQuery(connectionId, sql, params || []);
+      res.json({ success: true, ...result });
+    } else if (operation !== undefined) {
+      if (typeof operation !== 'string') {
+        return res.status(400).json({ error: 'operation must be a string' });
+      }
+      if (doc !== undefined && (doc === null || typeof doc !== 'object' || Array.isArray(doc))) {
+        return res.status(400).json({ error: 'document must be an object when provided' });
+      }
+      if (options !== undefined && (options === null || typeof options !== 'object' || Array.isArray(options))) {
+        return res.status(400).json({ error: 'options must be an object when provided' });
+      }
+      const result = await dbManager.mongoQuery(connectionId, operation, doc || {}, options || {});
+      res.json({ success: true, ...result });
+    } else {
+      res.status(400).json({ error: 'Either "sql" or "operation" must be provided' });
+    }
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/databases/pool/open
+ * Open a persistent pool for a connection.
+ * Body: DatabaseConnection config with _id
+ */
+app.post('/api/databases/pool/open', async (req, res) => {
+  const config = req.body;
+  if (!config || !config._id || !config.type) {
+    return res.status(400).json({ error: 'Missing required fields: _id, type' });
+  }
+  const validationError = validateDatabaseConfig(config, true);
+  if (validationError) {
+    return res.status(400).json({ error: validationError });
+  }
+  try {
+    await dbManager.createPool(config._id, config);
+    res.json({ ok: true, poolId: config._id });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/databases/pool/close
+ * Close a persistent pool.
+ * Body: { poolId: string }
+ */
+app.post('/api/databases/pool/close', async (req, res) => {
+  const { poolId } = req.body;
+  if (!poolId) return res.status(400).json({ error: 'poolId is required' });
+  await dbManager.closePool(poolId);
   res.json({ ok: true });
 });
 

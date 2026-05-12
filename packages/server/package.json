@@ -17,11 +17,18 @@
     "axios": "^1.15.2",
     "cors": "^2.8.5",
     "express": "^4.22.1",
-    "multer": "^1.4.5-lts.1",
-    "simple-git": "^3.35.2",
+    "mongodb": "^6.21.0",
+    "multer": "^2.1.1",
+    "mysql2": "^3.22.3",
+    "pg": "^8.20.0",
+    "simple-git": "^3.36.0",
     "ws": "^8.18.0"
   },
   "optionalDependencies": {
     "win-ca": "^3.5.1"
+  },
+  "overrides": {
+    "fast-uri": "^3.1.2",
+    "fast-xml-parser": "^5.7.3"
   }
 }
