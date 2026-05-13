@@ -165,12 +165,54 @@ Useful flags:
 
 - `--csv ./data.csv` to run one iteration per CSV row
 - `--iterations 5` to repeat a run without a CSV file
+- `--databases ./databases.json` to enable SQL and named MongoDB connections in headless CLI runs
 - `--execute-child-requests` to allow `apx.sendRequest()` inside scripts
 - `--no-conditional-execution` to ignore `setNextRequest()` flow overrides
 - `--timeout 10000` to override the default request timeout
 - `--ssl-verification` to enforce TLS verification in CI
 - `--no-follow-redirects` to surface redirect responses instead of following them automatically
 - `--no-color` to output plain text without ANSI color sequences
+
+Database file shape for `--databases`:
+
+```json
+[
+  {
+    "_id": "mysql_local",
+    "name": "Local MySQL",
+    "type": "mysql",
+    "host": "127.0.0.1",
+    "port": 3306,
+    "username": "root",
+    "password": "{{dbPassword}}",
+    "database": "app",
+    "ssl": false,
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  },
+  {
+    "_id": "pg_ci",
+    "name": "CI PostgreSQL",
+    "type": "postgres",
+    "host": "127.0.0.1",
+    "port": 5432,
+    "username": "postgres",
+    "password": "{{pgPassword}}",
+    "database": "app",
+    "ssl": false,
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  },
+  {
+    "_id": "mongo_named",
+    "name": "Named MongoDB",
+    "type": "mongodb",
+    "connectionUri": "mongodb://127.0.0.1:27017",
+    "ssl": false,
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  }
+]
+```
+
+SQL requests require a matching `request.sql.connectionId` in the collection. MongoDB requests can still use direct in-request URIs, or named connections via `request.mongodb.connection.connectionId`.
 
 Exit codes:
 
