@@ -97,6 +97,29 @@ test('executeRequest keeps collection and generic variable mutations out of envi
   });
 });
 
+test('executeRequest returns SQL_ERROR with actionable message when dbQueryFn is missing', async () => {
+  const item = {
+    name: 'SQL without dbQueryFn',
+    request: {
+      requestType: 'sql',
+      method: 'MYSQL',
+      url: { raw: '' },
+      sql: {
+        connectionId: 'db1',
+        query: 'SELECT 1',
+        params: '[]',
+      },
+    },
+  };
+
+  const result = await executeRequest(item, makeContext());
+
+  assert.equal(result.status, 0);
+  assert.equal(result.statusText, 'SQL_ERROR');
+  assert.equal(result.protocol, 'sql');
+  assert.match(result.error || '', /SQL execution is not available in this context/i);
+});
+
 function getEventExec(item, listen) {
   const event = (item.event || []).find(e => e.listen === listen);
   return event ? event.script.exec.join('\n') : null;

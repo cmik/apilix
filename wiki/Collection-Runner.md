@@ -329,6 +329,7 @@ apilix run ./collection.json --reporter junit --out ./artifacts/apilix.junit.xml
 | `--environment <path>` | `-e` | Environment JSON file to apply |
 | `--globals <path>` | | Globals JSON file to apply |
 | `--collection-vars <path>` | | Collection variables JSON file to apply |
+| `--databases <path>` | | Database connections JSON file (array or `{ "databases": [] }`) for SQL and named MongoDB requests |
 | `--csv <path>` | | CSV file for data-driven iterations (one row = one iteration) |
 | `--data <path>` | | JSON array file for data-driven iterations (one object = one iteration) |
 | `--iterations <n>` | | Number of iterations when no data file is supplied (default: `1`) |
@@ -353,6 +354,39 @@ apilix run ./collection.json --reporter junit --out ./artifacts/apilix.junit.xml
 | `--client-cert-host <pattern>` | | Hostname or `*.wildcard` scope for the client certificate (default: `*` — all hosts) |
 | `--no-follow-redirects` | | Return redirect responses instead of following them automatically |
 | `--no-color` | | Disable ANSI colour sequences — useful for plain CI logs |
+
+`--databases` file example:
+
+```json
+[
+  {
+    "_id": "mysql_local",
+    "name": "Local MySQL",
+    "type": "mysql",
+    "host": "127.0.0.1",
+    "port": 3306,
+    "username": "root",
+    "password": "{{dbPassword}}",
+    "database": "app",
+    "ssl": false,
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  },
+  {
+    "_id": "pg_ci",
+    "name": "CI PostgreSQL",
+    "type": "postgres",
+    "host": "127.0.0.1",
+    "port": 5432,
+    "username": "postgres",
+    "password": "{{pgPassword}}",
+    "database": "app",
+    "ssl": false,
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  }
+]
+```
+
+Use IDs from this file in `request.sql.connectionId` (SQL) or `request.mongodb.connection.connectionId` (named MongoDB).
 
 ### TLS and Certificates
 

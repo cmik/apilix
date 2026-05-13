@@ -294,7 +294,7 @@ async function executeSqlOperation(sqlCfg, vars, context, reqMethod) {
   const opStart = Date.now();
   const queryFn = context && context.dbQueryFn;
   if (!queryFn) {
-    throw new Error('SQL execution is not available in this context');
+    throw new Error('SQL execution is not available in this context (missing dbQueryFn; CLI runs require --databases <file>)');
   }
 
   const connectionId = resolveVariables(sqlCfg.connectionId || '', vars);
