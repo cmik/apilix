@@ -12,6 +12,7 @@ A lightweight, open-source alternative API testing tool — available as a **des
 - **Browser Capture** — attach to Chrome via CDP, inspect live network traffic, filter/sort requests, review headers/cookies, and import selected requests into a collection
 - **Send HTTP requests** (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS)
 - **MongoDB requests** — query, insert, update, delete, aggregate, and run scripts against MongoDB databases directly from a collection; mixed HTTP + MongoDB collections supported in the runner
+- **Database panel** — manage reusable connections and run ad-hoc SQL/CQL, MongoDB, Redis, and DynamoDB operations from a dedicated workspace view
 - **Query params, Headers, Body** (raw JSON/text, form-data, url-encoded)
 - **Authentication** (Bearer, Basic, API Key)
 - **Pre-request & Test scripts** (`apx.*` Postman-compatible API, including `apx.sendRequest()`)
@@ -165,7 +166,7 @@ Useful flags:
 
 - `--csv ./data.csv` to run one iteration per CSV row
 - `--iterations 5` to repeat a run without a CSV file
-- `--databases ./databases.json` to enable SQL and named MongoDB connections in headless CLI runs
+- `--databases ./databases.json` to enable SQL-like, named MongoDB, Redis, and DynamoDB connections in headless CLI runs
 - `--execute-child-requests` to allow `apx.sendRequest()` inside scripts
 - `--no-conditional-execution` to ignore `setNextRequest()` flow overrides
 - `--timeout 10000` to override the default request timeout
@@ -208,11 +209,40 @@ Database file shape for `--databases`:
     "connectionUri": "mongodb://127.0.0.1:27017",
     "ssl": false,
     "createdAt": "2026-01-01T00:00:00.000Z"
+  },
+  {
+    "_id": "sqlite_local",
+    "name": "Local SQLite",
+    "type": "sqlite",
+    "filePath": "./data/app.sqlite",
+    "readonly": false,
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  },
+  {
+    "_id": "redis_local",
+    "name": "Local Redis",
+    "type": "redis",
+    "host": "127.0.0.1",
+    "port": 6379,
+    "db": 0,
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  },
+  {
+    "_id": "dynamo_local",
+    "name": "Local DynamoDB",
+    "type": "dynamodb",
+    "region": "us-east-1",
+    "endpoint": "http://127.0.0.1:8000",
+    "createdAt": "2026-01-01T00:00:00.000Z"
   }
 ]
 ```
 
-SQL requests require a matching `request.sql.connectionId` in the collection. MongoDB requests can still use direct in-request URIs, or named connections via `request.mongodb.connection.connectionId`.
+Database request IDs in collections map to these entries as follows:
+
+- Preferred: `request.database.connectionId` for SQL-like, Redis, and DynamoDB request types.
+- Legacy SQL compatibility: `request.sql.connectionId` is still supported.
+- MongoDB named connections: `request.mongodb.connection.connectionId`.
 
 Exit codes:
 
@@ -261,6 +291,12 @@ Output directory:
 
 ## Build Desktop Installers
 
+Always run server dist preparation first. This installs production server dependencies and rebuilds native modules (for example `better-sqlite3`) for the packaged Electron runtime.
+
+```bash
+npm run dist:prepare:server
+```
+
 ```bash
 # All platforms
 ./build-all.sh
@@ -268,6 +304,12 @@ Output directory:
 # Or individually
 npm run dist:mac    # → dist/Apilix-x.x.x.dmg
 npm run dist:win    # → dist/Apilix Setup x.x.x.exe
+```
+
+If you hit an Electron native addon ABI mismatch error (for example `NODE_MODULE_VERSION` mismatch), re-run:
+
+```bash
+npm run dist:prepare:server
 ```
 
 > Cross-platform builds (e.g. `.exe` on macOS) may require Wine or Docker for some targets.
@@ -562,7 +604,7 @@ apx.sendRequest({
   apx.environment.set("token", res.json().token);
 });
 
-// Database queries (connection IDs from Settings -> Databases)
+// Database queries (connection IDs from the Database panel)
 const sqlOut = await apx.db.query("main_mysql", "SELECT id FROM users WHERE id = ?", [123]);
 if (!sqlOut.success) throw new Error(sqlOut.error);
 

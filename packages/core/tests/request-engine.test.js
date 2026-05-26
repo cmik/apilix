@@ -8,24 +8,46 @@ const JSON5 = require('json5');
 // decoupled from the rest of the request-engine module (MongoClient connect,
 // axios, etc.).  The functions only depend on JSON5 which is available here.
 function makeParseJsonObject() {
-  return function parseJsonObject(text, fallback = {}) {
+  return function parseJsonObject(text, fallback = {}, options = {}) {
+    const { strict = false, label = 'JSON object' } = options;
     if (!text || !String(text).trim()) return fallback;
     try {
       const parsed = JSON5.parse(String(text));
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : fallback;
-    } catch {
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed;
+      }
+      if (strict) {
+        throw new Error(`${label} must be an object`);
+      }
+      return fallback;
+    } catch (err) {
+      if (strict) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(`Invalid ${label}: ${message}`);
+      }
       return fallback;
     }
   };
 }
 
 function makeParseJsonArray() {
-  return function parseJsonArray(text, fallback = []) {
+  return function parseJsonArray(text, fallback = [], options = {}) {
+    const { strict = false, label = 'JSON array' } = options;
     if (!text || !String(text).trim()) return fallback;
     try {
       const parsed = JSON5.parse(String(text));
-      return Array.isArray(parsed) ? parsed : fallback;
-    } catch {
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+      if (strict) {
+        throw new Error(`${label} must be an array`);
+      }
+      return fallback;
+    } catch (err) {
+      if (strict) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(`Invalid ${label}: ${message}`);
+      }
       return fallback;
     }
   };
@@ -86,6 +108,20 @@ test('parseJsonObject: completely invalid input returns fallback', () => {
   assert.equal(parsed, fallback);
 });
 
+test('parseJsonObject: strict mode throws on invalid JSON/JSON5', () => {
+  assert.throws(
+    () => parseJsonObject('not valid {{ json', {}, { strict: true, label: 'Mongo find filter JSON/JSON5' }),
+    /Invalid Mongo find filter JSON\/JSON5:/,
+  );
+});
+
+test('parseJsonObject: strict mode throws when parsed value is not an object', () => {
+  assert.throws(
+    () => parseJsonObject('[1, 2, 3]', {}, { strict: true, label: 'Mongo find filter JSON/JSON5' }),
+    /Invalid Mongo find filter JSON\/JSON5: .*must be an object/,
+  );
+});
+
 // ─── parseJsonArray ───────────────────────────────────────────────────────────
 
 test('parseJsonArray: aggregate pipeline with bare $-operator keys parses correctly', () => {
@@ -99,4 +135,18 @@ test('parseJsonArray: invalid literal returns fallback', () => {
   const fallback = [];
   const parsed = parseJsonArray('[{ bad', fallback);
   assert.equal(parsed, fallback);
+});
+
+test('parseJsonArray: strict mode throws on invalid JSON/JSON5', () => {
+  assert.throws(
+    () => parseJsonArray('[{ bad', [], { strict: true, label: 'Mongo aggregate pipeline JSON/JSON5' }),
+    /Invalid Mongo aggregate pipeline JSON\/JSON5:/,
+  );
+});
+
+test('parseJsonArray: strict mode throws when parsed value is not an array', () => {
+  assert.throws(
+    () => parseJsonArray('{ key: "value" }', [], { strict: true, label: 'Mongo aggregate pipeline JSON/JSON5' }),
+    /Invalid Mongo aggregate pipeline JSON\/JSON5: .*must be an array/,
+  );
 });

@@ -16,7 +16,7 @@ Open it by clicking the gear icon (⚙️) in the bottom-left corner of the Acti
   - [Client Certificates (mTLS)](#client-certificates-mtls)
   - [Proxy](#proxy)
   - [CORS](#cors)
-  - [Databases](#databases)
+  - [Database Panel](#database-panel)
   - [About](#about)
   - [Settings Reference](#settings-reference)
 
@@ -129,62 +129,88 @@ This is useful when you run Apilix in web mode (e.g. `http://localhost:3001`) an
 
 ---
 
-## Databases
+## Database Panel
 
-The **Databases** tab centralizes reusable database connections for script usage (`apx.db.query()` and `apx.db.mongoQuery()`).
+Apilix includes a dedicated **Database** view in the Activity Bar for managing reusable connections and running ad-hoc database operations.
+
+Use this panel when you want to:
+
+- maintain connection profiles per workspace
+- verify connectivity with **Test Connection**
+- open a pooled connection and run interactive queries
 
 Supported connection types:
 
-| Type | Engine |
+| Type | Notes |
 |---|---|
-| **MySQL** | `mysql2` pool |
-| **PostgreSQL** | `pg` pool |
-| **MongoDB** | `mongodb` MongoClient |
+| **MySQL** | SQL query mode |
+| **PostgreSQL** | SQL query mode |
+| **SQLite** | SQL query mode (`filePath`) |
+| **Cassandra** | CQL query mode |
+| **Oracle** | SQL query mode (`connectString` or host/port + service/SID) |
+| **MSSQL** | SQL query mode |
+| **MongoDB** | Mongo operation mode |
+| **Redis** | Command mode |
+| **DynamoDB** | Operation mode |
 
 ### Add a connection
 
-1. Open **Settings → Databases**.
-2. Click **Add Connection**.
-3. Fill in common fields:
-  - Connection Name
-  - Type
-  - Connection Timeout (ms)
-  - Query Timeout (ms)
-  - Max Connections
-4. Fill type-specific fields:
-  - **MySQL / PostgreSQL**: Host, Port, Username, Password, Database
-  - **MongoDB**: Connection URI, Auth Mechanism, TLS options
-5. Click **Test Connection**.
-6. Click **Save**.
+1. Open **Activity Bar → Database**.
+2. Go to the **Connections** tab.
+3. Click **Add Connection**.
+4. Fill in common fields:
+   - Connection Name
+   - Type
+   - Connection Timeout (ms)
+   - Query Timeout (ms) where applicable
+   - Max Connections where applicable
+5. Fill type-specific fields for the selected engine.
+6. Click **Test Connection**.
+7. Click **Save**.
 
-### Manage connections
+### Run a query or operation
 
-The table shows:
+1. Open **Activity Bar → Database**.
+2. Go to the **Query** tab.
+3. Select a saved connection.
+4. Enter the command payload for the selected mode:
+   - SQL/CQL text + optional JSON params array
+   - Mongo operation + JSON document/options
+   - Redis command + JSON args array
+   - DynamoDB operation + JSON input object
+5. Click **Run**.
 
-| Column | Meaning |
-|---|---|
-| **Name** | Display name |
-| **Type** | Connection type badge |
-| **Host / URI** | SQL host/db or Mongo URI |
-| **Last Tested** | Timestamp of latest test |
-| **Status** | Last test status (`ok` / `failed`) |
+Examples:
 
-Actions per row:
+```sql
+SELECT id, email FROM users WHERE status = ?
+```
 
-- **Test** — test the saved connection
-- **Edit** — update fields
-- **Delete** — remove the connection
+```json
+{ "collection": "users", "query": { "status": "active" } }
+```
+
+```text
+Command: GET
+Args: ["session:123"]
+```
+
+```json
+{ "TableName": "Users", "Key": { "id": { "S": "123" } } }
+```
 
 ### Variables in connection fields
 
 Connection fields support `{{variable}}` placeholders.
 
-- During request execution, placeholders resolve with normal precedence:
-  - environment
-  - collection variables
-  - globals
-  - runner data row
-- During **Test Connection** from Settings, placeholders resolve from active environment + globals.
+- During query execution, placeholders resolve from active environment variables and globals.
+- During **Test Connection** from the Database panel, placeholders resolve from the same runtime context.
+
+### Validation behavior
+
+- SQLite `filePath` cannot be empty, contain null bytes, or include `..` traversal segments.
+- DynamoDB custom `endpoint` must use `http://` or `https://`.
+- Oracle accepts `connectString` directly, or host/port with one of: `serviceName`, `sid`, or `database`.
 
 ### Scope and persistence
 
@@ -234,4 +260,4 @@ Click **Check for update** to query the [GitHub Releases API](https://api.github
 
 All settings are stored in the active workspace and persist across sessions.
 
-> Database connection entries are tracked separately from `settings` in workspace data (`databases`), and are managed in the **Databases** tab.
+> Database connection entries are tracked separately from `settings` in workspace data (`databases`), and are managed in the **Database** panel.

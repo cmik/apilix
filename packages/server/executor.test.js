@@ -120,6 +120,110 @@ test('executeRequest returns SQL_ERROR with actionable message when dbQueryFn is
   assert.match(result.error || '', /SQL execution is not available in this context/i);
 });
 
+test('executeRequest runs sql-like database requests through dbQueryFn', async () => {
+  const calls = [];
+  const item = {
+    name: 'SQLite query',
+    request: {
+      requestType: 'database',
+      method: 'SQLITE',
+      url: { raw: '' },
+      database: {
+        connectionId: 'sqlite-1',
+        databaseType: 'sqlite',
+        operation: 'query',
+        query: 'SELECT 1 AS ok',
+        params: '[]',
+        resultView: 'table',
+      },
+    },
+  };
+
+  const result = await executeRequest(item, {
+    ...makeContext(),
+    dbQueryFn: async (connectionId, sql, params) => {
+      calls.push({ connectionId, sql, params });
+      return {
+        rows: [{ ok: 1 }],
+        columns: ['ok'],
+        rowCount: 1,
+      };
+    },
+  });
+
+  assert.deepEqual(calls, [{ connectionId: 'sqlite-1', sql: 'SELECT 1 AS ok', params: [] }]);
+  assert.equal(result.protocol, 'sql');
+  assert.equal(result.sqlDialect, 'sqlite');
+  assert.equal(result.statusText, 'SQL_SUCCESS');
+  assert.equal(result.resultTable?.rowCount, 1);
+  assert.match(result.body, /"ok": 1/);
+});
+
+test('executeRequest runs redis database requests through dbRedisCommandFn', async () => {
+  const calls = [];
+  const item = {
+    name: 'Redis command',
+    request: {
+      requestType: 'database',
+      method: 'REDIS',
+      url: { raw: '' },
+      database: {
+        connectionId: 'redis-1',
+        databaseType: 'redis',
+        operation: 'command',
+        command: 'GET',
+        args: '["users:1"]',
+        resultView: 'json',
+      },
+    },
+  };
+
+  const result = await executeRequest(item, {
+    ...makeContext(),
+    dbRedisCommandFn: async (connectionId, command, args) => {
+      calls.push({ connectionId, command, args });
+      return { result: '{"id":1}' };
+    },
+  });
+
+  assert.deepEqual(calls, [{ connectionId: 'redis-1', command: 'GET', args: ['users:1'] }]);
+  assert.equal(result.protocol, 'redis');
+  assert.equal(result.statusText, 'REDIS_SUCCESS');
+  assert.match(result.body, /users|id/);
+});
+
+test('executeRequest runs dynamodb database requests through dbDynamoOperationFn', async () => {
+  const calls = [];
+  const item = {
+    name: 'DynamoDB query',
+    request: {
+      requestType: 'database',
+      method: 'DYNAMODB',
+      url: { raw: '' },
+      database: {
+        connectionId: 'ddb-1',
+        databaseType: 'dynamodb',
+        operation: 'Scan',
+        input: '{"TableName":"Users"}',
+        resultView: 'json',
+      },
+    },
+  };
+
+  const result = await executeRequest(item, {
+    ...makeContext(),
+    dbDynamoOperationFn: async (connectionId, operation, input) => {
+      calls.push({ connectionId, operation, input });
+      return { result: { Count: 2, Items: [{ id: { S: '1' } }] } };
+    },
+  });
+
+  assert.deepEqual(calls, [{ connectionId: 'ddb-1', operation: 'Scan', input: { TableName: 'Users' } }]);
+  assert.equal(result.protocol, 'dynamodb');
+  assert.equal(result.statusText, 'DYNAMODB_SUCCESS');
+  assert.match(result.body, /"Count": 2/);
+});
+
 function getEventExec(item, listen) {
   const event = (item.event || []).find(e => e.listen === listen);
   return event ? event.script.exec.join('\n') : null;

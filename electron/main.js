@@ -60,10 +60,23 @@ function startServer(port) {
 
       const Module = require('module');
       const serverNodeModules = path.join(process.resourcesPath, 'packages', 'server', 'node_modules');
+
+      if (!fs.existsSync(serverNodeModules)) {
+        throw new Error('Server node_modules directory not found: ' + serverNodeModules);
+      }
+
+      // Set NODE_PATH and reinitialise module paths.
       process.env.NODE_PATH = process.env.NODE_PATH
         ? process.env.NODE_PATH + path.delimiter + serverNodeModules
         : serverNodeModules;
-      Module._initPaths();
+      if (typeof Module._initPaths === 'function') {
+        Module._initPaths();
+      }
+      // Belt-and-suspenders: directly push to globalPaths in case _initPaths
+      // is unavailable or doesn't take effect (known issue on some Electron builds).
+      if (Array.isArray(Module.globalPaths) && !Module.globalPaths.includes(serverNodeModules)) {
+        Module.globalPaths.unshift(serverNodeModules);
+      }
 
       const serverPath = path.join(process.resourcesPath, 'packages', 'server', 'index.js');
       require(serverPath);

@@ -9,7 +9,7 @@ The Collection Runner executes multiple requests from a collection in sequence, 
 - [Collection Runner](#collection-runner)
   - [Table of Contents](#table-of-contents)
   - [Overview](#overview)
-  - [MongoDB Requests in the Runner](#mongodb-requests-in-the-runner)
+  - [Database Requests in the Runner](#database-requests-in-the-runner)
   - [Run Collections from the CLI](#run-collections-from-the-cli)
     - [Before You Start](#before-you-start)
     - [Basic Workflow](#basic-workflow)
@@ -79,7 +79,7 @@ Key capabilities:
 | **Performance metrics** | Min/avg/max/P50/P95/P99 response time statistics with a live bar chart |
 | **Live streaming** | Results appear as each request completes — no waiting for the full run |
 | **Child requests** | Requests triggered by `apx.executeRequest()` inside scripts are shown nested under their parent |
-| **MongoDB requests** | MongoDB operations (find, insert, update, delete, aggregate, …) run in the same sequence as HTTP requests; status shown as `MONGO:FIND`, `MONGO_SUCCESS`, etc. |
+| **Database requests** | SQL-like, MongoDB, Redis, and DynamoDB operations run in the same sequence as HTTP requests, with protocol-specific status labels in the results stream. |
 
 ![Collection Runner overview](images/runner-overview.png)
 
@@ -329,7 +329,7 @@ apilix run ./collection.json --reporter junit --out ./artifacts/apilix.junit.xml
 | `--environment <path>` | `-e` | Environment JSON file to apply |
 | `--globals <path>` | | Globals JSON file to apply |
 | `--collection-vars <path>` | | Collection variables JSON file to apply |
-| `--databases <path>` | | Database connections JSON file (array or `{ "databases": [] }`) for SQL and named MongoDB requests |
+| `--databases <path>` | | Database connections JSON file (array or `{ "databases": [] }`) for SQL-like, named MongoDB, Redis, and DynamoDB requests |
 | `--csv <path>` | | CSV file for data-driven iterations (one row = one iteration) |
 | `--data <path>` | | JSON array file for data-driven iterations (one object = one iteration) |
 | `--iterations <n>` | | Number of iterations when no data file is supplied (default: `1`) |
@@ -382,19 +382,44 @@ apilix run ./collection.json --reporter junit --out ./artifacts/apilix.junit.xml
     "database": "app",
     "ssl": false,
     "createdAt": "2026-01-01T00:00:00.000Z"
+  },
+  {
+    "_id": "sqlite_local",
+    "name": "Local SQLite",
+    "type": "sqlite",
+    "filePath": "./data/app.sqlite",
+    "readonly": false,
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  },
+  {
+    "_id": "redis_local",
+    "name": "Local Redis",
+    "type": "redis",
+    "host": "127.0.0.1",
+    "port": 6379,
+    "db": 0,
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  },
+  {
+    "_id": "dynamo_local",
+    "name": "Local DynamoDB",
+    "type": "dynamodb",
+    "region": "us-east-1",
+    "endpoint": "http://127.0.0.1:8000",
+    "createdAt": "2026-01-01T00:00:00.000Z"
   }
 ]
 ```
 
-Use IDs from this file in `request.sql.connectionId` (SQL) or `request.mongodb.connection.connectionId` (named MongoDB).
+Use IDs from this file in:
+
+- `request.database.connectionId` (preferred for SQL-like, Redis, and DynamoDB requests)
+- `request.sql.connectionId` (legacy SQL compatibility)
+- `request.mongodb.connection.connectionId` (named MongoDB)
 
 ### TLS and Certificates
 
 The CLI supports three levels of TLS credential configuration.
-
-#### SSL Verification
-
-By default the CLI does **not** verify TLS certificates — this matches Postman's default and lets you test self-signed services without extra configuration. Pass `--ssl-verification` to enable strict checking.
 
 #### Custom CA Certificate (`--ca-cert`)
 
@@ -411,7 +436,6 @@ npm run cli -- run ./collection.json \
 ```
 
 #### Client Certificate for mTLS (`--client-cert` / `--client-key`)
-
 Use `--client-cert` and `--client-key` together to present a client certificate during the TLS handshake (mutual TLS). Both flags must always be used together — providing only one produces an exit code `2` error.
 
 | Flag | Description |
@@ -441,25 +465,30 @@ Use `--client-cert` and `--client-key` together to present a client certificate 
 
 ---
 
-## MongoDB Requests in the Runner
+## Database Requests in the Runner
 
-Collections can contain any mix of HTTP and MongoDB requests. The runner processes them in sequence — each MongoDB request receives the current environment and collection variable state, and any variables captured by its test script are immediately available to the next request.
+Collections can contain any mix of HTTP and database requests. The runner processes them in sequence, and each database request receives the current environment and collection variable state.
 
-**Status column:** MongoDB requests show their `mongoStatus` label (`MONGO_SUCCESS`, `MONGO_PARTIAL`, or `MONGO_ERROR`) in the status column instead of an HTTP status code. The method column shows the operation name prefixed with `MONGO:` (e.g., `MONGO:FIND`, `MONGO:INSERT`).
+**Status column:** Database requests show protocol-specific status labels instead of HTTP status codes:
 
-**Retry:** The retry setting does **not** apply to MongoDB requests. Each MongoDB request executes exactly once per iteration. This prevents accidental duplicate writes on transient errors.
+- MongoDB: `MONGO_SUCCESS`, `MONGO_PARTIAL`, `MONGO_ERROR`
+- SQL-like: `SQL_SUCCESS`, `SQL_ERROR`
+- Redis: `REDIS_SUCCESS`, `REDIS_ERROR`
+- DynamoDB: `DYNAMODB_SUCCESS`, `DYNAMODB_ERROR`
 
-**Timeout:** The per-run maximum of 1800 seconds applies across all requests (HTTP and MongoDB combined). Long-running aggregate pipelines or slow connections consume from this shared budget.
+**Retry:** The retry setting does **not** apply to database requests. Each database request executes once per iteration to reduce accidental duplicate writes on transient failures.
 
-**Variables propagate normally:** Capture values from MongoDB results in test scripts and use them in subsequent HTTP or MongoDB requests in the same iteration:
+**Timeout:** The per-run maximum of 1800 seconds applies across all requests (HTTP + database combined). Long-running queries and operations consume from this shared budget.
+
+**Variables propagate normally:** Capture values from database results in test scripts and use them in subsequent requests in the same iteration:
 
 ```js
-// In test script of a MONGO:INSERT request
+// In test script of a database request
 const result = apx.response.json();
 apx.environment.set('newUserId', String(result.insertedId));
 ```
 
-See [MongoDB Requests](MongoDB-Requests) for the complete reference.
+See [MongoDB Requests](MongoDB-Requests) for MongoDB-specific behavior.
 
 ---
 
@@ -506,9 +535,6 @@ The **Execution Order** list below the selection tree shows the selected request
 ## Configuring the Run
 
 ### Iterations
-
-Set the number of times the full request sequence runs. Each pass is one **iteration**. Results are grouped by iteration number in the results panel.
-
 > When a data file (CSV or JSON) is uploaded, the iteration count is ignored — the runner runs one iteration per data row instead.
 
 ### Delay

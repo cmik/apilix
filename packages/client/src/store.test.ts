@@ -1131,3 +1131,184 @@ describe('parseEnvironmentFile', () => {
     expect(() => parseEnvironmentFile({ name: 'X' })).toThrow();
   });
 });
+
+// ─── Database Actions ─────────────────────────────────────────────────────────
+
+describe('Database Actions', () => {
+  const mockConn1 = {
+    _id: 'db1',
+    name: 'Main DB',
+    type: 'postgres' as const,
+    createdAt: '2026-01-01T00:00:00Z',
+    host: 'localhost',
+    port: 5432,
+    username: 'user',
+    password: 'pass',
+    database: 'mydb',
+    ssl: false,
+  };
+
+  const mockConn2 = {
+    _id: 'db2',
+    name: 'Backup DB',
+    type: 'mysql' as const,
+    createdAt: '2026-01-01T00:00:00Z',
+    host: 'backup.example.com',
+    port: 3306,
+    username: 'user',
+    password: 'pass',
+    database: 'backupdb',
+    ssl: false,
+  };
+
+  it('SET_ACTIVE_DATABASE sets the active database ID', () => {
+    const state = { ...initialState, databases: [mockConn1, mockConn2] };
+    const action = { type: 'SET_ACTIVE_DATABASE' as const, payload: 'db1' };
+    const result = appReducer(state, action as any);
+    expect(result.activeDatabaseId).toBe('db1');
+  });
+
+  it('SET_ACTIVE_DATABASE can set to null', () => {
+    const state = { ...initialState, activeDatabaseId: 'db1', databases: [mockConn1] };
+    const action = { type: 'SET_ACTIVE_DATABASE' as const, payload: null };
+    const result = appReducer(state, action as any);
+    expect(result.activeDatabaseId).toBeNull();
+  });
+
+  it('ADD_DATABASE auto-selects the first added connection', () => {
+    const state = { ...initialState, databases: [], activeDatabaseId: null };
+    const action = { type: 'ADD_DATABASE' as const, payload: mockConn1 };
+    const result = appReducer(state, action as any);
+    expect(result.databases).toContain(mockConn1);
+    expect(result.activeDatabaseId).toBe('db1');
+  });
+
+  it('ADD_DATABASE preserves active selection if one exists', () => {
+    const state = { ...initialState, databases: [mockConn1], activeDatabaseId: 'db1' };
+    const action = { type: 'ADD_DATABASE' as const, payload: mockConn2 };
+    const result = appReducer(state, action as any);
+    expect(result.databases).toHaveLength(2);
+    expect(result.activeDatabaseId).toBe('db1');
+  });
+
+  it('REMOVE_DATABASE falls back to first remaining when active is deleted', () => {
+    const state = { ...initialState, databases: [mockConn1, mockConn2], activeDatabaseId: 'db1' };
+    const action = { type: 'REMOVE_DATABASE' as const, payload: 'db1' };
+    const result = appReducer(state, action as any);
+    expect(result.databases).toEqual([mockConn2]);
+    expect(result.activeDatabaseId).toBe('db2');
+  });
+
+  it('REMOVE_DATABASE sets activeDatabaseId to null when last connection deleted', () => {
+    const state = { ...initialState, databases: [mockConn1], activeDatabaseId: 'db1' };
+    const action = { type: 'REMOVE_DATABASE' as const, payload: 'db1' };
+    const result = appReducer(state, action as any);
+    expect(result.databases).toHaveLength(0);
+    expect(result.activeDatabaseId).toBeNull();
+  });
+
+  it('REMOVE_DATABASE preserves activeDatabaseId when deleting non-active', () => {
+    const state = { ...initialState, databases: [mockConn1, mockConn2], activeDatabaseId: 'db2' };
+    const action = { type: 'REMOVE_DATABASE' as const, payload: 'db1' };
+    const result = appReducer(state, action as any);
+    expect(result.databases).toEqual([mockConn2]);
+    expect(result.activeDatabaseId).toBe('db2');
+  });
+
+  it('HYDRATE_WORKSPACE restores activeDatabaseId from workspace data', () => {
+    const state = initialState;
+    const action = {
+      type: 'HYDRATE_WORKSPACE' as const,
+      payload: {
+        workspaces: [],
+        activeWorkspaceId: 'w1',
+        ...emptyWorkspaceData,
+        databases: [mockConn1],
+        activeDatabaseId: 'db1',
+      },
+    };
+    const result = appReducer(state, action as any);
+    expect(result.databases).toEqual([mockConn1]);
+    expect(result.activeDatabaseId).toBe('db1');
+  });
+
+  it('HYDRATE_WORKSPACE defaults activeDatabaseId to null if not in data', () => {
+    const state = initialState;
+    const action = {
+      type: 'HYDRATE_WORKSPACE' as const,
+      payload: {
+        workspaces: [],
+        activeWorkspaceId: 'w1',
+        ...emptyWorkspaceData,
+        databases: [mockConn1],
+      },
+    };
+    const result = appReducer(state, action as any);
+    expect(result.activeDatabaseId).toBeNull();
+  });
+
+  it('SWITCH_WORKSPACE restores activeDatabaseId from new workspace', () => {
+    const state = { ...initialState, databases: [mockConn1], activeDatabaseId: 'db1' };
+    const newWorkspace: Workspace = {
+      id: 'w2',
+      name: 'Other Workspace',
+      createdAt: '2026-01-01T00:00:00Z',
+      type: 'local',
+    };
+    const action = {
+      type: 'SWITCH_WORKSPACE' as const,
+      payload: {
+        workspace: newWorkspace,
+        data: { ...emptyWorkspaceData, databases: [mockConn2], activeDatabaseId: 'db2' },
+      },
+    };
+    const result = appReducer(state, action as any);
+    expect(result.databases).toEqual([mockConn2]);
+    expect(result.activeDatabaseId).toBe('db2');
+  });
+
+  it('CREATE_WORKSPACE initializes activeDatabaseId to null', () => {
+    const state = { ...initialState, databases: [mockConn1], activeDatabaseId: 'db1' };
+    const newWorkspace: Workspace = {
+      id: 'w-new',
+      name: 'New',
+      createdAt: '2026-01-01T00:00:00Z',
+      type: 'local',
+    };
+    const action = { type: 'CREATE_WORKSPACE' as const, payload: newWorkspace };
+    const result = appReducer(state, action as any);
+    expect(result.databases).toHaveLength(0);
+    expect(result.activeDatabaseId).toBeNull();
+  });
+
+  it('DUPLICATE_WORKSPACE preserves activeDatabaseId from duplicated workspace', () => {
+    const state = initialState;
+    const newWorkspace: Workspace = {
+      id: 'w-dup',
+      name: 'Duplicate',
+      createdAt: '2026-01-01T00:00:00Z',
+      type: 'local',
+    };
+    const action = {
+      type: 'DUPLICATE_WORKSPACE' as const,
+      payload: {
+        workspace: newWorkspace,
+        data: { ...emptyWorkspaceData, databases: [mockConn1], activeDatabaseId: 'db1' },
+      },
+    };
+    const result = appReducer(state, action as any);
+    expect(result.databases).toEqual([mockConn1]);
+    expect(result.activeDatabaseId).toBe('db1');
+  });
+
+  it('RESTORE_SNAPSHOT restores activeDatabaseId', () => {
+    const state = { ...initialState, databases: [mockConn1], activeDatabaseId: 'db1' };
+    const action = {
+      type: 'RESTORE_SNAPSHOT' as const,
+      payload: { ...emptyWorkspaceData, databases: [mockConn2], activeDatabaseId: 'db2' },
+    };
+    const result = appReducer(state, action as any);
+    expect(result.databases).toEqual([mockConn2]);
+    expect(result.activeDatabaseId).toBe('db2');
+  });
+});
