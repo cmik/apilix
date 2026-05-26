@@ -3,9 +3,7 @@ import { useApp } from '../store';
 import type { AppSettings, ClientCertificate } from '../types';
 import apilixLogo from '../assets/apilix1.svg';
 import { fetchLatestGitHubVersion, isVersionGreater } from '../utils/versionUtils';
-import DatabasesTab from './DatabasesTab';
 
-export type SettingsTab = 'appearance' | 'requests' | 'proxy' | 'cors' | 'databases' | 'shortcuts' | 'about';
 export type SettingsTab = 'appearance' | 'requests' | 'proxy' | 'cors' | 'databases' | 'shortcuts' | 'terminal' | 'about';
 
 const TABS: { key: SettingsTab; label: string }[] = [
@@ -13,7 +11,6 @@ const TABS: { key: SettingsTab; label: string }[] = [
   { key: 'requests',   label: 'Requests'   },
   { key: 'proxy',      label: 'Proxy'      },
   { key: 'cors',       label: 'CORS'       },
-  { key: 'databases',  label: 'Databases'  },
   { key: 'shortcuts',  label: 'Shortcuts'  },
   { key: 'terminal',   label: 'Terminal'   },
   { key: 'about',      label: 'About'      },
@@ -827,7 +824,6 @@ export default function SettingsModal({ onClose, initialTab }: Props) {
           {activeTab === 'requests'   && <RequestsTab   s={settings} u={update} />}
           {activeTab === 'proxy'      && <ProxyTab      s={settings} u={update} />}
           {activeTab === 'cors'       && <CorsTab       s={settings} u={update} />}
-          {activeTab === 'databases'  && <DatabasesTab />}
           {activeTab === 'shortcuts'  && <ShortcutsTab />}
           {activeTab === 'terminal'   && <TerminalTab   s={settings} u={update} />}
           {activeTab === 'about'      && <AboutTab />}

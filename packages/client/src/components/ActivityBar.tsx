@@ -13,11 +13,12 @@ import {
   IconSun,
   IconMoon,
   IconMonitor,
+  IconDatabase,
 } from './Icons';
 
 const WorkspaceManagerModal = lazy(() => import('./WorkspaceManagerModal'));
 
-type View = 'request' | 'runner' | 'environments' | 'mock' | 'capture' | 'history';
+type View = 'request' | 'runner' | 'environments' | 'mock' | 'capture' | 'history' | 'database';
 
 interface NavItem {
   key: View;
@@ -32,6 +33,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'runner',       label: 'Runner',   icon: IconRunner },
   { key: 'mock',         label: 'Mock',     icon: IconMock },
   { key: 'capture',      label: 'Capture',  icon: IconCapture },
+  { key: 'database',     label: 'Database', icon: IconDatabase },
 ];
 
 interface Props {

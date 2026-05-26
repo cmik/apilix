@@ -1,4 +1,15 @@
-import type { DatabaseConnection, DatabaseType, MongoDBConnectionConfig, SQLConnectionConfig } from '../types';
+import type {
+  CassandraConnectionConfig,
+  DatabaseConnection,
+  DatabaseType,
+  DynamoDBConnectionConfig,
+  MongoDBConnectionConfig,
+  MSSQLConnectionConfig,
+  OracleConnectionConfig,
+  RedisConnectionConfig,
+  SQLConnectionConfig,
+  SQLiteConnectionConfig,
+} from '../types';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -8,13 +19,10 @@ export function makeDatabasePreset(type: DatabaseType): DatabaseConnection {
   const base = {
     _id: crypto.randomUUID().replace(/-/g, '').slice(0, 12),
     name: '',
-    type,
     ssl: false,
     connectionTimeout: 10000,
     queryTimeout: 30000,
     createdAt: nowIso(),
-    sslRejectUnauthorized: true,
-    maxConnections: 5,
   };
 
   if (type === 'mongodb') {
@@ -26,8 +34,84 @@ export function makeDatabasePreset(type: DatabaseType): DatabaseConnection {
       sslCAPath: '',
       sslCertPath: '',
       sslKeyPath: '',
+      sslRejectUnauthorized: true,
+      maxConnections: 5,
     };
     return mongo;
+  }
+
+  if (type === 'sqlite') {
+    const sqlite: SQLiteConnectionConfig = {
+      ...base,
+      type: 'sqlite',
+      filePath: './apilix.sqlite',
+      readonly: false,
+    };
+    return sqlite;
+  }
+
+  if (type === 'redis') {
+    const redis: RedisConnectionConfig = {
+      ...base,
+      type: 'redis',
+      host: 'localhost',
+      port: 6379,
+      db: 0,
+      sslRejectUnauthorized: true,
+      maxConnections: 5,
+    };
+    return redis;
+  }
+
+  if (type === 'cassandra') {
+    const cassandra: CassandraConnectionConfig = {
+      ...base,
+      type: 'cassandra',
+      contactPoints: ['localhost'],
+      port: 9042,
+      localDataCenter: 'datacenter1',
+      maxConnections: 5,
+    };
+    return cassandra;
+  }
+
+  if (type === 'dynamodb') {
+    const dynamodb: DynamoDBConnectionConfig = {
+      ...base,
+      type: 'dynamodb',
+      region: 'us-east-1',
+    };
+    return dynamodb;
+  }
+
+  if (type === 'oracle') {
+    const oracle: OracleConnectionConfig = {
+      ...base,
+      type: 'oracle',
+      host: 'localhost',
+      port: 1521,
+      username: '',
+      password: '',
+      serviceName: 'XEPDB1',
+      maxConnections: 5,
+    };
+    return oracle;
+  }
+
+  if (type === 'mssql') {
+    const mssql: MSSQLConnectionConfig = {
+      ...base,
+      type: 'mssql',
+      host: 'localhost',
+      port: 1433,
+      username: '',
+      password: '',
+      database: '',
+      encrypt: true,
+      trustServerCertificate: false,
+      maxConnections: 5,
+    };
+    return mssql;
   }
 
   const sql: SQLConnectionConfig = {

@@ -81,6 +81,9 @@ function resolveDatabaseConfigTemplates(config, runtimeVars) {
   const STRING_FIELDS = [
     'host', 'username', 'password', 'database', 'sslCert',
     'connectionUri', 'sslCertPath', 'sslKeyPath', 'sslCAPath',
+    'filePath', 'endpoint', 'accessKeyId', 'secretAccessKey',
+    'sessionToken', 'serviceName', 'sid', 'connectString',
+    'instanceName', 'keyspace',
   ];
 
   STRING_FIELDS.forEach((field) => {
@@ -88,6 +91,12 @@ function resolveDatabaseConfigTemplates(config, runtimeVars) {
       resolved[field] = resolveVariables(resolved[field], vars);
     }
   });
+
+  if (Array.isArray(resolved.contactPoints)) {
+    resolved.contactPoints = resolved.contactPoints.map((cp) =>
+      (typeof cp === 'string' ? resolveVariables(cp, vars) : cp)
+    );
+  }
 
   return resolved;
 }
@@ -104,6 +113,24 @@ function isValidMongoConnectionId(id) {
 
 function isIntegerInRange(value, min, max) {
   return Number.isInteger(value) && value >= min && value <= max;
+}
+
+function validateHttpEndpoint(url) {
+  if (!url || typeof url !== 'string') return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function validateSqliteFilePath(filePath) {
+  if (typeof filePath !== 'string' || !filePath.trim()) return 'filePath is required';
+  if (/\0/.test(filePath)) return 'filePath cannot contain null bytes';
+  // Avoid parent-directory traversal style inputs for local filesystem access.
+  if (/(^|[\\/])\.\.([\\/]|$)/.test(filePath)) return 'filePath cannot contain parent directory traversal (..)';
+  return null;
 }
 
 function validateDatabaseConfig(config, requireId = false) {
@@ -137,6 +164,76 @@ function validateDatabaseConfig(config, requireId = false) {
     if (!validateMongoUri(config.connectionUri)) {
       return 'connectionUri must use the mongodb:// or mongodb+srv:// scheme';
     }
+  }
+
+  if (config.type === 'sqlite') {
+    return validateSqliteFilePath(config.filePath);
+  }
+
+  if (config.type === 'redis') {
+    if (config.connectionUri !== undefined) {
+      if (typeof config.connectionUri !== 'string' || !config.connectionUri.trim()) {
+        return 'connectionUri must be a non-empty string when provided';
+      }
+    } else {
+      if (typeof config.host !== 'string' || !config.host.trim()) return 'host is required';
+      if (!isIntegerInRange(config.port ?? 6379, 1, 65535)) return 'port must be an integer between 1 and 65535';
+    }
+    if (config.db !== undefined && !isIntegerInRange(config.db, 0, 15)) {
+      return 'db must be an integer between 0 and 15';
+    }
+  }
+
+  if (config.type === 'cassandra') {
+    if (!Array.isArray(config.contactPoints) || config.contactPoints.length === 0) {
+      return 'contactPoints is required and must be a non-empty array';
+    }
+    if (config.contactPoints.some((cp) => typeof cp !== 'string' || !cp.trim())) {
+      return 'contactPoints must contain only non-empty strings';
+    }
+    if (typeof config.localDataCenter !== 'string' || !config.localDataCenter.trim()) {
+      return 'localDataCenter is required';
+    }
+    if (!isIntegerInRange(config.port ?? 9042, 1, 65535)) {
+      return 'port must be an integer between 1 and 65535';
+    }
+  }
+
+  if (config.type === 'dynamodb') {
+    if (typeof config.region !== 'string' || !config.region.trim()) {
+      return 'region is required';
+    }
+    if (config.endpoint !== undefined && !validateHttpEndpoint(config.endpoint)) {
+      return 'endpoint must be a valid http:// or https:// URL when provided';
+    }
+  }
+
+  if (config.type === 'oracle') {
+    if (typeof config.username !== 'string' || !config.username.trim()) return 'username is required';
+    if (typeof config.password !== 'string') return 'password is required';
+    if (config.connectString !== undefined) {
+      if (typeof config.connectString !== 'string' || !config.connectString.trim()) {
+        return 'connectString must be a non-empty string when provided';
+      }
+    } else {
+      if (typeof config.host !== 'string' || !config.host.trim()) return 'host is required';
+      if (!isIntegerInRange(config.port ?? 1521, 1, 65535)) return 'port must be an integer between 1 and 65535';
+      if (
+        (typeof config.serviceName !== 'string' || !config.serviceName.trim())
+        && (typeof config.sid !== 'string' || !config.sid.trim())
+        && (typeof config.database !== 'string' || !config.database.trim())
+      ) {
+        return 'serviceName, sid, or database is required when connectString is not provided';
+      }
+    }
+  }
+
+  if (config.type === 'mssql') {
+    if (typeof config.host !== 'string' || !config.host.trim()) return 'host is required';
+    if (!isIntegerInRange(config.port ?? 1433, 1, 65535)) return 'port must be an integer between 1 and 65535';
+    if (typeof config.username !== 'string' || !config.username.trim()) return 'username is required';
+    if (typeof config.password !== 'string') return 'password is required';
+    if (typeof config.database !== 'string' || !config.database.trim()) return 'database is required';
   }
 
   return null;
@@ -218,6 +315,58 @@ function makeDatabaseMongoQueryFn(databases, defaultRuntimeVars = {}) {
       await dbManager.createPool(poolKey, resolvedConfig);
     }
     return dbManager.mongoQuery(poolKey, operation, document, options);
+  };
+}
+
+function makeDatabaseRedisCommandFn(databases, defaultRuntimeVars = {}) {
+  const activePoolKeyByConnection = new Map();
+  return async function dbRedisCommandFn(connectionId, command, args, scriptContext) {
+    const config = databases.find(d => d._id === connectionId);
+    if (!config) throw new Error(`Database connection "${connectionId}" not found`);
+
+    const runtimeVars = {
+      ...defaultRuntimeVars,
+      ...buildRuntimeVarsFromScriptContext(scriptContext),
+    };
+    const resolvedConfig = resolveDatabaseConfigTemplates(config, runtimeVars);
+    const poolKey = buildDatabasePoolKey(connectionId, resolvedConfig);
+    const previousKey = activePoolKeyByConnection.get(connectionId);
+
+    if (previousKey && previousKey !== poolKey) {
+      await dbManager.closePool(previousKey);
+    }
+    activePoolKeyByConnection.set(connectionId, poolKey);
+
+    if (!dbManager.hasPool(poolKey)) {
+      await dbManager.createPool(poolKey, resolvedConfig);
+    }
+    return dbManager.executeRedisCommand(poolKey, command, args);
+  };
+}
+
+function makeDatabaseDynamoOperationFn(databases, defaultRuntimeVars = {}) {
+  const activePoolKeyByConnection = new Map();
+  return async function dbDynamoOperationFn(connectionId, operation, input, scriptContext) {
+    const config = databases.find(d => d._id === connectionId);
+    if (!config) throw new Error(`Database connection "${connectionId}" not found`);
+
+    const runtimeVars = {
+      ...defaultRuntimeVars,
+      ...buildRuntimeVarsFromScriptContext(scriptContext),
+    };
+    const resolvedConfig = resolveDatabaseConfigTemplates(config, runtimeVars);
+    const poolKey = buildDatabasePoolKey(connectionId, resolvedConfig);
+    const previousKey = activePoolKeyByConnection.get(connectionId);
+
+    if (previousKey && previousKey !== poolKey) {
+      await dbManager.closePool(previousKey);
+    }
+    activePoolKeyByConnection.set(connectionId, poolKey);
+
+    if (!dbManager.hasPool(poolKey)) {
+      await dbManager.createPool(poolKey, resolvedConfig);
+    }
+    return dbManager.executeDynamoOperation(poolKey, operation, input);
   };
 }
 
@@ -459,6 +608,8 @@ app.post('/api/execute', async (req, res) => {
       databases: dbList,
       dbQueryFn: makeDatabaseQueryFn(dbList, runtimeVars),
       dbMongoQueryFn: makeDatabaseMongoQueryFn(dbList, runtimeVars),
+      dbRedisCommandFn: makeDatabaseRedisCommandFn(dbList, runtimeVars),
+      dbDynamoOperationFn: makeDatabaseDynamoOperationFn(dbList, runtimeVars),
     });
     return res.json(result);
   } catch (err) {
@@ -574,6 +725,8 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
     payload.databases = dbList;
     payload.dbQueryFn = makeDatabaseQueryFn(dbList, runtimeVars);
     payload.dbMongoQueryFn = makeDatabaseMongoQueryFn(dbList, runtimeVars);
+    payload.dbRedisCommandFn = makeDatabaseRedisCommandFn(dbList, runtimeVars);
+    payload.dbDynamoOperationFn = makeDatabaseDynamoOperationFn(dbList, runtimeVars);
     const prepared = prepareCollectionRun(payload, { csvText, jsonRows });
 
     if (prepared.requests.length === 0) {
@@ -2298,7 +2451,7 @@ async function handleDatabaseTestConnection(req, res) {
   if (!config || !config.type) {
     return res.status(400).json({ error: 'Missing required field: type' });
   }
-  const VALID_TYPES = ['mysql', 'postgres', 'mongodb'];
+  const VALID_TYPES = ['mysql', 'postgres', 'mongodb', 'sqlite', 'redis', 'cassandra', 'dynamodb', 'oracle', 'mssql'];
   if (!VALID_TYPES.includes(config.type)) {
     return res.status(400).json({ error: `Invalid database type: "${config.type}". Must be one of: ${VALID_TYPES.join(', ')}` });
   }
@@ -2326,14 +2479,27 @@ app.post('/api/databases/test-connection', handleDatabaseTestConnection);
 
 /**
  * POST /api/databases/query
- * Execute a SQL or MongoDB query against an established pool.
+ * Execute a SQL, MongoDB, Redis, or DynamoDB operation against an established pool.
  * Body (SQL):     { connectionId, sql, params? }
- * Body (MongoDB): { connectionId, operation, document, options? }
+ * Body (Redis):   { connectionId, command, args? }
+ * Body (MongoDB): { connectionId, operation, document, collection?, options? }
+ * Body (Dynamo):  { connectionId, operation, input }
  * Internal scripting uses injected db function hooks; this endpoint is for
  * explicit external callers that need direct query execution.
  */
 app.post('/api/databases/query', async (req, res) => {
-  const { connectionId, sql, params, operation, document: doc, options } = req.body;
+  const {
+    connectionId,
+    sql,
+    params,
+    operation,
+    document: doc,
+    collection,
+    options,
+    command,
+    args,
+    input,
+  } = req.body;
   if (typeof connectionId !== 'string' || !connectionId.trim()) {
     return res.status(400).json({ error: 'connectionId is required' });
   }
@@ -2346,22 +2512,71 @@ app.post('/api/databases/query', async (req, res) => {
       if (params !== undefined && !Array.isArray(params)) {
         return res.status(400).json({ error: 'params must be an array when provided' });
       }
+      const poolType = dbManager.getPoolType(connectionId);
+      if (!poolType) {
+        return res.status(400).json({ error: 'No open pool for this connectionId. Call /api/databases/pool/open first.' });
+      }
+      if (!['mysql', 'postgres', 'sqlite', 'cassandra', 'oracle', 'mssql'].includes(poolType)) {
+        return res.status(400).json({ error: 'sql is only supported for SQL-like pools' });
+      }
       const result = await dbManager.executeQuery(connectionId, sql, params || []);
+      res.json({ success: true, ...result });
+    } else if (command !== undefined) {
+      if (typeof command !== 'string') {
+        return res.status(400).json({ error: 'command must be a string' });
+      }
+      if (args !== undefined && !Array.isArray(args)) {
+        return res.status(400).json({ error: 'args must be an array when provided' });
+      }
+      const poolType = dbManager.getPoolType(connectionId);
+      if (!poolType) {
+        return res.status(400).json({ error: 'No open pool for this connectionId. Call /api/databases/pool/open first.' });
+      }
+      if (poolType !== 'redis') {
+        return res.status(400).json({ error: 'command is only supported for redis pools' });
+      }
+      const result = await dbManager.executeRedisCommand(connectionId, command, args || []);
       res.json({ success: true, ...result });
     } else if (operation !== undefined) {
       if (typeof operation !== 'string') {
         return res.status(400).json({ error: 'operation must be a string' });
       }
+      const poolType = dbManager.getPoolType(connectionId);
+      if (!poolType) {
+        return res.status(400).json({ error: 'No open pool for this connectionId. Call /api/databases/pool/open first.' });
+      }
+      if (poolType === 'dynamodb') {
+        const dynInput = input ?? doc;
+        if (dynInput !== undefined && (dynInput === null || typeof dynInput !== 'object' || Array.isArray(dynInput))) {
+          return res.status(400).json({ error: 'input must be an object when provided' });
+        }
+        const result = await dbManager.executeDynamoOperation(connectionId, operation, dynInput || {});
+        return res.json({ success: true, ...result });
+      }
+      if (poolType !== 'mongodb') {
+        return res.status(400).json({ error: 'operation is only supported for mongodb or dynamodb pools' });
+      }
+
       if (doc !== undefined && (doc === null || typeof doc !== 'object' || Array.isArray(doc))) {
         return res.status(400).json({ error: 'document must be an object when provided' });
+      }
+      if (collection !== undefined && (typeof collection !== 'string' || !collection.trim())) {
+        return res.status(400).json({ error: 'collection must be a non-empty string when provided' });
       }
       if (options !== undefined && (options === null || typeof options !== 'object' || Array.isArray(options))) {
         return res.status(400).json({ error: 'options must be an object when provided' });
       }
-      const result = await dbManager.mongoQuery(connectionId, operation, doc || {}, options || {});
+      const mongoDocument = {
+        ...(doc || {}),
+        ...(collection ? { collection: String(collection).trim() } : {}),
+      };
+      if (!mongoDocument.collection && operation !== 'aggregate') {
+        return res.status(400).json({ error: 'collection is required for mongodb operations' });
+      }
+      const result = await dbManager.mongoQuery(connectionId, operation, mongoDocument, options || {});
       res.json({ success: true, ...result });
     } else {
-      res.status(400).json({ error: 'Either "sql" or "operation" must be provided' });
+      res.status(400).json({ error: 'One of "sql", "command", or "operation" must be provided' });
     }
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -2371,12 +2586,18 @@ app.post('/api/databases/query', async (req, res) => {
 /**
  * POST /api/databases/pool/open
  * Open a persistent pool for a connection.
- * Body: DatabaseConnection config with _id
+ * Body: DatabaseConnection config with _id + optional variables for template resolution
  */
 app.post('/api/databases/pool/open', async (req, res) => {
-  const config = req.body;
+  const payload = req.body || {};
+  const { variables, ...rawConfig } = payload;
+  const config = resolveDatabaseConfigTemplates(rawConfig, variables || {});
   if (!config || !config._id || !config.type) {
     return res.status(400).json({ error: 'Missing required fields: _id, type' });
+  }
+  const VALID_TYPES = ['mysql', 'postgres', 'mongodb', 'sqlite', 'redis', 'cassandra', 'dynamodb', 'oracle', 'mssql'];
+  if (!VALID_TYPES.includes(config.type)) {
+    return res.status(400).json({ error: `Invalid database type: "${config.type}". Must be one of: ${VALID_TYPES.join(', ')}` });
   }
   const validationError = validateDatabaseConfig(config, true);
   if (validationError) {
@@ -2410,6 +2631,61 @@ app.use((err, _req, res, _next) => {
   const status = err.status || 500;
   if (status >= 500) console.error('Server error:', err);
   res.status(status).json({ error: err.message || 'Internal server error' });
+});
+
+// ─── Database Operations (MongoDB) ─────────────────────────────────────────────
+
+const mongoEngine = require('@apilix/core/mongo-engine');
+
+app.post('/api/database/test-connection', async (req, res) => {
+  try {
+    const { uri } = req.body || {};
+    if (!uri || typeof uri !== 'string') {
+      return res.status(400).json({ error: 'Connection URI is required' });
+    }
+    const success = await mongoEngine.testConnection(uri);
+    res.json({ success });
+  } catch (err) {
+    console.error('Database test error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/database/collections', async (req, res) => {
+  try {
+    const { uri, database } = req.body || {};
+    if (!uri || typeof uri !== 'string') {
+      return res.status(400).json({ error: 'Connection URI is required' });
+    }
+    if (!database || typeof database !== 'string') {
+      return res.status(400).json({ error: 'Database name is required' });
+    }
+    const collections = await mongoEngine.listCollections(uri, database);
+    res.json({ collections });
+  } catch (err) {
+    console.error('List collections error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/database/query', async (req, res) => {
+  try {
+    const { uri, database, collection, query, limit } = req.body || {};
+    if (!uri || typeof uri !== 'string') {
+      return res.status(400).json({ error: 'Connection URI is required' });
+    }
+    if (!database || typeof database !== 'string') {
+      return res.status(400).json({ error: 'Database name is required' });
+    }
+    if (!collection || typeof collection !== 'string') {
+      return res.status(400).json({ error: 'Collection name is required' });
+    }
+    const result = await mongoEngine.executeQuery(uri, database, collection, query, limit);
+    res.json(result);
+  } catch (err) {
+    console.error('Database query error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── Start ─────────────────────────────────────────────────────────────────────

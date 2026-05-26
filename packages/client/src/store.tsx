@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
 import apilixLogo from './assets/apilix2.svg';
-import type { AppState, AppAction, AppSettings, AppCollection, AppEnvironment, CollectionItem, RequestTab, CookieJar, Cookie, MockRoute, MockCollection, Workspace, WorkspaceData, HistoryRequest, SavedRunnerRun } from './types';
+import type { AppState, AppAction, AppSettings, AppCollection, AppEnvironment, CollectionItem, RequestTab, CookieJar, Cookie, MockRoute, MockCollection, Workspace, WorkspaceData, HistoryRequest, SavedRunnerRun, MongoQueryTab } from './types';
 import * as StorageDriver from './utils/storageDriver';
 import * as SnapshotEngine from './utils/snapshotEngine';
 import { API_BASE } from './api';
@@ -26,7 +26,7 @@ type PersistedTabRef = { id: string; collectionId: string; itemId: string };
 
 type PersistedState = Pick<
   AppState,
-  'collections' | 'environments' | 'activeEnvironmentId' | 'collectionVariables' | 'globalVariables' | 'cookieJar' | 'mockCollections' | 'mockRoutes' | 'mockPort'
+  'collections' | 'environments' | 'activeEnvironmentId' | 'collectionVariables' | 'globalVariables' | 'cookieJar' | 'mockCollections' | 'mockRoutes' | 'mockPort' | 'databases' | 'activeDatabaseId'
 > & {
   tabSession?: { tabs: PersistedTabRef[]; activeTabId: string | null };
 };
@@ -63,6 +63,12 @@ export const initialState: AppState = {
   environments: [],
   activeEnvironmentId: null,
   databases: [],
+  activeDatabaseId: null,
+  mongoQueryState: {
+    collections: [],
+    queryTabs: [],
+    activeQueryTabId: null,
+  },
   consoleLogs: [],
   tabs: [],
   activeTabId: null,
@@ -191,8 +197,14 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'SET_DATABASES':
       return { ...state, databases: action.payload };
 
-    case 'ADD_DATABASE':
-      return { ...state, databases: [...state.databases, action.payload] };
+    case 'ADD_DATABASE': {
+      const newDatabases = [...state.databases, action.payload];
+      return {
+        ...state,
+        databases: newDatabases,
+        activeDatabaseId: state.activeDatabaseId || action.payload._id,
+      };
+    }
 
     case 'UPDATE_DATABASE':
       return {
@@ -202,11 +214,21 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ),
       };
 
-    case 'REMOVE_DATABASE':
+    case 'REMOVE_DATABASE': {
+      const remaining = state.databases.filter(d => d._id !== action.payload);
+      let newActiveId = state.activeDatabaseId;
+      if (state.activeDatabaseId === action.payload) {
+        newActiveId = remaining.length > 0 ? remaining[0]._id : null;
+      }
       return {
         ...state,
-        databases: state.databases.filter(d => d._id !== action.payload),
+        databases: remaining,
+        activeDatabaseId: newActiveId,
       };
+    }
+
+    case 'SET_ACTIVE_DATABASE':
+      return { ...state, activeDatabaseId: action.payload };
 
     case 'SET_DATABASE_TEST_RESULT':
       return {
@@ -222,6 +244,84 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             : d
         ),
       };
+
+    case 'SET_MONGO_COLLECTIONS':
+      return { ...state, mongoQueryState: { ...state.mongoQueryState, collections: action.payload } };
+
+    case 'OPEN_MONGO_QUERY_TAB': {
+      const tab: MongoQueryTab = { ...action.payload, id: generateId() };
+      return {
+        ...state,
+        mongoQueryState: {
+          ...state.mongoQueryState,
+          queryTabs: [...state.mongoQueryState.queryTabs, tab],
+          activeQueryTabId: tab.id,
+        },
+      };
+    }
+
+    case 'CLOSE_MONGO_QUERY_TAB':
+      return {
+        ...state,
+        mongoQueryState: {
+          ...state.mongoQueryState,
+          queryTabs: state.mongoQueryState.queryTabs.filter(t => t.id !== action.payload),
+          activeQueryTabId: state.mongoQueryState.activeQueryTabId === action.payload ? null : state.mongoQueryState.activeQueryTabId,
+        },
+      };
+
+    case 'SET_ACTIVE_MONGO_QUERY_TAB':
+      return { ...state, mongoQueryState: { ...state.mongoQueryState, activeQueryTabId: action.payload } };
+
+    case 'UPDATE_MONGO_QUERY_TAB':
+      return {
+        ...state,
+        mongoQueryState: {
+          ...state.mongoQueryState,
+          queryTabs: state.mongoQueryState.queryTabs.map(t => t.id === action.payload.id ? action.payload : t),
+        },
+      };
+
+    case 'SET_MONGO_QUERY_RESULT': {
+      const { tabId, result } = action.payload;
+      return {
+        ...state,
+        mongoQueryState: {
+          ...state.mongoQueryState,
+          queryTabs: state.mongoQueryState.queryTabs.map(t =>
+            t.id === tabId ? { ...t, result } : t
+          ),
+        },
+      };
+    }
+
+    case 'SET_MONGO_QUERY_LOADING': {
+      const { tabId, loading } = action.payload;
+      return {
+        ...state,
+        mongoQueryState: {
+          ...state.mongoQueryState,
+          queryTabs: state.mongoQueryState.queryTabs.map(t =>
+            t.id === tabId ? { ...t, isLoading: loading } : t
+          ),
+        },
+      };
+    }
+
+    case 'ADD_MONGO_QUERY_HISTORY': {
+      const { tabId, query } = action.payload;
+      return {
+        ...state,
+        mongoQueryState: {
+          ...state.mongoQueryState,
+          queryTabs: state.mongoQueryState.queryTabs.map(t =>
+            t.id === tabId
+              ? { ...t, history: [...t.history, { query, timestamp: Date.now() }] }
+              : t
+          ),
+        },
+      };
+    }
 
     case 'SET_ACTIVE_REQUEST':
       return { ...state, activeRequest: action.payload, response: null };
@@ -575,6 +675,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         environments: data.environments ?? [],
         activeEnvironmentId: data.activeEnvironmentId ?? null,
         databases: data.databases ?? [],
+        activeDatabaseId: data.activeDatabaseId ?? null,
+        mongoQueryState: { collections: [], queryTabs: [], activeQueryTabId: null },
         collectionVariables: data.collectionVariables ?? {},
         globalVariables: data.globalVariables ?? {},
         cookieJar: data.cookieJar ?? {},
@@ -593,6 +695,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         collections: [],
         environments: [],
         activeEnvironmentId: null,
+        databases: [],
+        activeDatabaseId: null,
+        mongoQueryState: { collections: [], queryTabs: [], activeQueryTabId: null },
         collectionVariables: {},
         globalVariables: {},
         cookieJar: {},
@@ -628,6 +733,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         environments: data.environments ?? [],
         activeEnvironmentId: data.activeEnvironmentId ?? null,
         databases: data.databases ?? [],
+        activeDatabaseId: data.activeDatabaseId ?? null,
+        mongoQueryState: { collections: [], queryTabs: [], activeQueryTabId: null },
         collectionVariables: data.collectionVariables ?? {},
         globalVariables: data.globalVariables ?? {},
         cookieJar: data.cookieJar ?? {},
@@ -687,6 +794,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         environments: data.environments ?? [],
         activeEnvironmentId: data.activeEnvironmentId ?? null,
         databases: data.databases ?? [],
+        activeDatabaseId: data.activeDatabaseId ?? null,
+        mongoQueryState: { collections: [], queryTabs: [], activeQueryTabId: null },
         collectionVariables: data.collectionVariables ?? {},
         globalVariables: data.globalVariables ?? {},
         cookieJar: data.cookieJar ?? {},
@@ -731,6 +840,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         environments: data.environments ?? [],
         activeEnvironmentId: data.activeEnvironmentId ?? null,
         databases: data.databases ?? [],
+        activeDatabaseId: data.activeDatabaseId ?? null,
+        mongoQueryState: { collections: [], queryTabs: [], activeQueryTabId: null },
         collectionVariables: data.collectionVariables ?? {},
         globalVariables: data.globalVariables ?? {},
         cookieJar: data.cookieJar ?? {},
@@ -900,7 +1011,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
             collections: legacy.collections ?? [],
             environments: legacy.environments ?? [],
             activeEnvironmentId: legacy.activeEnvironmentId ?? null,
-            databases: [],
+            databases: legacy.databases ?? [],
+            activeDatabaseId: legacy.activeDatabaseId ?? null,
             collectionVariables: legacy.collectionVariables ?? {},
             globalVariables: legacy.globalVariables ?? {},
             cookieJar: legacy.cookieJar ?? {},
@@ -939,6 +1051,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             environments: [],
             activeEnvironmentId: null,
             databases: [],
+            activeDatabaseId: null,
             collectionVariables: {},
             globalVariables: {},
             cookieJar: {},
@@ -978,6 +1091,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         environments: state.environments,
         activeEnvironmentId: state.activeEnvironmentId,
         databases: state.databases,
+        activeDatabaseId: state.activeDatabaseId,
         collectionVariables: state.collectionVariables,
         globalVariables: state.globalVariables,
         cookieJar: state.cookieJar,
@@ -993,7 +1107,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSaveTimer(t);
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.collections, state.environments, state.activeEnvironmentId, state.collectionVariables, state.globalVariables, state.cookieJar, state.mockCollections, state.mockRoutes, state.mockPort, state.workspaces, state.activeWorkspaceId, state.storageReady]);
+  }, [state.collections, state.environments, state.activeEnvironmentId, state.databases, state.activeDatabaseId, state.collectionVariables, state.globalVariables, state.cookieJar, state.mockCollections, state.mockRoutes, state.mockPort, state.workspaces, state.activeWorkspaceId, state.storageReady]);
   const historyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const historyLoadedWorkspaceRef = useRef<string | null>(null);
   const skipNextHistoryPersistRef = useRef(false);

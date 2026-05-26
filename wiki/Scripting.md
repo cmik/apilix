@@ -653,11 +653,13 @@ The callback receives `(err, response)` where `response` exposes the same interf
 
 ## `apx.db` Database API
 
-Use `apx.db` to execute SQL and MongoDB operations against connections configured in **Settings → Databases**.
+Use `apx.db` to execute SQL-like and MongoDB operations against connections configured in **Activity Bar → Database**.
+
+`apx.db` currently exposes two script helpers: `query` (SQL-like backends) and `mongoQuery` (MongoDB). Redis and DynamoDB are available as database request types in collections and the Database panel query editor.
 
 ### `apx.db.query(connectionId, sql, params?)`
 
-Execute a SQL query (MySQL or PostgreSQL).
+Execute a SQL-like query (MySQL, PostgreSQL, SQLite, Cassandra CQL, Oracle, or MSSQL).
 
 ```js
 const out = await apx.db.query(

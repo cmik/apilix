@@ -172,7 +172,7 @@ The file is AES-256-GCM encrypted. See [Security and Encrypted Data](Security-an
 
 ### Managing Named Connections
 
-Named connections are managed via the server REST API. A UI panel is available in the app Settings modal under **Databases**.
+Named connections are managed via the server REST API. A UI panel is available in the app **Activity Bar → Database** view.
 
 Validation rules for `POST /api/mongo/connections`:
 

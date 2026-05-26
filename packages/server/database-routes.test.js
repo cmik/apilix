@@ -31,6 +31,23 @@ function isIntegerInRange(value, min, max) {
   return Number.isInteger(value) && value >= min && value <= max;
 }
 
+function validateHttpEndpoint(url) {
+  if (!url || typeof url !== 'string') return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function validateSqliteFilePath(filePath) {
+  if (typeof filePath !== 'string' || !filePath.trim()) return 'filePath is required';
+  if (/\0/.test(filePath)) return 'filePath cannot contain null bytes';
+  if (/(^|[\\/])\.\.([\\/]|$)/.test(filePath)) return 'filePath cannot contain parent directory traversal (..)';
+  return null;
+}
+
 function validateDatabaseConfig(config, requireId = false) {
   if (!config || typeof config !== 'object') return 'Invalid database config';
   if (requireId) {
@@ -64,6 +81,39 @@ function validateDatabaseConfig(config, requireId = false) {
     }
   }
 
+  if (config.type === 'sqlite') {
+    return validateSqliteFilePath(config.filePath);
+  }
+
+  if (config.type === 'dynamodb') {
+    if (typeof config.region !== 'string' || !config.region.trim()) {
+      return 'region is required';
+    }
+    if (config.endpoint !== undefined && !validateHttpEndpoint(config.endpoint)) {
+      return 'endpoint must be a valid http:// or https:// URL when provided';
+    }
+  }
+
+  if (config.type === 'oracle') {
+    if (typeof config.username !== 'string' || !config.username.trim()) return 'username is required';
+    if (typeof config.password !== 'string') return 'password is required';
+    if (config.connectString !== undefined) {
+      if (typeof config.connectString !== 'string' || !config.connectString.trim()) {
+        return 'connectString must be a non-empty string when provided';
+      }
+    } else {
+      if (typeof config.host !== 'string' || !config.host.trim()) return 'host is required';
+      if (!isIntegerInRange(config.port ?? 1521, 1, 65535)) return 'port must be an integer between 1 and 65535';
+      if (
+        (typeof config.serviceName !== 'string' || !config.serviceName.trim())
+        && (typeof config.sid !== 'string' || !config.sid.trim())
+        && (typeof config.database !== 'string' || !config.database.trim())
+      ) {
+        return 'serviceName, sid, or database is required when connectString is not provided';
+      }
+    }
+  }
+
   return null;
 }
 
@@ -93,6 +143,9 @@ function createTestServer() {
     createPool: [],
     executeQuery: [],
     mongoQuery: [],
+    redisQuery: [],
+    dynamoQuery: [],
+    poolTypes: new Map(),
   };
 
   const dbManager = {
@@ -102,6 +155,7 @@ function createTestServer() {
     },
     async createPool(poolId, config) {
       calls.createPool.push({ poolId, config });
+      calls.poolTypes.set(poolId, config.type);
     },
     async executeQuery(connectionId, sql, params) {
       calls.executeQuery.push({ connectionId, sql, params });
@@ -110,6 +164,17 @@ function createTestServer() {
     async mongoQuery(connectionId, operation, document, options) {
       calls.mongoQuery.push({ connectionId, operation, document, options });
       return { result: [] };
+    },
+    async executeRedisCommand(connectionId, command, args) {
+      calls.redisQuery.push({ connectionId, command, args });
+      return { result: 'OK' };
+    },
+    async executeDynamoOperation(connectionId, operation, input) {
+      calls.dynamoQuery.push({ connectionId, operation, input });
+      return { result: { ok: true } };
+    },
+    getPoolType(connectionId) {
+      return calls.poolTypes.get(connectionId) || null;
     },
   };
 
@@ -138,7 +203,18 @@ function createTestServer() {
     if (req.method === 'POST' && url.pathname === '/api/databases/query') {
       let body;
       try { body = await readBody(req); } catch { return sendJson(res, 400, { error: 'Invalid JSON body' }); }
-      const { connectionId, sql, params, operation, document, options } = body;
+      const {
+        connectionId,
+        sql,
+        params,
+        operation,
+        document,
+        collection,
+        options,
+        command,
+        args,
+        input,
+      } = body;
       if (typeof connectionId !== 'string' || !connectionId.trim()) {
         return sendJson(res, 400, { error: 'connectionId is required' });
       }
@@ -152,19 +228,62 @@ function createTestServer() {
         return sendJson(res, 200, { success: true, ...out });
       }
 
+      if (command !== undefined) {
+        if (typeof command !== 'string') return sendJson(res, 400, { error: 'command must be a string' });
+        if (args !== undefined && !Array.isArray(args)) {
+          return sendJson(res, 400, { error: 'args must be an array when provided' });
+        }
+        const poolType = dbManager.getPoolType(connectionId);
+        if (!poolType) {
+          return sendJson(res, 400, { error: 'No open pool for this connectionId. Call /api/databases/pool/open first.' });
+        }
+        if (poolType !== 'redis') {
+          return sendJson(res, 400, { error: 'command is only supported for redis pools' });
+        }
+        const out = await dbManager.executeRedisCommand(connectionId, command, args || []);
+        return sendJson(res, 200, { success: true, ...out });
+      }
+
       if (operation !== undefined) {
         if (typeof operation !== 'string') return sendJson(res, 400, { error: 'operation must be a string' });
+
+        const poolType = dbManager.getPoolType(connectionId);
+        if (!poolType) {
+          return sendJson(res, 400, { error: 'No open pool for this connectionId. Call /api/databases/pool/open first.' });
+        }
+        if (poolType === 'dynamodb') {
+          const dynInput = input ?? document;
+          if (dynInput !== undefined && (dynInput === null || typeof dynInput !== 'object' || Array.isArray(dynInput))) {
+            return sendJson(res, 400, { error: 'input must be an object when provided' });
+          }
+          const out = await dbManager.executeDynamoOperation(connectionId, operation, dynInput || {});
+          return sendJson(res, 200, { success: true, ...out });
+        }
+        if (poolType !== 'mongodb') {
+          return sendJson(res, 400, { error: 'operation is only supported for mongodb or dynamodb pools' });
+        }
+
         if (document !== undefined && (document === null || typeof document !== 'object' || Array.isArray(document))) {
           return sendJson(res, 400, { error: 'document must be an object when provided' });
+        }
+        if (collection !== undefined && (typeof collection !== 'string' || !collection.trim())) {
+          return sendJson(res, 400, { error: 'collection must be a non-empty string when provided' });
         }
         if (options !== undefined && (options === null || typeof options !== 'object' || Array.isArray(options))) {
           return sendJson(res, 400, { error: 'options must be an object when provided' });
         }
-        const out = await dbManager.mongoQuery(connectionId, operation, document || {}, options || {});
+        const mongoDocument = {
+          ...(document || {}),
+          ...(collection ? { collection: String(collection).trim() } : {}),
+        };
+        if (!mongoDocument.collection && operation !== 'aggregate') {
+          return sendJson(res, 400, { error: 'collection is required for mongodb operations' });
+        }
+        const out = await dbManager.mongoQuery(connectionId, operation, mongoDocument, options || {});
         return sendJson(res, 200, { success: true, ...out });
       }
 
-      return sendJson(res, 400, { error: 'Either "sql" or "operation" must be provided' });
+      return sendJson(res, 400, { error: 'One of "sql", "command", or "operation" must be provided' });
     }
 
     if (req.method === 'POST' && url.pathname === '/api/databases/pool/open') {
@@ -270,6 +389,34 @@ test('databases test route accepts valid SQL config and calls db manager', async
   assert.equal(fixture.calls.testConnection.length > 0, true);
 });
 
+test('databases test route rejects invalid dynamodb endpoint scheme', async () => {
+  const res = await postJson(fixture.server, '/api/databases/test', {
+    type: 'dynamodb',
+    region: 'us-east-1',
+    endpoint: 'ftp://localhost:8000',
+  });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /endpoint must be a valid http:\/\/ or https:\/\//i);
+});
+
+test('databases test route rejects sqlite filePath traversal', async () => {
+  const res = await postJson(fixture.server, '/api/databases/test', {
+    type: 'sqlite',
+    filePath: '../secrets.db',
+  });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /parent directory traversal/i);
+});
+
+test('databases test route rejects sqlite filePath with null bytes', async () => {
+  const res = await postJson(fixture.server, '/api/databases/test', {
+    type: 'sqlite',
+    filePath: 'db\u0000.sqlite',
+  });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /null bytes/i);
+});
+
 test('databases query route validates SQL payload types', async () => {
   const res = await postJson(fixture.server, '/api/databases/query', {
     connectionId: 'db1',
@@ -296,6 +443,138 @@ test('databases query route validates mongo operation payload types', async () =
   });
   assert.equal(res.status, 400);
   assert.match(res.body.error, /operation must be a string/i);
+});
+
+test('databases query route requires an opened pool for operation payloads', async () => {
+  const res = await postJson(fixture.server, '/api/databases/query', {
+    connectionId: 'missing_pool',
+    operation: 'find',
+    document: {},
+  });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /no open pool/i);
+});
+
+test('databases query route validates operation backend type', async () => {
+  await postJson(fixture.server, '/api/databases/pool/open', {
+    _id: 'sql_pool',
+    type: 'mysql',
+    host: 'localhost',
+    port: 3306,
+    username: 'root',
+    database: 'app',
+  });
+
+  const res = await postJson(fixture.server, '/api/databases/query', {
+    connectionId: 'sql_pool',
+    operation: 'find',
+    document: {},
+  });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /only supported for mongodb or dynamodb/i);
+});
+
+test('databases query route forwards top-level mongo collection', async () => {
+  await postJson(fixture.server, '/api/databases/pool/open', {
+    _id: 'mongo_pool',
+    type: 'mongodb',
+    connectionUri: 'mongodb://localhost:27017/app',
+  });
+
+  const res = await postJson(fixture.server, '/api/databases/query', {
+    connectionId: 'mongo_pool',
+    operation: 'find',
+    collection: 'users',
+    document: { query: { active: true } },
+    options: { limit: 5 },
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.success, true);
+  assert.equal(fixture.calls.mongoQuery.length > 0, true);
+  assert.equal(fixture.calls.mongoQuery.at(-1).document.collection, 'users');
+});
+
+test('databases query route rejects mongo operation without collection', async () => {
+  await postJson(fixture.server, '/api/databases/pool/open', {
+    _id: 'mongo_pool_no_collection',
+    type: 'mongodb',
+    connectionUri: 'mongodb://localhost:27017/app',
+  });
+
+  const res = await postJson(fixture.server, '/api/databases/query', {
+    connectionId: 'mongo_pool_no_collection',
+    operation: 'find',
+    document: { query: {} },
+    options: {},
+  });
+
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /collection is required/i);
+});
+
+test('databases query route requires an opened pool for redis command payloads', async () => {
+  const res = await postJson(fixture.server, '/api/databases/query', {
+    connectionId: 'missing_redis_pool',
+    command: 'PING',
+    args: [],
+  });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /no open pool/i);
+});
+
+test('databases query route validates redis command backend type', async () => {
+  await postJson(fixture.server, '/api/databases/pool/open', {
+    _id: 'sql_pool_for_redis_command',
+    type: 'mysql',
+    host: 'localhost',
+    port: 3306,
+    username: 'root',
+    database: 'app',
+  });
+
+  const res = await postJson(fixture.server, '/api/databases/query', {
+    connectionId: 'sql_pool_for_redis_command',
+    command: 'PING',
+    args: [],
+  });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /only supported for redis pools/i);
+});
+
+test('databases query route accepts valid redis command payload', async () => {
+  await postJson(fixture.server, '/api/databases/pool/open', {
+    _id: 'redis_pool',
+    type: 'redis',
+    host: 'localhost',
+    port: 6379,
+  });
+
+  const res = await postJson(fixture.server, '/api/databases/query', {
+    connectionId: 'redis_pool',
+    command: 'PING',
+    args: [],
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.success, true);
+  assert.equal(fixture.calls.redisQuery.length > 0, true);
+});
+
+test('databases query route accepts valid dynamodb operation payload', async () => {
+  await postJson(fixture.server, '/api/databases/pool/open', {
+    _id: 'dynamo_pool',
+    type: 'dynamodb',
+    region: 'us-east-1',
+  });
+
+  const res = await postJson(fixture.server, '/api/databases/query', {
+    connectionId: 'dynamo_pool',
+    operation: 'GetItem',
+    input: { TableName: 'users', Key: { id: { S: '1' } } },
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.success, true);
+  assert.equal(fixture.calls.dynamoQuery.length > 0, true);
 });
 
 test('databases query route accepts valid SQL payload', async () => {
@@ -334,4 +613,18 @@ test('databases pool open accepts valid config and opens pool', async () => {
   assert.equal(res.status, 200);
   assert.equal(res.body.ok, true);
   assert.equal(fixture.calls.createPool.length > 0, true);
+});
+
+test('databases pool open accepts Oracle SID when connectString is not provided', async () => {
+  const res = await postJson(fixture.server, '/api/databases/pool/open', {
+    _id: 'oracle_pool',
+    type: 'oracle',
+    host: 'localhost',
+    port: 1521,
+    username: 'system',
+    password: 'secret',
+    sid: 'ORCLCDB',
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.ok, true);
 });

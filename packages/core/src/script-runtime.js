@@ -716,6 +716,8 @@ function createApx(response, variables, updatedVariables, updatedGlobalMutations
             databases: execContext.databases || [],
             dbQueryFn: (deps && deps.dbQueryFn) || null,
             dbMongoQueryFn: (deps && deps.dbMongoQueryFn) || null,
+            dbRedisCommandFn: (deps && deps.dbRedisCommandFn) || null,
+            dbDynamoOperationFn: (deps && deps.dbDynamoOperationFn) || null,
           });
 
           // Propagate mutations made by the child request (env/collVars/globals set

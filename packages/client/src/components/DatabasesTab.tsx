@@ -17,7 +17,39 @@ function formatLastTest(value?: string): string {
 function typeBadge(type: DatabaseConnection['type']): string {
   if (type === 'mysql') return 'text-sky-300 bg-sky-700/30 border-sky-600/70';
   if (type === 'postgres') return 'text-emerald-300 bg-emerald-700/30 border-emerald-600/70';
+  if (type === 'mongodb') return 'text-green-300 bg-green-700/30 border-green-600/70';
+  if (type === 'sqlite') return 'text-amber-300 bg-amber-700/30 border-amber-600/70';
+  if (type === 'redis') return 'text-red-300 bg-red-700/30 border-red-600/70';
+  if (type === 'cassandra') return 'text-cyan-300 bg-cyan-700/30 border-cyan-600/70';
+  if (type === 'dynamodb') return 'text-lime-300 bg-lime-700/30 border-lime-600/70';
+  if (type === 'oracle') return 'text-yellow-300 bg-yellow-700/30 border-yellow-600/70';
+  if (type === 'mssql') return 'text-indigo-300 bg-indigo-700/30 border-indigo-600/70';
   return 'text-orange-300 bg-orange-700/30 border-orange-600/70';
+}
+
+function connectionPreview(db: DatabaseConnection): string {
+  switch (db.type) {
+    case 'mongodb':
+      return db.connectionUri;
+    case 'sqlite':
+      return db.filePath;
+    case 'redis':
+      if (db.connectionUri) return db.connectionUri;
+      return `${db.host || 'localhost'}:${db.port ?? 6379}/db${db.db ?? 0}`;
+    case 'cassandra':
+      return `${db.contactPoints.join(',')}:${db.port ?? 9042}${db.keyspace ? `/${db.keyspace}` : ''}`;
+    case 'dynamodb':
+      return db.endpoint ? `${db.region} @ ${db.endpoint}` : db.region;
+    case 'oracle':
+      if (db.connectString) return db.connectString;
+      return `${db.host || 'localhost'}:${db.port ?? 1521}/${db.serviceName || db.sid || db.database || ''}`;
+    case 'mssql':
+      return `${db.host}:${db.port ?? 1433}/${db.database}`;
+    case 'mysql':
+      return `${db.host}:${db.port}/${db.database}`;
+    case 'postgres':
+      return `${db.host}:${db.port}/${db.database}`;
+  }
 }
 
 export default function DatabasesTab() {
@@ -181,7 +213,9 @@ export default function DatabasesTab() {
               </tr>
             </thead>
             <tbody>
-              {state.databases.map(db => (
+              {state.databases.map(db => {
+                const preview = connectionPreview(db);
+                return (
                 <tr key={db._id} className="border-t border-slate-800 text-slate-300">
                   <td className="px-3 py-2">{db.name}</td>
                   <td className="px-3 py-2">
@@ -189,8 +223,8 @@ export default function DatabasesTab() {
                       {db.type}
                     </span>
                   </td>
-                  <td className="px-3 py-2 truncate max-w-[250px]" title={db.type === 'mongodb' ? db.connectionUri : `${db.host}:${db.port}/${db.database}`}>
-                    {db.type === 'mongodb' ? db.connectionUri : `${db.host}:${db.port}/${db.database}`}
+                  <td className="px-3 py-2 truncate max-w-[250px]" title={preview}>
+                    {preview}
                   </td>
                   <td className="px-3 py-2 text-slate-400">{formatLastTest(db.lastTestedAt)}</td>
                   <td className="px-3 py-2">
@@ -223,7 +257,8 @@ export default function DatabasesTab() {
                     </button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

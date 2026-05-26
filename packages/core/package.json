@@ -37,6 +37,10 @@
       "require": "./src/variable-resolver.js",
       "default": "./src/variable-resolver.js"
     },
+    "./mongo-engine": {
+      "require": "./src/mongo-engine.js",
+      "default": "./src/mongo-engine.js"
+    },
     "./types": "./types/index.ts"
   },
   "files": [

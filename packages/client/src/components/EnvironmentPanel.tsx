@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useApp, generateId } from '../store';
 import type { AppEnvironment } from '../types';
 import ConfirmModal from './ConfirmModal';
@@ -16,6 +16,17 @@ function EnvEditor({ env, onSave, onCancel }: EnvEditorProps) {
   const [rows, setRows] = useState(
     env.values.map(v => ({ ...v }))
   );
+  const [pendingFocusRow, setPendingFocusRow] = useState<number | null>(null);
+  const keyInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
+
+  useEffect(() => {
+    if (pendingFocusRow === null) return;
+    const input = keyInputRefs.current[pendingFocusRow];
+    if (input) {
+      input.focus();
+      setPendingFocusRow(null);
+    }
+  }, [rows, pendingFocusRow]);
 
   function updateRow(i: number, field: 'key' | 'value', val: string) {
     setRows(r => r.map((row, idx) => (idx === i ? { ...row, [field]: val } : row)));
@@ -27,7 +38,11 @@ function EnvEditor({ env, onSave, onCancel }: EnvEditorProps) {
     setRows(r => r.filter((_, idx) => idx !== i));
   }
   function addRow() {
-    setRows(r => [...r, { key: '', value: '', enabled: true, secret: false }]);
+    setRows(r => {
+      const nextRows = [...r, { key: '', value: '', enabled: true, secret: false }];
+      setPendingFocusRow(nextRows.length - 1);
+      return nextRows;
+    });
   }
   function toggleSecret(i: number) {
     setRows(r => r.map((row, idx) => (idx === i ? { ...row, secret: !row.secret } : row)));
@@ -86,6 +101,9 @@ function EnvEditor({ env, onSave, onCancel }: EnvEditorProps) {
                 </td>
                 <td className="py-1 pr-2">
                   <input
+                    ref={el => {
+                      keyInputRefs.current[i] = el;
+                    }}
                     value={row.key}
                     onChange={e => updateRow(i, 'key', e.target.value)}
                     placeholder="key"
@@ -143,15 +161,19 @@ function EnvEditor({ env, onSave, onCancel }: EnvEditorProps) {
                 </td>
               </tr>
             ))}
+            <tr>
+              <td colSpan={5} className="pt-2">
+                <button
+                  onClick={addRow}
+                  className="text-xs text-slate-500 hover:text-orange-400 transition-colors flex items-center gap-1.5"
+                >
+                  <IconPlus className="w-3.5 h-3.5" />
+                  Add variable
+                </button>
+              </td>
+            </tr>
           </tbody>
         </table>
-        <button
-          onClick={addRow}
-          className="mt-2 text-xs text-slate-500 hover:text-orange-400 transition-colors flex items-center gap-1.5"
-        >
-          <IconPlus className="w-3.5 h-3.5" />
-          Add variable
-        </button>
       </div>
     </div>
   );

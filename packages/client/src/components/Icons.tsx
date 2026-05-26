@@ -335,3 +335,13 @@ export function IconSignal({ className = 'w-4 h-4' }: { className?: string }) {
     </svg>
   );
 }
+
+export function IconDatabase({ className = 'w-5 h-5' }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <ellipse cx="12" cy="5" rx="9" ry="3" strokeLinecap="round" strokeLinejoin="round" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 5v14c0 1.657 4.03 3 9 3s9-1.343 9-3V5" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 12c0 1.657 4.03 3 9 3s9-1.343 9-3" />
+    </svg>
+  );
+}

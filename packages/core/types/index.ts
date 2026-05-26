@@ -112,7 +112,7 @@ export interface MongoRequestConfig {
   auth?: MongoRequestAuth;
 }
 
-export type SqlDialect = 'mysql' | 'postgres';
+export type SqlDialect = 'mysql' | 'postgres' | 'sqlite' | 'cassandra' | 'oracle' | 'mssql';
 
 export interface SqlRequestConfig {
   connectionId: string;
@@ -125,6 +125,39 @@ export interface SqlRequestConfig {
   /** Preferred response rendering mode in UI. */
   resultView?: 'table' | 'json';
 }
+
+export type SqlDatabaseType = 'mysql' | 'postgres' | 'sqlite' | 'cassandra' | 'oracle' | 'mssql';
+
+export interface SqlDatabaseRequestConfig {
+  connectionId: string;
+  databaseType: SqlDatabaseType;
+  operation: 'query';
+  dialect?: SqlDialect;
+  query: string;
+  params?: string;
+  resultView?: 'table' | 'json';
+}
+
+export interface RedisRequestConfig {
+  connectionId: string;
+  databaseType: 'redis';
+  operation: 'command';
+  command: string;
+  args?: string;
+  resultView?: 'json';
+}
+
+export type DynamoRequestOperation = 'GetItem' | 'PutItem' | 'UpdateItem' | 'DeleteItem' | 'Query' | 'Scan';
+
+export interface DynamoRequestConfig {
+  connectionId: string;
+  databaseType: 'dynamodb';
+  operation: DynamoRequestOperation;
+  input: string;
+  resultView?: 'json';
+}
+
+export type DatabaseRequestConfig = SqlDatabaseRequestConfig | RedisRequestConfig | DynamoRequestConfig;
 
 export interface QueryResultTable {
   columns: string[];
@@ -153,7 +186,7 @@ export interface CollectionItem {
 }
 
 export interface CollectionRequest {
-  requestType?: 'http' | 'mongodb' | 'sql';
+  requestType?: 'http' | 'mongodb' | 'sql' | 'database';
   method: string;
   url: CollectionUrl | string;
   header?: CollectionHeader[];
@@ -161,6 +194,7 @@ export interface CollectionRequest {
   auth?: CollectionAuth;
   mongodb?: MongoRequestConfig;
   sql?: SqlRequestConfig;
+  database?: DatabaseRequestConfig;
   description?: string;
 }
 
@@ -263,7 +297,7 @@ export interface NetworkTimings {
 }
 
 export interface RequestResponse {
-  protocol?: 'http' | 'mongodb' | 'sql';
+  protocol?: 'http' | 'mongodb' | 'sql' | 'redis' | 'dynamodb';
   status: number;
   statusText: string;
   mongoStatus?: 'success' | 'partial' | 'error';
@@ -288,7 +322,7 @@ export interface RequestResponse {
 export interface RunnerIterationResult {
   name: string;
   method: string;
-  protocol?: 'http' | 'mongodb' | 'sql';
+  protocol?: 'http' | 'mongodb' | 'sql' | 'redis' | 'dynamodb';
   mongoOperation?: MongoRequestOperation;
   mongoStatus?: 'success' | 'partial' | 'error';
   sqlDialect?: SqlDialect;
@@ -381,7 +415,7 @@ export interface HistoryRequest {
   error: string | null;
 }
 
-export type AppView = 'request' | 'runner' | 'environments' | 'globals' | 'variables' | 'mock' | 'capture' | 'history';
+export type AppView = 'request' | 'runner' | 'environments' | 'globals' | 'variables' | 'mock' | 'capture' | 'history' | 'database';
 
 // ─── Application Settings ─────────────────────────────────────────────────────────────
 
@@ -586,7 +620,16 @@ export interface MockRoute {
 
 // ─── Database Connection Types ──────────────────────────────────────────────
 
-export type DatabaseType = 'mysql' | 'postgres' | 'mongodb';
+export type DatabaseType =
+  | 'mysql'
+  | 'postgres'
+  | 'mongodb'
+  | 'sqlite'
+  | 'redis'
+  | 'cassandra'
+  | 'dynamodb'
+  | 'oracle'
+  | 'mssql';
 
 export interface DatabaseConnectionBase {
   _id: string;           // Unique identifier (generated)
@@ -625,7 +668,114 @@ export interface MongoDBConnectionConfig extends DatabaseConnectionBase {
   maxConnections?: number; // Pool size, default 5
 }
 
-export type DatabaseConnection = SQLConnectionConfig | MongoDBConnectionConfig;
+// ─── MongoDB Query Types ────────────────────────────────────────────────────
+
+export interface MongoCollection {
+  name: string;
+  count?: number;
+  avgSize?: number;
+  totalSize?: number;
+}
+
+export interface MongoQueryResult {
+  success: boolean;
+  data?: unknown;
+  error?: string;
+  executionTime?: number;
+  documentCount?: number;
+}
+
+export interface MongoQueryTab {
+  id: string;
+  connectionId: string;
+  database: string;
+  collection: string;
+  query: string;
+  result: MongoQueryResult | null;
+  isLoading: boolean;
+  history: Array<{ query: string; timestamp: number }>;
+}
+
+export interface MongoQueryState {
+  collections: MongoCollection[];
+  queryTabs: MongoQueryTab[];
+  activeQueryTabId: string | null;
+}
+
+export interface SQLiteConnectionConfig extends DatabaseConnectionBase {
+  type: 'sqlite';
+  filePath: string;
+  readonly?: boolean;
+}
+
+export interface RedisConnectionConfig extends DatabaseConnectionBase {
+  type: 'redis';
+  host?: string;
+  port?: number;
+  username?: string;
+  password?: string;
+  connectionUri?: string;
+  db?: number;
+  sslRejectUnauthorized?: boolean;
+  maxConnections?: number;
+}
+
+export interface CassandraConnectionConfig extends DatabaseConnectionBase {
+  type: 'cassandra';
+  contactPoints: string[];
+  port?: number;
+  localDataCenter: string;
+  keyspace?: string;
+  username?: string;
+  password?: string;
+  sslRejectUnauthorized?: boolean;
+  maxConnections?: number;
+}
+
+export interface DynamoDBConnectionConfig extends DatabaseConnectionBase {
+  type: 'dynamodb';
+  region: string;
+  endpoint?: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  sessionToken?: string;
+}
+
+export interface OracleConnectionConfig extends DatabaseConnectionBase {
+  type: 'oracle';
+  host?: string;
+  port?: number;
+  username: string;
+  password: string;
+  database?: string;
+  serviceName?: string;
+  sid?: string;
+  connectString?: string;
+  maxConnections?: number;
+}
+
+export interface MSSQLConnectionConfig extends DatabaseConnectionBase {
+  type: 'mssql';
+  host: string;
+  port?: number;
+  username: string;
+  password: string;
+  database: string;
+  instanceName?: string;
+  encrypt?: boolean;
+  trustServerCertificate?: boolean;
+  maxConnections?: number;
+}
+
+export type DatabaseConnection =
+  | SQLConnectionConfig
+  | MongoDBConnectionConfig
+  | SQLiteConnectionConfig
+  | RedisConnectionConfig
+  | CassandraConnectionConfig
+  | DynamoDBConnectionConfig
+  | OracleConnectionConfig
+  | MSSQLConnectionConfig;
 
 // ─── Workspace & Collaboration Types ─────────────────────────────────────────
 
@@ -653,6 +803,7 @@ export interface WorkspaceData {
   mockRoutes: MockRoute[];
   mockPort: number;
   databases?: DatabaseConnection[];
+  activeDatabaseId?: string | null;
 }
 
 export type SyncProvider = 's3' | 'git' | 'http' | 'team' | 'minio';
@@ -875,6 +1026,8 @@ export interface AppState {
   environments: AppEnvironment[];
   activeEnvironmentId: string | null;
   databases: DatabaseConnection[];
+  activeDatabaseId: string | null;
+  mongoQueryState: MongoQueryState;
   consoleLogs: ConsoleEntry[];
   tabs: RequestTab[];
   activeTabId: string | null;
@@ -937,7 +1090,16 @@ export type AppAction =
   | { type: 'ADD_DATABASE'; payload: DatabaseConnection }
   | { type: 'UPDATE_DATABASE'; payload: DatabaseConnection }
   | { type: 'REMOVE_DATABASE'; payload: string }
+  | { type: 'SET_ACTIVE_DATABASE'; payload: string | null }
   | { type: 'SET_DATABASE_TEST_RESULT'; payload: { databaseId: string; status: 'success' | 'failed'; error?: string } }
+  | { type: 'SET_MONGO_COLLECTIONS'; payload: MongoCollection[] }
+  | { type: 'OPEN_MONGO_QUERY_TAB'; payload: Omit<MongoQueryTab, 'id'> }
+  | { type: 'CLOSE_MONGO_QUERY_TAB'; payload: string }
+  | { type: 'SET_ACTIVE_MONGO_QUERY_TAB'; payload: string }
+  | { type: 'UPDATE_MONGO_QUERY_TAB'; payload: MongoQueryTab }
+  | { type: 'SET_MONGO_QUERY_RESULT'; payload: { tabId: string; result: MongoQueryResult } }
+  | { type: 'SET_MONGO_QUERY_LOADING'; payload: { tabId: string; loading: boolean } }
+  | { type: 'ADD_MONGO_QUERY_HISTORY'; payload: { tabId: string; query: string } }
   | { type: 'SET_ACTIVE_REQUEST'; payload: ActiveRequest | null }
   | { type: 'SET_RESPONSE'; payload: RequestResponse | null }
   | { type: 'SET_LOADING'; payload: boolean }

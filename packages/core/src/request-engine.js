@@ -15,24 +15,166 @@ const MAX_RESULT_BYTES = 10 * 1024 * 1024;
 const MAX_RUNTIME_MS = 1800 * 1000;
 const DEFAULT_MONGO_LIMIT = 50;
 
-function parseJsonObject(text, fallback = {}) {
+function parseJsonObject(text, fallback = {}, options = {}) {
+  const { strict = false, label = 'JSON object' } = options;
   if (!text || !String(text).trim()) return fallback;
   try {
     const parsed = JSON5.parse(String(text));
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : fallback;
-  } catch {
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed;
+    }
+    if (strict) {
+      throw new Error(`${label} must be an object`);
+    }
+    return fallback;
+  } catch (err) {
+    if (strict) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Invalid ${label}: ${message}`);
+    }
     return fallback;
   }
 }
 
-function parseJsonArray(text, fallback = []) {
+function parseJsonArray(text, fallback = [], options = {}) {
+  const { strict = false, label = 'JSON array' } = options;
   if (!text || !String(text).trim()) return fallback;
   try {
     const parsed = JSON5.parse(String(text));
-    return Array.isArray(parsed) ? parsed : fallback;
-  } catch {
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+    if (strict) {
+      throw new Error(`${label} must be an array`);
+    }
+    return fallback;
+  } catch (err) {
+    if (strict) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Invalid ${label}: ${message}`);
+    }
     return fallback;
   }
+}
+
+function parseMongoOperationInput(mongoCfg, vars, maxTimeMS) {
+  const operation = mongoCfg.operation || 'find';
+  const collectionName = resolveVariables(mongoCfg.collection || '', vars);
+  const limit = Math.max(1, Math.min(5000, parseInt(mongoCfg.limit, 10) || DEFAULT_MONGO_LIMIT));
+
+  if (operation === 'script') {
+    return { operation, collectionName, limit };
+  }
+
+  if (!collectionName) {
+    throw new Error('MongoDB collection is required for this operation');
+  }
+
+  if (operation === 'find') {
+    return {
+      operation,
+      collectionName,
+      limit,
+      find: {
+        filter: parseJsonObject(resolveVariables(mongoCfg.filter || '{}', vars), {}, {
+          strict: true,
+          label: 'Mongo find filter JSON/JSON5',
+        }),
+        projection: parseJsonObject(resolveVariables(mongoCfg.projection || '{}', vars), undefined, {
+          strict: true,
+          label: 'Mongo find projection JSON/JSON5',
+        }),
+        sort: parseJsonObject(resolveVariables(mongoCfg.sort || '{}', vars), undefined, {
+          strict: true,
+          label: 'Mongo find sort JSON/JSON5',
+        }),
+        skip: Math.max(0, parseInt(mongoCfg.skip, 10) || 0),
+      },
+    };
+  }
+
+  if (operation === 'aggregate') {
+    return {
+      operation,
+      collectionName,
+      limit,
+      aggregate: {
+        pipeline: parseJsonArray(resolveVariables(mongoCfg.pipeline || '[]', vars), [], {
+          strict: true,
+          label: 'Mongo aggregate pipeline JSON/JSON5',
+        }),
+      },
+    };
+  }
+
+  if (operation === 'insert') {
+    const docs = parseJsonArray(resolveVariables(mongoCfg.documents || '[]', vars), [], {
+      strict: true,
+      label: 'Mongo insert documents JSON/JSON5',
+    });
+    if (docs.length === 0) throw new Error('Mongo insert requires at least one document');
+    return { operation, collectionName, limit, insert: { docs } };
+  }
+
+  if (operation === 'update') {
+    const filter = parseJsonObject(resolveVariables(mongoCfg.filter || '{}', vars), {}, {
+      strict: true,
+      label: 'Mongo update filter JSON/JSON5',
+    });
+    const update = parseJsonObject(resolveVariables(mongoCfg.update || '{}', vars), {}, {
+      strict: true,
+      label: 'Mongo update document JSON/JSON5',
+    });
+    if (!update || Object.keys(update).length === 0) throw new Error('Mongo update requires an update document');
+    return { operation, collectionName, limit, update: { filter, update } };
+  }
+
+  if (operation === 'delete') {
+    return {
+      operation,
+      collectionName,
+      limit,
+      delete: {
+        filter: parseJsonObject(resolveVariables(mongoCfg.filter || '{}', vars), {}, {
+          strict: true,
+          label: 'Mongo delete filter JSON/JSON5',
+        }),
+      },
+    };
+  }
+
+  if (operation === 'count') {
+    return {
+      operation,
+      collectionName,
+      limit,
+      count: {
+        filter: parseJsonObject(resolveVariables(mongoCfg.filter || '{}', vars), {}, {
+          strict: true,
+          label: 'Mongo count filter JSON/JSON5',
+        }),
+      },
+    };
+  }
+
+  if (operation === 'distinct') {
+    const field = resolveVariables(mongoCfg.distinctField || '', vars);
+    if (!field) throw new Error('Mongo distinct requires distinctField');
+    return {
+      operation,
+      collectionName,
+      limit,
+      distinct: {
+        field,
+        filter: parseJsonObject(resolveVariables(mongoCfg.filter || '{}', vars), {}, {
+          strict: true,
+          label: 'Mongo distinct filter JSON/JSON5',
+        }),
+      },
+    };
+  }
+
+  throw new Error(`Unsupported MongoDB operation "${operation}"`);
 }
 
 function applyMongoAuthOptions(uri, auth) {
@@ -122,6 +264,8 @@ async function executeMongoOperation(mongoCfg, vars, context) {
   const opStart = Date.now();
   const { uri, database } = extractMongoConnection(mongoCfg, vars, context);
   const maxTimeMS = Math.max(1, Math.min(MAX_RUNTIME_MS, parseInt(mongoCfg.maxTimeMS, 10) || MAX_RUNTIME_MS));
+  const mongoInput = parseMongoOperationInput(mongoCfg, vars, maxTimeMS);
+  const operation = mongoInput.operation;
   // Declared outside execPromise so the timeout handler can force-close it
   // if the race resolves before the operation completes.
   let client;
@@ -142,8 +286,7 @@ async function executeMongoOperation(mongoCfg, vars, context) {
     });
     await client.connect();
     const db = client.db(database);
-    const collectionName = resolveVariables(mongoCfg.collection || '', vars);
-    const operation = mongoCfg.operation || 'find';
+    const collectionName = mongoInput.collectionName;
     const useTransaction = mongoCfg.useTransaction === true;
     const session = useTransaction ? client.startSession() : null;
 
@@ -194,51 +337,42 @@ async function executeMongoOperation(mongoCfg, vars, context) {
           return ret === undefined ? sandbox.result : ret;
         }
 
-        if (!collectionName) throw new Error('MongoDB collection is required for this operation');
         const collection = db.collection(collectionName);
-        const limit = Math.max(1, Math.min(5000, parseInt(mongoCfg.limit, 10) || DEFAULT_MONGO_LIMIT));
+        const limit = mongoInput.limit;
         if (operation === 'find') {
-          const filter = parseJsonObject(resolveVariables(mongoCfg.filter || '{}', vars), {});
-          const projection = parseJsonObject(resolveVariables(mongoCfg.projection || '{}', vars), undefined);
-          const sort = parseJsonObject(resolveVariables(mongoCfg.sort || '{}', vars), undefined);
-          const skip = Math.max(0, parseInt(mongoCfg.skip, 10) || 0);
+          const { filter, projection, sort, skip } = mongoInput.find;
           const cursor = collection.find(filter, { projection, sort, skip, limit, maxTimeMS, session: session || undefined });
           return await cursor.toArray();
         }
         if (operation === 'aggregate') {
-          const pipeline = parseJsonArray(resolveVariables(mongoCfg.pipeline || '[]', vars), []);
+          const { pipeline } = mongoInput.aggregate;
           const cursor = collection.aggregate(pipeline, { maxTimeMS, session: session || undefined });
           return await cursor.limit(limit).toArray();
         }
         if (operation === 'insert') {
-          const docs = parseJsonArray(resolveVariables(mongoCfg.documents || '[]', vars), []);
-          if (docs.length === 0) throw new Error('Mongo insert requires at least one document');
+          const { docs } = mongoInput.insert;
           return docs.length === 1
             ? await collection.insertOne(docs[0], { session: session || undefined })
             : await collection.insertMany(docs, { session: session || undefined });
         }
         if (operation === 'update') {
-          const filter = parseJsonObject(resolveVariables(mongoCfg.filter || '{}', vars), {});
-          const update = parseJsonObject(resolveVariables(mongoCfg.update || '{}', vars), {});
-          if (!update || Object.keys(update).length === 0) throw new Error('Mongo update requires an update document');
+          const { filter, update } = mongoInput.update;
           return mongoCfg.updateMode === 'many'
             ? await collection.updateMany(filter, update, { session: session || undefined })
             : await collection.updateOne(filter, update, { session: session || undefined });
         }
         if (operation === 'delete') {
-          const filter = parseJsonObject(resolveVariables(mongoCfg.filter || '{}', vars), {});
+          const { filter } = mongoInput.delete;
           return mongoCfg.deleteMode === 'many'
             ? await collection.deleteMany(filter, { session: session || undefined })
             : await collection.deleteOne(filter, { session: session || undefined });
         }
         if (operation === 'count') {
-          const filter = parseJsonObject(resolveVariables(mongoCfg.filter || '{}', vars), {});
+          const { filter } = mongoInput.count;
           return { count: await collection.countDocuments(filter, { maxTimeMS, session: session || undefined }) };
         }
         if (operation === 'distinct') {
-          const filter = parseJsonObject(resolveVariables(mongoCfg.filter || '{}', vars), {});
-          const field = resolveVariables(mongoCfg.distinctField || '', vars);
-          if (!field) throw new Error('Mongo distinct requires distinctField');
+          const { filter, field } = mongoInput.distinct;
           return await collection.distinct(field, filter, { maxTimeMS, session: session || undefined });
         }
         throw new Error(`Unsupported MongoDB operation "${operation}"`);
@@ -280,67 +414,225 @@ async function executeMongoOperation(mongoCfg, vars, context) {
   }
 }
 
+const SQL_DATABASE_TYPES = new Set(['mysql', 'postgres', 'sqlite', 'cassandra', 'oracle', 'mssql']);
+
+const DATABASE_METHOD_TO_TYPE = {
+  MYSQL: 'mysql',
+  POSTGRESQL: 'postgres',
+  SQLITE: 'sqlite',
+  CASSANDRA: 'cassandra',
+  ORACLE: 'oracle',
+  MSSQL: 'mssql',
+  REDIS: 'redis',
+  DYNAMODB: 'dynamodb',
+};
+
 function inferSqlDialect(sqlCfg, reqMethod, context) {
-  const methodDialect = reqMethod === 'POSTGRESQL' ? 'postgres' : reqMethod === 'MYSQL' ? 'mysql' : null;
-  if (sqlCfg && (sqlCfg.dialect === 'mysql' || sqlCfg.dialect === 'postgres')) return sqlCfg.dialect;
-  if (methodDialect) return methodDialect;
+  const methodDialect = DATABASE_METHOD_TO_TYPE[reqMethod];
+  if (sqlCfg && SQL_DATABASE_TYPES.has(sqlCfg.dialect)) return sqlCfg.dialect;
+  if (methodDialect && SQL_DATABASE_TYPES.has(methodDialect)) return methodDialect;
   const databases = (context && context.databases) || [];
   const found = databases.find(d => d && d._id === sqlCfg.connectionId);
-  if (found && (found.type === 'mysql' || found.type === 'postgres')) return found.type;
+  if (found && SQL_DATABASE_TYPES.has(found.type)) return found.type;
   return 'mysql';
 }
 
-async function executeSqlOperation(sqlCfg, vars, context, reqMethod) {
-  const opStart = Date.now();
-  const queryFn = context && context.dbQueryFn;
-  if (!queryFn) {
-    throw new Error('SQL execution is not available in this context (missing dbQueryFn; CLI runs require --databases <file>)');
+function inferDatabaseTypeFromConnection(connectionId, context) {
+  const databases = (context && context.databases) || [];
+  const found = databases.find(d => d && d._id === connectionId);
+  return found ? found.type : null;
+}
+
+function normalizeDatabaseRequest(req, method, context) {
+  if (req && req.requestType === 'database' && req.database && typeof req.database === 'object') {
+    return req.database;
   }
 
-  const connectionId = resolveVariables(sqlCfg.connectionId || '', vars);
-  if (!connectionId) {
-    throw new Error('SQL request is missing connectionId');
-  }
+  const isLegacySql = req?.requestType === 'sql' || !!req?.sql || method === 'MYSQL' || method === 'POSTGRESQL';
+  if (!isLegacySql) return null;
 
-  const query = resolveVariables(sqlCfg.query || '', vars).trim();
-  if (!query) {
-    throw new Error('SQL query is empty');
-  }
-
-  const paramsText = resolveVariables(sqlCfg.params || '[]', vars);
-  const params = parseJsonArray(paramsText, []);
-  if (!Array.isArray(params)) {
-    throw new Error('SQL params must be a JSON array');
-  }
-
-  const result = await queryFn(connectionId, query, params, context);
-  const table = {
-    columns: Array.isArray(result.columns) ? result.columns : [],
-    rows: Array.isArray(result.rows) ? result.rows : [],
-    rowCount: typeof result.rowCount === 'number'
-      ? result.rowCount
-      : (Array.isArray(result.rows) ? result.rows.length : 0),
+  const sqlCfg = req.sql || {
+    connectionId: '',
+    dialect: method === 'POSTGRESQL' ? 'postgres' : 'mysql',
+    query: '',
+    params: '[]',
+    resultView: 'table',
   };
-  const payload = {
-    rowCount: table.rowCount,
-    columns: table.columns,
-    rows: table.rows,
-  };
-  const body = JSON.stringify(payload, null, 2);
-
+  const connectionType = inferDatabaseTypeFromConnection(sqlCfg.connectionId, context);
+  const dialect = inferSqlDialect(sqlCfg, method, context);
   return {
-    protocol: 'sql',
-    status: 2200,
-    statusText: 'SQL_SUCCESS',
-    sqlDialect: inferSqlDialect(sqlCfg, reqMethod, context),
-    sqlConnectionId: connectionId,
+    connectionId: sqlCfg.connectionId || '',
+    databaseType: SQL_DATABASE_TYPES.has(connectionType) ? connectionType : dialect,
+    operation: 'query',
+    dialect,
+    query: sqlCfg.query || '',
+    params: sqlCfg.params || '[]',
     resultView: sqlCfg.resultView === 'json' ? 'json' : 'table',
-    responseTime: Date.now() - opStart,
-    body,
-    jsonData: payload,
-    size: Buffer.byteLength(body, 'utf8'),
-    resultTable: table,
   };
+}
+
+function buildDatabaseRequestUrl(databaseCfg, vars) {
+  const connectionId = resolveVariables(databaseCfg.connectionId || '', vars) || 'connection';
+  if (SQL_DATABASE_TYPES.has(databaseCfg.databaseType)) {
+    const dialect = databaseCfg.dialect || databaseCfg.databaseType;
+    return `sql://${connectionId}?dialect=${dialect}`;
+  }
+  if (databaseCfg.databaseType === 'redis') {
+    const command = resolveVariables(databaseCfg.command || '', vars) || 'COMMAND';
+    return `redis://${connectionId}?command=${encodeURIComponent(command)}`;
+  }
+  if (databaseCfg.databaseType === 'dynamodb') {
+    const operation = resolveVariables(databaseCfg.operation || '', vars) || 'Operation';
+    return `dynamodb://${connectionId}?operation=${encodeURIComponent(operation)}`;
+  }
+  return `db://${connectionId}?type=${encodeURIComponent(databaseCfg.databaseType || 'database')}`;
+}
+
+function resolveDatabaseRequestBodyForLog(databaseCfg, vars) {
+  if (!databaseCfg) return '';
+  if (SQL_DATABASE_TYPES.has(databaseCfg.databaseType)) {
+    return resolveVariables(databaseCfg.query || '', vars);
+  }
+  if (databaseCfg.databaseType === 'redis') {
+    const command = resolveVariables(databaseCfg.command || '', vars);
+    const argsText = resolveVariables(databaseCfg.args || '[]', vars);
+    return JSON.stringify({ command, args: parseJsonArray(argsText, []) }, null, 2);
+  }
+  if (databaseCfg.databaseType === 'dynamodb') {
+    return resolveVariables(databaseCfg.input || '{}', vars);
+  }
+  return '';
+}
+
+function getDatabaseProtocol(databaseCfg) {
+  if (!databaseCfg) return 'sql';
+  if (databaseCfg.databaseType === 'redis') return 'redis';
+  if (databaseCfg.databaseType === 'dynamodb') return 'dynamodb';
+  return 'sql';
+}
+
+function getDatabaseErrorStatusText(databaseCfg) {
+  if (!databaseCfg) return 'DB_ERROR';
+  if (databaseCfg.databaseType === 'redis') return 'REDIS_ERROR';
+  if (databaseCfg.databaseType === 'dynamodb') return 'DYNAMODB_ERROR';
+  return 'SQL_ERROR';
+}
+
+async function executeDatabaseOperation(databaseCfg, vars, context, reqMethod) {
+  const opStart = Date.now();
+  const connectionId = resolveVariables(databaseCfg.connectionId || '', vars);
+  if (!connectionId) {
+    throw new Error('Database request is missing connectionId');
+  }
+
+  if (SQL_DATABASE_TYPES.has(databaseCfg.databaseType)) {
+    const queryFn = context && context.dbQueryFn;
+    if (!queryFn) {
+      throw new Error('SQL execution is not available in this context (missing dbQueryFn; CLI runs require --databases <file>)');
+    }
+
+    const query = resolveVariables(databaseCfg.query || '', vars).trim();
+    if (!query) {
+      throw new Error('SQL query is empty');
+    }
+
+    const paramsText = resolveVariables(databaseCfg.params || '[]', vars);
+    const params = parseJsonArray(paramsText, []);
+    if (!Array.isArray(params)) {
+      throw new Error('SQL params must be a JSON array');
+    }
+
+    const result = await queryFn(connectionId, query, params, context);
+    const table = {
+      columns: Array.isArray(result.columns) ? result.columns : [],
+      rows: Array.isArray(result.rows) ? result.rows : [],
+      rowCount: typeof result.rowCount === 'number'
+        ? result.rowCount
+        : (Array.isArray(result.rows) ? result.rows.length : 0),
+    };
+    const payload = {
+      rowCount: table.rowCount,
+      columns: table.columns,
+      rows: table.rows,
+    };
+    const body = JSON.stringify(payload, null, 2);
+
+    return {
+      protocol: 'sql',
+      status: 2200,
+      statusText: 'SQL_SUCCESS',
+      sqlDialect: inferSqlDialect(databaseCfg, reqMethod, context),
+      sqlConnectionId: connectionId,
+      resultView: databaseCfg.resultView === 'json' ? 'json' : 'table',
+      responseTime: Date.now() - opStart,
+      body,
+      jsonData: payload,
+      size: Buffer.byteLength(body, 'utf8'),
+      resultTable: table,
+    };
+  }
+
+  if (databaseCfg.databaseType === 'redis') {
+    const redisCommandFn = context && context.dbRedisCommandFn;
+    if (!redisCommandFn) {
+      throw new Error('Redis execution is not available in this context');
+    }
+
+    const command = resolveVariables(databaseCfg.command || '', vars).trim();
+    if (!command) {
+      throw new Error('Redis command is empty');
+    }
+
+    const argsText = resolveVariables(databaseCfg.args || '[]', vars);
+    const args = parseJsonArray(argsText, []);
+    if (!Array.isArray(args)) {
+      throw new Error('Redis args must be a JSON array');
+    }
+
+    const result = await redisCommandFn(connectionId, command, args, context);
+    const payload = { result: result.result };
+    const body = JSON.stringify(payload, null, 2);
+    return {
+      protocol: 'redis',
+      status: 2200,
+      statusText: 'REDIS_SUCCESS',
+      responseTime: Date.now() - opStart,
+      body,
+      jsonData: payload,
+      size: Buffer.byteLength(body, 'utf8'),
+      resultView: 'json',
+    };
+  }
+
+  if (databaseCfg.databaseType === 'dynamodb') {
+    const dynamoOperationFn = context && context.dbDynamoOperationFn;
+    if (!dynamoOperationFn) {
+      throw new Error('DynamoDB execution is not available in this context');
+    }
+
+    const operation = resolveVariables(databaseCfg.operation || '', vars).trim();
+    if (!operation) {
+      throw new Error('DynamoDB operation is empty');
+    }
+
+    const inputText = resolveVariables(databaseCfg.input || '{}', vars);
+    const input = parseJsonObject(inputText, {});
+    const result = await dynamoOperationFn(connectionId, operation, input, context);
+    const payload = { result: result.result };
+    const body = JSON.stringify(payload, null, 2);
+    return {
+      protocol: 'dynamodb',
+      status: 2200,
+      statusText: 'DYNAMODB_SUCCESS',
+      responseTime: Date.now() - opStart,
+      body,
+      jsonData: payload,
+      size: Buffer.byteLength(body, 'utf8'),
+      resultView: 'json',
+    };
+  }
+
+  throw new Error(`Unsupported database request type "${databaseCfg.databaseType}"`);
 }
 
 const httpClient = axios.create({
@@ -960,6 +1252,8 @@ async function executeRequest(item, context) {
         iteration,
         dbQueryFn: context.dbQueryFn || null,
         dbMongoQueryFn: context.dbMongoQueryFn || null,
+        dbRedisCommandFn: context.dbRedisCommandFn || null,
+        dbDynamoOperationFn: context.dbDynamoOperationFn || null,
       };
       const result = await runScript(code, null, vars, scriptDeps, vmContext);
       const preUpdatedVars = result.updatedVariables;
@@ -1006,27 +1300,20 @@ async function executeRequest(item, context) {
   const req = item.request;
   const method = (req.method || 'GET').toUpperCase();
   const isMongo = req?.requestType === 'mongodb' || !!req?.mongodb || method === 'MONGO';
-  const isSql = req?.requestType === 'sql' || !!req?.sql || method === 'MYSQL' || method === 'POSTGRESQL';
-  const sqlCfg = isSql
-    ? (req.sql || {
-        connectionId: '',
-        dialect: method === 'POSTGRESQL' ? 'postgres' : 'mysql',
-        query: '',
-        params: '[]',
-        resultView: 'table',
-      })
-    : null;
-  const sqlDialect = isSql ? inferSqlDialect(sqlCfg || {}, method, context) : undefined;
+  const databaseCfg = isMongo ? null : normalizeDatabaseRequest(req, method, context);
+  const isDatabase = !!databaseCfg;
+  const isSql = !!databaseCfg && SQL_DATABASE_TYPES.has(databaseCfg.databaseType);
+  const sqlDialect = isSql ? inferSqlDialect(databaseCfg || {}, method, context) : undefined;
   let url = isMongo
     ? `mongodb://${resolveVariables(req.mongodb?.database || '', vars)}/${resolveVariables(req.mongodb?.collection || '', vars)}`
-    : isSql
-      ? `sql://${resolveVariables(sqlCfg?.connectionId || '', vars) || 'connection'}?dialect=${sqlDialect || 'mysql'}`
+    : isDatabase
+      ? buildDatabaseRequestUrl(databaseCfg, vars)
       : resolveUrl(req.url, vars);
 
   // Rewrite to mock server base AFTER variable resolution so that URLs like
   // {{baseUrl}}/path resolve to https://real.host/path first, then become
   // http://localhost:PORT/path — not http://localhost:PORT/https://real.host/path.
-  if (mockBase && !isMongo && !isSql) {
+  if (mockBase && !isMongo && !isDatabase) {
     try {
       const parsed = new URL(url);
       url = mockBase.replace(/\/$/, '') + parsed.pathname + parsed.search + parsed.hash;
@@ -1040,23 +1327,23 @@ async function executeRequest(item, context) {
 
   const headers = {};
 
-  if (!isMongo && !isSql) {
+  if (!isMongo && !isDatabase) {
     Object.assign(headers, resolveHeaderPairs(req.header, vars));
   }
 
   const authWarnings = [];
-  if (!isMongo && !isSql) {
+  if (!isMongo && !isDatabase) {
     url = await applyAuth(req.auth, headers, vars, url, authWarnings);
   }
 
   // Inject cookies from cookie jar
-  if (!isMongo && !isSql) {
+  if (!isMongo && !isDatabase) {
     const cookieHeader = getCookiesForRequest(cookies, url);
     if (cookieHeader) headers['Cookie'] = cookieHeader;
   }
 
   const buildWarnings = [];
-  const data = (isMongo || isSql) ? undefined : buildBody(req.body, headers, vars, buildWarnings);
+  const data = (isMongo || isDatabase) ? undefined : buildBody(req.body, headers, vars, buildWarnings);
   const allWarnings = [...authWarnings, ...buildWarnings];
 
   // Capture request body as a loggable string
@@ -1075,8 +1362,8 @@ async function executeRequest(item, context) {
   let nextRequestByIdSignal = undefined; // set by pm.execution.setNextRequestById()
 
   try {
-    if (isSql) {
-      const sqlResponse = await executeSqlOperation(sqlCfg || {}, vars, context, method);
+    if (isDatabase) {
+      const databaseResponse = await executeDatabaseOperation(databaseCfg || {}, vars, context, method);
 
       const testScript = (item.event || []).find(e => e.listen === 'test');
       let testResults = [];
@@ -1108,14 +1395,16 @@ async function executeRequest(item, context) {
             iteration,
             dbQueryFn: context.dbQueryFn || null,
             dbMongoQueryFn: context.dbMongoQueryFn || null,
+            dbRedisCommandFn: context.dbRedisCommandFn || null,
+            dbDynamoOperationFn: context.dbDynamoOperationFn || null,
           };
           const result = await runScript(code, {
-            code: sqlResponse.status,
-            status: sqlResponse.statusText,
-            responseTime: sqlResponse.responseTime,
+            code: databaseResponse.status,
+            status: databaseResponse.statusText,
+            responseTime: databaseResponse.responseTime,
             headers: {},
-            body: sqlResponse.body,
-            jsonData: sqlResponse.jsonData,
+            body: databaseResponse.body,
+            jsonData: databaseResponse.jsonData,
           }, vars, scriptDeps, vmContext);
           testResults = result.tests;
           updatedVars = result.updatedVariables;
@@ -1145,20 +1434,20 @@ async function executeRequest(item, context) {
       });
 
       return {
-        protocol: 'sql',
-        sqlDialect: sqlResponse.sqlDialect,
-        sqlConnectionId: sqlResponse.sqlConnectionId,
-        resultView: sqlResponse.resultView,
-        resultTable: sqlResponse.resultTable,
-        status: sqlResponse.status,
-        statusText: sqlResponse.statusText,
-        responseTime: sqlResponse.responseTime,
+        protocol: databaseResponse.protocol,
+        sqlDialect: databaseResponse.sqlDialect,
+        sqlConnectionId: databaseResponse.sqlConnectionId,
+        resultView: databaseResponse.resultView,
+        resultTable: databaseResponse.resultTable,
+        status: databaseResponse.status,
+        statusText: databaseResponse.statusText,
+        responseTime: databaseResponse.responseTime,
         resolvedUrl: url,
         requestHeaders: {},
-        requestBody: sqlCfg ? resolveVariables(sqlCfg.query || '', vars) : '',
+        requestBody: resolveDatabaseRequestBodyForLog(databaseCfg, vars),
         headers: {},
-        body: sqlResponse.body,
-        size: sqlResponse.size,
+        body: databaseResponse.body,
+        size: databaseResponse.size,
         testResults,
         scriptLogs,
         preChildRequests,
@@ -1210,6 +1499,8 @@ async function executeRequest(item, context) {
             iteration,
             dbQueryFn: context.dbQueryFn || null,
             dbMongoQueryFn: context.dbMongoQueryFn || null,
+            dbRedisCommandFn: context.dbRedisCommandFn || null,
+            dbDynamoOperationFn: context.dbDynamoOperationFn || null,
           };
           const result = await runScript(code, {
             code: mongoResponse.status,
@@ -1395,6 +1686,8 @@ async function executeRequest(item, context) {
           iteration,
           dbQueryFn: context.dbQueryFn || null,
           dbMongoQueryFn: context.dbMongoQueryFn || null,
+          dbRedisCommandFn: context.dbRedisCommandFn || null,
+          dbDynamoOperationFn: context.dbDynamoOperationFn || null,
         };
         const result = await runScript(code, responseData, vars, scriptDeps, vmContext);
         testResults = result.tests;
@@ -1482,17 +1775,17 @@ async function executeRequest(item, context) {
   } catch (err) {
     const errorResponseTime = Date.now() - startTime;
     return {
-      protocol: isMongo ? 'mongodb' : isSql ? 'sql' : 'http',
+      protocol: isMongo ? 'mongodb' : isDatabase ? getDatabaseProtocol(databaseCfg) : 'http',
       mongoStatus: isMongo ? 'error' : undefined,
       mongoOperation: isMongo ? (req.mongodb?.operation || 'find') : undefined,
       sqlDialect: isSql ? sqlDialect : undefined,
-      sqlConnectionId: isSql ? resolveVariables(sqlCfg?.connectionId || '', vars) : undefined,
+      sqlConnectionId: isSql ? resolveVariables(databaseCfg?.connectionId || '', vars) : undefined,
       status: 0,
-      statusText: isMongo ? 'MONGO_ERROR' : isSql ? 'SQL_ERROR' : 'Request Failed',
+      statusText: isMongo ? 'MONGO_ERROR' : isDatabase ? getDatabaseErrorStatusText(databaseCfg) : 'Request Failed',
       responseTime: errorResponseTime,
       resolvedUrl: url,
       requestHeaders: headers,
-      requestBody: isSql ? resolveVariables(sqlCfg?.query || '', vars) : requestBodyStr,
+      requestBody: isDatabase ? resolveDatabaseRequestBodyForLog(databaseCfg, vars) : requestBodyStr,
       headers: {},
       body: err.message,
       size: 0,
