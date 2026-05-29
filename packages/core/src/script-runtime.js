@@ -871,6 +871,15 @@ function buildResponse(r) {
       has(name) {
         return Object.keys(r.headers || {}).some(k => k.toLowerCase() === name.toLowerCase());
       },
+      toObject() {
+        const src = r.headers || {};
+        if (src && typeof src.toJSON === 'function') {
+          return { ...src.toJSON() };
+        }
+        const out = {};
+        Object.entries(src).forEach(([k, v]) => { out[k] = v; });
+        return out;
+      },
     },
     // Chai-like assertion sugar on response
     to: {

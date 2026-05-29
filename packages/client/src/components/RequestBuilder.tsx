@@ -4,8 +4,9 @@ import { marked } from 'marked';
 import type { CollectionItem, CollectionRequest, CollectionHeader, CollectionQueryParam, OAuth2Config, CollectionBody, DatabaseRequestConfig, SqlDatabaseType } from '../types';
 import { useApp, generateId } from '../store';
 import { executeRequest, API_BASE } from '../api';
+import type { ChildRequestLog } from '../api';
 import { getUrlDisplay, buildCollectionDefinitionVarMap, buildVarMap, resolveVariables } from '../utils/variableResolver';
-import { updateItemById, renameItemById, resolveInheritedAuth, resolveInheritedAuthWithSource, findItemInTree, flattenRequestNames, flattenRequestItems, collectAncestorScripts, getRequestBreadcrumb, getRequestBreadcrumbPrefix } from '../utils/treeHelpers';
+import { updateItemById, renameItemById, resolveInheritedAuth, resolveInheritedAuthWithSource, findItemInTree, flattenRequestNames, flattenRequestItems, collectAncestorScripts, getRequestBreadcrumb, getRequestBreadcrumbPrefix, applyInheritedAuth } from '../utils/treeHelpers';
 import { parseCurlCommand } from '../utils/curlUtils';
 import { parseHurlFile } from '../utils/hurlUtils';
 import { openAuthorizationWindow } from '../utils/oauth';
@@ -1291,6 +1292,31 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
 
   // Build CodeGenParams with all variable placeholders resolved
   function buildResolvedCodeGenParams(editState: EditState, vars: Record<string, string>) {
+    // When auth is set to 'inherit', resolve the effective auth from the collection tree
+    let effectiveAuthType = editState.authType;
+    let effectiveAuthBearer = editState.authBearer;
+    let effectiveAuthBasicUser = editState.authBasicUser;
+    let effectiveAuthBasicPass = editState.authBasicPass;
+    let effectiveAuthApiKeyName = editState.authApiKeyName;
+    let effectiveAuthApiKeyValue = editState.authApiKeyValue;
+
+    if (editState.authType === 'inherit' && activeReq) {
+      const col = state.collections.find(c => c._id === activeReq.collectionId);
+      const resolvedAuth = resolveInheritedAuth(col?.item ?? [], activeReq.item.id ?? '', col?.auth);
+      if (resolvedAuth && resolvedAuth.type !== 'inherit') {
+        effectiveAuthType = resolvedAuth.type;
+        if (resolvedAuth.type === 'bearer') {
+          effectiveAuthBearer = resolvedAuth.bearer?.find(e => e.key === 'token')?.value ?? '';
+        } else if (resolvedAuth.type === 'basic') {
+          effectiveAuthBasicUser = resolvedAuth.basic?.find(e => e.key === 'username')?.value ?? '';
+          effectiveAuthBasicPass = resolvedAuth.basic?.find(e => e.key === 'password')?.value ?? '';
+        } else if (resolvedAuth.type === 'apikey') {
+          effectiveAuthApiKeyName = resolvedAuth.apikey?.find(e => e.key === 'key')?.value ?? '';
+          effectiveAuthApiKeyValue = resolvedAuth.apikey?.find(e => e.key === 'value')?.value ?? '';
+        }
+      }
+    }
+
     return {
       method: editState.method,
       url: resolveCodeGenUrlWithPathParams(editState, vars),
@@ -1313,12 +1339,12 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
       })),
       bodyGraphqlQuery: resolveVariables(editState.bodyGraphqlQuery, vars),
       bodyGraphqlVariables: resolveVariables(editState.bodyGraphqlVariables, vars),
-      authType: editState.authType,
-      authBearer: resolveVariables(editState.authBearer, vars),
-      authBasicUser: resolveVariables(editState.authBasicUser, vars),
-      authBasicPass: resolveVariables(editState.authBasicPass, vars),
-      authApiKeyName: resolveVariables(editState.authApiKeyName, vars),
-      authApiKeyValue: resolveVariables(editState.authApiKeyValue, vars),
+      authType: effectiveAuthType,
+      authBearer: resolveVariables(effectiveAuthBearer, vars),
+      authBasicUser: resolveVariables(effectiveAuthBasicUser, vars),
+      authBasicPass: resolveVariables(effectiveAuthBasicPass, vars),
+      authApiKeyName: resolveVariables(effectiveAuthApiKeyName, vars),
+      authApiKeyValue: resolveVariables(effectiveAuthApiKeyValue, vars),
     };
   }
 
@@ -1329,6 +1355,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     dispatch({ type: 'SET_TAB_RESPONSE', payload: { tabId, response: null } });
 
     const col = state.collections.find(c => c._id === activeReq.collectionId);
+    const authResolvedItems = col ? applyInheritedAuth(col.item, col.auth) : [];
     // Resolve auth — 'inherit' walks up the collection tree to find the effective parent auth
     const resolvedAuth = edit.authType === 'inherit'
       ? resolveInheritedAuth(col?.item ?? [], activeReq.item.id ?? '', col?.auth)
@@ -1384,7 +1411,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
         globals: state.globalVariables,
         collVars: col?.variable ?? [],
         cookies: state.cookieJar,
-        collectionItems: col?.item ?? [],
+        collectionItems: authResolvedItems,
         databases: state.databases,
       });
 
@@ -1398,9 +1425,10 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
       const logBase = Date.now();
       let logSeq = 0;
 
-      // 1. Pre-request children (ran before main) — dispatch first so they appear below it
-      if (result.preChildRequests && result.preChildRequests.length > 0) {
-        result.preChildRequests.forEach((child) => {
+      // Recursive helper to log child requests at any nesting depth
+      const logChildRequestsRecursively = (childRequests: ChildRequestLog[] | undefined) => {
+        if (!childRequests || childRequests.length === 0) return;
+        childRequests.forEach((child) => {
           dispatch({
             type: 'ADD_CONSOLE_LOG',
             payload: {
@@ -1409,15 +1437,21 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
               method: child.method,
               url: child.result.resolvedUrl ?? child.name,
               requestHeaders: child.result.requestHeaders
-                ? Object.entries(child.result.requestHeaders).map(([key, value]) => ({ key, value }))
+                ? Object.entries(child.result.requestHeaders).map(([key, value]) => ({ key, value: String(value) }))
                 : [],
               requestBody: child.result.requestBody,
               scriptLogs: child.result.scriptLogs ?? [],
               response: child.result,
             },
           });
+          // Recursively log nested children from this child's test/pre-request calls
+          logChildRequestsRecursively((child.result as any).preChildRequests);
+          logChildRequestsRecursively((child.result as any).testChildRequests);
         });
-      }
+      };
+
+      // 1. Pre-request children (ran before main) — dispatch first so they appear below it
+      logChildRequestsRecursively(result.preChildRequests);
 
       // 2. Main request
       dispatch({
@@ -1457,25 +1491,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
       }
 
       // 3. Test children (ran after main) — dispatch last so they appear above it
-      if (result.testChildRequests && result.testChildRequests.length > 0) {
-        result.testChildRequests.forEach((child) => {
-          dispatch({
-            type: 'ADD_CONSOLE_LOG',
-            payload: {
-              id: (logBase + logSeq).toString(36) + Math.random().toString(36).slice(2),
-              timestamp: logBase + logSeq++,
-              method: child.method,
-              url: child.result.resolvedUrl ?? child.name,
-              requestHeaders: child.result.requestHeaders
-                ? Object.entries(child.result.requestHeaders).map(([key, value]) => ({ key, value }))
-                : [],
-              requestBody: child.result.requestBody,
-              scriptLogs: child.result.scriptLogs ?? [],
-              response: child.result,
-            },
-          });
-        });
-      }
+      logChildRequestsRecursively(result.testChildRequests);
 
       if (result.updatedEnvironment) {
         dispatch({ type: 'UPDATE_ACTIVE_ENV_VARS', payload: result.updatedEnvironment });
@@ -1560,6 +1576,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     dispatch({ type: 'SET_TAB_RESPONSE', payload: { tabId, response: null } });
 
     const col = state.collections.find(c => c._id === activeReq.collectionId);
+    const authResolvedItems = col ? applyInheritedAuth(col.item, col.auth) : [];
     const resolvedAuth = edit.authType === 'inherit'
       ? resolveInheritedAuth(col?.item ?? [], activeReq.item.id ?? '', col?.auth)
       : buildAuth(edit);
@@ -1602,11 +1619,42 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
         globals: state.globalVariables,
         collVars: col?.variable ?? [],
         cookies: state.cookieJar,
-        collectionItems: col?.item ?? [],
+        collectionItems: authResolvedItems,
         mockBase,
         databases: state.databases,
       });
       dispatch({ type: 'SET_TAB_RESPONSE', payload: { tabId, response: result } });
+
+      // Recursive helper to log child requests at any nesting depth
+      const logChildRequestsRecursively = (childRequests: ChildRequestLog[] | undefined) => {
+        if (!childRequests || childRequests.length === 0) return;
+        const mockLogBase = Date.now();
+        let mockLogSeq = 0;
+        childRequests.forEach((child) => {
+          dispatch({
+            type: 'ADD_CONSOLE_LOG',
+            payload: {
+              id: (mockLogBase + mockLogSeq).toString(36) + Math.random().toString(36).slice(2),
+              timestamp: mockLogBase + mockLogSeq++,
+              method: child.method,
+              url: child.result.resolvedUrl ?? child.name,
+              requestHeaders: child.result.requestHeaders
+                ? Object.entries(child.result.requestHeaders).map(([key, value]) => ({ key, value: String(value) }))
+                : [],
+              requestBody: child.result.requestBody,
+              scriptLogs: child.result.scriptLogs ?? [],
+              response: child.result,
+            },
+          });
+          // Recursively log nested children from this child's test/pre-request calls
+          logChildRequestsRecursively((child.result as any).preChildRequests);
+          logChildRequestsRecursively((child.result as any).testChildRequests);
+        });
+      };
+
+      // Log all child requests (preChildRequests and testChildRequests) recursively
+      logChildRequestsRecursively(result.preChildRequests);
+
       dispatch({
         type: 'ADD_CONSOLE_LOG',
         payload: {
@@ -1622,6 +1670,9 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
           response: result,
         },
       });
+
+      logChildRequestsRecursively(result.testChildRequests);
+
       dispatch({
         type: 'ADD_REQUEST_HISTORY',
         payload: {

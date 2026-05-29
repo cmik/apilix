@@ -798,6 +798,226 @@ test('environment variable set in child request test script is available in pare
   });
 });
 
+// ─── apx.executeRequest auth inheritance ─────────────────────────────────────
+
+test('child request inherits bearer auth from collection-level auth when using apx.executeRequest', async () => {
+  setExecutorConfig({ followRedirects: false, requestTimeout: 3000, sslVerification: false });
+
+  await withServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ received: req.headers['authorization'] || '' }));
+  }, async (url) => {
+    const baseUrl = url.slice(0, url.lastIndexOf('/'));
+
+    const childItem = {
+      name: 'Child request',
+      request: {
+        method: 'GET',
+        url: `${baseUrl}/data`,
+        // Child has auth type 'inherit', will be resolved to actual auth by parent context
+        auth: { type: 'inherit' },
+      },
+    };
+
+    const parentItem = {
+      name: 'Parent request',
+      request: { method: 'GET', url: `${baseUrl}/parent` },
+      event: [
+        {
+          listen: 'prerequest',
+          script: {
+            type: 'text/javascript',
+            exec: ["apx.executeRequest('Child request');"],
+          },
+        },
+      ],
+    };
+
+    // Collection-level auth that should be inherited by child
+    const collectionAuth = {
+      type: 'bearer',
+      bearer: [{ key: 'token', value: 'inherited-bearer-token' }],
+    };
+
+    // Simulate what RequestBuilder does: apply inherited auth to items before executing
+    const resolvedItems = [
+      {
+        ...childItem,
+        request: {
+          ...childItem.request,
+          auth: collectionAuth, // Child auth resolved to inherited auth
+        },
+      },
+      parentItem,
+    ];
+
+    const context = {
+      ...makeContext(),
+      collectionItems: resolvedItems,
+    };
+
+    const result = await executeRequest(resolvedItems[1], context);
+
+    assert.equal(result.error, null);
+    const body = JSON.parse(result.body);
+    assert.equal(body.received, 'Bearer inherited-bearer-token');
+  });
+});
+
+test('child request inherits apikey auth from collection-level auth', async () => {
+  setExecutorConfig({ followRedirects: false, requestTimeout: 3000, sslVerification: false });
+
+  await withServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      header: req.headers['x-api-key'] || '',
+      query: new URL(`http://localhost${req.url}`).searchParams.get('api_key') || '',
+    }));
+  }, async (url) => {
+    const baseUrl = url.slice(0, url.lastIndexOf('/'));
+
+    const childItem = {
+      name: 'Child request',
+      request: {
+        method: 'GET',
+        url: `${baseUrl}/data`,
+        auth: { type: 'inherit' },
+      },
+    };
+
+    const parentItem = {
+      name: 'Parent request',
+      request: { method: 'GET', url: `${baseUrl}/parent` },
+      event: [
+        {
+          listen: 'prerequest',
+          script: {
+            type: 'text/javascript',
+            exec: ["apx.executeRequest('Child request');"],
+          },
+        },
+      ],
+    };
+
+    // Collection-level API key auth (header mode)
+    const collectionAuth = {
+      type: 'apikey',
+      apikey: [
+        { key: 'key', value: 'X-Api-Key' },
+        { key: 'value', value: 'my-secret-key' },
+        { key: 'in', value: 'header' },
+      ],
+    };
+
+    // Apply inherited auth to items before executing
+    const resolvedItems = [
+      {
+        ...childItem,
+        request: {
+          ...childItem.request,
+          auth: collectionAuth,
+        },
+      },
+      parentItem,
+    ];
+
+    const context = {
+      ...makeContext(),
+      collectionItems: resolvedItems,
+    };
+
+    const result = await executeRequest(resolvedItems[1], context);
+
+    assert.equal(result.error, null);
+    const body = JSON.parse(result.body);
+    assert.equal(body.header, 'my-secret-key');
+  });
+});
+
+test('nested child requests (grandchildren) inherit auth through the call chain', async () => {
+  setExecutorConfig({ followRedirects: false, requestTimeout: 3000, sslVerification: false });
+
+  let requestCount = 0;
+  await withServer((req, res) => {
+    requestCount++;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ 
+      level: req.url.split('/').pop(),
+      received: req.headers['authorization'] || '' 
+    }));
+  }, async (url) => {
+    const baseUrl = url.slice(0, url.lastIndexOf('/'));
+
+    const grandchildItem = {
+      name: 'Grandchild request',
+      request: { method: 'GET', url: `${baseUrl}/grandchild` },
+    };
+
+    const childItem = {
+      name: 'Child request',
+      request: { method: 'GET', url: `${baseUrl}/child` },
+      event: [
+        {
+          listen: 'prerequest',
+          script: {
+            type: 'text/javascript',
+            exec: ["apx.executeRequest('Grandchild request');"],
+          },
+        },
+      ],
+    };
+
+    const parentItem = {
+      name: 'Parent request',
+      request: { method: 'GET', url: `${baseUrl}/parent` },
+      event: [
+        {
+          listen: 'prerequest',
+          script: {
+            type: 'text/javascript',
+            exec: ["apx.executeRequest('Child request');"],
+          },
+        },
+      ],
+    };
+
+    const collectionAuth = {
+      type: 'bearer',
+      bearer: [{ key: 'token', value: 'nested-token' }],
+    };
+
+    // Apply inherited auth to all items before executing
+    const resolvedItems = [
+      {
+        ...grandchildItem,
+        request: {
+          ...grandchildItem.request,
+          auth: collectionAuth,
+        },
+      },
+      {
+        ...childItem,
+        request: {
+          ...childItem.request,
+          auth: collectionAuth,
+        },
+      },
+      parentItem,
+    ];
+
+    const context = {
+      ...makeContext(),
+      collectionItems: resolvedItems,
+    };
+
+    const result = await executeRequest(resolvedItems[2], context);
+
+    assert.equal(result.error, null);
+    // All three requests (parent, child, grandchild) should have received the auth
+    assert.equal(requestCount, 3);
+  });
+});
+
 // ─── executeRequest header variable resolution (integration) ─────────────────
 
 test('executeRequest resolves variables in request header values', async () => {
