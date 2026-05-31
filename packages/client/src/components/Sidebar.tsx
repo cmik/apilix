@@ -1,9 +1,15 @@
-import { useEffect, useState, lazy, Suspense } from 'react';
+import { useEffect, useRef, useState, lazy, Suspense } from 'react';
 import { useApp, generateId } from '../store';
 import CollectionTree from './CollectionTree';
 import DatabaseListMode from './DatabaseListMode';
 import WorkspaceSwitcher from './WorkspaceSwitcher';
 import { IconSearch, IconSortAZ } from './Icons';
+import { validateDatabaseConnection } from '../utils/databaseValidator';
+import {
+  buildDatabaseConnectionsExportPackage,
+  normalizeImportedConnections,
+  parseDatabaseConnectionsImportText,
+} from '../utils/databaseConnectionTransfer';
 
 const ImportModal = lazy(() => import('./ImportModal'));
 const ExportModal = lazy(() => import('./ExportModal'));
@@ -24,6 +30,12 @@ export default function Sidebar() {
   const [manageOpen, setManageOpen] = useState(false);
   const [showDatabaseEditor, setShowDatabaseEditor] = useState(false);
   const [editingDatabase, setEditingDatabase] = useState<any>(undefined);
+  const [dbDraggingImport, setDbDraggingImport] = useState(false);
+  const [dbImportStatus, setDbImportStatus] = useState('');
+  const [dbImportError, setDbImportError] = useState('');
+  const [showDatabaseExportPicker, setShowDatabaseExportPicker] = useState(false);
+  const [selectedDbExportIds, setSelectedDbExportIds] = useState<string[]>([]);
+  const dbImportInputRef = useRef<HTMLInputElement | null>(null);
 
   const handleEditDatabase = (conn: any) => {
     setEditingDatabase(conn);
@@ -39,6 +51,68 @@ export default function Sidebar() {
     setShowDatabaseEditor(false);
     setEditingDatabase(undefined);
   };
+
+  async function handleDatabaseImportFiles(files: File[]) {
+    if (files.length === 0) return;
+    const existingDatabases = state.databases ?? [];
+    const incoming: any[] = [];
+    let invalidCount = 0;
+
+    for (const file of files) {
+      const text = await file.text();
+      const parsed = parseDatabaseConnectionsImportText(text);
+      if (parsed.length === 0) {
+        throw new Error(`No valid database connections found in ${file.name}.`);
+      }
+
+      const normalized = normalizeImportedConnections(
+        parsed,
+        [...existingDatabases, ...incoming],
+        generateId
+      );
+
+      for (const conn of normalized) {
+        const check = validateDatabaseConnection(conn);
+        if (check.valid) {
+          incoming.push(conn);
+        } else {
+          invalidCount += 1;
+        }
+      }
+    }
+
+    if (incoming.length === 0) {
+      throw new Error('Imported file(s) did not contain any valid database connections.');
+    }
+
+    incoming.forEach(conn => dispatch({ type: 'ADD_DATABASE', payload: conn }));
+
+    const suffix = invalidCount > 0 ? ` (${invalidCount} invalid skipped)` : '';
+    setDbImportStatus(`Imported ${incoming.length} connection${incoming.length !== 1 ? 's' : ''}${suffix}.`);
+    setDbImportError('');
+  }
+
+  function openDatabaseExportPicker() {
+    const ids = (state.databases ?? []).map(db => db._id);
+    setSelectedDbExportIds(ids);
+    setShowDatabaseExportPicker(true);
+  }
+
+  function exportSelectedDatabases() {
+    const selected = (state.databases ?? []).filter(db => selectedDbExportIds.includes(db._id));
+    if (selected.length === 0) {
+      return;
+    }
+    const payload = buildDatabaseConnectionsExportPackage(selected);
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'apilix-database-connections.json';
+    a.click();
+    URL.revokeObjectURL(url);
+    setShowDatabaseExportPicker(false);
+  }
 
   useEffect(() => {
     if (!state.activeWorkspaceId) return;
@@ -66,16 +140,157 @@ export default function Sidebar() {
           <RunnerSidePanel />
         </Suspense>
       ) : state.view === 'database' ? (
-        <>
-          <div className="px-3 py-2 border-b border-slate-700 shrink-0">
-            <button
-              onClick={() => handleEditDatabase(undefined)}
-              className="w-full px-3 py-1.5 bg-orange-600 hover:bg-orange-500 text-white text-xs rounded font-medium transition-colors"
-            >
-              + New Connection
-            </button>
+        <div
+          className="flex flex-col flex-1 min-h-0 relative"
+          onDragOver={e => {
+            e.preventDefault();
+            setDbDraggingImport(true);
+          }}
+          onDragLeave={e => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+              setDbDraggingImport(false);
+            }
+          }}
+          onDrop={e => {
+            e.preventDefault();
+            setDbDraggingImport(false);
+            void handleDatabaseImportFiles(Array.from(e.dataTransfer.files || []))
+              .catch((err: unknown) => {
+                setDbImportError(err instanceof Error ? err.message : String(err));
+                setDbImportStatus('');
+              });
+          }}
+        >
+          <div className="px-3 py-2 border-b border-slate-700 shrink-0 space-y-2">
+            <div className="flex items-center">
+              <button
+                onClick={() => handleEditDatabase(undefined)}
+                title="Create new database connection"
+                className="px-2 py-1 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 text-xs rounded font-medium transition-colors"
+              >
+                + New
+              </button>
+              <div className="ml-auto flex items-center gap-1.5">
+                <button
+                  onClick={openDatabaseExportPicker}
+                  title="Export selected database connections"
+                  disabled={(state.databases ?? []).length === 0}
+                  className="px-2 py-1 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 text-xs rounded font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Export
+                </button>
+                <button
+                  onClick={() => dbImportInputRef.current?.click()}
+                  title="Import database connections"
+                  className="px-2 py-1 bg-orange-600 hover:bg-orange-500 text-white text-xs rounded font-medium transition-colors"
+                >
+                  Import
+                </button>
+              </div>
+            </div>
+            <input
+              ref={dbImportInputRef}
+              type="file"
+              accept=".json,application/json"
+              multiple
+              className="hidden"
+              onChange={e => {
+                const files = Array.from(e.target.files ?? []);
+                if (files.length === 0) return;
+                void handleDatabaseImportFiles(files)
+                  .catch((err: unknown) => {
+                    setDbImportError(err instanceof Error ? err.message : String(err));
+                    setDbImportStatus('');
+                  })
+                  .finally(() => {
+                    e.target.value = '';
+                  });
+              }}
+            />
+            {(dbImportStatus || dbImportError) && (
+              <p className={`text-[11px] ${dbImportError ? 'text-red-400' : 'text-emerald-300'}`}>
+                {dbImportError || dbImportStatus}
+              </p>
+            )}
+            <p className="text-[10px] text-slate-500">Drag & drop JSON file(s) here to import database connections.</p>
           </div>
           <DatabaseListMode onEdit={handleEditDatabase} />
+
+          {dbDraggingImport && (
+            <div className="absolute inset-0 z-20 bg-orange-500/10 border-2 border-dashed border-orange-400 pointer-events-none flex items-center justify-center">
+              <p className="text-xs text-orange-200 font-medium">Drop JSON file(s) to import connections</p>
+            </div>
+          )}
+
+          {showDatabaseExportPicker && (
+            <div className="fixed inset-0 z-40 bg-black/60 flex items-center justify-center p-4">
+              <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-lg shadow-2xl">
+                <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-slate-100">Export Database Connections</h3>
+                  <button
+                    onClick={() => setShowDatabaseExportPicker(false)}
+                    className="text-slate-500 hover:text-slate-300 text-xl leading-none"
+                  >
+                    ×
+                  </button>
+                </div>
+
+                <div className="px-4 py-3 space-y-3 max-h-72 overflow-y-auto">
+                  <div className="p-2 bg-slate-800/50 border border-slate-700 rounded text-xs text-slate-300">
+                    <p className="font-semibold text-slate-200 mb-1">⚠️ Security Notice</p>
+                    <p>Connection credentials (passwords, API keys, tokens) are not exported for security. You'll need to re-enter them when importing.</p>
+                  </div>
+                  <div className="flex items-center justify-between text-xs">
+                    <button
+                      onClick={() => setSelectedDbExportIds((state.databases ?? []).map(db => db._id))}
+                      className="text-slate-400 hover:text-slate-200"
+                    >
+                      Select all
+                    </button>
+                    <button
+                      onClick={() => setSelectedDbExportIds([])}
+                      className="text-slate-400 hover:text-slate-200"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                  {(state.databases ?? []).map(db => (
+                    <label key={db._id} className="flex items-center gap-2 text-xs text-slate-300">
+                      <input
+                        type="checkbox"
+                        className="accent-orange-500"
+                        checked={selectedDbExportIds.includes(db._id)}
+                        onChange={e => {
+                          setSelectedDbExportIds(prev =>
+                            e.target.checked ? [...prev, db._id] : prev.filter(id => id !== db._id)
+                          );
+                        }}
+                      />
+                      <span className="truncate">{db.name}</span>
+                      <span className="text-slate-500">({db.type})</span>
+                    </label>
+                  ))}
+                </div>
+
+                <div className="px-4 py-3 border-t border-slate-700 flex justify-end gap-2">
+                  <button
+                    onClick={() => setShowDatabaseExportPicker(false)}
+                    className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 text-xs rounded"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={exportSelectedDatabases}
+                    disabled={selectedDbExportIds.length === 0}
+                    className="px-3 py-1.5 bg-orange-600 hover:bg-orange-500 text-white text-xs rounded disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Export
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {showDatabaseEditor && (
             <Suspense fallback={null}>
               <ConnectionEditorModal
@@ -86,7 +301,7 @@ export default function Sidebar() {
               />
             </Suspense>
           )}
-        </>
+        </div>
       ) : (
         <>
           {/* Collections toolbar */}

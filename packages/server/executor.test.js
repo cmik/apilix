@@ -803,9 +803,12 @@ test('environment variable set in child request test script is available in pare
 test('child request inherits bearer auth from collection-level auth when using apx.executeRequest', async () => {
   setExecutorConfig({ followRedirects: false, requestTimeout: 3000, sslVerification: false });
 
+  let childReceivedAuth = '';
   await withServer((req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ received: req.headers['authorization'] || '' }));
+    const authHeader = req.headers['authorization'] || '';
+    if (req.url.endsWith('/data')) childReceivedAuth = authHeader;
+    res.end(JSON.stringify({ received: authHeader }));
   }, async (url) => {
     const baseUrl = url.slice(0, url.lastIndexOf('/'));
 
@@ -859,18 +862,20 @@ test('child request inherits bearer auth from collection-level auth when using a
     const result = await executeRequest(resolvedItems[1], context);
 
     assert.equal(result.error, null);
-    const body = JSON.parse(result.body);
-    assert.equal(body.received, 'Bearer inherited-bearer-token');
+    assert.equal(childReceivedAuth, 'Bearer inherited-bearer-token');
   });
 });
 
 test('child request inherits apikey auth from collection-level auth', async () => {
   setExecutorConfig({ followRedirects: false, requestTimeout: 3000, sslVerification: false });
 
+  let childReceivedHeader = '';
   await withServer((req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
+    const apiKeyHeader = req.headers['x-api-key'] || '';
+    if (req.url.endsWith('/data')) childReceivedHeader = apiKeyHeader;
     res.end(JSON.stringify({
-      header: req.headers['x-api-key'] || '',
+      header: apiKeyHeader,
       query: new URL(`http://localhost${req.url}`).searchParams.get('api_key') || '',
     }));
   }, async (url) => {
@@ -929,8 +934,7 @@ test('child request inherits apikey auth from collection-level auth', async () =
     const result = await executeRequest(resolvedItems[1], context);
 
     assert.equal(result.error, null);
-    const body = JSON.parse(result.body);
-    assert.equal(body.header, 'my-secret-key');
+    assert.equal(childReceivedHeader, 'my-secret-key');
   });
 });
 

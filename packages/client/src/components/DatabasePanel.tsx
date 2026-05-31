@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useApp, generateId } from '../store';
 import { useDatabaseConnectionActions } from '../hooks/useDatabaseConnectionActions';
 import type {
@@ -26,8 +26,11 @@ import {
   type DbMongoResult,
   type DbGenericResult,
 } from '../api';
-import { IconDatabase, IconDelete, IconSuccess, IconError } from './Icons';
+import { IconDatabase, IconSuccess, IconError } from './Icons';
 import { getMongoDatabaseFromUri, resolveMongoConnectionTemplates } from '../utils/databasePanelMongoHelpers';
+import {
+  buildDatabaseConnectionsExportPackage,
+} from '../utils/databaseConnectionTransfer';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -359,7 +362,28 @@ export function ConnectionEditorModal({ initial, runtimeVars, onSave, onClose }:
             <>
               <div>
                 <label className={labelClass}>Database File Path</label>
-                <input className={inputClass} value={filePath} onChange={e => setFilePath(e.target.value)} placeholder="/path/to/database.sqlite" />
+                <div className="flex gap-2">
+                  <input className={inputClass} value={filePath} onChange={e => setFilePath(e.target.value)} placeholder="/path/to/database.sqlite" />
+                  <button
+                    onClick={async () => {
+                      const eAPI = (window as any).electronAPI ?? null;
+                      if (eAPI?.openFileDialog) {
+                        try {
+                          const selected: string | null = await eAPI.openFileDialog([
+                            { name: 'SQLite files', extensions: ['db', 'sqlite', 'sqlite3'] },
+                            { name: 'All files', extensions: ['*'] },
+                          ]);
+                          if (selected) setFilePath(selected);
+                        } catch (err: unknown) {
+                          console.error('File dialog error:', err instanceof Error ? err.message : String(err));
+                        }
+                      }
+                    }}
+                    className="px-2 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-slate-100 text-xs rounded font-medium transition-colors shrink-0"
+                  >
+                    Browse
+                  </button>
+                </div>
               </div>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" className="accent-orange-500" checked={sqliteReadonly} onChange={e => setSqliteReadonly(e.target.checked)} />
@@ -1136,6 +1160,19 @@ export default function DatabasePanel() {
     setEditorOpen(false);
   }
 
+  function handleExportSelected() {
+    if (!selectedConn) return;
+    const payload = buildDatabaseConnectionsExportPackage([selectedConn]);
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const safeName = selectedConn.name.replace(/[^a-z0-9_\-. ]/gi, '_') || 'connection';
+    a.download = `apilix-db-${safeName}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden bg-slate-900">
       {/* Header */}
@@ -1144,15 +1181,24 @@ export default function DatabasePanel() {
           <IconDatabase className="w-4 h-4 text-orange-400" />
           <span className="text-sm font-medium text-slate-100">Database</span>
         </div>
-        {selectedConn && tab === 'connection' && (
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => handleTest(selectedConn)}
-            disabled={testingId === selectedConn._id}
+            onClick={handleExportSelected}
+            disabled={!selectedConn}
             className="px-3 py-1 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 text-xs rounded font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
           >
-            {testingId === selectedConn._id ? 'Testing…' : 'Test Connection'}
+            Export
           </button>
-        )}
+          {selectedConn && tab === 'connection' && (
+            <button
+              onClick={() => handleTest(selectedConn)}
+              disabled={testingId === selectedConn._id}
+              className="px-3 py-1 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 text-xs rounded font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              {testingId === selectedConn._id ? 'Testing…' : 'Test Connection'}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Tab bar */}

@@ -474,8 +474,9 @@ export interface ScriptEditorProps {
 
 function checkJsSyntax(code: string): string | null {
   try {
+    // Wrap in async IIFE to allow await in pre-request and test scripts
     // eslint-disable-next-line no-new-func
-    new Function(code);
+    new Function(`(async function() { ${code} })()`);
     return null;
   } catch (e) {
     return e instanceof SyntaxError ? e.message : String(e);
