@@ -40,6 +40,14 @@ function main() {
 	console.log('[dist:prepare:server] Installing server production dependencies...');
 	run('npm install --prefix packages/server --omit=dev --install-links --no-workspaces');
 
+	console.log('[dist:prepare:server] Auditing for vulnerabilities...');
+	try {
+		run('npm audit fix --prefix packages/server --no-workspaces');
+	} catch (error) {
+		console.warn('[dist:prepare:server] Warning: npm audit fix encountered an issue.');
+		console.warn('[dist:prepare:server] Some vulnerabilities may remain. Check manually with: npm audit --prefix packages/server');
+	}
+
 	// Verify that critical dependencies were installed.
 	const criticalDeps = ['express', 'cors', 'axios'];
 	for (const dep of criticalDeps) {

@@ -754,15 +754,24 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
         dispatch({ type: 'SET_VIEW', payload: 'runner' });
       },
     },
-    {
-      label: 'Add to Mock Server',
-      icon: IconMock,
-      onClick: () => {
-        const isMongo = item.request?.requestType === 'mongodb' || item.request?.method === 'MONGO';
-        const items = isFolder ? flattenMockItems(item.item || []) : (item.request && !isMongo ? [item] : []);
-        if (items.length > 0) setMockItems(items);
-      },
-    },
+    ...(() => {
+      // Hide "Add to Mock Server" for database-type requests
+      const isMongo = item.request?.requestType === 'mongodb' || item.request?.method === 'MONGO';
+      const isDatabaseMethod = ['MYSQL', 'POSTGRESQL', 'SQLITE', 'CASSANDRA', 'ORACLE', 'MSSQL', 'REDIS', 'DYNAMODB'].includes(item.request?.method ?? '');
+      const isDatabase = isMongo || isDatabaseMethod;
+      
+      if (isFolder || !isDatabase) {
+        return [{
+          label: 'Add to Mock Server',
+          icon: IconMock,
+          onClick: () => {
+            const items = isFolder ? flattenMockItems(item.item || []) : (item.request && !isMongo ? [item] : []);
+            if (items.length > 0) setMockItems(items);
+          },
+        }];
+      }
+      return [];
+    })(),
     {
       label: 'Rename',
       icon: IconRename,

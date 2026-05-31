@@ -12,6 +12,115 @@ interface SnippetCategory {
   snippets: Snippet[];
 }
 
+const DATABASE_REQUEST_SNIPPETS: Snippet[] = [
+  {
+    id: 'db-mysql-query',
+    name: 'MySQL Query',
+    description: 'Run a MySQL query with positional parameters and store rows',
+    code: `const connectionId = apx.environment.get('mysqlConnectionId') ?? 'mysql-connection-id';
+apx.db.query(
+  connectionId,
+  'SELECT id, email FROM users WHERE status = ? LIMIT 20',
+  ['active']
+).then(result => {
+  if (!result.success) throw new Error(result.error || 'MySQL query failed');
+  apx.environment.set('mysqlRows', JSON.stringify(result.rows ?? []));
+}).catch(err => console.error('Query failed:', err));`,
+  },
+  {
+    id: 'db-postgres-query',
+    name: 'PostgreSQL Query',
+    description: 'Run a PostgreSQL query using $1 placeholders',
+    code: `const connectionId = apx.environment.get('postgresConnectionId') ?? 'postgres-connection-id';
+const role = apx.environment.get('role') ?? 'user';
+
+apx.db.query(
+  connectionId,
+  'SELECT id, username FROM accounts WHERE role = $1 ORDER BY created_at DESC LIMIT 10',
+  [role]
+).then(result => {
+  if (!result.success) throw new Error(result.error || 'PostgreSQL query failed');
+  apx.environment.set('postgresRows', JSON.stringify(result.rows ?? []));
+}).catch(err => console.error('Query failed:', err));`,
+  },
+  {
+    id: 'db-sqlite-query',
+    name: 'SQLite Query',
+    description: 'Run a SQLite query and cache the first row id',
+    code: `const connectionId = apx.environment.get('sqliteConnectionId') ?? 'sqlite-connection-id';
+apx.db.query(
+  connectionId,
+  'SELECT id, name FROM projects WHERE archived = ? ORDER BY updated_at DESC LIMIT 1',
+  [0]
+).then(result => {
+  if (!result.success) throw new Error(result.error || 'SQLite query failed');
+  const first = (result.rows ?? [])[0];
+  if (first?.id != null) apx.environment.set('sqliteProjectId', String(first.id));
+}).catch(err => console.error('Query failed:', err));`,
+  },
+  {
+    id: 'db-mssql-query',
+    name: 'MSSQL Query',
+    description: 'Run a Microsoft SQL Server query and store row count',
+    code: `const connectionId = apx.environment.get('mssqlConnectionId') ?? 'mssql-connection-id';
+apx.db.query(
+  connectionId,
+  'SELECT TOP 50 id, status FROM jobs WHERE status = ? ORDER BY id DESC',
+  ['queued']
+).then(result => {
+  if (!result.success) throw new Error(result.error || 'MSSQL query failed');
+  apx.environment.set('mssqlRowCount', String(result.rowCount ?? 0));
+}).catch(err => console.error('Query failed:', err));`,
+  },
+  {
+    id: 'db-oracle-query',
+    name: 'Oracle Query',
+    description: 'Run an Oracle query and capture a value for downstream requests',
+    code: `const connectionId = apx.environment.get('oracleConnectionId') ?? 'oracle-connection-id';
+apx.db.query(
+  connectionId,
+  'SELECT id, status FROM tasks WHERE ROWNUM <= 10'
+).then(result => {
+  if (!result.success) throw new Error(result.error || 'Oracle query failed');
+  const first = (result.rows ?? [])[0];
+  if (first?.status != null) apx.environment.set('oracleTaskStatus', String(first.status));
+}).catch(err => console.error('Query failed:', err));`,
+  },
+  {
+    id: 'db-cassandra-query',
+    name: 'Cassandra CQL',
+    description: 'Run a Cassandra CQL statement through apx.db.query',
+    code: `const connectionId = apx.environment.get('cassandraConnectionId') ?? 'cassandra-connection-id';
+apx.db.query(
+  connectionId,
+  'SELECT id, email FROM users_by_tenant WHERE tenant_id = ? LIMIT 25',
+  [apx.environment.get('tenantId') ?? 'default-tenant']
+).then(result => {
+  if (!result.success) throw new Error(result.error || 'Cassandra query failed');
+  apx.environment.set('cassandraRows', JSON.stringify(result.rows ?? []));
+}).catch(err => console.error('Query failed:', err));`,
+  },
+  {
+    id: 'db-mongo-find',
+    name: 'MongoDB find',
+    description: 'Run a MongoDB find operation and store matched documents',
+    code: `const connectionId = apx.environment.get('mongoConnectionId') ?? 'mongo-connection-id';
+apx.db.mongoQuery(
+  connectionId,
+  'find',
+  {
+    database: apx.environment.get('mongoDatabase') ?? 'app',
+    collection: apx.environment.get('mongoCollection') ?? 'users',
+    query: { status: 'active' },
+  },
+  { limit: 20, sort: { createdAt: -1 } }
+).then(result => {
+  if (!result.success) throw new Error(result.error || 'MongoDB query failed');
+  apx.environment.set('mongoDocs', JSON.stringify(result.data ?? []));
+}).catch(err => console.error('Query failed:', err));`,
+  },
+];
+
 const PRE_REQUEST_CATEGORIES: SnippetCategory[] = [
   {
     label: 'Variables & Environment',
@@ -445,6 +554,10 @@ apx.environment.set('sqlInClause', quoted);`,
       apx.environment.set('tenantUsersTable', safeTenant + '.users');`,
       },
     ],
+  },
+  {
+    label: 'Database Requests',
+    snippets: DATABASE_REQUEST_SNIPPETS,
   },
 ];
 
@@ -902,6 +1015,80 @@ apx.test('First row id captured', () => {
 });`,
       },
     ],
+  },
+  {
+    label: 'Database Request Assertions',
+    snippets: [
+      {
+        id: 'db-query-success-test',
+        name: 'SQL-family query succeeds',
+        description: 'Execute apx.db.query and assert successful execution',
+        code: `const connectionId = apx.environment.get('sqlConnectionId') ?? 'sql-connection-id';
+const result = await apx.db.query(connectionId, 'SELECT 1 AS ok');
+
+apx.test('SQL-family query succeeds', () => {
+  apx.expect(result.success).to.equal(true);
+  apx.expect(result.error ?? '').to.equal('');
+});`,
+      },
+      {
+        id: 'db-query-row-count-test',
+        name: 'SQL-family rowCount assertion',
+        description: 'Assert returned rowCount matches expected value',
+        code: `const connectionId = apx.environment.get('sqlConnectionId') ?? 'sql-connection-id';
+const expected = Number(apx.environment.get('expectedRowCount') ?? '1');
+const result = await apx.db.query(connectionId, 'SELECT 1 AS ok');
+
+apx.test('SQL-family rowCount matches expected', () => {
+  apx.expect(result.success).to.equal(true);
+  apx.expect(Number(result.rowCount ?? 0)).to.equal(expected);
+});`,
+      },
+      {
+        id: 'db-mongo-success-test',
+        name: 'MongoDB operation succeeds',
+        description: 'Execute apx.db.mongoQuery and assert success flag',
+        code: `const connectionId = apx.environment.get('mongoConnectionId') ?? 'mongo-connection-id';
+const result = await apx.db.mongoQuery(
+  connectionId,
+  'find',
+  {
+    database: apx.environment.get('mongoDatabase') ?? 'app',
+    collection: apx.environment.get('mongoCollection') ?? 'users',
+    query: {},
+  },
+  { limit: 5 }
+);
+
+apx.test('MongoDB operation succeeds', () => {
+  apx.expect(result.success).to.equal(true);
+});`,
+      },
+      {
+        id: 'db-mongo-array-result-test',
+        name: 'MongoDB returns array data',
+        description: 'Assert MongoDB find result data is an array',
+        code: `const connectionId = apx.environment.get('mongoConnectionId') ?? 'mongo-connection-id';
+const result = await apx.db.mongoQuery(
+  connectionId,
+  'find',
+  {
+    database: apx.environment.get('mongoDatabase') ?? 'app',
+    collection: apx.environment.get('mongoCollection') ?? 'users',
+    query: { status: 'active' },
+  }
+);
+
+apx.test('MongoDB returns array data', () => {
+  apx.expect(result.success).to.equal(true);
+  apx.expect(Array.isArray(result.data)).to.equal(true);
+});`,
+      },
+    ],
+  },
+  {
+    label: 'Database Requests',
+    snippets: DATABASE_REQUEST_SNIPPETS,
   },
   {
     label: 'XML / SOAP Responses',

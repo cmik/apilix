@@ -85,5 +85,20 @@ describe('ScriptSnippetsLibrary', () => {
 
     expect(onInsert).toHaveBeenCalledTimes(2);
     expect(onInsert.mock.calls[1][0]).toContain("apx.expect(json.rowCount).to.be.above(0);");
+
+    await user.click(screen.getByRole('button', { name: /snippets/i }));
+    await user.click(screen.getByRole('button', { name: 'Database Requests' }));
+    expect(screen.getByText('MySQL Query')).toBeInTheDocument();
+    expect(screen.getByText('MongoDB find')).toBeInTheDocument();
+
+    const dbCards = screen.getAllByText('MySQL Query');
+    const dbRow = dbCards.find(el => el.closest('div')?.textContent?.includes('Run a MySQL query with positional parameters and store rows'));
+    const dbContainer = dbRow?.closest('div')?.parentElement;
+    const dbInsertButton = dbContainer?.querySelector('button:last-of-type') as HTMLButtonElement;
+    await user.click(dbInsertButton);
+
+    expect(onInsert).toHaveBeenCalledTimes(3);
+    expect(onInsert.mock.calls[2][0]).toContain("const connectionId = apx.environment.get('mysqlConnectionId') ?? 'mysql-connection-id';");
+    expect(onInsert.mock.calls[2][0]).toContain("const result = await apx.db.query(");
   });
 });

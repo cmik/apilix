@@ -1,8 +1,13 @@
 import { useState } from 'react';
-import { useApp } from '../store';
+import { useApp, generateId } from '../store';
 import type { DatabaseConnection } from '../types';
 import { useDatabaseConnectionActions } from '../hooks/useDatabaseConnectionActions';
-import { IconSearch, IconDelete } from './Icons';
+import { IconSearch } from './Icons';
+import ConfirmModal from './ConfirmModal';
+import {
+  buildDatabaseConnectionsExportPackage,
+  makeDuplicateConnection,
+} from '../utils/databaseConnectionTransfer';
 
 interface DatabaseListModeProps {
   onEdit: (conn: DatabaseConnection) => void;
@@ -76,15 +81,42 @@ function connPreview(conn: DatabaseConnection): string {
 const DB_TYPES = ['mysql', 'postgres', 'mongodb', 'sqlite', 'redis', 'cassandra', 'dynamodb', 'oracle', 'mssql'] as const;
 
 export default function DatabaseListMode({ onEdit }: DatabaseListModeProps) {
-  const { state } = useApp();
+  const { state, dispatch } = useApp();
   const { handleEdit, handleTest, handleDelete, handleSelect, testingId, deletingId } = useDatabaseConnectionActions(onEdit);
   
   const [textFilter, setTextFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const databases = state.databases ?? [];
   const activeDatabaseId = state.activeDatabaseId;
+  const confirmDeleteConn = confirmDeleteId
+    ? databases.find(d => d._id === confirmDeleteId) ?? null
+    : null;
+
+  function downloadConnection(conn: DatabaseConnection) {
+    const payload = buildDatabaseConnectionsExportPackage([conn]);
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const safeName = conn.name.replace(/[^a-z0-9_\-. ]/gi, '_') || 'connection';
+    a.download = `apilix-db-${safeName}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function duplicateConnection(conn: DatabaseConnection) {
+    const duplicated = makeDuplicateConnection(conn, databases.map(d => d.name), generateId);
+    dispatch({ type: 'ADD_DATABASE', payload: duplicated });
+    dispatch({ type: 'SET_ACTIVE_DATABASE', payload: duplicated._id });
+  }
+
+  function copyConnectionId(connectionId: string) {
+    if (!navigator.clipboard?.writeText) return;
+    void navigator.clipboard.writeText(connectionId);
+  }
 
   // Filter databases
   const filtered = databases.filter(conn => {
@@ -207,13 +239,43 @@ export default function DatabaseListMode({ onEdit }: DatabaseListModeProps) {
                       <button
                         onClick={e => {
                           e.stopPropagation();
-                          handleDelete(conn);
+                          setConfirmDeleteId(conn._id);
                           setOpenMenu(null);
                         }}
                         disabled={deletingId === conn._id}
-                        className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-slate-700 hover:text-red-300 transition-colors disabled:opacity-50"
+                        className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-slate-700 hover:text-red-300 transition-colors border-b border-slate-700 disabled:opacity-50"
                       >
                         {deletingId === conn._id ? 'Deleting…' : 'Delete'}
+                      </button>
+                      <button
+                        onClick={e => {
+                          e.stopPropagation();
+                          duplicateConnection(conn);
+                          setOpenMenu(null);
+                        }}
+                        className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-700 hover:text-slate-100 transition-colors border-b border-slate-700"
+                      >
+                        Duplicate
+                      </button>
+                      <button
+                        onClick={e => {
+                          e.stopPropagation();
+                          copyConnectionId(conn._id);
+                          setOpenMenu(null);
+                        }}
+                        className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-700 hover:text-slate-100 transition-colors border-b border-slate-700"
+                      >
+                        Copy ID
+                      </button>
+                      <button
+                        onClick={e => {
+                          e.stopPropagation();
+                          downloadConnection(conn);
+                          setOpenMenu(null);
+                        }}
+                        className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-700 hover:text-slate-100 transition-colors"
+                      >
+                        Export
                       </button>
                     </div>
                   )}
@@ -223,6 +285,21 @@ export default function DatabaseListMode({ onEdit }: DatabaseListModeProps) {
           </ul>
         )}
       </div>
+
+      {/* Delete confirmation modal */}
+      {confirmDeleteConn && (
+        <ConfirmModal
+          title="Delete connection?"
+          message={<>Delete connection <strong className="text-slate-200">{confirmDeleteConn.name}</strong>? This cannot be undone.</>}
+          confirmLabel={deletingId === confirmDeleteConn._id ? 'Deleting…' : 'Delete'}
+          danger={true}
+          onConfirm={() => {
+            void handleDelete(confirmDeleteConn);
+            setConfirmDeleteId(null);
+          }}
+          onCancel={() => setConfirmDeleteId(null)}
+        />
+      )}
     </div>
   );
 }
