@@ -157,7 +157,7 @@ When Apilix opens for the first time, a **default workspace** is created automat
 
 | # | Zone | Description |
 |---|---|---|
-| 1 | **Activity Bar** | Far-left icon strip. Click icons to switch the main view: Collections, Environments, Request History, Collection Runner, Mock Server, Browser Capture. |
+| 1 | **Activity Bar** | Far-left icon strip. Click icons to switch the main view: Collections, Environments, Request History, Collection Runner, Mock Server, Browser Capture, and Database. |
 | 2 | **Workspace Switcher** | Dropdown at the top of the sidebar to create or switch workspaces. |
 | 3 | **Sidebar** | Collection tree — shows all collections, folders, and requests. Right-click items for a context menu. |
 | 4 | **Tab Bar** | Each open request gets its own tab. Tabs are independent — you can have multiple requests open simultaneously. An unsaved tab shows a dot indicator. |
@@ -165,6 +165,16 @@ When Apilix opens for the first time, a **default workspace** is created automat
 | 6 | **Send Button** | Click to send the request. Keyboard shortcut: `Cmd+Enter` (macOS) / `Ctrl+Enter` (Windows/Linux). |
 | 7 | **Response Viewer** | Displays the response body (with syntax highlighting), headers, cookies, network timeline, TLS certificate chain, and redirect chain. |
 | 8 | **Status Bar** | Bottom bar — shows the active environment, the last response status/time/size, and a console toggle button with an unread-count badge. |
+
+### Database View
+
+The **Database** Activity Bar view is separate from the request builder. Use it to manage saved database connections for the current workspace or to run ad-hoc queries without creating a collection request first.
+
+- The **sidebar** lists saved connections and lets you filter, test, duplicate, import, export, and delete them.
+- The **main panel** switches between **Connection** details and a **Query Editor** for the selected connection.
+- Saved connections are reused later in collection requests and scripts.
+
+> **Desktop vs web:** the SQLite editor includes a file picker in the desktop app. In web mode, type the SQLite file path manually.
 
 ---
 

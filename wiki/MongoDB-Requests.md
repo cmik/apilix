@@ -117,7 +117,7 @@ All connection settings for a MongoDB request live in the **Connection** tab, ke
 **Connection Mode** — choose one of:
 
 - **Direct URI** — type or paste a MongoDB URI directly. Supports `{{variable}}` tokens so you can keep the actual URI in an environment (e.g. `{{mongoUri}}`).
-- **Named Connection** — pick a saved connection by ID. Named connections store the URI encrypted on disk; the URI is never sent to the browser. A **Refresh** button reloads the list from the server.
+- **Named Connection** — pick a saved MongoDB connection by ID from the current workspace, or enter the ID manually if you are driving it with variables.
 
 **Auth Override** — an optional collapsible section that injects credentials into the URI at send time without modifying the stored URI. Useful for testing different credential sets against the same endpoint without editing the connection. See [Authentication Override](#authentication-override).
 
@@ -154,7 +154,7 @@ Set `mongoUri` to `mongodb://localhost:27017` in your **Development** environmen
 
 ### Named Connections
 
-Store a connection URI once and reference it by a short identifier. This keeps URIs out of collection files (which may be version-controlled) and centralises credential rotation.
+Store a connection once in the workspace and reference it by its saved connection ID. This keeps MongoDB requests focused on the operation itself and lets the same connection be reused from the Database view, collection requests, and scripts.
 
 ```json
 "connection": {
@@ -163,72 +163,28 @@ Store a connection URI once and reference it by a short identifier. This keeps U
 }
 ```
 
-Named connections are stored encrypted on disk at:
-
-- **macOS:** `~/.apilix/mongo-connections.enc.json`
-- **Windows / Linux:** `~/.apilix/mongo-connections.enc.json`
-
-The file is AES-256-GCM encrypted. See [Security and Encrypted Data](Security-and-Encrypted-Data#mongodb-connection-registry) for details.
+Named connections are workspace-scoped saved database connections. Open **Activity Bar → Database** to create and manage them.
 
 ### Managing Named Connections
 
-Named connections are managed via the server REST API. A UI panel is available in the app **Activity Bar → Database** view.
+Use the **Database** Activity Bar view for day-to-day connection management.
 
-Validation rules for `POST /api/mongo/connections`:
+1. Open **Activity Bar → Database**.
+2. Click **+ New** in the sidebar.
+3. Choose **MongoDB** as the connection type.
+4. Enter a connection name and the MongoDB URI.
+5. Click **Test Connection**.
+6. Click **Save**.
 
-- `id` is required and must match `^[a-z0-9_-]{1,64}$`.
-- Reserved IDs are rejected (`__proto__`, `prototype`, `constructor`).
-- `uri` is required and must use `mongodb://` or `mongodb+srv://`.
+The Database sidebar also lets you:
 
-**Create or update a connection:**
+- filter MongoDB connections by name or host
+- edit and re-test a saved connection
+- duplicate a connection to create a variant quickly
+- copy the connection ID for use in variables or JSON
+- export/import connection JSON files
 
-```bash
-curl -X POST http://localhost:3001/api/mongo/connections \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "id": "atlas-dev",
-    "name": "Atlas Development",
-    "uri": "mongodb+srv://user:pass@cluster.mongodb.net",
-    "database": "mydb",
-    "authMode": "scram"
-  }'
-```
-
-**List connections** (URIs are never returned):
-
-```bash
-curl http://localhost:3001/api/mongo/connections
-```
-
-```json
-{
-  "connections": [
-    {
-      "id": "atlas-dev",
-      "name": "Atlas Development",
-      "database": "mydb",
-      "authMode": "scram",
-      "hasUri": true
-    }
-  ]
-}
-```
-
-**Delete a connection:**
-
-```bash
-curl -X DELETE http://localhost:3001/api/mongo/connections/atlas-dev
-```
-
-If an ID is malformed, delete and test routes return HTTP 400:
-
-```bash
-curl -X POST http://localhost:3001/api/mongo/connections/bad.id/test
-```
-
-```json
-{ "error": "Invalid connection id" }
-```
+When you export connections, Apilix strips secret fields from the JSON file. Re-enter credentials after import before using the connection.
 
 ### Authentication Override
 
@@ -272,6 +228,8 @@ Click the list icon beside the **Database** field. Apilix sends either a resolve
 **Collection fetch button**
 
 Click the list icon beside the **Collection** field. Requires a non-empty database name plus either a resolved direct URI or a valid named `connectionId`. Returns all collections in the specified database, sorted alphabetically.
+
+The **Database** Activity Bar panel uses the same live discovery flow for saved MongoDB connections in its query editor.
 
 **Introspect request forms**
 
@@ -787,6 +745,8 @@ Collections can contain any mix of HTTP and MongoDB requests. The runner process
 **Status column in the runner UI:** MongoDB requests display their `mongoStatus` (`MONGO_SUCCESS`, `MONGO_PARTIAL`, or `MONGO_ERROR`) in the status column instead of an HTTP code. The method column shows the operation name (e.g. `MONGO:FIND`, `MONGO:INSERT`).
 
 **Variable propagation:** Variables captured by a MongoDB test script (`apx.environment.set(...)`) are immediately available to subsequent requests in the same iteration, whether HTTP or MongoDB.
+
+MongoDB requests also coexist with the other database request types (`MYSQL`, `POSTGRESQL`, `SQLITE`, `CASSANDRA`, `ORACLE`, `MSSQL`, `REDIS`, and `DYNAMODB`) in the same collection runner sequence.
 
 ### No-retry Policy
 

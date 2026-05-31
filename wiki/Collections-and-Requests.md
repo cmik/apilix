@@ -13,6 +13,9 @@ Collections are the primary way to organise your API work in Apilix. A collectio
 2. [Requests](#requests)
    - [Creating a Request](#creating-a-request)
    - [HTTP Methods](#http-methods)
+   - [Database Requests](#database-requests)
+     - [MongoDB Requests](#mongodb-requests)
+     - [SQL, Redis, and DynamoDB Requests](#sql-redis-and-dynamodb-requests)
    - [URL Bar](#url-bar)
    - [Query Parameters](#query-parameters)
    - [Request Headers](#request-headers)
@@ -115,6 +118,31 @@ Select the method from the dropdown to the left of the URL bar.
 | **OPTIONS** | Check allowed methods / CORS preflight |
 
 The method badge is colour-coded in the collection tree and tab bar for quick visual identification.
+
+### Database Requests
+
+Apilix supports database-backed requests directly inside collections. Select one of these methods from the method dropdown:
+
+- `MONGO`
+- `MYSQL`
+- `POSTGRESQL`
+- `SQLITE`
+- `CASSANDRA`
+- `ORACLE`
+- `MSSQL`
+- `REDIS`
+- `DYNAMODB`
+
+When you choose a database method, the standard URL bar becomes read-only guidance text and the request switches to dedicated tabs for the selected database type.
+
+All database request types support:
+
+- saved connections from **Activity Bar → Database**
+- `{{variable}}` substitution in connection IDs and payload fields
+- **Pre-request**, **Tests**, and **Docs** tabs
+- mixed runs in the **Collection Runner** alongside HTTP requests
+
+Database requests cannot be sent to the **Mock Server** because they do not produce outbound HTTP traffic.
 
 ### URL Bar
 
@@ -225,9 +253,9 @@ Open the **Settings** tab on a request to add a **Markdown description**. Descri
 
 ---
 
-### MongoDB Requests
+#### MongoDB Requests
 
-In addition to standard HTTP methods, Apilix supports **MongoDB** as a request type. Select `MONGO` from the method dropdown to switch the request into MongoDB mode.
+Select `MONGO` from the method dropdown to switch the request into MongoDB mode.
 
 - The **URL bar** is hidden — the panel switches to a dedicated MongoDB editor.
 - The editor is organised into five tabs: **Query**, **Connection**, **Pre-request**, **Tests**, and **Docs**.
@@ -239,6 +267,18 @@ In addition to standard HTTP methods, Apilix supports **MongoDB** as a request t
 - MongoDB requests can coexist with HTTP requests inside the same collection and run seamlessly in the Collection Runner.
 
 See [MongoDB Requests](MongoDB-Requests) for a full reference on operations, connections, and scripting patterns.
+
+#### SQL, Redis, and DynamoDB Requests
+
+The non-Mongo database methods use the same five-tab layout: **Connection**, **Query** (or **Command** / **Operation**), **Pre-request**, **Tests**, and **Docs**.
+
+- **SQL/CQL methods** (`MYSQL`, `POSTGRESQL`, `SQLITE`, `CASSANDRA`, `ORACLE`, `MSSQL`) use a query editor plus a JSON params array.
+- **REDIS** uses a command field plus a JSON args array.
+- **DYNAMODB** uses an operation picker plus a JSON input object.
+
+The **Connection** tab prefers matching saved connections from the Database view. If no matching saved connections exist yet, you can still enter a connection ID or `{{variable}}` placeholder manually.
+
+For SQL-like methods, you can choose whether the response is rendered as a **table** or as raw **JSON**.
 
 ---
 
