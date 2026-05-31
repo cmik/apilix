@@ -120,14 +120,14 @@ The Apilix UI is divided into five main zones:
 
 ### Core Concepts
 - [Workspaces](Workspaces) — Create, switch, sync, and snapshot workspaces
-- [Collections & Requests](Collections-and-Requests) — Organize and send HTTP requests
+- [Collections & Requests](Collections-and-Requests) — Organize HTTP requests and database requests in the same collections
 - [Variables & Environments](Variables-and-Environments) — `{{variable}}` scopes, environments, globals
 
 ### Authentication
 - [Authentication](Authentication) — Bearer, Basic, API Key, and full OAuth 2.0
 
 ### Scripting & Testing
-- [Scripting](Scripting) — Pre-request & test scripts, `apx.*` / `pm.*` API, assertions, snippets
+- [Scripting](Scripting) — Pre-request & test scripts, `apx.*` / `pm.*` API, assertions, snippets, and saved database helpers
 
 ### Advanced Workflows
 - [Collection Runner](Collection-Runner) — Data-driven runs, pause/resume/stop, performance metrics, headless CLI
@@ -141,7 +141,7 @@ The Apilix UI is divided into five main zones:
 - [Code Generation](Code-Generation) — Request code snippets in multiple languages
 
 ### Reference
-- [Settings & Configuration](Settings-and-Configuration) — Theme, proxy, SSL, timeouts, CORS
+- [Settings & Configuration](Settings-and-Configuration) — Theme, proxy, SSL, timeouts, CORS, and where database tools live
 - [Keyboard Shortcuts](Keyboard-Shortcuts) — Full shortcut reference table
 - [Security & Encrypted Data](Security-and-Encrypted-Data) — OS keychain, secret variables, remote encryption, TLS, sandbox
 

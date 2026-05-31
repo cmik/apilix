@@ -653,13 +653,13 @@ The callback receives `(err, response)` where `response` exposes the same interf
 
 ## `apx.db` Database API
 
-Use `apx.db` to execute SQL-like and MongoDB operations against connections configured in **Activity Bar → Database**.
+Use `apx.db` to execute database operations against saved connections configured in **Activity Bar → Database**.
 
-`apx.db` currently exposes two script helpers: `query` (SQL-like backends) and `mongoQuery` (MongoDB). Redis and DynamoDB are available as database request types in collections and the Database panel query editor.
+`apx.db` currently exposes two script helpers: `query` for SQL-like backends and `mongoQuery` for MongoDB. Redis and DynamoDB are available as database request types in collections and in the Database panel query editor, but they are not exposed as `apx.db.*` helpers yet.
 
 ### `apx.db.query(connectionId, sql, params?)`
 
-Execute a SQL-like query (MySQL, PostgreSQL, SQLite, Cassandra CQL, Oracle, or MSSQL).
+Execute a SQL-like query (MySQL, PostgreSQL, SQLite, Cassandra CQL, Oracle, or MSSQL) against a saved connection ID.
 
 ```js
 const out = await apx.db.query(
@@ -734,6 +734,7 @@ Connection fields can contain `{{variable}}` tokens.
 
 - Tokens are resolved at execution time using the current script context.
 - In collection runs, runner row values (`iterationData`) are included in resolution.
+- This applies to saved connection fields such as host, username, password, database, MongoDB URI, SQLite file path, and DynamoDB endpoint.
 
 ### Error handling pattern
 

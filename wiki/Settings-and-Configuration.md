@@ -16,7 +16,7 @@ Open it by clicking the gear icon (⚙️) in the bottom-left corner of the Acti
   - [Client Certificates (mTLS)](#client-certificates-mtls)
   - [Proxy](#proxy)
   - [CORS](#cors)
-  - [Databases](#databases)
+  - [Database Tools](#database-tools)
     - [Add a connection](#add-a-connection)
     - [Manage connections](#manage-connections)
     - [Variables in connection fields](#variables-in-connection-fields)
@@ -134,15 +134,16 @@ This is useful when you run Apilix in web mode (e.g. `http://localhost:3001`) an
 
 ---
 
-## Database Panel
+## Database Tools
 
-Apilix includes a dedicated **Database** view in the Activity Bar for managing reusable connections and running ad-hoc database operations.
+The **Settings** modal does not contain the database connection editor. Database tooling lives in the dedicated **Database** Activity Bar view and uses the current workspace for storage.
 
-Use this panel when you want to:
+Use the Database view when you want to:
 
-- maintain connection profiles per workspace
+- maintain reusable connection profiles per workspace
 - verify connectivity with **Test Connection**
-- open a pooled connection and run interactive queries
+- import or export connection definitions
+- run interactive queries or operations without creating a collection request first
 
 Supported connection types:
 
@@ -161,23 +162,21 @@ Supported connection types:
 ### Add a connection
 
 1. Open **Activity Bar → Database**.
-2. Go to the **Connections** tab.
-3. Click **Add Connection**.
+2. Click **+ New** in the sidebar.
 4. Fill in common fields:
    - Connection Name
    - Type
-   - Connection Timeout (ms)
-   - Query Timeout (ms) where applicable
-   - Max Connections where applicable
 5. Fill type-specific fields for the selected engine.
 6. Click **Test Connection**.
 7. Click **Save**.
 
+The sidebar also lets you filter connections, duplicate them, copy a connection ID, or delete them.
+
 ### Run a query or operation
 
 1. Open **Activity Bar → Database**.
-2. Go to the **Query** tab.
-3. Select a saved connection.
+2. Select a saved connection in the sidebar.
+3. Open the **Query Editor** tab in the main panel.
 4. Enter the command payload for the selected mode:
    - SQL/CQL text + optional JSON params array
    - Mongo operation + JSON document/options
@@ -211,6 +210,10 @@ Connection fields support `{{variable}}` placeholders.
 - During query execution, placeholders resolve from active environment variables and globals.
 - During **Test Connection** from the Database panel, placeholders resolve from the same runtime context.
 
+For MongoDB connections, the query editor also attempts to fetch live database and collection names from the resolved connection.
+
+For SQLite connections, the desktop app offers a file picker, while web mode requires typing the file path manually.
+
 ### Validation behavior
 
 - SQLite `filePath` cannot be empty, contain null bytes, or include `..` traversal segments.
@@ -220,6 +223,8 @@ Connection fields support `{{variable}}` placeholders.
 ### Scope and persistence
 
 Database connections are stored in workspace data (`WorkspaceData.databases`) and move with workspace export/sync.
+
+Connection exports omit secret fields such as passwords, API keys, and tokens. Re-enter them after import.
 
 ## Terminal
 
