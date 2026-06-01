@@ -1219,16 +1219,24 @@ export default function ResponseViewer() {
                 </button>
               </div>
             )}
-            <label className="flex items-center gap-1 text-xs text-slate-500 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={rawMode}
-                onChange={e => setRawMode(e.target.checked)}
-                className="accent-orange-500"
-                disabled={(hasDbTable && dbBodyMode === 'table') || (isHtml && htmlViewMode === 'preview')}
-              />
-              Raw
-            </label>
+            {!isHtml && (
+              <div className="flex rounded overflow-hidden border border-slate-600 text-xs">
+                <button
+                  onClick={() => setRawMode(false)}
+                  className={`px-2 py-0.5 transition-colors ${!rawMode ? 'bg-slate-600 text-slate-100' : 'bg-slate-800 text-slate-400 hover:text-slate-200'}`}
+                  disabled={hasDbTable && dbBodyMode === 'table'}
+                >
+                  Tree
+                </button>
+                <button
+                  onClick={() => setRawMode(true)}
+                  className={`px-2 py-0.5 transition-colors ${rawMode ? 'bg-slate-600 text-slate-100' : 'bg-slate-800 text-slate-400 hover:text-slate-200'}`}
+                  disabled={hasDbTable && dbBodyMode === 'table'}
+                >
+                  Raw
+                </button>
+              </div>
+            )}
             <button
               onClick={copyBody}
               className={`text-xs px-1.5 py-0.5 rounded transition-colors ${
