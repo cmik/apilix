@@ -387,6 +387,89 @@ test('runCli accepts databases file as an object with databases[]', async () => 
   });
 });
 
+test('runCli accepts expanded database connection types in databases file', async () => {
+  await withTempDir(async (dir) => {
+    const collectionPath = path.join(dir, 'collection.json');
+    const databasesPath = path.join(dir, 'db.json');
+    await fs.writeFile(collectionPath, JSON.stringify({
+      info: {
+        name: 'Expanded Database Types Acceptance',
+        schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+      },
+      item: [],
+    }));
+    await fs.writeFile(databasesPath, JSON.stringify([
+      {
+        _id: 'db-mysql',
+        name: 'Local MySQL',
+        type: 'mysql',
+        host: '127.0.0.1',
+        port: 3306,
+        username: 'root',
+        database: 'test',
+      },
+      {
+        _id: 'db-postgres',
+        name: 'Local Postgres',
+        type: 'postgres',
+        host: '127.0.0.1',
+        port: 5432,
+        username: 'postgres',
+        database: 'test',
+      },
+      {
+        _id: 'db-mongo',
+        name: 'Local MongoDB',
+        type: 'mongodb',
+        connectionUri: 'mongodb://127.0.0.1:27017',
+      },
+      {
+        _id: 'db-sqlite',
+        name: 'Local SQLite',
+        type: 'sqlite',
+      },
+      {
+        _id: 'db-cassandra',
+        name: 'Local Cassandra',
+        type: 'cassandra',
+      },
+      {
+        _id: 'db-oracle',
+        name: 'Local Oracle',
+        type: 'oracle',
+      },
+      {
+        _id: 'db-mssql',
+        name: 'Local MSSQL',
+        type: 'mssql',
+      },
+      {
+        _id: 'db-redis',
+        name: 'Local Redis',
+        type: 'redis',
+      },
+      {
+        _id: 'db-dynamo',
+        name: 'Local DynamoDB',
+        type: 'dynamodb',
+      },
+    ]));
+
+    const io = makeIo(dir);
+    const exitCode = await runCli([
+      'run',
+      'collection.json',
+      '--databases', 'db.json',
+      '--reporter', 'json',
+    ], io);
+
+    assert.equal(exitCode, 0);
+    const report = JSON.parse(io.readStdout());
+    assert.equal(report.summary.requests, 0);
+    assert.equal(report.summary.errors, 0);
+  });
+});
+
 test('runCli returns usage error for out-of-range database queryTimeout', async () => {
   await withTempDir(async (dir) => {
     const collectionPath = path.join(dir, 'collection.json');
