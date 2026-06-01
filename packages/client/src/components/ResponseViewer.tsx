@@ -257,15 +257,65 @@ function escapeRegex(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function highlightText(text: string, query: string): React.ReactNode {
+type SearchOptions = {
+  caseSensitive: boolean;
+  regex: boolean;
+};
+
+function buildSearchRegex(query: string, options: SearchOptions): RegExp | null {
+  if (!query.trim()) return null;
+  const source = options.regex ? query : escapeRegex(query);
+  const flags = `g${options.caseSensitive ? '' : 'i'}`;
+  try {
+    return new RegExp(source, flags);
+  } catch {
+    return null;
+  }
+}
+
+function countSearchMatches(text: string, query: string, options: SearchOptions): number {
+  const regex = buildSearchRegex(query, options);
+  if (!regex) return 0;
+  let count = 0;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(text)) !== null) {
+    if (match[0].length === 0) {
+      regex.lastIndex += 1;
+      continue;
+    }
+    count += 1;
+  }
+  return count;
+}
+
+function highlightText(text: string, query: string, options: SearchOptions): React.ReactNode {
   if (!query.trim()) return text;
-  const regex = new RegExp(`(${escapeRegex(query)})`, 'gi');
-  const parts = text.split(regex);
-  return parts.map((part, i) =>
-    i % 2 === 1
-      ? <mark key={i} className="search-match bg-yellow-500/30 text-yellow-200 rounded-sm not-italic">{part}</mark>
-      : part
-  );
+  const regex = buildSearchRegex(query, options);
+  if (!regex) return text;
+
+  const out: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    const start = match.index;
+    const end = start + match[0].length;
+    if (end === start) {
+      regex.lastIndex += 1;
+      continue;
+    }
+    if (start > lastIndex) out.push(text.slice(lastIndex, start));
+    out.push(
+      <mark key={`${start}-${end}-${out.length}`} className="search-match bg-yellow-500/30 text-yellow-200 rounded-sm not-italic">
+        {text.slice(start, end)}
+      </mark>
+    );
+    lastIndex = end;
+  }
+
+  if (out.length === 0) return text;
+  if (lastIndex < text.length) out.push(text.slice(lastIndex));
+  return out;
 }
 
 const LARGE_BODY_THRESHOLD = 512 * 1024; // 512 KB
@@ -280,11 +330,12 @@ type JsonNodeProps = {
   depth: number;
   isLast: boolean;
   searchQuery?: string;
+  searchOptions?: SearchOptions;
   path?: (string | number)[];
   onSaveToVar?: (path: (string | number)[], value: unknown, x: number, y: number) => void;
 };
 
-function JsonNode({ data, name, depth, isLast, searchQuery, path, onSaveToVar }: JsonNodeProps) {
+function JsonNode({ data, name, depth, isLast, searchQuery, searchOptions, path, onSaveToVar }: JsonNodeProps) {
   const [open, setOpen] = useState(true);
   const [visibleCount, setVisibleCount] = useState(INITIAL_CHILD_LIMIT);
   const { expandSignal, collapseSignal } = useContext(TreeSignalContext);
@@ -294,7 +345,7 @@ function JsonNode({ data, name, depth, isLast, searchQuery, path, onSaveToVar }:
   const paddingLeft = depth * 16;
   const comma = !isLast ? <span className="text-slate-500">,</span> : null;
   const keyEl = name !== undefined
-    ? <><span className="text-amber-300">"</span><span className="text-amber-300">{searchQuery ? highlightText(name, searchQuery) : name}</span><span className="text-amber-300">"</span><span className="text-slate-500">: </span></>
+    ? <><span className="text-amber-300">"</span><span className="text-amber-300">{searchQuery && searchOptions ? highlightText(name, searchQuery, searchOptions) : name}</span><span className="text-amber-300">"</span><span className="text-slate-500">: </span></>
     : null;
 
   const leafCtx = onSaveToVar
@@ -306,20 +357,20 @@ function JsonNode({ data, name, depth, isLast, searchQuery, path, onSaveToVar }:
   const leafCls = onSaveToVar ? ' cursor-context-menu hover:bg-slate-700/50 rounded' : '';
 
   if (data === null) {
-    return <div style={{ paddingLeft }} className={`leading-5${leafCls}`} {...leafCtx}>{keyEl}<span className="text-rose-400 hover:bg-rose-400/15 rounded px-0.5">null</span>{comma}</div>;
+    return <div style={{ paddingLeft }} className={`leading-5${leafCls}`} {...leafCtx}>{keyEl}<span className="text-rose-400 hover:bg-rose-400/15 rounded px-0.5">{searchQuery && searchOptions ? highlightText('null', searchQuery, searchOptions) : 'null'}</span>{comma}</div>;
   }
   if (typeof data === 'boolean') {
-    return <div style={{ paddingLeft }} className={`leading-5${leafCls}`} {...leafCtx}>{keyEl}<span className="text-purple-400 hover:bg-purple-400/15 rounded px-0.5">{String(data)}</span>{comma}</div>;
+    return <div style={{ paddingLeft }} className={`leading-5${leafCls}`} {...leafCtx}>{keyEl}<span className="text-purple-400 hover:bg-purple-400/15 rounded px-0.5">{searchQuery && searchOptions ? highlightText(String(data), searchQuery, searchOptions) : String(data)}</span>{comma}</div>;
   }
   if (typeof data === 'number') {
-    return <div style={{ paddingLeft }} className={`leading-5${leafCls}`} {...leafCtx}>{keyEl}<span className="text-sky-300 hover:bg-sky-300/15 rounded px-0.5">{data}</span>{comma}</div>;
+    return <div style={{ paddingLeft }} className={`leading-5${leafCls}`} {...leafCtx}>{keyEl}<span className="text-sky-300 hover:bg-sky-300/15 rounded px-0.5">{searchQuery && searchOptions ? highlightText(String(data), searchQuery, searchOptions) : data}</span>{comma}</div>;
   }
   if (typeof data === 'string') {
     return (
       <div style={{ paddingLeft }} className={`leading-5 break-all${leafCls}`} {...leafCtx}>
         {keyEl}
         <span className="text-emerald-400 hover:bg-emerald-400/15 rounded px-0.5">
-          &quot;{searchQuery ? highlightText(data, searchQuery) : data}&quot;
+          &quot;{searchQuery && searchOptions ? highlightText(data, searchQuery, searchOptions) : data}&quot;
         </span>
         {comma}
       </div>
@@ -349,7 +400,7 @@ function JsonNode({ data, name, depth, isLast, searchQuery, path, onSaveToVar }:
         {open && (
           <>
             {data.slice(0, visibleCount).map((item, i) => (
-              <JsonNode key={i} data={item} depth={depth + 1} isLast={i === data.length - 1 && data.length <= visibleCount} searchQuery={searchQuery} path={[...(path ?? []), i]} onSaveToVar={onSaveToVar} />
+              <JsonNode key={i} data={item} depth={depth + 1} isLast={i === data.length - 1 && data.length <= visibleCount} searchQuery={searchQuery} searchOptions={searchOptions} path={[...(path ?? []), i]} onSaveToVar={onSaveToVar} />
             ))}
             {data.length > visibleCount && (
               <div style={{ paddingLeft: paddingLeft + 14 }} className="leading-5">
@@ -391,7 +442,7 @@ function JsonNode({ data, name, depth, isLast, searchQuery, path, onSaveToVar }:
         {open && (
           <>
             {entries.slice(0, visibleCount).map(([k, v], i) => (
-              <JsonNode key={k} data={v} name={k} depth={depth + 1} isLast={i === entries.length - 1 && entries.length <= visibleCount} searchQuery={searchQuery} path={[...(path ?? []), k]} onSaveToVar={onSaveToVar} />
+              <JsonNode key={k} data={v} name={k} depth={depth + 1} isLast={i === entries.length - 1 && entries.length <= visibleCount} searchQuery={searchQuery} searchOptions={searchOptions} path={[...(path ?? []), k]} onSaveToVar={onSaveToVar} />
             ))}
             {entries.length > visibleCount && (
               <div style={{ paddingLeft: paddingLeft + 14 }} className="leading-5">
@@ -571,9 +622,10 @@ function XmlTreeView({ body, expandSignal = 0, collapseSignal = 0 }: { body: str
   );
 }
 
-function JsonTreeView({ body, searchQuery, onSaveToVar, expandSignal = 0, collapseSignal = 0 }: {
+function JsonTreeView({ body, searchQuery, searchOptions, onSaveToVar, expandSignal = 0, collapseSignal = 0 }: {
   body: string;
   searchQuery?: string;
+  searchOptions?: SearchOptions;
   onSaveToVar?: (path: (string | number)[], value: unknown, x: number, y: number) => void;
   expandSignal?: number;
   collapseSignal?: number;
@@ -611,14 +663,14 @@ function JsonTreeView({ body, searchQuery, onSaveToVar, expandSignal = 0, collap
   if (!result.ok) {
     return (
       <pre className="p-3 text-sm font-mono text-slate-200 whitespace-pre-wrap break-all">
-        {searchQuery ? highlightText(body, searchQuery) : body}
+        {searchQuery && searchOptions ? highlightText(body, searchQuery, searchOptions) : body}
       </pre>
     );
   }
   return (
     <TreeSignalContext.Provider value={{ expandSignal, collapseSignal }}>
       <div className="p-3 text-sm font-mono text-slate-200">
-        <JsonNode data={result.value} depth={0} isLast={true} searchQuery={searchQuery} path={[]} onSaveToVar={onSaveToVar} />
+        <JsonNode data={result.value} depth={0} isLast={true} searchQuery={searchQuery} searchOptions={searchOptions} path={[]} onSaveToVar={onSaveToVar} />
       </div>
     </TreeSignalContext.Provider>
   );
@@ -768,6 +820,8 @@ export default function ResponseViewer() {
   const [dbBodyMode, setDbBodyMode] = useState<'table' | 'json'>('table');
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchCaseSensitive, setSearchCaseSensitive] = useState(false);
+  const [searchUseRegex, setSearchUseRegex] = useState(false);
   const [matchIndex, setMatchIndex] = useState(0);
   const [copied, setCopied] = useState(false);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'canceled' | 'error'>('idle');
@@ -775,6 +829,8 @@ export default function ResponseViewer() {
   const [collapseSignal, setCollapseSignal] = useState(0);
   const [jsonPathExpr, setJsonPathExpr] = useState('');
   const [jsonPathOpen, setJsonPathOpen] = useState(false);
+  const [treeMatchCount, setTreeMatchCount] = useState(0);
+  const [searchFallbackNotice, setSearchFallbackNotice] = useState<string | null>(null);
   const jsonPathInputRef = useRef<HTMLInputElement>(null);
   const [ctxMenu, setCtxMenu] = useState<{ left: number; top: number; path: (string | number)[]; value: unknown; tabId: string | null; collectionId: string | null } | null>(null);
   const [saveToVarTarget, setSaveToVarTarget] = useState<{ path: (string | number)[]; value: unknown; tabId: string | null; collectionId: string | null } | null>(null);
@@ -811,6 +867,8 @@ export default function ResponseViewer() {
   };
   const searchInputRef = useRef<HTMLInputElement>(null);
   const bodyContentRef = useRef<HTMLDivElement>(null);
+  const autoSwitchedSigRef = useRef<string | null>(null);
+  const lastResetKeyRef = useRef<string | null>(null);
 
   const { response, isLoading } = state;
 
@@ -860,21 +918,48 @@ export default function ResponseViewer() {
 
   const totalMatches = useMemo(() => {
     if (!searchQuery.trim() || !response) return 0;
-    const body = response.body.toLowerCase();
-    const q = searchQuery.toLowerCase();
-    let count = 0;
-    let pos = 0;
-    while (true) {
-      const idx = body.indexOf(q, pos);
-      if (idx === -1) break;
-      count++;
-      pos = idx + 1;
-    }
-    return count;
-  }, [searchQuery, response]);
+    return countSearchMatches(response.body, searchQuery, {
+      caseSensitive: searchCaseSensitive,
+      regex: searchUseRegex,
+    });
+  }, [searchQuery, response, searchCaseSensitive, searchUseRegex]);
+
+  const isInvalidRegex = useMemo(() => {
+    if (!searchUseRegex || !searchQuery.trim()) return false;
+    return buildSearchRegex(searchQuery, {
+      caseSensitive: searchCaseSensitive,
+      regex: true,
+    }) === null;
+  }, [searchQuery, searchCaseSensitive, searchUseRegex]);
 
   // Reset match index when query changes
-  useEffect(() => { setMatchIndex(0); }, [searchQuery]);
+  useEffect(() => { setMatchIndex(0); }, [searchQuery, searchCaseSensitive, searchUseRegex]);
+
+  // Reset auto-switch guard when search context changes.
+  useEffect(() => {
+    autoSwitchedSigRef.current = null;
+  }, [searchQuery, response?.body, jsonPathExpr, searchCaseSensitive, searchUseRegex]);
+
+  // Clear stale fallback notice when body/filter context changes.
+  useEffect(() => {
+    setSearchFallbackNotice(null);
+  }, [response?.body, jsonPathExpr]);
+
+  // When search is cleared, also clear the tree-visible match count.
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setTreeMatchCount(0);
+      setSearchFallbackNotice(null);
+    }
+    if (isInvalidRegex || totalMatches === 0) {
+      setTreeMatchCount(0);
+    }
+  }, [searchQuery, isInvalidRegex, totalMatches]);
+
+  const isTreeViewActive = !rawMode && (isJson || isXml) && (!hasDbTable || dbBodyMode === 'json');
+
+  // Derived: use tree-visible mark count in tree mode, raw body count in raw/fallback mode
+  const displayMatchCount = isTreeViewActive ? treeMatchCount : totalMatches;
 
   // Reset expand/collapse signals when a new response arrives so newly-mounted
   // nodes inherit the default open state instead of the stale signal value.
@@ -904,10 +989,45 @@ export default function ResponseViewer() {
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
-  // Scroll to current match after render
+  // Reset search + raw/tree selection when changing request context
+  // or when starting a fresh execution for the current request.
+  useEffect(() => {
+    const requestItemId = state.activeRequest?.item?.id ?? '';
+    const resetKey = `${activeTabId ?? ''}::${requestItemId}::${isLoading ? 'loading' : 'idle'}`;
+    if (lastResetKeyRef.current === resetKey) return;
+    lastResetKeyRef.current = resetKey;
+
+    setSearchOpen(false);
+    setSearchQuery('');
+    setSearchCaseSensitive(false);
+    setSearchUseRegex(false);
+    setMatchIndex(0);
+    setTreeMatchCount(0);
+    setSearchFallbackNotice(null);
+    autoSwitchedSigRef.current = null;
+    setRawMode(false);
+  }, [activeTabId, state.activeRequest?.item?.id, isLoading]);
+
+  // Scroll to current match after render; auto-switch to Raw when tree shows fewer matches than raw body
   useLayoutEffect(() => {
     if (!bodyContentRef.current || !searchQuery.trim() || totalMatches === 0) return;
     const marks = bodyContentRef.current.querySelectorAll<HTMLElement>('mark.search-match');
+    // In tree mode: track how many marks are actually rendered and auto-switch to Raw
+    // when the raw body contains more occurrences than the tree can display.
+    if (isTreeViewActive) {
+      setTreeMatchCount(marks.length);
+      if (marks.length < totalMatches) {
+        const sig = `${response?.body.length ?? 0}::${searchQuery}::${jsonPathExpr}::${searchCaseSensitive ? '1' : '0'}::${searchUseRegex ? '1' : '0'}`;
+        if (autoSwitchedSigRef.current !== sig) {
+          autoSwitchedSigRef.current = sig;
+          setRawMode(true);
+          setSearchFallbackNotice(
+            `Switched to Raw mode — ${totalMatches} match${totalMatches !== 1 ? 'es' : ''} in Raw vs ${marks.length} in Tree.`
+          );
+          return;
+        }
+      }
+    }
     if (marks.length === 0) return;
     const cur = matchIndex % marks.length;
     marks.forEach((m, i) => {
@@ -920,28 +1040,28 @@ export default function ResponseViewer() {
         m.style.outline = '';
       }
     });
-  }, [matchIndex, searchQuery, totalMatches, rawMode, response]);
+  }, [matchIndex, searchQuery, totalMatches, isTreeViewActive, response, jsonPathExpr, searchCaseSensitive, searchUseRegex]);
 
   const closeSearch = () => { setSearchOpen(false); setSearchQuery(''); setMatchIndex(0); };
 
   const navigateSearch = useCallback((direction: 'prev' | 'next') => {
-    if (totalMatches === 0) return;
+    if (displayMatchCount === 0) return;
     // In tree mode, make sure folded branches are visible before navigating.
-    if (!rawMode && (isJson || isXml)) {
+    if (isTreeViewActive) {
       setCollapseSignal(0);
       setExpandSignal(n => n + 1);
     }
     setMatchIndex(i => (
       direction === 'prev'
-        ? (i - 1 + totalMatches) % totalMatches
-        : (i + 1) % totalMatches
+        ? (i - 1 + displayMatchCount) % displayMatchCount
+        : (i + 1) % displayMatchCount
     ));
-  }, [totalMatches, rawMode, isJson, isXml]);
+  }, [displayMatchCount, isTreeViewActive]);
 
   const handleSearchKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Escape') {
       closeSearch();
-    } else if (e.key === 'Enter' && totalMatches > 0) {
+    } else if (e.key === 'Enter' && displayMatchCount > 0) {
       if (e.shiftKey) {
         navigateSearch('prev');
       } else {
@@ -1188,27 +1308,54 @@ export default function ResponseViewer() {
             ref={searchInputRef}
             type="text"
             value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
+            onChange={e => {
+              setSearchFallbackNotice(null);
+              setSearchQuery(e.target.value);
+            }}
             onKeyDown={handleSearchKey}
             placeholder="Search in body… (Enter ↓  Shift+Enter ↑  Esc close)"
             className="flex-1 bg-slate-700 text-slate-200 text-xs px-2 py-1 rounded outline-none border border-slate-600 focus:border-orange-500 placeholder-slate-500"
           />
+          <button
+            onClick={() => {
+              setSearchFallbackNotice(null);
+              setSearchCaseSensitive(v => !v);
+            }}
+            className={`text-[11px] px-1.5 py-0.5 rounded border transition-colors font-semibold ${
+              searchCaseSensitive
+                ? 'border-orange-500 bg-orange-500/15 text-orange-300'
+                : 'border-slate-600 text-slate-400 hover:text-slate-200'
+            }`}
+            title="Case sensitive"
+          >Aa</button>
+          <button
+            onClick={() => {
+              setSearchFallbackNotice(null);
+              setSearchUseRegex(v => !v);
+            }}
+            className={`text-[11px] px-1.5 py-0.5 rounded border transition-colors font-semibold ${
+              searchUseRegex
+                ? 'border-orange-500 bg-orange-500/15 text-orange-300'
+                : 'border-slate-600 text-slate-400 hover:text-slate-200'
+            }`}
+            title="Use regular expression"
+          >.*</button>
           {searchQuery.trim() && (
             <span className={`text-xs whitespace-nowrap ${
-              totalMatches === 0 ? 'text-red-400' : 'text-slate-400'
+              isInvalidRegex || displayMatchCount === 0 ? 'text-red-400' : 'text-slate-400'
             }`}>
-              {totalMatches === 0 ? 'No matches' : `${matchIndex + 1} / ${totalMatches}`}
+              {isInvalidRegex ? 'Invalid regex' : (displayMatchCount === 0 ? 'No matches' : `${matchIndex + 1} / ${displayMatchCount}`)}
             </span>
           )}
           <button
             onClick={() => navigateSearch('prev')}
-            disabled={totalMatches === 0}
+            disabled={isInvalidRegex || displayMatchCount === 0}
             className="text-slate-400 hover:text-slate-200 disabled:opacity-30 px-1 text-sm"
             title="Previous match (Shift+Enter)"
           >↑</button>
           <button
             onClick={() => navigateSearch('next')}
-            disabled={totalMatches === 0}
+            disabled={isInvalidRegex || displayMatchCount === 0}
             className="text-slate-400 hover:text-slate-200 disabled:opacity-30 px-1 text-sm"
             title="Next match (Enter)"
           >↓</button>
@@ -1217,6 +1364,25 @@ export default function ResponseViewer() {
             className="text-slate-500 hover:text-slate-200 px-1 text-sm"
             title="Close (Esc)"
           >✕</button>
+        </div>
+      )}
+
+      {/* Search fallback notice */}
+      {searchFallbackNotice && tab === 'Body' && (
+        <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-amber-700/50 bg-amber-900/20 shrink-0">
+          <span className="text-xs text-amber-300">{searchFallbackNotice}</span>
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              onClick={() => { setRawMode(false); setSearchFallbackNotice(null); }}
+              className="text-xs text-amber-400 hover:text-amber-200 underline"
+              title="Switch back to Tree mode (may show fewer matches)"
+            >Back to Tree</button>
+            <button
+              onClick={() => setSearchFallbackNotice(null)}
+              className="text-amber-500 hover:text-amber-200 px-1 text-sm"
+              title="Dismiss"
+            >✕</button>
+          </div>
         </div>
       )}
 
@@ -1241,20 +1407,20 @@ export default function ResponseViewer() {
             const serialized = JSON.stringify(jsonPathResult.value, null, 2) ?? 'null';
             return rawMode ? (
               <pre className="p-3 text-sm font-mono text-slate-200 whitespace-pre-wrap break-all">
-                {searchQuery.trim() ? highlightText(serialized, searchQuery) : serialized}
+                {searchQuery.trim() ? highlightText(serialized, searchQuery, { caseSensitive: searchCaseSensitive, regex: searchUseRegex }) : serialized}
               </pre>
             ) : (
-              <JsonTreeView body={serialized} searchQuery={searchQuery.trim() ? searchQuery : undefined} expandSignal={expandSignal} collapseSignal={collapseSignal} />
+              <JsonTreeView body={serialized} searchQuery={searchQuery.trim() ? searchQuery : undefined} searchOptions={{ caseSensitive: searchCaseSensitive, regex: searchUseRegex }} expandSignal={expandSignal} collapseSignal={collapseSignal} />
             );
           }
           return rawMode ? (
             <pre className="p-3 text-sm font-mono text-slate-200 whitespace-pre-wrap break-all">
-              {searchQuery.trim() ? highlightText(response.body, searchQuery) : response.body}
+              {searchQuery.trim() ? highlightText(response.body, searchQuery, { caseSensitive: searchCaseSensitive, regex: searchUseRegex }) : response.body}
             </pre>
           ) : isXml ? (
             <XmlTreeView body={response.body} expandSignal={expandSignal} collapseSignal={collapseSignal} />
           ) : (
-            <JsonTreeView body={response.body} searchQuery={searchQuery.trim() ? searchQuery : undefined} onSaveToVar={handleSaveToVar} expandSignal={expandSignal} collapseSignal={collapseSignal} />
+            <JsonTreeView body={response.body} searchQuery={searchQuery.trim() ? searchQuery : undefined} searchOptions={{ caseSensitive: searchCaseSensitive, regex: searchUseRegex }} onSaveToVar={handleSaveToVar} expandSignal={expandSignal} collapseSignal={collapseSignal} />
           );
         })()}
 

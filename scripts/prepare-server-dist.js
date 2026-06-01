@@ -21,13 +21,46 @@ function sanitizeSemver(value) {
 	return String(value || '').replace(/^[^0-9]*/, '');
 }
 
+function normalizePlatform(value) {
+	const v = String(value || '').toLowerCase();
+	if (!v) return process.platform;
+	if (v === 'win') return 'win32';
+	if (v === 'windows') return 'win32';
+	if (v === 'mac') return 'darwin';
+	if (v === 'osx') return 'darwin';
+	return v;
+}
+
+function normalizeArch(value) {
+	const v = String(value || '').toLowerCase();
+	if (!v) return process.arch;
+	if (v === 'x86_64') return 'x64';
+	if (v === 'amd64') return 'x64';
+	if (v === 'aarch64') return 'arm64';
+	return v;
+}
+
+function assertBuildTargetCompatibility(targetPlatform, targetArch) {
+	if (targetPlatform !== process.platform || targetArch !== process.arch) {
+		throw new Error(
+			`[dist:prepare:server] Refusing to prepare server dependencies for ${targetPlatform}/${targetArch} on ` +
+			`${process.platform}/${process.arch}. Native SQLite addon (better-sqlite3) must be installed/rebuilt on the target OS/arch. ` +
+			'Build Windows installers on Windows runners and macOS installers on macOS runners.'
+		);
+	}
+}
+
 function main() {
 	const rootPkg = require(path.join(rootDir, 'package.json'));
 	const electronVersion = sanitizeSemver(rootPkg?.devDependencies?.electron);
+	const targetPlatform = normalizePlatform(process.env.APILIX_TARGET_PLATFORM || process.env.npm_config_platform);
+	const targetArch = normalizeArch(process.env.APILIX_TARGET_ARCH || process.env.npm_config_arch);
 
 	if (!electronVersion) {
 		throw new Error('Cannot determine Electron version from root package.json');
 	}
+
+	assertBuildTargetCompatibility(targetPlatform, targetArch);
 
 	// Remove existing node_modules to avoid stale workspace symlinks that
 	// electron-builder may not follow correctly on Windows.
@@ -37,8 +70,14 @@ function main() {
 		fs.rmSync(serverNodeModules, { recursive: true, force: true });
 	}
 
-	console.log('[dist:prepare:server] Installing server production dependencies...');
-	run('npm install --prefix packages/server --omit=dev --install-links --no-workspaces');
+	console.log(`[dist:prepare:server] Installing server production dependencies for ${targetPlatform}/${targetArch}...`);
+	run('npm install --prefix packages/server --omit=dev --install-links --no-workspaces', {
+		env: {
+			...process.env,
+			npm_config_platform: targetPlatform,
+			npm_config_arch: targetArch,
+		},
+	});
 
 	console.log('[dist:prepare:server] Auditing for vulnerabilities...');
 	try {
@@ -71,15 +110,17 @@ function main() {
 	console.log('[dist:prepare:server] Installing @apilix/core production dependencies...');
 	run('npm install --omit=dev', { cwd: coreDestDir });
 
-	console.log(`[dist:prepare:server] Rebuilding better-sqlite3 for Electron ${electronVersion}...`);
-	try {
-		run(
-			`npx --yes @electron/rebuild -f -w better-sqlite3 -v ${electronVersion} -m ${JSON.stringify(serverDir)}`
-		);
-	} catch (error) {
-		console.warn('[dist:prepare:server] Warning: Failed to rebuild better-sqlite3 for Electron.');
-		console.warn('[dist:prepare:server] SQLite connections may be unavailable in packaged builds.');
-	}
+	console.log(`[dist:prepare:server] Rebuilding better-sqlite3 for Electron ${electronVersion} on ${targetPlatform}/${targetArch}...`);
+	run(
+		`npx --yes @electron/rebuild -f -w better-sqlite3 -v ${electronVersion} -m ${JSON.stringify(serverDir)}`,
+		{
+			env: {
+				...process.env,
+				npm_config_platform: targetPlatform,
+				npm_config_arch: targetArch,
+			},
+		}
+	);
 }
 
 main();
