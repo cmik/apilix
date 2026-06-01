@@ -20,6 +20,17 @@ const {
 
 const DEFAULT_REQUEST_TIMEOUT = 30000;
 const MAX_REQUEST_NAME_WIDTH = 72;
+const SUPPORTED_DATABASE_TYPES = new Set([
+  'mysql',
+  'postgres',
+  'mongodb',
+  'sqlite',
+  'cassandra',
+  'oracle',
+  'mssql',
+  'redis',
+  'dynamodb',
+]);
 
 function usage() {
   return [
@@ -168,9 +179,9 @@ function normalizeDatabases(input) {
       throw new Error(`databases[${index}] must be an object`);
     }
     const id = typeof db._id === 'string' ? db._id.trim() : '';
-    const type = typeof db.type === 'string' ? db.type : '';
+    const type = typeof db.type === 'string' ? db.type.trim().toLowerCase() : '';
     if (!id) throw new Error(`databases[${index}] is missing _id`);
-    if (!['mysql', 'postgres', 'mongodb'].includes(type)) {
+    if (!SUPPORTED_DATABASE_TYPES.has(type)) {
       throw new Error(`databases[${index}] has unsupported type "${type}"`);
     }
 
@@ -209,7 +220,7 @@ function normalizeDatabases(input) {
       throw new Error(`databases[${index}] (mongodb) must include connectionUri`);
     }
 
-    return { ...db };
+    return { ...db, type };
   });
 }
 
