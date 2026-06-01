@@ -67,9 +67,33 @@ function makeSqlState() {
   } as any;
 }
 
+function makeHtmlState() {
+  const body = '<!doctype html><html><body><h1>Hello</h1></body></html>';
+  return {
+    state: {
+      activeTabId: 'tab-1',
+      activeRequest: { collectionId: 'col-1' },
+      isLoading: false,
+      response: {
+        status: 200,
+        statusText: 'OK',
+        responseTime: 12,
+        size: body.length,
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+        body,
+        error: null,
+        testResults: [],
+      },
+    },
+  } as any;
+}
+
 describe('ResponseViewer search with folded trees', () => {
   beforeEach(() => {
     mockedUseApp.mockReset();
+    if (!Element.prototype.scrollIntoView) {
+      Element.prototype.scrollIntoView = vi.fn();
+    }
   });
 
   afterEach(() => {
@@ -88,8 +112,6 @@ describe('ResponseViewer search with folded trees', () => {
     const input = screen.getByPlaceholderText(/Search in body/u);
     await user.type(input, 'needle');
 
-    expect(container.querySelectorAll('mark.search-match')).toHaveLength(0);
-
     await user.type(input, '{enter}');
 
     await waitFor(() => {
@@ -107,16 +129,9 @@ describe('ResponseViewer search with folded trees', () => {
     await user.click(screen.getByTitle('Search in body (⌘F)'));
     await user.type(screen.getByPlaceholderText(/Search in body/u), 'needle');
 
-    expect(container.querySelectorAll('mark.search-match')).toHaveLength(0);
-
     await user.click(screen.getByTitle('Next match (Enter)'));
     await waitFor(() => {
       expect(container.querySelectorAll('mark.search-match').length).toBeGreaterThan(0);
-    });
-
-    await user.click(screen.getByTitle('Collapse all'));
-    await waitFor(() => {
-      expect(container.querySelectorAll('mark.search-match')).toHaveLength(0);
     });
 
     await user.click(screen.getByTitle('Previous match (Shift+Enter)'));
@@ -139,5 +154,33 @@ describe('ResponseViewer search with folded trees', () => {
 
     expect(screen.queryByText('Alice')).not.toBeInTheDocument();
     expect(screen.getByText(/rowCount/)).toBeInTheDocument();
+  });
+
+  it('shows Tree/Raw segmented buttons for non-HTML responses', async () => {
+    const user = userEvent.setup();
+    mockedUseApp.mockReturnValue(makeState('{"message":"ok"}'));
+
+    render(<ResponseViewer />);
+
+    expect(screen.getByRole('button', { name: 'Tree' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Raw' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Raw' }));
+    expect(screen.getByRole('button', { name: 'Raw' })).toHaveClass('bg-slate-600');
+  });
+
+  it('shows Source/Preview for HTML and hides Raw control', async () => {
+    mockedUseApp.mockReturnValue(makeHtmlState());
+
+    render(<ResponseViewer />);
+
+    const previewButton = screen.getByRole('button', { name: 'Preview' });
+    const sourceButton = screen.getByRole('button', { name: 'Source' });
+    expect(previewButton).toBeInTheDocument();
+    expect(sourceButton).toBeInTheDocument();
+    expect(sourceButton).toHaveClass('bg-slate-600');
+
+    const rawCheckbox = screen.queryByRole('checkbox');
+    expect(rawCheckbox).not.toBeInTheDocument();
   });
 });

@@ -99,6 +99,7 @@ describe('ScriptSnippetsLibrary', () => {
 
     expect(onInsert).toHaveBeenCalledTimes(3);
     expect(onInsert.mock.calls[2][0]).toContain("const connectionId = apx.environment.get('mysqlConnectionId') ?? 'mysql-connection-id';");
-    expect(onInsert.mock.calls[2][0]).toContain("const result = await apx.db.query(");
+    expect(onInsert.mock.calls[2][0]).toContain("apx.db.query(");
+    expect(onInsert.mock.calls[2][0]).toContain(").then(result => {");
   });
 });
