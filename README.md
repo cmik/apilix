@@ -307,13 +307,15 @@ npm run dist:mac    # → dist/Apilix-x.x.x.dmg
 npm run dist:win    # → dist/Apilix Setup x.x.x.exe
 ```
 
+`better-sqlite3` is a native addon. Desktop installers must be built on the same OS/arch they target (for example, build Windows installers on Windows runners).
+
 If you hit an Electron native addon ABI mismatch error (for example `NODE_MODULE_VERSION` mismatch), re-run:
 
 ```bash
 npm run dist:prepare:server
 ```
 
-> Cross-platform builds (e.g. `.exe` on macOS) may require Wine or Docker for some targets.
+> For reliable desktop packaging, prefer host-native builds per platform (for example, CI matrix jobs on macOS + Windows + Linux).
 
 ---
 
