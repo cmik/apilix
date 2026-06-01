@@ -97,6 +97,133 @@ test('executeRequest keeps collection and generic variable mutations out of envi
   });
 });
 
+test('executeRequest returns SQL_ERROR with actionable message when dbQueryFn is missing', async () => {
+  const item = {
+    name: 'SQL without dbQueryFn',
+    request: {
+      requestType: 'sql',
+      method: 'MYSQL',
+      url: { raw: '' },
+      sql: {
+        connectionId: 'db1',
+        query: 'SELECT 1',
+        params: '[]',
+      },
+    },
+  };
+
+  const result = await executeRequest(item, makeContext());
+
+  assert.equal(result.status, 0);
+  assert.equal(result.statusText, 'SQL_ERROR');
+  assert.equal(result.protocol, 'sql');
+  assert.match(result.error || '', /SQL execution is not available in this context/i);
+});
+
+test('executeRequest runs sql-like database requests through dbQueryFn', async () => {
+  const calls = [];
+  const item = {
+    name: 'SQLite query',
+    request: {
+      requestType: 'database',
+      method: 'SQLITE',
+      url: { raw: '' },
+      database: {
+        connectionId: 'sqlite-1',
+        databaseType: 'sqlite',
+        operation: 'query',
+        query: 'SELECT 1 AS ok',
+        params: '[]',
+        resultView: 'table',
+      },
+    },
+  };
+
+  const result = await executeRequest(item, {
+    ...makeContext(),
+    dbQueryFn: async (connectionId, sql, params) => {
+      calls.push({ connectionId, sql, params });
+      return {
+        rows: [{ ok: 1 }],
+        columns: ['ok'],
+        rowCount: 1,
+      };
+    },
+  });
+
+  assert.deepEqual(calls, [{ connectionId: 'sqlite-1', sql: 'SELECT 1 AS ok', params: [] }]);
+  assert.equal(result.protocol, 'sql');
+  assert.equal(result.sqlDialect, 'sqlite');
+  assert.equal(result.statusText, 'SQL_SUCCESS');
+  assert.equal(result.resultTable?.rowCount, 1);
+  assert.match(result.body, /"ok": 1/);
+});
+
+test('executeRequest runs redis database requests through dbRedisCommandFn', async () => {
+  const calls = [];
+  const item = {
+    name: 'Redis command',
+    request: {
+      requestType: 'database',
+      method: 'REDIS',
+      url: { raw: '' },
+      database: {
+        connectionId: 'redis-1',
+        databaseType: 'redis',
+        operation: 'command',
+        command: 'GET',
+        args: '["users:1"]',
+        resultView: 'json',
+      },
+    },
+  };
+
+  const result = await executeRequest(item, {
+    ...makeContext(),
+    dbRedisCommandFn: async (connectionId, command, args) => {
+      calls.push({ connectionId, command, args });
+      return { result: '{"id":1}' };
+    },
+  });
+
+  assert.deepEqual(calls, [{ connectionId: 'redis-1', command: 'GET', args: ['users:1'] }]);
+  assert.equal(result.protocol, 'redis');
+  assert.equal(result.statusText, 'REDIS_SUCCESS');
+  assert.match(result.body, /users|id/);
+});
+
+test('executeRequest runs dynamodb database requests through dbDynamoOperationFn', async () => {
+  const calls = [];
+  const item = {
+    name: 'DynamoDB query',
+    request: {
+      requestType: 'database',
+      method: 'DYNAMODB',
+      url: { raw: '' },
+      database: {
+        connectionId: 'ddb-1',
+        databaseType: 'dynamodb',
+        operation: 'Scan',
+        input: '{"TableName":"Users"}',
+        resultView: 'json',
+      },
+    },
+  };
+
+  const result = await executeRequest(item, {
+    ...makeContext(),
+    dbDynamoOperationFn: async (connectionId, operation, input) => {
+      calls.push({ connectionId, operation, input });
+      return { result: { Count: 2, Items: [{ id: { S: '1' } }] } };
+    },
+  });
+
+  assert.deepEqual(calls, [{ connectionId: 'ddb-1', operation: 'Scan', input: { TableName: 'Users' } }]);
+  assert.equal(result.protocol, 'dynamodb');
+  assert.equal(result.statusText, 'DYNAMODB_SUCCESS');
+  assert.match(result.body, /"Count": 2/);
+});
+
 function getEventExec(item, listen) {
   const event = (item.event || []).find(e => e.listen === listen);
   return event ? event.script.exec.join('\n') : null;
@@ -668,6 +795,230 @@ test('environment variable set in child request test script is available in pare
     // Verify the resolved header was actually sent with the token value.
     const body = JSON.parse(result.body);
     assert.equal(body.received, 'Bearer secret-token');
+  });
+});
+
+// ─── apx.executeRequest auth inheritance ─────────────────────────────────────
+
+test('child request inherits bearer auth from collection-level auth when using apx.executeRequest', async () => {
+  setExecutorConfig({ followRedirects: false, requestTimeout: 3000, sslVerification: false });
+
+  let childReceivedAuth = '';
+  await withServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    const authHeader = req.headers['authorization'] || '';
+    if (req.url.endsWith('/data')) childReceivedAuth = authHeader;
+    res.end(JSON.stringify({ received: authHeader }));
+  }, async (url) => {
+    const baseUrl = url.slice(0, url.lastIndexOf('/'));
+
+    const childItem = {
+      name: 'Child request',
+      request: {
+        method: 'GET',
+        url: `${baseUrl}/data`,
+        // Child has auth type 'inherit', will be resolved to actual auth by parent context
+        auth: { type: 'inherit' },
+      },
+    };
+
+    const parentItem = {
+      name: 'Parent request',
+      request: { method: 'GET', url: `${baseUrl}/parent` },
+      event: [
+        {
+          listen: 'prerequest',
+          script: {
+            type: 'text/javascript',
+            exec: ["apx.executeRequest('Child request');"],
+          },
+        },
+      ],
+    };
+
+    // Collection-level auth that should be inherited by child
+    const collectionAuth = {
+      type: 'bearer',
+      bearer: [{ key: 'token', value: 'inherited-bearer-token' }],
+    };
+
+    // Simulate what RequestBuilder does: apply inherited auth to items before executing
+    const resolvedItems = [
+      {
+        ...childItem,
+        request: {
+          ...childItem.request,
+          auth: collectionAuth, // Child auth resolved to inherited auth
+        },
+      },
+      parentItem,
+    ];
+
+    const context = {
+      ...makeContext(),
+      collectionItems: resolvedItems,
+    };
+
+    const result = await executeRequest(resolvedItems[1], context);
+
+    assert.equal(result.error, null);
+    assert.equal(childReceivedAuth, 'Bearer inherited-bearer-token');
+  });
+});
+
+test('child request inherits apikey auth from collection-level auth', async () => {
+  setExecutorConfig({ followRedirects: false, requestTimeout: 3000, sslVerification: false });
+
+  let childReceivedHeader = '';
+  await withServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    const apiKeyHeader = req.headers['x-api-key'] || '';
+    if (req.url.endsWith('/data')) childReceivedHeader = apiKeyHeader;
+    res.end(JSON.stringify({
+      header: apiKeyHeader,
+      query: new URL(`http://localhost${req.url}`).searchParams.get('api_key') || '',
+    }));
+  }, async (url) => {
+    const baseUrl = url.slice(0, url.lastIndexOf('/'));
+
+    const childItem = {
+      name: 'Child request',
+      request: {
+        method: 'GET',
+        url: `${baseUrl}/data`,
+        auth: { type: 'inherit' },
+      },
+    };
+
+    const parentItem = {
+      name: 'Parent request',
+      request: { method: 'GET', url: `${baseUrl}/parent` },
+      event: [
+        {
+          listen: 'prerequest',
+          script: {
+            type: 'text/javascript',
+            exec: ["apx.executeRequest('Child request');"],
+          },
+        },
+      ],
+    };
+
+    // Collection-level API key auth (header mode)
+    const collectionAuth = {
+      type: 'apikey',
+      apikey: [
+        { key: 'key', value: 'X-Api-Key' },
+        { key: 'value', value: 'my-secret-key' },
+        { key: 'in', value: 'header' },
+      ],
+    };
+
+    // Apply inherited auth to items before executing
+    const resolvedItems = [
+      {
+        ...childItem,
+        request: {
+          ...childItem.request,
+          auth: collectionAuth,
+        },
+      },
+      parentItem,
+    ];
+
+    const context = {
+      ...makeContext(),
+      collectionItems: resolvedItems,
+    };
+
+    const result = await executeRequest(resolvedItems[1], context);
+
+    assert.equal(result.error, null);
+    assert.equal(childReceivedHeader, 'my-secret-key');
+  });
+});
+
+test('nested child requests (grandchildren) inherit auth through the call chain', async () => {
+  setExecutorConfig({ followRedirects: false, requestTimeout: 3000, sslVerification: false });
+
+  let requestCount = 0;
+  await withServer((req, res) => {
+    requestCount++;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ 
+      level: req.url.split('/').pop(),
+      received: req.headers['authorization'] || '' 
+    }));
+  }, async (url) => {
+    const baseUrl = url.slice(0, url.lastIndexOf('/'));
+
+    const grandchildItem = {
+      name: 'Grandchild request',
+      request: { method: 'GET', url: `${baseUrl}/grandchild` },
+    };
+
+    const childItem = {
+      name: 'Child request',
+      request: { method: 'GET', url: `${baseUrl}/child` },
+      event: [
+        {
+          listen: 'prerequest',
+          script: {
+            type: 'text/javascript',
+            exec: ["apx.executeRequest('Grandchild request');"],
+          },
+        },
+      ],
+    };
+
+    const parentItem = {
+      name: 'Parent request',
+      request: { method: 'GET', url: `${baseUrl}/parent` },
+      event: [
+        {
+          listen: 'prerequest',
+          script: {
+            type: 'text/javascript',
+            exec: ["apx.executeRequest('Child request');"],
+          },
+        },
+      ],
+    };
+
+    const collectionAuth = {
+      type: 'bearer',
+      bearer: [{ key: 'token', value: 'nested-token' }],
+    };
+
+    // Apply inherited auth to all items before executing
+    const resolvedItems = [
+      {
+        ...grandchildItem,
+        request: {
+          ...grandchildItem.request,
+          auth: collectionAuth,
+        },
+      },
+      {
+        ...childItem,
+        request: {
+          ...childItem.request,
+          auth: collectionAuth,
+        },
+      },
+      parentItem,
+    ];
+
+    const context = {
+      ...makeContext(),
+      collectionItems: resolvedItems,
+    };
+
+    const result = await executeRequest(resolvedItems[2], context);
+
+    assert.equal(result.error, null);
+    // All three requests (parent, child, grandchild) should have received the auth
+    assert.equal(requestCount, 3);
   });
 });
 

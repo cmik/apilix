@@ -331,6 +331,7 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
         collections: state.collections,
         environments: state.environments,
         activeEnvironmentId: state.activeEnvironmentId,
+        databases: state.databases,
         collectionVariables: state.collectionVariables,
         globalVariables: state.globalVariables,
         cookieJar: state.cookieJar,
@@ -342,6 +343,7 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
       try {
         data = await StorageDriver.readWorkspace(w.id) ?? {
           collections: [], environments: [], activeEnvironmentId: null,
+          databases: [],
           collectionVariables: {}, globalVariables: {}, cookieJar: {},
           mockCollections: [], mockRoutes: [], mockPort: 3002,
         };
@@ -1291,6 +1293,7 @@ function SyncTab() {
       collections: state.collections,
       environments: state.environments,
       activeEnvironmentId: state.activeEnvironmentId,
+      databases: state.databases,
       collectionVariables: state.collectionVariables,
       globalVariables: state.globalVariables,
       cookieJar: state.cookieJar,
@@ -1980,6 +1983,7 @@ function emptyWorkspaceData(): WorkspaceData {
     collections: [],
     environments: [],
     activeEnvironmentId: null,
+    databases: [],
     collectionVariables: {},
     globalVariables: {},
     cookieJar: {},

@@ -445,6 +445,11 @@ function createApx(response, variables, updatedVariables, updatedGlobalMutations
   const requestId = (deps && deps.requestId) || '';
   const iteration = (deps && deps.iteration) || 1;
 
+  function trackPendingPromise(promise) {
+    pendingRequests.push(promise);
+    return promise;
+  }
+
   const makeVarStore = (namespaceBucket, namespaceSrc) => {
     const isNamespaced = namespaceSrc !== undefined;
     const deletedKeys = new Set();
@@ -712,6 +717,12 @@ function createApx(response, variables, updatedVariables, updatedGlobalMutations
             cookies: execContext.cookies || {},
             collectionItems,
             mockBase: execContext.mockBase || null,
+            mongoConnections: execContext.mongoConnections || {},
+            databases: execContext.databases || [],
+            dbQueryFn: (deps && deps.dbQueryFn) || null,
+            dbMongoQueryFn: (deps && deps.dbMongoQueryFn) || null,
+            dbRedisCommandFn: (deps && deps.dbRedisCommandFn) || null,
+            dbDynamoOperationFn: (deps && deps.dbDynamoOperationFn) || null,
           });
 
           // Propagate mutations made by the child request (env/collVars/globals set
@@ -760,6 +771,58 @@ function createApx(response, variables, updatedVariables, updatedGlobalMutations
       })();
 
       pendingRequests.push(promise);
+    },
+
+    // ─── Database API ──────────────────────────────────────────────────────
+    db: {
+      /**
+       * Execute a SQL query on a named database connection.
+       * @param {string} connectionId  The _id of a DatabaseConnection
+       * @param {string} sql           SQL statement (supports {{variable}} tokens)
+       * @param {Array}  [params]      Parameterized query values
+       * @param {Function} [callback]  Optional error-first callback
+       * @returns {Promise<{success: boolean, rows?: object[], columns?: string[], rowCount?: number, error?: string}>}
+       */
+      query(connectionId, sql, params = []) {
+        const promise = (async () => {
+          const queryFn = deps && deps.dbQueryFn;
+          if (!queryFn) {
+            return { success: false, error: 'apx.db.query: database support not available in this context' };
+          }
+          try {
+            const result = await queryFn(connectionId, sql, params, execContext);
+            return { success: true, ...result };
+          } catch (err) {
+            return { success: false, error: err.message };
+          }
+        })();
+        return trackPendingPromise(promise);
+      },
+
+      /**
+       * Execute a MongoDB operation on a named database connection.
+       * @param {string} connectionId  The _id of a DatabaseConnection
+       * @param {string} operation     e.g. 'findOne', 'find', 'insertOne', 'updateOne', etc.
+       * @param {object} document      Operation descriptor: { database, collection, query?, update?, pipeline?, ... }
+       * @param {object} [options]     Additional driver options (sort, limit, skip, etc.)
+       * @param {Function} [callback]  Optional error-first callback
+       * @returns {Promise<{success: boolean, data?: any, error?: string}>}
+       */
+      mongoQuery(connectionId, operation, document, options = {}) {
+        const promise = (async () => {
+          const mongoQueryFn = deps && deps.dbMongoQueryFn;
+          if (!mongoQueryFn) {
+            return { success: false, error: 'apx.db.mongoQuery: database support not available in this context' };
+          }
+          try {
+            const result = await mongoQueryFn(connectionId, operation, document, options, execContext);
+            return { success: true, data: result.result };
+          } catch (err) {
+            return { success: false, error: err.message };
+          }
+        })();
+        return trackPendingPromise(promise);
+      },
     },
   };
 
@@ -821,6 +884,15 @@ function buildResponse(r) {
       has(name) {
         return Object.keys(r.headers || {}).some(k => k.toLowerCase() === name.toLowerCase());
       },
+      toObject() {
+        const src = r.headers || {};
+        if (src && typeof src.toJSON === 'function') {
+          return { ...src.toJSON() };
+        }
+        const out = {};
+        Object.entries(src).forEach(([k, v]) => { out[k] = v; });
+        return out;
+      },
     },
     // Chai-like assertion sugar on response
     to: {
@@ -856,6 +928,19 @@ function buildResponse(r) {
 }
 
 // ─── Script runner ───────────────────────────────────────────────────────────
+
+async function flushPendingRequests(pendingRequests, context) {
+  while (pendingRequests.length > 0) {
+    const batch = pendingRequests.splice(0);
+    if (batch.length > 0) {
+      await Promise.all(batch);
+    }
+    if (context) {
+      vm.runInContext('', context, { timeout: 5000 });
+    }
+    await Promise.resolve();
+  }
+}
 
 async function runScript(code, response, variables, deps, vmContext) {
   const tests = [];
@@ -934,7 +1019,7 @@ async function runScript(code, response, variables, deps, vmContext) {
     vmContext.apx = apx;
     vmContext.pm = apx;
     vmContext.console = sandbox.console;
-    const wrappedCode = `(function(){\n'use strict';\n${code}\n})();`;
+    const wrappedCode = `(async function(){\n'use strict';\n${code}\n})();`;
     let script = _scriptCache.get(wrappedCode);
     if (!script) {
       if (_scriptCache.size >= 500) _scriptCache.delete(_scriptCache.keys().next().value);
@@ -942,8 +1027,9 @@ async function runScript(code, response, variables, deps, vmContext) {
       _scriptCache.set(wrappedCode, script);
     }
     try {
-      script.runInContext(vmContext, { timeout: 5000 });
-      if (pendingRequests.length > 0) await Promise.all(pendingRequests);
+      const runResult = script.runInContext(vmContext, { timeout: 5000 });
+      if (runResult && typeof runResult.then === 'function') await runResult;
+      await flushPendingRequests(pendingRequests, vmContext);
     } catch (err) {
       tests.push({ name: '__ScriptError__', passed: false, error: err.message });
     } finally {
@@ -959,10 +1045,12 @@ async function runScript(code, response, variables, deps, vmContext) {
   } else {
     // ─── Fresh-context path (single request sends, direct tests) ───────────
     try {
-      const script = new vm.Script(code, { filename: 'apilix-script.js' });
+      const wrappedCode = `(async function(){\n'use strict';\n${code}\n})();`;
+      const script = new vm.Script(wrappedCode, { filename: 'apilix-script.js' });
       const ctx = vm.createContext(sandbox);
-      script.runInContext(ctx, { timeout: 5000 });
-      if (pendingRequests.length > 0) await Promise.all(pendingRequests);
+      const runResult = script.runInContext(ctx, { timeout: 5000 });
+      if (runResult && typeof runResult.then === 'function') await runResult;
+      await flushPendingRequests(pendingRequests, ctx);
     } catch (err) {
       tests.push({ name: '__ScriptError__', passed: false, error: err.message });
     }

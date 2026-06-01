@@ -1,19 +1,23 @@
 import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import { marked } from 'marked';
-import type { CollectionItem, CollectionRequest, CollectionHeader, CollectionQueryParam, OAuth2Config, CollectionBody } from '../types';
+import type { CollectionItem, CollectionRequest, CollectionHeader, CollectionQueryParam, OAuth2Config, CollectionBody, DatabaseRequestConfig, SqlDatabaseType } from '../types';
 import { useApp, generateId } from '../store';
 import { executeRequest, API_BASE } from '../api';
+import type { ChildRequestLog } from '../api';
 import { getUrlDisplay, buildCollectionDefinitionVarMap, buildVarMap, resolveVariables } from '../utils/variableResolver';
-import { updateItemById, renameItemById, resolveInheritedAuth, resolveInheritedAuthWithSource, findItemInTree, flattenRequestNames, flattenRequestItems, collectAncestorScripts, getRequestBreadcrumb, getRequestBreadcrumbPrefix } from '../utils/treeHelpers';
+import { updateItemById, renameItemById, resolveInheritedAuth, resolveInheritedAuthWithSource, findItemInTree, flattenRequestNames, flattenRequestItems, collectAncestorScripts, getRequestBreadcrumb, getRequestBreadcrumbPrefix, applyInheritedAuth } from '../utils/treeHelpers';
 import { parseCurlCommand } from '../utils/curlUtils';
 import { parseHurlFile } from '../utils/hurlUtils';
 import { openAuthorizationWindow } from '../utils/oauth';
 import GraphQLPanel from './GraphQLPanel';
 import SoapPanel from './SoapPanel';
+import MongoRequestPanel from './MongoRequestPanel';
+import SqlRequestPanel from './SqlRequestPanel';
 import CodeEditor from './CodeEditor';
 import type { CodeLanguage } from './CodeEditor';
 import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
+import ScriptTab from './ScriptTab';
 import ScriptEditor from './ScriptEditor';
 import OAuthConfigPanel from './OAuthConfigPanel';
 import { IconRequests } from './Icons';
@@ -27,7 +31,13 @@ import type { InjectTestSnippetDetail } from '../utils/appEvents';
 const CodeGenModal = lazy(() => import('./CodeGenModal'));
 const ItemSettingsModal = lazy(() => import('./ItemSettingsModal'));
 
-const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'WS'];
+const DATABASE_METHODS = ['MYSQL', 'POSTGRESQL', 'SQLITE', 'CASSANDRA', 'ORACLE', 'MSSQL', 'REDIS', 'DYNAMODB'] as const;
+type DatabaseMethod = typeof DATABASE_METHODS[number];
+type SqlDatabaseMethod = Extract<DatabaseMethod, 'MYSQL' | 'POSTGRESQL' | 'SQLITE' | 'CASSANDRA' | 'ORACLE' | 'MSSQL'>;
+type AnyDatabaseConfig = NonNullable<CollectionRequest['database']>;
+type SqlDatabaseConfig = Extract<AnyDatabaseConfig, { databaseType: SqlDatabaseType }>;
+
+const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'WS', 'MONGO', ...DATABASE_METHODS];
 
 const METHOD_COLORS: Record<string, string> = {
   GET: 'text-green-400',
@@ -38,7 +48,189 @@ const METHOD_COLORS: Record<string, string> = {
   HEAD: 'text-purple-400',
   OPTIONS: 'text-slate-400',
   WS: 'text-cyan-400',
+  MONGO: 'text-emerald-400',
+  MYSQL: 'text-sky-400',
+  POSTGRESQL: 'text-teal-400',
+  SQLITE: 'text-indigo-400',
+  CASSANDRA: 'text-fuchsia-400',
+  ORACLE: 'text-rose-400',
+  MSSQL: 'text-cyan-300',
+  REDIS: 'text-red-300',
+  DYNAMODB: 'text-amber-300',
 };
+
+function isDatabaseMethod(method: string): method is DatabaseMethod {
+  return (DATABASE_METHODS as readonly string[]).includes(method);
+}
+
+function isSqlDatabaseMethod(method: string): method is SqlDatabaseMethod {
+  return ['MYSQL', 'POSTGRESQL', 'SQLITE', 'CASSANDRA', 'ORACLE', 'MSSQL'].includes(method);
+}
+
+function databaseTypeForMethod(method: DatabaseMethod): NonNullable<DatabaseRequestConfig['databaseType']> {
+  switch (method) {
+    case 'MYSQL': return 'mysql';
+    case 'POSTGRESQL': return 'postgres';
+    case 'SQLITE': return 'sqlite';
+    case 'CASSANDRA': return 'cassandra';
+    case 'ORACLE': return 'oracle';
+    case 'MSSQL': return 'mssql';
+    case 'REDIS': return 'redis';
+    case 'DYNAMODB': return 'dynamodb';
+  }
+}
+
+function defaultSqlDatabaseConfigForMethod(method: SqlDatabaseMethod): SqlDatabaseConfig {
+  const databaseType = databaseTypeForMethod(method) as SqlDatabaseType;
+  return {
+    connectionId: '',
+    databaseType,
+    operation: 'query',
+    dialect: databaseType,
+    query: databaseType === 'sqlite' ? 'SELECT datetime("now") AS server_time;' : 'SELECT NOW() AS server_time;',
+    params: '[]',
+    resultView: 'table',
+  };
+}
+
+function defaultDatabaseConfigForMethod(method: DatabaseMethod): AnyDatabaseConfig {
+  if (isSqlDatabaseMethod(method)) {
+    return defaultSqlDatabaseConfigForMethod(method);
+  }
+  if (method === 'REDIS') {
+    return {
+      connectionId: '',
+      databaseType: 'redis',
+      operation: 'command',
+      command: 'PING',
+      args: '[]',
+      resultView: 'json',
+    };
+  }
+  return {
+    connectionId: '',
+    databaseType: 'dynamodb',
+    operation: 'Scan',
+    input: '{\n  "TableName": ""\n}',
+    resultView: 'json',
+  };
+}
+
+function defaultSqlConfigForMethod(method: 'MYSQL' | 'POSTGRESQL'): NonNullable<CollectionRequest['sql']> {
+  const config = defaultSqlDatabaseConfigForMethod(method);
+  return {
+    connectionId: config.connectionId,
+    dialect: config.dialect,
+    query: config.query,
+    params: config.params,
+    resultView: config.resultView,
+  };
+}
+
+function defaultMongoConfig(): NonNullable<CollectionRequest['mongodb']> {
+  return {
+    connection: { mode: 'direct', uri: '{{mongoUri}}' },
+    database: '{{mongoDb}}',
+    collection: '',
+    operation: 'find',
+    filter: '{}',
+    limit: 50,
+  };
+}
+
+function databaseMethodFromRequest(req: CollectionRequest, methodUpper: string): DatabaseMethod | null {
+  if (req.requestType === 'database' && req.database) {
+    switch (req.database.databaseType) {
+      case 'mysql': return 'MYSQL';
+      case 'postgres': return 'POSTGRESQL';
+      case 'sqlite': return 'SQLITE';
+      case 'cassandra': return 'CASSANDRA';
+      case 'oracle': return 'ORACLE';
+      case 'mssql': return 'MSSQL';
+      case 'redis': return 'REDIS';
+      case 'dynamodb': return 'DYNAMODB';
+      default: return null;
+    }
+  }
+  if (methodUpper === 'MYSQL' || methodUpper === 'POSTGRESQL') return methodUpper;
+  return null;
+}
+
+function databaseConfigFromRequest(req: CollectionRequest, method: DatabaseMethod): AnyDatabaseConfig {
+  if (req.requestType === 'database' && req.database) {
+    if (isSqlDatabaseMethod(method)) {
+      return {
+        ...defaultSqlDatabaseConfigForMethod(method),
+        ...req.database,
+        databaseType: databaseTypeForMethod(method),
+      } as SqlDatabaseConfig;
+    }
+    if (method === 'REDIS') {
+      const fallback = defaultDatabaseConfigForMethod('REDIS');
+      return {
+        ...fallback,
+        ...req.database,
+        databaseType: 'redis',
+      } as AnyDatabaseConfig;
+    }
+    const fallback = defaultDatabaseConfigForMethod('DYNAMODB');
+    return {
+      ...fallback,
+      ...req.database,
+      databaseType: 'dynamodb',
+    } as AnyDatabaseConfig;
+  }
+  if ((req.requestType === 'sql' || !!req.sql) && (method === 'MYSQL' || method === 'POSTGRESQL')) {
+    const fallback = defaultSqlDatabaseConfigForMethod(method);
+    return {
+      ...fallback,
+      connectionId: req.sql?.connectionId ?? fallback.connectionId,
+      query: req.sql?.query ?? fallback.query,
+      params: req.sql?.params ?? fallback.params,
+      resultView: req.sql?.resultView === 'json' ? 'json' : fallback.resultView,
+      dialect: req.sql?.dialect ?? fallback.dialect,
+    };
+  }
+  return defaultDatabaseConfigForMethod(method);
+}
+
+function parseDatabaseConfig(raw: string, method: DatabaseMethod): NonNullable<CollectionRequest['database']> {
+  const fallback = defaultDatabaseConfigForMethod(method);
+  try {
+    const parsed = JSON.parse(raw || '{}');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return fallback;
+    const parsedObj = parsed as Record<string, unknown>;
+    if (isSqlDatabaseMethod(method)) {
+      return {
+        ...defaultSqlDatabaseConfigForMethod(method),
+        ...parsedObj,
+        databaseType: databaseTypeForMethod(method),
+      } as SqlDatabaseConfig;
+    }
+    if (method === 'REDIS') {
+      return {
+        ...defaultDatabaseConfigForMethod('REDIS'),
+        ...parsedObj,
+        databaseType: 'redis',
+      } as AnyDatabaseConfig;
+    }
+    return parsed && typeof parsed === 'object'
+      ? { ...defaultDatabaseConfigForMethod('DYNAMODB'), ...parsedObj, databaseType: 'dynamodb' } as AnyDatabaseConfig
+      : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function buildEditStateForMethod(edit: ReturnType<typeof itemToEditState>, method: string) {
+  if (method === 'MONGO') {
+    return { ...edit, method, bodyMode: 'raw', bodyRaw: JSON.stringify(defaultMongoConfig(), null, 2) };
+  }
+  if (isDatabaseMethod(method)) {
+    return { ...edit, method, bodyMode: 'raw', bodyRaw: JSON.stringify(defaultDatabaseConfigForMethod(method), null, 2) };
+  }
+  return { ...edit, method };
+}
 
 const TABS = ['Params', 'Auth', 'Headers', 'Body', 'Pre-request', 'Tests', 'Docs'] as const;
 type Tab = typeof TABS[number];
@@ -103,14 +295,18 @@ function itemToEditState(item: CollectionItem) {
   const storedMap = new Map(urlVars.map(v => [v.key ?? '', v.value ?? '']));
   // Headers can be a raw string in v2.0 — drop them in that case
   const headerArr = Array.isArray(req.header) ? req.header : [];
+  const methodUpper = (req.method || 'GET').toUpperCase();
+  const isMongo = req.requestType === 'mongodb' || !!req.mongodb || methodUpper === 'MONGO';
+  const databaseMethod = databaseMethodFromRequest(req, methodUpper);
+  const isDatabase = !!databaseMethod;
   return {
-    method: req.method?.toUpperCase() ?? 'GET',
+    method: isMongo ? 'MONGO' : isDatabase ? databaseMethod : (req.method?.toUpperCase() ?? 'GET'),
     url: urlRaw,
     headers: headerArr.map(h => ({ ...h })),
     queryParams: extractQueryParams(urlRaw),
     pathParams: detectedNames.map(k => ({ key: k, value: storedMap.get(k) ?? '' })),
-    bodyMode: req.body?.soap ? 'soap' : (req.body?.mode ?? 'none'),
-    bodyRaw: req.body?.raw ?? '',
+    bodyMode: (isMongo || isDatabase) ? 'raw' : (req.body?.soap ? 'soap' : (req.body?.mode ?? 'none')),
+    bodyRaw: isMongo ? JSON.stringify(req.mongodb ?? defaultMongoConfig(), null, 2) : isDatabase ? JSON.stringify(databaseConfigFromRequest(req, databaseMethod), null, 2) : (req.body?.raw ?? ''),
     bodyRawLang: req.body?.options?.raw?.language ?? 'json',
     bodyFormData: Array.isArray(req.body?.formdata) ? req.body!.formdata! : [],
     bodyUrlEncoded: Array.isArray(req.body?.urlencoded) ? req.body!.urlencoded! : [],
@@ -201,6 +397,55 @@ function injectSoapHeaders(headers: CollectionHeader[], action: string, version:
 }
 
 function buildUpdatedRequestItem(item: CollectionItem, edit: EditState): CollectionItem {
+  if (edit.method === 'MONGO') {
+    let mongoCfg: unknown = null;
+    try { mongoCfg = JSON.parse(edit.bodyRaw || '{}'); } catch { mongoCfg = null; }
+    return {
+      ...item,
+      description: edit.description || undefined,
+      request: {
+        method: 'MONGO',
+        url: { raw: '' },
+        requestType: 'mongodb',
+        mongodb: (mongoCfg && typeof mongoCfg === 'object') ? (mongoCfg as CollectionRequest['mongodb']) : {
+          ...defaultMongoConfig(),
+        },
+      },
+      event: [
+        {
+          listen: 'prerequest',
+          script: { type: 'text/javascript', exec: edit.preRequestScript ? edit.preRequestScript.split('\n') : [] },
+        },
+        {
+          listen: 'test',
+          script: { type: 'text/javascript', exec: edit.testScript ? edit.testScript.split('\n') : [] },
+        },
+      ],
+    };
+  }
+  if (isDatabaseMethod(edit.method)) {
+    const databaseCfg = parseDatabaseConfig(edit.bodyRaw, edit.method);
+    return {
+      ...item,
+      description: edit.description || undefined,
+      request: {
+        method: edit.method,
+        url: { raw: '' },
+        requestType: 'database',
+        database: databaseCfg,
+      },
+      event: [
+        {
+          listen: 'prerequest',
+          script: { type: 'text/javascript', exec: edit.preRequestScript ? edit.preRequestScript.split('\n') : [] },
+        },
+        {
+          listen: 'test',
+          script: { type: 'text/javascript', exec: edit.testScript ? edit.testScript.split('\n') : [] },
+        },
+      ],
+    };
+  }
   const isSoap = edit.bodyMode === 'soap';
   return {
     ...item,
@@ -224,63 +469,6 @@ function buildUpdatedRequestItem(item: CollectionItem, edit: EditState): Collect
     },
     event: buildEvents(edit),
   };
-}
-
-// ─── Script tab with snippet library ─────────────────────────────────────────
-
-interface ScriptTabProps {
-  label: React.ReactNode;
-  value: string;
-  onChange: (v: string) => void;
-  placeholder: string;
-  target: 'prerequest' | 'test';
-  requestNames?: string[];
-  requestItems?: Array<{ id: string; name: string }>;
-  onSyntaxCheck?: (hasError: boolean) => void;
-}
-
-function ScriptTab({ label, value, onChange, placeholder, target, requestNames, requestItems, onSyntaxCheck }: ScriptTabProps) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  const handleInsert = useCallback((code: string) => {
-    const el = textareaRef.current;
-    if (!el) {
-      onChange(value ? value + '\n\n' + code : code);
-      return;
-    }
-    const start = el.selectionStart;
-    const end = el.selectionEnd;
-    const separator = (value.length > 0 && !value.endsWith('\n')) ? '\n\n' : (value.length > 0 ? '\n' : '');
-    const before = value.slice(0, start);
-    const after = value.slice(end);
-    const newValue = before + (start === end && start === value.length ? separator : '') + code + after;
-    onChange(newValue);
-    // Restore focus and move cursor after inserted snippet
-    requestAnimationFrame(() => {
-      const insertPos = start + (start === end && start === value.length ? separator.length : 0) + code.length;
-      el.focus();
-      el.setSelectionRange(insertPos, insertPos);
-    });
-  }, [value, onChange]);
-
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-slate-500 text-xs">{label}</p>
-        <ScriptSnippetsLibrary target={target} onInsert={handleInsert} />
-      </div>
-      <ScriptEditor
-        textareaRef={textareaRef}
-        value={value}
-        onChange={onChange}
-        onSyntaxCheck={onSyntaxCheck}
-        rows={14}
-        placeholder={placeholder}
-        requestNames={requestNames}
-        requestItems={requestItems}
-      />
-    </div>
-  );
 }
 
 // ─── Key/value table component ───────────────────────────────────────────────
@@ -1104,6 +1292,31 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
 
   // Build CodeGenParams with all variable placeholders resolved
   function buildResolvedCodeGenParams(editState: EditState, vars: Record<string, string>) {
+    // When auth is set to 'inherit', resolve the effective auth from the collection tree
+    let effectiveAuthType = editState.authType;
+    let effectiveAuthBearer = editState.authBearer;
+    let effectiveAuthBasicUser = editState.authBasicUser;
+    let effectiveAuthBasicPass = editState.authBasicPass;
+    let effectiveAuthApiKeyName = editState.authApiKeyName;
+    let effectiveAuthApiKeyValue = editState.authApiKeyValue;
+
+    if (editState.authType === 'inherit' && activeReq) {
+      const col = state.collections.find(c => c._id === activeReq.collectionId);
+      const resolvedAuth = resolveInheritedAuth(col?.item ?? [], activeReq.item.id ?? '', col?.auth);
+      if (resolvedAuth && resolvedAuth.type !== 'inherit') {
+        effectiveAuthType = resolvedAuth.type;
+        if (resolvedAuth.type === 'bearer') {
+          effectiveAuthBearer = resolvedAuth.bearer?.find(e => e.key === 'token')?.value ?? '';
+        } else if (resolvedAuth.type === 'basic') {
+          effectiveAuthBasicUser = resolvedAuth.basic?.find(e => e.key === 'username')?.value ?? '';
+          effectiveAuthBasicPass = resolvedAuth.basic?.find(e => e.key === 'password')?.value ?? '';
+        } else if (resolvedAuth.type === 'apikey') {
+          effectiveAuthApiKeyName = resolvedAuth.apikey?.find(e => e.key === 'key')?.value ?? '';
+          effectiveAuthApiKeyValue = resolvedAuth.apikey?.find(e => e.key === 'value')?.value ?? '';
+        }
+      }
+    }
+
     return {
       method: editState.method,
       url: resolveCodeGenUrlWithPathParams(editState, vars),
@@ -1126,12 +1339,12 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
       })),
       bodyGraphqlQuery: resolveVariables(editState.bodyGraphqlQuery, vars),
       bodyGraphqlVariables: resolveVariables(editState.bodyGraphqlVariables, vars),
-      authType: editState.authType,
-      authBearer: resolveVariables(editState.authBearer, vars),
-      authBasicUser: resolveVariables(editState.authBasicUser, vars),
-      authBasicPass: resolveVariables(editState.authBasicPass, vars),
-      authApiKeyName: resolveVariables(editState.authApiKeyName, vars),
-      authApiKeyValue: resolveVariables(editState.authApiKeyValue, vars),
+      authType: effectiveAuthType,
+      authBearer: resolveVariables(effectiveAuthBearer, vars),
+      authBasicUser: resolveVariables(effectiveAuthBasicUser, vars),
+      authBasicPass: resolveVariables(effectiveAuthBasicPass, vars),
+      authApiKeyName: resolveVariables(effectiveAuthApiKeyName, vars),
+      authApiKeyValue: resolveVariables(effectiveAuthApiKeyValue, vars),
     };
   }
 
@@ -1142,6 +1355,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     dispatch({ type: 'SET_TAB_RESPONSE', payload: { tabId, response: null } });
 
     const col = state.collections.find(c => c._id === activeReq.collectionId);
+    const authResolvedItems = col ? applyInheritedAuth(col.item, col.auth) : [];
     // Resolve auth — 'inherit' walks up the collection tree to find the effective parent auth
     const resolvedAuth = edit.authType === 'inherit'
       ? resolveInheritedAuth(col?.item ?? [], activeReq.item.id ?? '', col?.auth)
@@ -1160,13 +1374,17 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     // Build the item from current edit state
     const resolvedUrl = applyPathParams(edit.url, edit.pathParams, allVars);
     const ancestorScripts = collectAncestorScripts(col?.item ?? [], activeReq.item.id ?? '', col?.event);
+    const isMongo = edit.method === 'MONGO';
+    const databaseMethod = isDatabaseMethod(edit.method) ? edit.method : null;
+    const isDatabase = !!databaseMethod;
     const item: CollectionItem = {
       ...activeReq.item,
       request: {
         method: edit.method,
-        url: { raw: resolvedUrl, variable: edit.pathParams.filter(p => p.key).map(p => ({ key: p.key, value: p.value })) },
-        header: edit.headers.filter(h => !h.disabled),
-        body: edit.bodyMode !== 'none' ? (
+        requestType: isMongo ? 'mongodb' : isDatabase ? 'database' : 'http',
+        url: (isMongo || isDatabase) ? { raw: '' } : { raw: resolvedUrl, variable: edit.pathParams.filter(p => p.key).map(p => ({ key: p.key, value: p.value })) },
+        header: (isMongo || isDatabase) ? [] : edit.headers.filter(h => !h.disabled),
+        body: (!isMongo && !isDatabase && edit.bodyMode !== 'none') ? (
           edit.bodyMode === 'soap' ? buildSoapBody(edit) : {
             mode: edit.bodyMode as NonNullable<NonNullable<CollectionItem['request']>['body']>['mode'],
             raw: edit.bodyMode === 'raw' ? edit.bodyRaw : edit.bodyMode === 'file' ? (binaryBase64 ?? '') : undefined,
@@ -1176,7 +1394,11 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as RawLanguage } } : undefined,
           }
         ) : undefined,
-        auth: resolvedAuth,
+        auth: (isMongo || isDatabase) ? undefined : resolvedAuth,
+        mongodb: isMongo ? (() => {
+          try { return JSON.parse(edit.bodyRaw || '{}'); } catch { return undefined; }
+        })() : undefined,
+        database: databaseMethod ? parseDatabaseConfig(edit.bodyRaw, databaseMethod) : undefined,
       },
       event: buildMergedEvents(edit, ancestorScripts),
     };
@@ -1189,7 +1411,8 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
         globals: state.globalVariables,
         collVars: col?.variable ?? [],
         cookies: state.cookieJar,
-        collectionItems: col?.item ?? [],
+        collectionItems: authResolvedItems,
+        databases: state.databases,
       });
 
       dispatch({ type: 'SET_TAB_RESPONSE', payload: { tabId, response: result } });
@@ -1202,9 +1425,10 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
       const logBase = Date.now();
       let logSeq = 0;
 
-      // 1. Pre-request children (ran before main) — dispatch first so they appear below it
-      if (result.preChildRequests && result.preChildRequests.length > 0) {
-        result.preChildRequests.forEach((child) => {
+      // Recursive helper to log child requests at any nesting depth
+      const logChildRequestsRecursively = (childRequests: ChildRequestLog[] | undefined) => {
+        if (!childRequests || childRequests.length === 0) return;
+        childRequests.forEach((child) => {
           dispatch({
             type: 'ADD_CONSOLE_LOG',
             payload: {
@@ -1213,15 +1437,21 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
               method: child.method,
               url: child.result.resolvedUrl ?? child.name,
               requestHeaders: child.result.requestHeaders
-                ? Object.entries(child.result.requestHeaders).map(([key, value]) => ({ key, value }))
+                ? Object.entries(child.result.requestHeaders).map(([key, value]) => ({ key, value: String(value) }))
                 : [],
               requestBody: child.result.requestBody,
               scriptLogs: child.result.scriptLogs ?? [],
               response: child.result,
             },
           });
+          // Recursively log nested children from this child's test/pre-request calls
+          logChildRequestsRecursively((child.result as any).preChildRequests);
+          logChildRequestsRecursively((child.result as any).testChildRequests);
         });
-      }
+      };
+
+      // 1. Pre-request children (ran before main) — dispatch first so they appear below it
+      logChildRequestsRecursively(result.preChildRequests);
 
       // 2. Main request
       dispatch({
@@ -1261,25 +1491,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
       }
 
       // 3. Test children (ran after main) — dispatch last so they appear above it
-      if (result.testChildRequests && result.testChildRequests.length > 0) {
-        result.testChildRequests.forEach((child) => {
-          dispatch({
-            type: 'ADD_CONSOLE_LOG',
-            payload: {
-              id: (logBase + logSeq).toString(36) + Math.random().toString(36).slice(2),
-              timestamp: logBase + logSeq++,
-              method: child.method,
-              url: child.result.resolvedUrl ?? child.name,
-              requestHeaders: child.result.requestHeaders
-                ? Object.entries(child.result.requestHeaders).map(([key, value]) => ({ key, value }))
-                : [],
-              requestBody: child.result.requestBody,
-              scriptLogs: child.result.scriptLogs ?? [],
-              response: child.result,
-            },
-          });
-        });
-      }
+      logChildRequestsRecursively(result.testChildRequests);
 
       if (result.updatedEnvironment) {
         dispatch({ type: 'UPDATE_ACTIVE_ENV_VARS', payload: result.updatedEnvironment });
@@ -1350,6 +1562,10 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
 
   async function handleSendToMock() {
     if (!edit || !activeReq || !activeTab) return;
+    if (edit.method === 'MONGO' || isDatabaseMethod(edit.method)) {
+      window.alert('Database requests cannot be sent to the mock server.');
+      return;
+    }
     if (!state.mockServerRunning) {
       window.alert('Mock server is not running. Start the mock server and try again.');
       return;
@@ -1360,6 +1576,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     dispatch({ type: 'SET_TAB_RESPONSE', payload: { tabId, response: null } });
 
     const col = state.collections.find(c => c._id === activeReq.collectionId);
+    const authResolvedItems = col ? applyInheritedAuth(col.item, col.auth) : [];
     const resolvedAuth = edit.authType === 'inherit'
       ? resolveInheritedAuth(col?.item ?? [], activeReq.item.id ?? '', col?.auth)
       : buildAuth(edit);
@@ -1402,10 +1619,42 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
         globals: state.globalVariables,
         collVars: col?.variable ?? [],
         cookies: state.cookieJar,
-        collectionItems: col?.item ?? [],
+        collectionItems: authResolvedItems,
         mockBase,
+        databases: state.databases,
       });
       dispatch({ type: 'SET_TAB_RESPONSE', payload: { tabId, response: result } });
+
+      // Recursive helper to log child requests at any nesting depth
+      const logChildRequestsRecursively = (childRequests: ChildRequestLog[] | undefined) => {
+        if (!childRequests || childRequests.length === 0) return;
+        const mockLogBase = Date.now();
+        let mockLogSeq = 0;
+        childRequests.forEach((child) => {
+          dispatch({
+            type: 'ADD_CONSOLE_LOG',
+            payload: {
+              id: (mockLogBase + mockLogSeq).toString(36) + Math.random().toString(36).slice(2),
+              timestamp: mockLogBase + mockLogSeq++,
+              method: child.method,
+              url: child.result.resolvedUrl ?? child.name,
+              requestHeaders: child.result.requestHeaders
+                ? Object.entries(child.result.requestHeaders).map(([key, value]) => ({ key, value: String(value) }))
+                : [],
+              requestBody: child.result.requestBody,
+              scriptLogs: child.result.scriptLogs ?? [],
+              response: child.result,
+            },
+          });
+          // Recursively log nested children from this child's test/pre-request calls
+          logChildRequestsRecursively((child.result as any).preChildRequests);
+          logChildRequestsRecursively((child.result as any).testChildRequests);
+        });
+      };
+
+      // Log all child requests (preChildRequests and testChildRequests) recursively
+      logChildRequestsRecursively(result.preChildRequests);
+
       dispatch({
         type: 'ADD_CONSOLE_LOG',
         payload: {
@@ -1421,6 +1670,9 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
           response: result,
         },
       });
+
+      logChildRequestsRecursively(result.testChildRequests);
+
       dispatch({
         type: 'ADD_REQUEST_HISTORY',
         payload: {
@@ -1756,7 +2008,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
         <div className="flex gap-2">
           <select
             value={edit.method}
-            onChange={e => setEdit(x => x ? { ...x, method: e.target.value } : x)}
+            onChange={e => setEdit(x => x ? buildEditStateForMethod(x, e.target.value) : x)}
             className={`bg-slate-700 border border-slate-600 rounded px-2 py-2 text-sm font-bold focus:outline-none ${METHOD_COLORS[edit.method] || 'text-slate-300'}`}
           >
             {METHODS.map(m => (
@@ -1764,6 +2016,15 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             ))}
           </select>
           <div className="relative flex-1">
+          {edit.method === 'MONGO' ? (
+            <div className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-emerald-400 font-mono italic opacity-60 select-none">
+              MongoDB — configure request in the Connection and Body tabs
+            </div>
+          ) : isDatabaseMethod(edit.method) ? (
+            <div className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-sky-300 font-mono italic opacity-60 select-none">
+              Database request — configure connection and operation in dedicated tabs
+            </div>
+          ) : (
           <input
             ref={urlInputRef}
             type="text"
@@ -1774,7 +2035,8 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             placeholder="https://api.example.com/endpoint"
             className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-orange-500"
           />
-          {urlAcSuggestions.length > 0 && (
+          )}
+          {urlAcSuggestions.length > 0 && edit.method !== 'MONGO' && !isDatabaseMethod(edit.method) && (
             <div className="absolute top-full mt-1 z-50 bg-slate-800 border border-slate-600 rounded shadow-xl min-w-52 max-h-52 overflow-y-auto" style={{ left: urlAcLeft }}>
               {urlAcSuggestions.map((name, i) => (
                 <button
@@ -1843,8 +2105,8 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
                   <div className="absolute right-0 top-full mt-1 z-50 bg-slate-800 border border-slate-600 rounded-md shadow-2xl py-1 min-w-[190px]">
                     <button
                       onClick={() => { setShowSendMenu(false); handleSendToMock(); }}
-                      disabled={!state.mockServerRunning}
-                      title={state.mockServerRunning ? `Send to mock server on port ${state.mockPort}` : 'Start the mock server first'}
+                      disabled={!state.mockServerRunning || edit.method === 'MONGO' || isDatabaseMethod(edit.method)}
+                      title={(edit.method === 'MONGO' || isDatabaseMethod(edit.method)) ? 'Database requests cannot be sent to mock server' : (state.mockServerRunning ? `Send to mock server on port ${state.mockPort}` : 'Start the mock server first')}
                       className="w-full text-left flex items-center gap-2.5 px-3 py-1.5 text-xs transition-colors hover:bg-slate-700 text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                     >
                       <span className="w-4 shrink-0 text-center">🎭</span>
@@ -1866,8 +2128,56 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     <div className="flex flex-col flex-1 overflow-hidden">
       {urlBarPortalTarget ? createPortal(urlBarSection, urlBarPortalTarget) : urlBarSection}
 
-      {/* Tabs (HTTP only) */}
-      {edit.method !== 'WS' && (
+      {/* MongoDB dedicated panel */}
+      {edit.method === 'MONGO' && (
+        <MongoRequestPanel
+          key={activeTabId ?? 'mongo'}
+          bodyRaw={edit.bodyRaw}
+          preRequestScript={edit.preRequestScript}
+          testScript={edit.testScript}
+          description={edit.description}
+          variableSuggestions={variableSuggestions}
+          preRequestHasError={preRequestHasError}
+          testHasError={testHasError}
+          activeTabId={activeTabId}
+          requestNames={flattenRequestNames(col?.item ?? [])}
+          requestItems={flattenRequestItems(col?.item ?? [])}
+          resolvedVars={allVars}
+          onBodyChange={v => setEdit(x => x ? { ...x, bodyRaw: v } : x)}
+          onPreRequestChange={v => setEdit(x => x ? { ...x, preRequestScript: v } : x)}
+          onTestChange={v => setEdit(x => x ? { ...x, testScript: v } : x)}
+          onDescriptionChange={v => setEdit(x => x ? { ...x, description: v } : x)}
+          onPreRequestSyntaxCheck={setPreRequestHasError}
+          onTestSyntaxCheck={setTestHasError}
+        />
+      )}
+
+      {isDatabaseMethod(edit.method) && (
+        <SqlRequestPanel
+          key={activeTabId ?? 'sql'}
+          method={edit.method}
+          bodyRaw={edit.bodyRaw}
+          preRequestScript={edit.preRequestScript}
+          testScript={edit.testScript}
+          description={edit.description}
+          variableSuggestions={variableSuggestions}
+          preRequestHasError={preRequestHasError}
+          testHasError={testHasError}
+          activeTabId={activeTabId}
+          requestNames={flattenRequestNames(col?.item ?? [])}
+          requestItems={flattenRequestItems(col?.item ?? [])}
+          databases={state.databases}
+          onBodyChange={v => setEdit(x => x ? { ...x, bodyRaw: v } : x)}
+          onPreRequestChange={v => setEdit(x => x ? { ...x, preRequestScript: v } : x)}
+          onTestChange={v => setEdit(x => x ? { ...x, testScript: v } : x)}
+          onDescriptionChange={v => setEdit(x => x ? { ...x, description: v } : x)}
+          onPreRequestSyntaxCheck={setPreRequestHasError}
+          onTestSyntaxCheck={setTestHasError}
+        />
+      )}
+
+      {/* Tabs (HTTP only — not WS/MONGO/database) */}
+      {edit.method !== 'WS' && edit.method !== 'MONGO' && !isDatabaseMethod(edit.method) && (
         <div className="flex border-b border-slate-700 bg-slate-800 shrink-0">
           {TABS.map(t => {
             const hasErr =
@@ -1902,8 +2212,8 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
         />
       )}
 
-      {/* Tab content (HTTP only) */}
-      {edit.method !== 'WS' && <div className="flex-1 overflow-y-auto p-3 bg-slate-800/50 min-h-0">
+      {/* Tab content (HTTP only — not WS/MONGO/database) */}
+      {edit.method !== 'WS' && edit.method !== 'MONGO' && !isDatabaseMethod(edit.method) && <div className="flex-1 overflow-y-auto p-3 bg-slate-800/50 min-h-0">
         {activeRequestTab === 'Params' && (
           <div className="flex flex-col gap-4">
             <KvTable
@@ -2516,27 +2826,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
                     if (!activeTab || !edit || !saveTargetCollectionId) { closeAfterSaveRef.current = false; return; }
                     const targetCol = state.collections.find(c => c._id === saveTargetCollectionId);
                     if (!targetCol) { closeAfterSaveRef.current = false; return; }
-                    const updatedItem: CollectionItem = {
-                      ...activeTab.item,
-                      description: edit.description || undefined,
-                      request: {
-                        ...(activeTab.item.request ?? {}),
-                        method: edit.method,
-                        url: { raw: edit.url, variable: edit.pathParams.filter(p => p.key).map(p => ({ key: p.key, value: p.value })) },
-                        header: edit.headers,
-                        body: edit.bodyMode !== 'none' ? (
-                          edit.bodyMode === 'soap' ? buildSoapBody(edit) : {
-                            mode: edit.bodyMode as NonNullable<NonNullable<CollectionItem['request']>['body']>['mode'],
-                            raw: edit.bodyMode === 'raw' ? edit.bodyRaw : undefined,
-                            urlencoded: edit.bodyMode === 'urlencoded' ? edit.bodyUrlEncoded : undefined,
-                            formdata: edit.bodyMode === 'formdata' ? edit.bodyFormData : undefined,
-                            graphql: edit.bodyMode === 'graphql' ? { query: edit.bodyGraphqlQuery, variables: edit.bodyGraphqlVariables || undefined } : undefined,
-                            options: edit.bodyMode === 'raw' ? { raw: { language: edit.bodyRawLang as RawLanguage } } : undefined,
-                          }
-                        ) : undefined,
-                        auth: buildAuth(edit),
-                      },
-                    };
+                    const updatedItem = buildUpdatedRequestItem(activeTab.item, edit);
                     dispatch({ type: 'UPDATE_COLLECTION', payload: { ...targetCol, item: [...targetCol.item, updatedItem] } });
                     dispatch({ type: 'UPDATE_TAB', payload: { tabId: activeTab.id, collectionId: saveTargetCollectionId, item: updatedItem } });
                     cacheRef.current.set(activeTab.id, { edit, dirty: false, activeRequestTab });

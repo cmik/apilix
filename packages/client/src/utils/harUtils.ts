@@ -248,6 +248,10 @@ function collectionItemToHarEntry(item: CollectionItem): HarExportEntry | null {
   if (!item.request) return null;
 
   const req = item.request;
+
+  // MongoDB requests are not HTTP — skip them in HAR export
+  if (req.requestType === 'mongodb' || req.method === 'MONGO') return null;
+
   const rawUrl = typeof req.url === 'string' ? req.url : (req.url?.raw ?? '');
   const method = (req.method ?? 'GET').toUpperCase();
 

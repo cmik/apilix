@@ -13,6 +13,10 @@ interface StatusBarProps {
 }
 
 function statusColor(status: number): string {
+  // MongoDB synthetic status codes
+  if (status === 2200) return 'text-green-400';  // MONGO_SUCCESS
+  if (status === 2400) return 'text-yellow-400'; // MONGO_PARTIAL
+  // HTTP status codes
   if (status >= 500) return 'text-red-400';
   if (status >= 400) return 'text-yellow-400';
   if (status >= 300) return 'text-sky-400';

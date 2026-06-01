@@ -2,15 +2,35 @@
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const crypto = require('node:crypto');
 
 const Chalk = require('chalk');
 const { Command } = require('commander');
 
 const pkg = require('../package.json');
-const { setExecutorConfig, prepareCollectionRun, executePreparedCollectionRun, summarizeRun, buildJsonReport, buildJUnitReport } = require('@apilix/core');
+const {
+  setExecutorConfig,
+  prepareCollectionRun,
+  executePreparedCollectionRun,
+  summarizeRun,
+  buildJsonReport,
+  buildJUnitReport,
+  resolveVariables,
+} = require('@apilix/core');
 
 const DEFAULT_REQUEST_TIMEOUT = 30000;
 const MAX_REQUEST_NAME_WIDTH = 72;
+const SUPPORTED_DATABASE_TYPES = new Set([
+  'mysql',
+  'postgres',
+  'mongodb',
+  'sqlite',
+  'cassandra',
+  'oracle',
+  'mssql',
+  'redis',
+  'dynamodb',
+]);
 
 function usage() {
   return [
@@ -22,6 +42,7 @@ function usage() {
     '  -e, --environment <file>     Environment JSON file with values[]',
     '  --globals <file>             Globals JSON file or key/value map',
     '  --collection-vars <file>     Collection variables JSON file or key/value map',
+    '  --databases <file>           Database connections JSON file (array or { databases: [] })',
     '  --csv <file>                 CSV data file for per-row iterations',
     '  --data <file>                JSON data file (array of objects) for per-row iterations',
     '  --iterations <n>             Iteration count when no data file is provided (max 100)',
@@ -40,6 +61,8 @@ function usage() {
     '  --retry-delay <ms>           Base delay between retries in ms (default 1000)',
     '  --retry-backoff <fixed|exponential>  Backoff strategy (default: fixed)',
     '  --retry-on <failures|errors|both>    What triggers a retry (default: both)',
+    '  --mongo-uri <uri>            Override MongoDB URI for mongodb requests',
+    '  --mongo-db <db>              Override MongoDB database for mongodb requests',
     '  --ssl-verification           Enable TLS certificate verification',
     '  --ca-cert <file>             PEM CA certificate(s) to add to the trust store',
     '  --client-cert <file>         PEM client certificate for mTLS',
@@ -141,6 +164,327 @@ function ensureReporter(value) {
   return value;
 }
 
+function normalizeDatabases(input) {
+  if (input == null) return [];
+  const databases = Array.isArray(input)
+    ? input
+    : (input && Array.isArray(input.databases) ? input.databases : null);
+
+  if (!databases) {
+    throw new Error('databases file must be an array or an object with databases[]');
+  }
+
+  return databases.map((db, index) => {
+    if (!db || typeof db !== 'object') {
+      throw new Error(`databases[${index}] must be an object`);
+    }
+    const id = typeof db._id === 'string' ? db._id.trim() : '';
+    const type = typeof db.type === 'string' ? db.type.trim().toLowerCase() : '';
+    if (!id) throw new Error(`databases[${index}] is missing _id`);
+    if (!SUPPORTED_DATABASE_TYPES.has(type)) {
+      throw new Error(`databases[${index}] has unsupported type "${type}"`);
+    }
+
+    if ((type === 'mysql' || type === 'postgres')) {
+      if (!db.host || !db.username || !db.database) {
+        throw new Error(`databases[${index}] (${type}) must include host, username, and database`);
+      }
+      const port = Number(db.port ?? (type === 'postgres' ? 5432 : 3306));
+      if (!Number.isFinite(port) || port <= 0 || port > 65535) {
+        throw new Error(`databases[${index}] (${type}) has invalid port`);
+      }
+    }
+
+    if (db.connectionTimeout !== undefined) {
+      const timeout = Number(db.connectionTimeout);
+      if (!Number.isInteger(timeout) || timeout < 100 || timeout > 120000) {
+        throw new Error(`databases[${index}] connectionTimeout must be an integer between 100 and 120000`);
+      }
+    }
+
+    if (db.queryTimeout !== undefined) {
+      const timeout = Number(db.queryTimeout);
+      if (!Number.isInteger(timeout) || timeout < 100 || timeout > 600000) {
+        throw new Error(`databases[${index}] queryTimeout must be an integer between 100 and 600000`);
+      }
+    }
+
+    if (db.maxConnections !== undefined) {
+      const maxConnections = Number(db.maxConnections);
+      if (!Number.isInteger(maxConnections) || maxConnections < 1 || maxConnections > 50) {
+        throw new Error(`databases[${index}] maxConnections must be an integer between 1 and 50`);
+      }
+    }
+
+    if (type === 'mongodb' && (!db.connectionUri || typeof db.connectionUri !== 'string')) {
+      throw new Error(`databases[${index}] (mongodb) must include connectionUri`);
+    }
+
+    return { ...db, type };
+  });
+}
+
+function buildRuntimeVars(scriptContext, defaultRuntimeVars = {}) {
+  const ctx = scriptContext && typeof scriptContext === 'object' ? scriptContext : {};
+  return {
+    ...defaultRuntimeVars,
+    ...(ctx.environment || {}),
+    ...(ctx.collectionVariables || {}),
+    ...(ctx.globals || {}),
+    ...(ctx.dataRow || {}),
+  };
+}
+
+function resolveDatabaseConfigTemplates(config, runtimeVars) {
+  const vars = runtimeVars || {};
+  const resolved = { ...config };
+  const fields = [
+    'host', 'username', 'password', 'database', 'sslCert',
+    'connectionUri', 'sslCertPath', 'sslKeyPath', 'sslCAPath',
+  ];
+
+  fields.forEach((field) => {
+    if (typeof resolved[field] === 'string') {
+      resolved[field] = resolveVariables(resolved[field], vars);
+    }
+  });
+
+  return resolved;
+}
+
+function poolKeyFor(connectionId, resolvedConfig) {
+  const hash = crypto
+    .createHash('sha1')
+    .update(JSON.stringify(resolvedConfig || {}))
+    .digest('hex')
+    .slice(0, 12);
+  return `cli_${connectionId}_${hash}`;
+}
+
+function createCliDbQueryFn(databases, defaultRuntimeVars = {}) {
+  const sqlPools = new Map(); // poolKey -> { type, client }
+  const activePoolByConnection = new Map(); // connectionId -> poolKey
+
+  async function closePool(poolKey) {
+    const entry = sqlPools.get(poolKey);
+    if (!entry) return;
+    try {
+      await entry.client.end();
+    } finally {
+      sqlPools.delete(poolKey);
+    }
+  }
+
+  async function ensurePool(connectionId, resolvedConfig) {
+    const poolKey = poolKeyFor(connectionId, resolvedConfig);
+    const existing = activePoolByConnection.get(connectionId);
+    if (existing && existing !== poolKey) {
+      await closePool(existing);
+    }
+    activePoolByConnection.set(connectionId, poolKey);
+    if (sqlPools.has(poolKey)) return { poolKey, entry: sqlPools.get(poolKey) };
+
+    const timeout = resolvedConfig.connectionTimeout ?? 10000;
+    const maxConns = resolvedConfig.maxConnections ?? 5;
+
+    if (resolvedConfig.type === 'mysql') {
+      const mysql = require('mysql2/promise');
+      const pool = mysql.createPool({
+        host: resolvedConfig.host,
+        port: resolvedConfig.port ?? 3306,
+        user: resolvedConfig.username,
+        password: resolvedConfig.password,
+        database: resolvedConfig.database,
+        ssl: resolvedConfig.ssl ? { rejectUnauthorized: resolvedConfig.sslRejectUnauthorized !== false } : undefined,
+        connectTimeout: timeout,
+        connectionLimit: maxConns,
+        waitForConnections: true,
+        enableKeepAlive: true,
+      });
+      sqlPools.set(poolKey, { type: 'mysql', client: pool, config: resolvedConfig });
+    } else if (resolvedConfig.type === 'postgres') {
+      const { Pool } = require('pg');
+      const pool = new Pool({
+        host: resolvedConfig.host,
+        port: resolvedConfig.port ?? 5432,
+        user: resolvedConfig.username,
+        password: resolvedConfig.password,
+        database: resolvedConfig.database,
+        ssl: resolvedConfig.ssl
+          ? {
+              rejectUnauthorized: resolvedConfig.sslRejectUnauthorized !== false,
+              ca: resolvedConfig.sslCert || undefined,
+            }
+          : false,
+        connectionTimeoutMillis: timeout,
+        max: maxConns,
+      });
+      pool.on('error', (err) => {
+        console.error(`[cli-db] Postgres pool error for ${connectionId}:`, err.message);
+      });
+      sqlPools.set(poolKey, { type: 'postgres', client: pool, config: resolvedConfig });
+    } else {
+      throw new Error(`Unsupported SQL database type: ${resolvedConfig.type}`);
+    }
+
+    return { poolKey, entry: sqlPools.get(poolKey) };
+  }
+
+  async function query(connectionId, sql, params = [], scriptContext) {
+    if (!Array.isArray(databases) || databases.length === 0) {
+      throw new Error('No database connections are configured for this run. Provide --databases <file>.');
+    }
+    const config = databases.find(d => d && d._id === connectionId);
+    if (!config) throw new Error(`Database connection "${connectionId}" not found`);
+    if (config.type !== 'mysql' && config.type !== 'postgres') {
+      throw new Error(`Database connection "${connectionId}" is not an SQL connection`);
+    }
+
+    const runtimeVars = buildRuntimeVars(scriptContext, defaultRuntimeVars);
+    const resolvedConfig = resolveDatabaseConfigTemplates(config, runtimeVars);
+    const { entry } = await ensurePool(connectionId, resolvedConfig);
+
+    if (entry.type === 'mysql') {
+      const [rows] = await entry.client.query({ sql, timeout: entry.config.queryTimeout ?? 30000 }, params);
+      const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
+      return { rows, columns, rowCount: rows.length };
+    }
+
+    const result = await entry.client.query(sql, params);
+    const columns = result.fields ? result.fields.map(f => f.name) : [];
+    return {
+      rows: result.rows,
+      columns,
+      rowCount: result.rowCount ?? result.rows.length,
+    };
+  }
+
+  async function closeAll() {
+    const keys = [...sqlPools.keys()];
+    for (const key of keys) {
+      await closePool(key);
+    }
+  }
+
+  return { query, closeAll };
+}
+
+function createCliMongoQueryFn(databases, defaultRuntimeVars = {}) {
+  const mongoClients = new Map(); // clientKey -> MongoClient
+  const activeClientByConnection = new Map(); // connectionId -> clientKey
+
+  async function closeClient(clientKey) {
+    const client = mongoClients.get(clientKey);
+    if (!client) return;
+    try {
+      await client.close();
+    } finally {
+      mongoClients.delete(clientKey);
+    }
+  }
+
+  async function ensureClient(connectionId, resolvedConfig) {
+    const clientKey = poolKeyFor(connectionId, resolvedConfig);
+    const previousKey = activeClientByConnection.get(connectionId);
+    if (previousKey && previousKey !== clientKey) {
+      await closeClient(previousKey);
+    }
+    activeClientByConnection.set(connectionId, clientKey);
+    if (mongoClients.has(clientKey)) return mongoClients.get(clientKey);
+
+    const { MongoClient } = require('mongodb');
+    const timeout = resolvedConfig.connectionTimeout ?? 10000;
+    const maxConns = resolvedConfig.maxConnections ?? 5;
+    const tlsCertificateKeyFile = resolvedConfig.sslKeyPath || resolvedConfig.sslCertPath || undefined;
+    const client = new MongoClient(resolvedConfig.connectionUri, {
+      maxPoolSize: maxConns,
+      connectTimeoutMS: timeout,
+      serverSelectionTimeoutMS: timeout,
+      authMechanism: resolvedConfig.authMechanism || undefined,
+      tls: resolvedConfig.ssl,
+      tlsAllowInvalidCertificates: resolvedConfig.sslRejectUnauthorized === false,
+      tlsCAFile: resolvedConfig.sslCAPath || undefined,
+      tlsCertificateKeyFile,
+    });
+    await client.connect();
+    mongoClients.set(clientKey, client);
+    return client;
+  }
+
+  async function mongoQuery(connectionId, operation, document, options = {}, scriptContext) {
+    if (!Array.isArray(databases) || databases.length === 0) {
+      throw new Error('No database connections are configured for this run. Provide --databases <file>.');
+    }
+    const config = databases.find(d => d && d._id === connectionId);
+    if (!config) throw new Error(`Database connection "${connectionId}" not found`);
+    if (config.type !== 'mongodb') {
+      throw new Error(`Database connection "${connectionId}" is not a MongoDB connection`);
+    }
+
+    const runtimeVars = buildRuntimeVars(scriptContext, defaultRuntimeVars);
+    const resolvedConfig = resolveDatabaseConfigTemplates(config, runtimeVars);
+    const client = await ensureClient(connectionId, resolvedConfig);
+
+    const doc = (document && typeof document === 'object') ? document : {};
+    const dbName = doc.database
+      ? doc.database
+      : resolvedConfig.database;
+    if (!dbName) throw new Error('MongoDB operation requires a database name');
+    const db = client.db(dbName);
+    const collectionName = doc.collection;
+    if (!collectionName && operation !== 'aggregate') {
+      throw new Error('MongoDB operation requires collection');
+    }
+
+    if (operation === 'aggregate') {
+      const col = db.collection(collectionName || '_aggregate');
+      const cursor = col.aggregate(doc.pipeline || [], options);
+      return { result: await cursor.toArray() };
+    }
+
+    const collection = db.collection(collectionName);
+
+    switch (operation) {
+      case 'findOne':
+        return { result: await collection.findOne(document.query || {}, options) };
+      case 'find': {
+        const cursor = collection.find(document.query || {}, options);
+        if (options.sort) cursor.sort(options.sort);
+        if (options.skip) cursor.skip(options.skip);
+        if (options.limit) cursor.limit(options.limit);
+        return { result: await cursor.toArray() };
+      }
+      case 'insertOne':
+        return { result: await collection.insertOne(document.document || document.data || {}, options) };
+      case 'insertMany':
+        return { result: await collection.insertMany(document.documents || document.data || [], options) };
+      case 'updateOne':
+        return { result: await collection.updateOne(document.query || {}, document.update || {}, options) };
+      case 'updateMany':
+        return { result: await collection.updateMany(document.query || {}, document.update || {}, options) };
+      case 'deleteOne':
+        return { result: await collection.deleteOne(document.query || {}, options) };
+      case 'deleteMany':
+        return { result: await collection.deleteMany(document.query || {}, options) };
+      case 'countDocuments':
+        return { result: await collection.countDocuments(document.query || {}, options) };
+      case 'distinct':
+        return { result: await collection.distinct(document.field || '_id', document.query || {}, options) };
+      default:
+        throw new Error(`Unsupported MongoDB operation: ${operation}`);
+    }
+  }
+
+  async function closeAll() {
+    const keys = [...mongoClients.keys()];
+    for (const key of keys) {
+      await closeClient(key);
+    }
+  }
+
+  return { mongoQuery, closeAll };
+}
+
 function createProgram(io) {
   const parsed = {
     command: null,
@@ -161,6 +505,9 @@ function createProgram(io) {
     clientKeyPath: null,
     clientKeyPassphrase: '',
     clientCertHost: '*',
+    databasesPath: null,
+    mongoUri: '',
+    mongoDb: '',
   };
 
   const program = new Command();
@@ -181,6 +528,7 @@ function createProgram(io) {
     .option('-e, --environment <file>', 'Environment JSON file with values[]')
     .option('--globals <file>', 'Globals JSON file or key/value map')
     .option('--collection-vars <file>', 'Collection variables JSON file or key/value map')
+    .option('--databases <file>', 'Database connections JSON file (array or { databases: [] })')
     .option('--csv <file>', 'CSV data file for per-row iterations')
     .option('--iterations <n>', 'Iteration count when CSV is not provided')
     .option('--delay <ms>', 'Delay between requests (max 5000)')
@@ -199,6 +547,8 @@ function createProgram(io) {
     .option('--retry-delay <ms>', 'Base delay between retries in ms', '1000')
     .option('--retry-backoff <fixed|exponential>', 'Backoff strategy (fixed or exponential)', 'fixed')
     .option('--retry-on <failures|errors|both>', 'What triggers a retry', 'both')
+    .option('--mongo-uri <uri>', 'Override MongoDB URI for mongodb requests')
+    .option('--mongo-db <db>', 'Override MongoDB database for mongodb requests')
     .option('--ssl-verification', 'Enable TLS certificate verification')
     .option('--ca-cert <file>', 'PEM CA certificate(s) to add to the trust store')
     .option('--client-cert <file>', 'PEM client certificate for mTLS')
@@ -214,6 +564,7 @@ function createProgram(io) {
       parsed.environmentPath = opts.environment;
       parsed.globalsPath = opts.globals;
       parsed.collectionVarsPath = opts.collectionVars;
+      parsed.databasesPath = opts.databases || null;
       parsed.csvPath = opts.csv;
       parsed.dataPath = opts.data;
       parsed.iterations = opts.iterations;
@@ -221,6 +572,8 @@ function createProgram(io) {
       parsed.retryDelay = opts.retryDelay;
       parsed.retryBackoff = opts.retryBackoff;
       parsed.retryOn = opts.retryOn;
+      parsed.mongoUri = opts.mongoUri || '';
+      parsed.mongoDb = opts.mongoDb || '';
       parsed.delay = opts.delay;
       parsed.reporter = opts.reporter;
       parsed.outPath = opts.out;
@@ -281,9 +634,10 @@ function assertionStatus(result) {
 }
 
 function pushRows(rows, result, namePrefix) {
+  const isMongo = result.protocol === 'mongodb' || String(result.method || '').startsWith('MONGO:');
   rows.push({
     requestName: `${namePrefix}${result.name}`,
-    statusCode: result.status,
+    statusCode: isMongo ? (result.mongoStatus || result.statusText || 'MONGO') : result.status,
     responseTime: `${Math.max(0, Number(result.responseTime) || 0)} ms`,
     assertion: assertionStatus(result),
   });
@@ -348,9 +702,9 @@ function formatTable(rows, chalk) {
       ? chalk.green(row.assertion)
       : (row.assertion === 'FAIL' ? chalk.red(row.assertion) : chalk.yellow(row.assertion));
 
-    const statusCode = Number(row.statusCode) >= 400
-      ? chalk.red(String(row.statusCode))
-      : chalk.green(String(row.statusCode));
+    const statusCode = Number.isFinite(Number(row.statusCode))
+      ? (Number(row.statusCode) >= 400 ? chalk.red(String(row.statusCode)) : chalk.green(String(row.statusCode)))
+      : chalk.cyan(String(row.statusCode));
 
     lines.push(
       `| ${String(row.requestName).padEnd(widths.requestName)} | ${statusCode.padEnd(widths.statusCode + (statusCode.length - String(row.statusCode).length))} | ${String(row.responseTime).padEnd(widths.responseTime)} | ${assertionText.padEnd(widths.assertion + (assertionText.length - String(row.assertion).length))} |`
@@ -392,6 +746,7 @@ function buildExitCode(summary, runErrors) {
 
 async function runCli(argv, ioOverrides = {}) {
   const io = createIo(ioOverrides);
+  let closeDbResources = async () => {};
 
   try {
     const args = parseArgs(argv, io);
@@ -432,6 +787,9 @@ async function runCli(argv, ioOverrides = {}) {
     const collectionVarsJson = args.collectionVarsPath
       ? await readJsonFile(io, args.collectionVarsPath, 'collection variables')
       : null;
+    const databasesJson = args.databasesPath
+      ? await readJsonFile(io, args.databasesPath, 'databases')
+      : null;
     if (args.csvPath && args.dataPath) {
       throw new Error('Use either --csv or --data, not both');
     }
@@ -454,6 +812,19 @@ async function runCli(argv, ioOverrides = {}) {
     const environment = normalizeEnvironment(environmentJson);
     const globals = normalizeVariableMap(globalsJson, 'globals');
     const collectionVariables = normalizeVariableMap(collectionVarsJson, 'collection variables');
+    const databases = normalizeDatabases(databasesJson);
+
+    const baseRuntimeVars = {
+      ...environment.vars,
+      ...collectionVariables,
+      ...globals,
+    };
+    const sqlApi = createCliDbQueryFn(databases, baseRuntimeVars);
+    const mongoApi = createCliMongoQueryFn(databases, baseRuntimeVars);
+    closeDbResources = async () => {
+      await sqlApi.closeAll();
+      await mongoApi.closeAll();
+    };
 
     const customCAsText = args.caCertPath
       ? await readTextFile(io, args.caCertPath, 'CA certificate')
@@ -510,7 +881,35 @@ async function runCli(argv, ioOverrides = {}) {
       retryOn: ['failures', 'errors', 'both'].includes(args.retryOn) ? args.retryOn : 'both',
       allCollectionItems: collection.item,
       mockBase: null,
+      mongoConnections: {},
+      databases,
+      dbQueryFn: sqlApi.query,
+      dbMongoQueryFn: mongoApi.mongoQuery,
     };
+
+    if (args.mongoUri) {
+      payload.mongoConnections.__cli = {
+        uri: args.mongoUri,
+        database: args.mongoDb || '',
+      };
+      const applyMongoOverrides = (items) => {
+        for (const item of (items || [])) {
+          if (item.item) {
+            applyMongoOverrides(item.item);
+            continue;
+          }
+          if (item.request?.requestType === 'mongodb' || item.request?.mongodb) {
+            item.request = item.request || {};
+            item.request.requestType = 'mongodb';
+            item.request.mongodb = item.request.mongodb || {};
+            item.request.mongodb.connection = { mode: 'named', connectionId: '__cli' };
+            if (args.mongoDb) item.request.mongodb.database = args.mongoDb;
+          }
+        }
+      };
+      applyMongoOverrides(payload.collection.item);
+      applyMongoOverrides(payload.allCollectionItems);
+    }
 
     const startedAt = new Date().toISOString();
     const prepared = prepareCollectionRun(payload, { csvText, jsonRows });
@@ -552,6 +951,7 @@ async function runCli(argv, ioOverrides = {}) {
         environmentPath: args.environmentPath ? path.relative(io.cwd, resolvePath(io, args.environmentPath)) : null,
         globalsPath: args.globalsPath ? path.relative(io.cwd, resolvePath(io, args.globalsPath)) : null,
         collectionVarsPath: args.collectionVarsPath ? path.relative(io.cwd, resolvePath(io, args.collectionVarsPath)) : null,
+        databasesPath: args.databasesPath ? path.relative(io.cwd, resolvePath(io, args.databasesPath)) : null,
         csvPath: args.csvPath ? path.relative(io.cwd, resolvePath(io, args.csvPath)) : null,
         dataPath: args.dataPath ? path.relative(io.cwd, resolvePath(io, args.dataPath)) : null,
         maxRetries: payload.maxRetries,
@@ -609,6 +1009,8 @@ async function runCli(argv, ioOverrides = {}) {
     io.stderr.write(`Error: ${error.message}\n`);
     io.stderr.write(`${usage()}\n`);
     return 2;
+  } finally {
+    await closeDbResources();
   }
 }
 

@@ -230,6 +230,11 @@ test('parseArgs supports -e short flag for environment file', () => {
   assert.equal(args.environmentPath, 'env.json');
 });
 
+test('parseArgs captures --databases file path', () => {
+  const args = parseArgs(['run', 'col.json', '--databases', 'db.json']);
+  assert.equal(args.databasesPath, 'db.json');
+});
+
 test('parseArgs supports legacy --collection flag without positional path', () => {
   const args = parseArgs(['run', '--collection', 'col.json']);
   assert.equal(args.collectionPath, 'col.json');
@@ -284,6 +289,379 @@ test('runCli returns usage error for invalid globals file shape', async () => {
 
     assert.equal(exitCode, 2);
     assert.match(io.readStderr(), /globals file must be an object map/i);
+  });
+});
+
+test('runCli returns usage error for invalid databases file shape', async () => {
+  await withTempDir(async (dir) => {
+    const collectionPath = path.join(dir, 'collection.json');
+    const databasesPath = path.join(dir, 'db.json');
+    await copyFixture('collection-success.json', collectionPath);
+    await fs.writeFile(databasesPath, JSON.stringify({ bad: true }));
+
+    const io = makeIo(dir);
+    const exitCode = await runCli([
+      'run',
+      'collection.json',
+      '--databases', 'db.json',
+    ], io);
+
+    assert.equal(exitCode, 2);
+    assert.match(io.readStderr(), /databases file must be an array or an object with databases\[\]/i);
+  });
+});
+
+test('runCli returns usage error for out-of-range database timeout settings', async () => {
+  await withTempDir(async (dir) => {
+    const collectionPath = path.join(dir, 'collection.json');
+    const databasesPath = path.join(dir, 'db.json');
+    await copyFixture('collection-success.json', collectionPath);
+    await fs.writeFile(databasesPath, JSON.stringify([
+      {
+        _id: 'db1',
+        name: 'Invalid MySQL',
+        type: 'mysql',
+        ssl: false,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        host: '127.0.0.1',
+        port: 3306,
+        username: 'root',
+        password: '',
+        database: 'test',
+        connectionTimeout: 10,
+      },
+    ]));
+
+    const io = makeIo(dir);
+    const exitCode = await runCli([
+      'run',
+      'collection.json',
+      '--databases', 'db.json',
+    ], io);
+
+    assert.equal(exitCode, 2);
+    assert.match(io.readStderr(), /connectionTimeout must be an integer between 100 and 120000/i);
+  });
+});
+
+test('runCli accepts databases file as an object with databases[]', async () => {
+  await withTempDir(async (dir) => {
+    const collectionPath = path.join(dir, 'collection.json');
+    const databasesPath = path.join(dir, 'db.json');
+    await fs.writeFile(collectionPath, JSON.stringify({
+      info: {
+        name: 'Databases Shape Acceptance',
+        schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+      },
+      item: [],
+    }));
+    await fs.writeFile(databasesPath, JSON.stringify({
+      databases: [
+        {
+          _id: 'db1',
+          name: 'Local MySQL',
+          type: 'mysql',
+          ssl: false,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          host: '127.0.0.1',
+          port: 3306,
+          username: 'root',
+          password: '',
+          database: 'test',
+        },
+      ],
+    }));
+
+    const io = makeIo(dir);
+    const exitCode = await runCli([
+      'run',
+      'collection.json',
+      '--databases', 'db.json',
+      '--reporter', 'json',
+    ], io);
+
+    assert.equal(exitCode, 0);
+    const report = JSON.parse(io.readStdout());
+    assert.equal(report.summary.requests, 0);
+    assert.equal(report.summary.errors, 0);
+  });
+});
+
+test('runCli accepts expanded database connection types in databases file', async () => {
+  await withTempDir(async (dir) => {
+    const collectionPath = path.join(dir, 'collection.json');
+    const databasesPath = path.join(dir, 'db.json');
+    await fs.writeFile(collectionPath, JSON.stringify({
+      info: {
+        name: 'Expanded Database Types Acceptance',
+        schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+      },
+      item: [],
+    }));
+    await fs.writeFile(databasesPath, JSON.stringify([
+      {
+        _id: 'db-mysql',
+        name: 'Local MySQL',
+        type: 'mysql',
+        host: '127.0.0.1',
+        port: 3306,
+        username: 'root',
+        database: 'test',
+      },
+      {
+        _id: 'db-postgres',
+        name: 'Local Postgres',
+        type: 'postgres',
+        host: '127.0.0.1',
+        port: 5432,
+        username: 'postgres',
+        database: 'test',
+      },
+      {
+        _id: 'db-mongo',
+        name: 'Local MongoDB',
+        type: 'mongodb',
+        connectionUri: 'mongodb://127.0.0.1:27017',
+      },
+      {
+        _id: 'db-sqlite',
+        name: 'Local SQLite',
+        type: 'sqlite',
+      },
+      {
+        _id: 'db-cassandra',
+        name: 'Local Cassandra',
+        type: 'cassandra',
+      },
+      {
+        _id: 'db-oracle',
+        name: 'Local Oracle',
+        type: 'oracle',
+      },
+      {
+        _id: 'db-mssql',
+        name: 'Local MSSQL',
+        type: 'mssql',
+      },
+      {
+        _id: 'db-redis',
+        name: 'Local Redis',
+        type: 'redis',
+      },
+      {
+        _id: 'db-dynamo',
+        name: 'Local DynamoDB',
+        type: 'dynamodb',
+      },
+    ]));
+
+    const io = makeIo(dir);
+    const exitCode = await runCli([
+      'run',
+      'collection.json',
+      '--databases', 'db.json',
+      '--reporter', 'json',
+    ], io);
+
+    assert.equal(exitCode, 0);
+    const report = JSON.parse(io.readStdout());
+    assert.equal(report.summary.requests, 0);
+    assert.equal(report.summary.errors, 0);
+  });
+});
+
+test('runCli returns usage error for out-of-range database queryTimeout', async () => {
+  await withTempDir(async (dir) => {
+    const collectionPath = path.join(dir, 'collection.json');
+    const databasesPath = path.join(dir, 'db.json');
+    await copyFixture('collection-success.json', collectionPath);
+    await fs.writeFile(databasesPath, JSON.stringify([
+      {
+        _id: 'db1',
+        name: 'Invalid MySQL Query Timeout',
+        type: 'mysql',
+        ssl: false,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        host: '127.0.0.1',
+        port: 3306,
+        username: 'root',
+        password: '',
+        database: 'test',
+        queryTimeout: 50,
+      },
+    ]));
+
+    const io = makeIo(dir);
+    const exitCode = await runCli([
+      'run',
+      'collection.json',
+      '--databases', 'db.json',
+    ], io);
+
+    assert.equal(exitCode, 2);
+    assert.match(io.readStderr(), /queryTimeout must be an integer between 100 and 600000/i);
+  });
+});
+
+test('runCli returns usage error for out-of-range database maxConnections', async () => {
+  await withTempDir(async (dir) => {
+    const collectionPath = path.join(dir, 'collection.json');
+    const databasesPath = path.join(dir, 'db.json');
+    await copyFixture('collection-success.json', collectionPath);
+    await fs.writeFile(databasesPath, JSON.stringify([
+      {
+        _id: 'db1',
+        name: 'Invalid MySQL Max Connections',
+        type: 'mysql',
+        ssl: false,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        host: '127.0.0.1',
+        port: 3306,
+        username: 'root',
+        password: '',
+        database: 'test',
+        maxConnections: 0,
+      },
+    ]));
+
+    const io = makeIo(dir);
+    const exitCode = await runCli([
+      'run',
+      'collection.json',
+      '--databases', 'db.json',
+    ], io);
+
+    assert.equal(exitCode, 2);
+    assert.match(io.readStderr(), /maxConnections must be an integer between 1 and 50/i);
+  });
+});
+
+test('runCli returns usage error when mongodb database config is missing connectionUri', async () => {
+  await withTempDir(async (dir) => {
+    const collectionPath = path.join(dir, 'collection.json');
+    const databasesPath = path.join(dir, 'db.json');
+    await copyFixture('collection-success.json', collectionPath);
+    await fs.writeFile(databasesPath, JSON.stringify([
+      {
+        _id: 'mdb',
+        name: 'Invalid MongoDB',
+        type: 'mongodb',
+        ssl: false,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+    ]));
+
+    const io = makeIo(dir);
+    const exitCode = await runCli([
+      'run',
+      'collection.json',
+      '--databases', 'db.json',
+    ], io);
+
+    assert.equal(exitCode, 2);
+    assert.match(io.readStderr(), /\(mongodb\) must include connectionUri/i);
+  });
+});
+
+test('runCli SQL request without --databases fails with actionable guidance', async () => {
+  await withTempDir(async (dir) => {
+    const collectionPath = path.join(dir, 'collection.json');
+    await fs.writeFile(collectionPath, JSON.stringify({
+      info: {
+        name: 'SQL No DB Context',
+        schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+      },
+      item: [{
+        id: 'req-1',
+        name: 'SQL Query',
+        request: {
+          requestType: 'sql',
+          method: 'MYSQL',
+          url: { raw: '' },
+          sql: {
+            connectionId: 'db1',
+            dialect: 'mysql',
+            query: 'SELECT 1',
+            params: '[]',
+            resultView: 'table',
+          },
+        },
+      }],
+    }));
+
+    const io = makeIo(dir);
+    const exitCode = await runCli([
+      'run',
+      'collection.json',
+      '--reporter', 'json',
+    ], io);
+
+    assert.equal(exitCode, 1);
+    const report = JSON.parse(io.readStdout());
+    assert.equal(report.summary.errors, 1);
+    const result = report.iterations[0].results[0];
+    assert.equal(result.statusText, 'SQL_ERROR');
+    assert.match(result.body, /no database connections are configured/i);
+    assert.match(result.body, /--databases/i);
+  });
+});
+
+test('runCli SQL request with --databases uses SQL path instead of missing-context error', async () => {
+  await withTempDir(async (dir) => {
+    const collectionPath = path.join(dir, 'collection.json');
+    const databasesPath = path.join(dir, 'db.json');
+    await fs.writeFile(collectionPath, JSON.stringify({
+      info: {
+        name: 'SQL With DB Context',
+        schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+      },
+      item: [{
+        id: 'req-1',
+        name: 'SQL Query',
+        request: {
+          requestType: 'sql',
+          method: 'MYSQL',
+          url: { raw: '' },
+          sql: {
+            connectionId: 'db1',
+            dialect: 'mysql',
+            query: 'SELECT 1',
+            params: '[]',
+            resultView: 'table',
+          },
+        },
+      }],
+    }));
+    await fs.writeFile(databasesPath, JSON.stringify([
+      {
+        _id: 'db1',
+        name: 'Local MySQL',
+        type: 'mysql',
+        ssl: false,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        host: '127.0.0.1',
+        port: 1,
+        username: 'root',
+        password: '',
+        database: 'test',
+      },
+    ]));
+
+    const io = makeIo(dir);
+    const exitCode = await runCli([
+      'run',
+      'collection.json',
+      '--databases', 'db.json',
+      '--reporter', 'json',
+      '--timeout', '1000',
+    ], io);
+
+    assert.equal(exitCode, 1);
+    const report = JSON.parse(io.readStdout());
+    assert.equal(report.summary.errors, 1);
+    const result = report.iterations[0].results[0];
+    assert.equal(result.statusText, 'SQL_ERROR');
+    assert.doesNotMatch(result.body, /missing dbQueryFn/i);
   });
 });
 
@@ -375,6 +753,18 @@ test('parseArgs defaults cert fields to null / empty / *', () => {
   assert.equal(args.clientKeyPath, null);
   assert.equal(args.clientKeyPassphrase, '');
   assert.equal(args.clientCertHost, '*');
+});
+
+test('parseArgs captures --mongo-uri and --mongo-db flags', () => {
+  const args = parseArgs(['run', 'col.json', '--mongo-uri', 'mongodb://localhost:27017', '--mongo-db', 'sample']);
+  assert.equal(args.mongoUri, 'mongodb://localhost:27017');
+  assert.equal(args.mongoDb, 'sample');
+});
+
+test('parseArgs defaults Mongo override flags to empty strings', () => {
+  const args = parseArgs(['run', 'col.json']);
+  assert.equal(args.mongoUri, '');
+  assert.equal(args.mongoDb, '');
 });
 
 // --bail integration

@@ -4,9 +4,779 @@ const axios = require('axios');
 const http = require('http');
 const https = require('https');
 const FormData = require('form-data');
+const vm = require('vm');
+const JSON5 = require('json5');
+const { MongoClient, ObjectId } = require('mongodb');
 const { runScript } = require('./script-runtime');
 const { refreshOAuth2Token } = require('./oauth');
 const { makeHttpsAgent } = require('./tls-utils');
+
+const MAX_RESULT_BYTES = 10 * 1024 * 1024;
+const MAX_RUNTIME_MS = 1800 * 1000;
+const DEFAULT_MONGO_LIMIT = 50;
+
+function looksLikeHexObjectId(value) {
+  return typeof value === 'string' && /^[a-fA-F0-9]{24}$/.test(value);
+}
+
+function convertExtendedMongoTypes(value) {
+  if (Array.isArray(value)) {
+    return value.map(convertExtendedMongoTypes);
+  }
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+
+  if (Object.keys(value).length === 1 && Object.prototype.hasOwnProperty.call(value, '$oid')) {
+    const oid = value.$oid;
+    if (looksLikeHexObjectId(oid)) {
+      return new ObjectId(oid);
+    }
+    return value;
+  }
+
+  const out = {};
+  for (const [k, v] of Object.entries(value)) {
+    out[k] = convertExtendedMongoTypes(v);
+  }
+  return out;
+}
+
+function rewriteObjectIdCalls(text) {
+  const src = String(text);
+  const len = src.length;
+  let i = 0;
+  let inString = false;
+  let quote = '';
+  let escaped = false;
+  let out = '';
+
+  while (i < len) {
+    const ch = src[i];
+    if (inString) {
+      out += ch;
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === quote) {
+        inString = false;
+        quote = '';
+      }
+      i += 1;
+      continue;
+    }
+
+    if (ch === '"' || ch === "'") {
+      inString = true;
+      quote = ch;
+      out += ch;
+      i += 1;
+      continue;
+    }
+
+    const isNew = src.startsWith('new', i) && (i === 0 || !/[A-Za-z0-9_$]/.test(src[i - 1])) && (i + 3 >= len || /\s/.test(src[i + 3]));
+    let fnStart = isNew ? i + 3 : i;
+    if (isNew) {
+      while (fnStart < len && /\s/.test(src[fnStart])) fnStart += 1;
+    }
+    if (!src.startsWith('ObjectId', fnStart) || (fnStart > 0 && /[A-Za-z0-9_$]/.test(src[fnStart - 1]))) {
+      out += ch;
+      i += 1;
+      continue;
+    }
+
+    let j = fnStart + 'ObjectId'.length;
+    while (j < len && /\s/.test(src[j])) j += 1;
+    if (j >= len || src[j] !== '(') {
+      out += ch;
+      i += 1;
+      continue;
+    }
+    j += 1;
+    while (j < len && /\s/.test(src[j])) j += 1;
+    if (j >= len || (src[j] !== '"' && src[j] !== "'")) {
+      out += ch;
+      i += 1;
+      continue;
+    }
+
+    const strQuote = src[j];
+    j += 1;
+    const valueStart = j;
+    let strEscaped = false;
+    while (j < len) {
+      const c = src[j];
+      if (strEscaped) {
+        strEscaped = false;
+        j += 1;
+        continue;
+      }
+      if (c === '\\') {
+        strEscaped = true;
+        j += 1;
+        continue;
+      }
+      if (c === strQuote) break;
+      j += 1;
+    }
+    if (j >= len) {
+      out += ch;
+      i += 1;
+      continue;
+    }
+    const rawValue = src.slice(valueStart, j);
+    j += 1;
+    while (j < len && /\s/.test(src[j])) j += 1;
+    if (j >= len || src[j] !== ')') {
+      out += ch;
+      i += 1;
+      continue;
+    }
+
+    if (!looksLikeHexObjectId(rawValue)) {
+      out += ch;
+      i += 1;
+      continue;
+    }
+
+    const replacement = `{ "$oid": "${rawValue}" }`;
+    out += replacement;
+    i = j + 1;
+  }
+
+  return out;
+}
+
+function parseMongoLikeJson(text) {
+  try {
+    return JSON5.parse(String(text));
+  } catch (err) {
+    const rewritten = rewriteObjectIdCalls(text);
+    if (rewritten === String(text)) throw err;
+    return JSON5.parse(rewritten);
+  }
+}
+
+function parseJsonObject(text, fallback = {}, options = {}) {
+  const { strict = false, label = 'JSON object' } = options;
+  if (!text || !String(text).trim()) return fallback;
+  try {
+    const parsed = convertExtendedMongoTypes(parseMongoLikeJson(text));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed;
+    }
+    if (strict) {
+      throw new Error(`${label} must be an object`);
+    }
+    return fallback;
+  } catch (err) {
+    if (strict) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Invalid ${label}: ${message}`);
+    }
+    return fallback;
+  }
+}
+
+function parseJsonArray(text, fallback = [], options = {}) {
+  const { strict = false, label = 'JSON array' } = options;
+  if (!text || !String(text).trim()) return fallback;
+  try {
+    const parsed = convertExtendedMongoTypes(parseMongoLikeJson(text));
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+    if (strict) {
+      throw new Error(`${label} must be an array`);
+    }
+    return fallback;
+  } catch (err) {
+    if (strict) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Invalid ${label}: ${message}`);
+    }
+    return fallback;
+  }
+}
+
+function parseMongoOperationInput(mongoCfg, vars, maxTimeMS) {
+  const operation = mongoCfg.operation || 'find';
+  const collectionName = resolveVariables(mongoCfg.collection || '', vars);
+  const limit = Math.max(1, Math.min(5000, parseInt(mongoCfg.limit, 10) || DEFAULT_MONGO_LIMIT));
+
+  if (operation === 'script') {
+    return { operation, collectionName, limit };
+  }
+
+  if (!collectionName) {
+    throw new Error('MongoDB collection is required for this operation');
+  }
+
+  if (operation === 'find') {
+    return {
+      operation,
+      collectionName,
+      limit,
+      find: {
+        filter: parseJsonObject(resolveVariables(mongoCfg.filter || '{}', vars), {}, {
+          strict: true,
+          label: 'Mongo find filter JSON/JSON5',
+        }),
+        projection: parseJsonObject(resolveVariables(mongoCfg.projection || '{}', vars), undefined, {
+          strict: true,
+          label: 'Mongo find projection JSON/JSON5',
+        }),
+        sort: parseJsonObject(resolveVariables(mongoCfg.sort || '{}', vars), undefined, {
+          strict: true,
+          label: 'Mongo find sort JSON/JSON5',
+        }),
+        skip: Math.max(0, parseInt(mongoCfg.skip, 10) || 0),
+      },
+    };
+  }
+
+  if (operation === 'aggregate') {
+    return {
+      operation,
+      collectionName,
+      limit,
+      aggregate: {
+        pipeline: parseJsonArray(resolveVariables(mongoCfg.pipeline || '[]', vars), [], {
+          strict: true,
+          label: 'Mongo aggregate pipeline JSON/JSON5',
+        }),
+      },
+    };
+  }
+
+  if (operation === 'insert') {
+    const docs = parseJsonArray(resolveVariables(mongoCfg.documents || '[]', vars), [], {
+      strict: true,
+      label: 'Mongo insert documents JSON/JSON5',
+    });
+    if (docs.length === 0) throw new Error('Mongo insert requires at least one document');
+    return { operation, collectionName, limit, insert: { docs } };
+  }
+
+  if (operation === 'update') {
+    const filter = parseJsonObject(resolveVariables(mongoCfg.filter || '{}', vars), {}, {
+      strict: true,
+      label: 'Mongo update filter JSON/JSON5',
+    });
+    const update = parseJsonObject(resolveVariables(mongoCfg.update || '{}', vars), {}, {
+      strict: true,
+      label: 'Mongo update document JSON/JSON5',
+    });
+    if (!update || Object.keys(update).length === 0) throw new Error('Mongo update requires an update document');
+    return { operation, collectionName, limit, update: { filter, update } };
+  }
+
+  if (operation === 'delete') {
+    return {
+      operation,
+      collectionName,
+      limit,
+      delete: {
+        filter: parseJsonObject(resolveVariables(mongoCfg.filter || '{}', vars), {}, {
+          strict: true,
+          label: 'Mongo delete filter JSON/JSON5',
+        }),
+      },
+    };
+  }
+
+  if (operation === 'count') {
+    return {
+      operation,
+      collectionName,
+      limit,
+      count: {
+        filter: parseJsonObject(resolveVariables(mongoCfg.filter || '{}', vars), {}, {
+          strict: true,
+          label: 'Mongo count filter JSON/JSON5',
+        }),
+      },
+    };
+  }
+
+  if (operation === 'distinct') {
+    const field = resolveVariables(mongoCfg.distinctField || '', vars);
+    if (!field) throw new Error('Mongo distinct requires distinctField');
+    return {
+      operation,
+      collectionName,
+      limit,
+      distinct: {
+        field,
+        filter: parseJsonObject(resolveVariables(mongoCfg.filter || '{}', vars), {}, {
+          strict: true,
+          label: 'Mongo distinct filter JSON/JSON5',
+        }),
+      },
+    };
+  }
+
+  throw new Error(`Unsupported MongoDB operation "${operation}"`);
+}
+
+function applyMongoAuthOptions(uri, auth) {
+  if (!auth || !auth.mode) return uri;
+  try {
+    const parsed = new URL(uri);
+    // The URL setter already percent-encodes userinfo characters — do NOT pre-encode
+    // with encodeURIComponent or the result will be double-encoded in the final URI.
+    if (auth.username) parsed.username = auth.username;
+    if (auth.password) parsed.password = auth.password;
+    if (auth.authSource) parsed.searchParams.set('authSource', auth.authSource);
+    if (auth.mode === 'x509') parsed.searchParams.set('authMechanism', 'MONGODB-X509');
+    if (auth.mode === 'ldap-plain') parsed.searchParams.set('authMechanism', 'PLAIN');
+    if (auth.mode === 'oidc') parsed.searchParams.set('authMechanism', 'MONGODB-OIDC');
+    return parsed.toString();
+  } catch {
+    return uri;
+  }
+}
+
+function extractMongoConnection(config, vars, context) {
+  const resolvedDatabase = resolveVariables(config.database || '', vars);
+  // Resolve {{variable}} tokens in auth credentials before injecting into the URI.
+  const resolvedAuth = config.auth ? {
+    ...config.auth,
+    username: resolveVariables(config.auth.username || '', vars) || undefined,
+    password: resolveVariables(config.auth.password || '', vars) || undefined,
+    authSource: resolveVariables(config.auth.authSource || '', vars) || undefined,
+  } : config.auth;
+
+  if (!config.connection || !config.connection.mode) {
+    throw new Error('MongoDB request is missing a connection reference');
+  }
+  if (config.connection.mode === 'direct') {
+    const uri = resolveVariables(config.connection.uri || '', vars);
+    if (!uri) throw new Error('MongoDB direct connection URI is empty');
+    return { uri: applyMongoAuthOptions(uri, resolvedAuth), database: resolvedDatabase };
+  }
+
+  const registry = (context && context.mongoConnections) || {};
+  const connectionId = config.connection.connectionId;
+  let found = registry[connectionId];
+
+  // Backward-compatible fallback: resolve named Mongo connections from the
+  // unified Settings Databases list when no legacy mongoConnections entry exists.
+  if ((!found || !found.uri) && Array.isArray(context && context.databases)) {
+    const dbEntry = context.databases.find(d => d && d.type === 'mongodb' && d._id === connectionId);
+    if (dbEntry && dbEntry.connectionUri) {
+      found = {
+        uri: dbEntry.connectionUri,
+        database: dbEntry.database || '',
+      };
+    }
+  }
+
+  if (!found || !found.uri) {
+    throw new Error(`MongoDB named connection "${config.connection.connectionId}" not found`);
+  }
+  const uri = resolveVariables(found.uri, vars);
+  const db = resolvedDatabase || resolveVariables(found.database || '', vars);
+  if (!db) throw new Error('MongoDB database is required');
+  return { uri: applyMongoAuthOptions(uri, resolvedAuth), database: db };
+}
+
+function buildMongoDbApi(db, session) {
+  return {
+    collection(name) {
+      const coll = db.collection(name);
+      return {
+        find: (filter = {}, options = {}) => coll.find(filter, { ...options, session }),
+        aggregate: (pipeline = [], options = {}) => coll.aggregate(pipeline, { ...options, session }),
+        insertOne: (doc, options = {}) => coll.insertOne(doc, { ...options, session }),
+        insertMany: (docs, options = {}) => coll.insertMany(docs, { ...options, session }),
+        updateOne: (filter, update, options = {}) => coll.updateOne(filter, update, { ...options, session }),
+        updateMany: (filter, update, options = {}) => coll.updateMany(filter, update, { ...options, session }),
+        deleteOne: (filter, options = {}) => coll.deleteOne(filter, { ...options, session }),
+        deleteMany: (filter, options = {}) => coll.deleteMany(filter, { ...options, session }),
+        countDocuments: (filter = {}, options = {}) => coll.countDocuments(filter, { ...options, session }),
+        distinct: (field, filter = {}, options = {}) => coll.distinct(field, filter, { ...options, session }),
+      };
+    },
+    ObjectId,
+  };
+}
+
+async function executeMongoOperation(mongoCfg, vars, context) {
+  const opStart = Date.now();
+  const { uri, database } = extractMongoConnection(mongoCfg, vars, context);
+  const maxTimeMS = Math.max(1, Math.min(MAX_RUNTIME_MS, parseInt(mongoCfg.maxTimeMS, 10) || MAX_RUNTIME_MS));
+  const mongoInput = parseMongoOperationInput(mongoCfg, vars, maxTimeMS);
+  const operation = mongoInput.operation;
+  // Declared outside execPromise so the timeout handler can force-close it
+  // if the race resolves before the operation completes.
+  let client;
+
+  let timeoutHandle;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutHandle = setTimeout(() => reject(new Error(`Mongo request timed out after ${maxTimeMS}ms`)), maxTimeMS);
+  });
+
+  const execPromise = (async () => {
+    client = new MongoClient(uri, {
+      maxPoolSize: 20,
+      minPoolSize: 0,
+      maxIdleTimeMS: 30000,
+      serverSelectionTimeoutMS: Math.min(5000, maxTimeMS),
+      connectTimeoutMS: Math.min(10000, maxTimeMS),
+      socketTimeoutMS: Math.min(MAX_RUNTIME_MS, maxTimeMS),
+    });
+    await client.connect();
+    const db = client.db(database);
+    const collectionName = mongoInput.collectionName;
+    const useTransaction = mongoCfg.useTransaction === true;
+    const session = useTransaction ? client.startSession() : null;
+
+    const runInSession = async (fn) => {
+      if (!session) return fn();
+      let output;
+      await session.withTransaction(async () => {
+        output = await fn();
+      });
+      return output;
+    };
+
+    try {
+      const payload = await runInSession(async () => {
+        if (operation === 'script') {
+          const sandbox = {
+            db: buildMongoDbApi(db, session),
+            BSON: { ObjectId },
+            ObjectId,
+            result: null,
+            console: { log() {}, warn() {}, error() {}, info() {} },
+            // ECMAScript built-ins — not present in a blank vm.runInNewContext context by default
+            Date,
+            Math,
+            JSON,
+            Array,
+            Object,
+            Number,
+            String,
+            Boolean,
+            RegExp,
+            Error,
+            Buffer,
+            parseInt,
+            parseFloat,
+            isNaN,
+            isFinite,
+          };
+          const script = new vm.Script(String(mongoCfg.script || ''), { filename: 'apilix-mongo-script.js' });
+          // Limit synchronous CPU time to 30 s regardless of maxTimeMS to avoid
+          // blocking the event loop. Async/wall-clock timeout is handled by timeoutPromise.
+          const vmSyncTimeout = Math.min(30000, maxTimeMS);
+          let ret = script.runInNewContext(sandbox, { timeout: vmSyncTimeout });
+          // The script may return a Promise (e.g. async function or .then chain).
+          // vm.runInNewContext itself is synchronous but the returned Promise can
+          // be awaited in this outer async context.
+          if (ret && typeof ret.then === 'function') ret = await ret;
+          return ret === undefined ? sandbox.result : ret;
+        }
+
+        const collection = db.collection(collectionName);
+        const limit = mongoInput.limit;
+        if (operation === 'find') {
+          const { filter, projection, sort, skip } = mongoInput.find;
+          const cursor = collection.find(filter, { projection, sort, skip, limit, maxTimeMS, session: session || undefined });
+          return await cursor.toArray();
+        }
+        if (operation === 'aggregate') {
+          const { pipeline } = mongoInput.aggregate;
+          const cursor = collection.aggregate(pipeline, { maxTimeMS, session: session || undefined });
+          return await cursor.limit(limit).toArray();
+        }
+        if (operation === 'insert') {
+          const { docs } = mongoInput.insert;
+          return docs.length === 1
+            ? await collection.insertOne(docs[0], { session: session || undefined })
+            : await collection.insertMany(docs, { session: session || undefined });
+        }
+        if (operation === 'update') {
+          const { filter, update } = mongoInput.update;
+          return mongoCfg.updateMode === 'many'
+            ? await collection.updateMany(filter, update, { session: session || undefined })
+            : await collection.updateOne(filter, update, { session: session || undefined });
+        }
+        if (operation === 'delete') {
+          const { filter } = mongoInput.delete;
+          return mongoCfg.deleteMode === 'many'
+            ? await collection.deleteMany(filter, { session: session || undefined })
+            : await collection.deleteOne(filter, { session: session || undefined });
+        }
+        if (operation === 'count') {
+          const { filter } = mongoInput.count;
+          return { count: await collection.countDocuments(filter, { maxTimeMS, session: session || undefined }) };
+        }
+        if (operation === 'distinct') {
+          const { filter, field } = mongoInput.distinct;
+          return await collection.distinct(field, filter, { maxTimeMS, session: session || undefined });
+        }
+        throw new Error(`Unsupported MongoDB operation "${operation}"`);
+      });
+
+      const prettyBody = JSON.stringify(payload, null, 2);
+      const bodyBytes = Buffer.byteLength(prettyBody, 'utf8');
+      const truncated = bodyBytes > MAX_RESULT_BYTES;
+      const body = truncated
+        ? prettyBody.slice(0, MAX_RESULT_BYTES) + '\n/* truncated: exceeded 10MB limit */'
+        : prettyBody;
+
+      return {
+        protocol: 'mongodb',
+        status: truncated ? 2400 : 2200,
+        statusText: truncated ? 'MONGO_PARTIAL' : 'MONGO_SUCCESS',
+        mongoStatus: truncated ? 'partial' : 'success',
+        mongoOperation: operation,
+        responseTime: Date.now() - opStart,
+        body,
+        jsonData: payload,
+        size: Buffer.byteLength(body, 'utf8'),
+      };
+    } finally {
+      if (session) await session.endSession();
+      await client.close();
+    }
+  })();
+
+  try {
+    return await Promise.race([execPromise, timeoutPromise]);
+  } catch (err) {
+    // If the timeout won the race the execPromise may still be running and
+    // holding the client open. Force-close it to release the socket immediately.
+    if (client) await client.close().catch(() => {});
+    throw err;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
+const SQL_DATABASE_TYPES = new Set(['mysql', 'postgres', 'sqlite', 'cassandra', 'oracle', 'mssql']);
+
+const DATABASE_METHOD_TO_TYPE = {
+  MYSQL: 'mysql',
+  POSTGRESQL: 'postgres',
+  SQLITE: 'sqlite',
+  CASSANDRA: 'cassandra',
+  ORACLE: 'oracle',
+  MSSQL: 'mssql',
+  REDIS: 'redis',
+  DYNAMODB: 'dynamodb',
+};
+
+function inferSqlDialect(sqlCfg, reqMethod, context) {
+  const methodDialect = DATABASE_METHOD_TO_TYPE[reqMethod];
+  if (sqlCfg && SQL_DATABASE_TYPES.has(sqlCfg.dialect)) return sqlCfg.dialect;
+  if (methodDialect && SQL_DATABASE_TYPES.has(methodDialect)) return methodDialect;
+  const databases = (context && context.databases) || [];
+  const found = databases.find(d => d && d._id === sqlCfg.connectionId);
+  if (found && SQL_DATABASE_TYPES.has(found.type)) return found.type;
+  return 'mysql';
+}
+
+function inferDatabaseTypeFromConnection(connectionId, context) {
+  const databases = (context && context.databases) || [];
+  const found = databases.find(d => d && d._id === connectionId);
+  return found ? found.type : null;
+}
+
+function normalizeDatabaseRequest(req, method, context) {
+  if (req && req.requestType === 'database' && req.database && typeof req.database === 'object') {
+    return req.database;
+  }
+
+  const isLegacySql = req?.requestType === 'sql' || !!req?.sql || method === 'MYSQL' || method === 'POSTGRESQL';
+  if (!isLegacySql) return null;
+
+  const sqlCfg = req.sql || {
+    connectionId: '',
+    dialect: method === 'POSTGRESQL' ? 'postgres' : 'mysql',
+    query: '',
+    params: '[]',
+    resultView: 'table',
+  };
+  const connectionType = inferDatabaseTypeFromConnection(sqlCfg.connectionId, context);
+  const dialect = inferSqlDialect(sqlCfg, method, context);
+  return {
+    connectionId: sqlCfg.connectionId || '',
+    databaseType: SQL_DATABASE_TYPES.has(connectionType) ? connectionType : dialect,
+    operation: 'query',
+    dialect,
+    query: sqlCfg.query || '',
+    params: sqlCfg.params || '[]',
+    resultView: sqlCfg.resultView === 'json' ? 'json' : 'table',
+  };
+}
+
+function buildDatabaseRequestUrl(databaseCfg, vars) {
+  const connectionId = resolveVariables(databaseCfg.connectionId || '', vars) || 'connection';
+  if (SQL_DATABASE_TYPES.has(databaseCfg.databaseType)) {
+    const dialect = databaseCfg.dialect || databaseCfg.databaseType;
+    return `sql://${connectionId}?dialect=${dialect}`;
+  }
+  if (databaseCfg.databaseType === 'redis') {
+    const command = resolveVariables(databaseCfg.command || '', vars) || 'COMMAND';
+    return `redis://${connectionId}?command=${encodeURIComponent(command)}`;
+  }
+  if (databaseCfg.databaseType === 'dynamodb') {
+    const operation = resolveVariables(databaseCfg.operation || '', vars) || 'Operation';
+    return `dynamodb://${connectionId}?operation=${encodeURIComponent(operation)}`;
+  }
+  return `db://${connectionId}?type=${encodeURIComponent(databaseCfg.databaseType || 'database')}`;
+}
+
+function resolveDatabaseRequestBodyForLog(databaseCfg, vars) {
+  if (!databaseCfg) return '';
+  if (SQL_DATABASE_TYPES.has(databaseCfg.databaseType)) {
+    return resolveVariables(databaseCfg.query || '', vars);
+  }
+  if (databaseCfg.databaseType === 'redis') {
+    const command = resolveVariables(databaseCfg.command || '', vars);
+    const argsText = resolveVariables(databaseCfg.args || '[]', vars);
+    return JSON.stringify({ command, args: parseJsonArray(argsText, []) }, null, 2);
+  }
+  if (databaseCfg.databaseType === 'dynamodb') {
+    return resolveVariables(databaseCfg.input || '{}', vars);
+  }
+  return '';
+}
+
+function getDatabaseProtocol(databaseCfg) {
+  if (!databaseCfg) return 'sql';
+  if (databaseCfg.databaseType === 'redis') return 'redis';
+  if (databaseCfg.databaseType === 'dynamodb') return 'dynamodb';
+  return 'sql';
+}
+
+function getDatabaseErrorStatusText(databaseCfg) {
+  if (!databaseCfg) return 'DB_ERROR';
+  if (databaseCfg.databaseType === 'redis') return 'REDIS_ERROR';
+  if (databaseCfg.databaseType === 'dynamodb') return 'DYNAMODB_ERROR';
+  return 'SQL_ERROR';
+}
+
+async function executeDatabaseOperation(databaseCfg, vars, context, reqMethod) {
+  const opStart = Date.now();
+  const connectionId = resolveVariables(databaseCfg.connectionId || '', vars);
+  if (!connectionId) {
+    throw new Error('Database request is missing connectionId');
+  }
+
+  if (SQL_DATABASE_TYPES.has(databaseCfg.databaseType)) {
+    const queryFn = context && context.dbQueryFn;
+    if (!queryFn) {
+      throw new Error('SQL execution is not available in this context (missing dbQueryFn; CLI runs require --databases <file>)');
+    }
+
+    const query = resolveVariables(databaseCfg.query || '', vars).trim();
+    if (!query) {
+      throw new Error('SQL query is empty');
+    }
+
+    const paramsText = resolveVariables(databaseCfg.params || '[]', vars);
+    const params = parseJsonArray(paramsText, []);
+    if (!Array.isArray(params)) {
+      throw new Error('SQL params must be a JSON array');
+    }
+
+    const result = await queryFn(connectionId, query, params, context);
+    const table = {
+      columns: Array.isArray(result.columns) ? result.columns : [],
+      rows: Array.isArray(result.rows) ? result.rows : [],
+      rowCount: typeof result.rowCount === 'number'
+        ? result.rowCount
+        : (Array.isArray(result.rows) ? result.rows.length : 0),
+    };
+    const payload = {
+      rowCount: table.rowCount,
+      columns: table.columns,
+      rows: table.rows,
+    };
+    const body = JSON.stringify(payload, null, 2);
+
+    return {
+      protocol: 'sql',
+      status: 2200,
+      statusText: 'SQL_SUCCESS',
+      sqlDialect: inferSqlDialect(databaseCfg, reqMethod, context),
+      sqlConnectionId: connectionId,
+      resultView: databaseCfg.resultView === 'json' ? 'json' : 'table',
+      responseTime: Date.now() - opStart,
+      body,
+      jsonData: payload,
+      size: Buffer.byteLength(body, 'utf8'),
+      resultTable: table,
+    };
+  }
+
+  if (databaseCfg.databaseType === 'redis') {
+    const redisCommandFn = context && context.dbRedisCommandFn;
+    if (!redisCommandFn) {
+      throw new Error('Redis execution is not available in this context');
+    }
+
+    const command = resolveVariables(databaseCfg.command || '', vars).trim();
+    if (!command) {
+      throw new Error('Redis command is empty');
+    }
+
+    const argsText = resolveVariables(databaseCfg.args || '[]', vars);
+    const args = parseJsonArray(argsText, []);
+    if (!Array.isArray(args)) {
+      throw new Error('Redis args must be a JSON array');
+    }
+
+    const result = await redisCommandFn(connectionId, command, args, context);
+    const payload = { result: result.result };
+    const body = JSON.stringify(payload, null, 2);
+    return {
+      protocol: 'redis',
+      status: 2200,
+      statusText: 'REDIS_SUCCESS',
+      responseTime: Date.now() - opStart,
+      body,
+      jsonData: payload,
+      size: Buffer.byteLength(body, 'utf8'),
+      resultView: 'json',
+    };
+  }
+
+  if (databaseCfg.databaseType === 'dynamodb') {
+    const dynamoOperationFn = context && context.dbDynamoOperationFn;
+    if (!dynamoOperationFn) {
+      throw new Error('DynamoDB execution is not available in this context');
+    }
+
+    const operation = resolveVariables(databaseCfg.operation || '', vars).trim();
+    if (!operation) {
+      throw new Error('DynamoDB operation is empty');
+    }
+
+    const inputText = resolveVariables(databaseCfg.input || '{}', vars);
+    const input = parseJsonObject(inputText, {});
+    const result = await dynamoOperationFn(connectionId, operation, input, context);
+    const payload = { result: result.result };
+    const body = JSON.stringify(payload, null, 2);
+    return {
+      protocol: 'dynamodb',
+      status: 2200,
+      statusText: 'DYNAMODB_SUCCESS',
+      responseTime: Date.now() - opStart,
+      body,
+      jsonData: payload,
+      size: Buffer.byteLength(body, 'utf8'),
+      resultView: 'json',
+    };
+  }
+
+  throw new Error(`Unsupported database request type "${databaseCfg.databaseType}"`);
+}
 
 const httpClient = axios.create({
   httpsAgent: new https.Agent({ rejectUnauthorized: false }),
@@ -14,6 +784,69 @@ const httpClient = axios.create({
   timeout: 30000,
   validateStatus: () => true, // never throw based on status code
 });
+
+/**
+ * Ping a MongoDB server to verify connectivity.
+ * Used by server-side database connection testing.
+ *
+ * @param {string} uri - MongoDB connection URI
+ * @param {string} [database='admin'] - Database to ping
+ * @returns {Promise<{ ok: boolean, latencyMs?: number, error?: string }>}
+ */
+async function executeMongoTest(uri, database = 'admin') {
+  try {
+    const client = new MongoClient(uri, {
+      serverSelectionTimeoutMS: 5000,
+      connectTimeoutMS: 5000,
+      socketTimeoutMS: 5000,
+    });
+    const start = Date.now();
+    try {
+      await client.connect();
+      await client.db(database).command({ ping: 1 });
+      return { ok: true, latencyMs: Date.now() - start };
+    } finally {
+      try { await client.close(); } catch (_) {}
+    }
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * List databases or collections via a short-lived MongoClient.
+ * @param {string} uri - MongoDB connection URI
+ * @param {'databases'|'collections'} operation - What to list
+ * @param {string} [database] - Required when operation='collections'
+ * @returns {Promise<{ databases?: string[], collections?: string[], error?: string }>}
+ */
+async function executeMongoIntrospect(uri, operation, database) {
+  // Validate early so we never open a network connection unnecessarily
+  if (operation === 'collections' && !database) {
+    return { error: 'database is required for collections listing' };
+  }
+  try {
+    const client = new MongoClient(uri, {
+      serverSelectionTimeoutMS: 5000,
+      connectTimeoutMS: 5000,
+      socketTimeoutMS: 5000,
+    });
+    try {
+      await client.connect();
+      if (operation === 'databases') {
+        const result = await client.db().admin().listDatabases();
+        return { databases: result.databases.map(d => d.name) };
+      } else {
+        const result = await client.db(database).listCollections().toArray();
+        return { collections: result.map(c => c.name).sort() };
+      }
+    } finally {
+      try { await client.close(); } catch (_) {}
+    }
+  } catch (err) {
+    return { error: err.message };
+  }
+}
 
 // ─── Runtime config (updated by POST /api/settings) ─────────────────────────────────────────────────
 
@@ -547,9 +1380,23 @@ async function executeRequest(item, context) {
       const scriptDeps = {
         collectionItems,
         executeRequestFn: executeRequest,
-        context: { environment, collectionVariables, globals, dataRow, collVars, cookies, mockBase },
+        context: {
+          environment,
+          collectionVariables,
+          globals,
+          dataRow,
+          collVars,
+          cookies,
+          mockBase,
+          mongoConnections: context.mongoConnections || {},
+          databases: context.databases || [],
+        },
         requestId,
         iteration,
+        dbQueryFn: context.dbQueryFn || null,
+        dbMongoQueryFn: context.dbMongoQueryFn || null,
+        dbRedisCommandFn: context.dbRedisCommandFn || null,
+        dbDynamoOperationFn: context.dbDynamoOperationFn || null,
       };
       const result = await runScript(code, null, vars, scriptDeps, vmContext);
       const preUpdatedVars = result.updatedVariables;
@@ -595,12 +1442,21 @@ async function executeRequest(item, context) {
 
   const req = item.request;
   const method = (req.method || 'GET').toUpperCase();
-  let url = resolveUrl(req.url, vars);
+  const isMongo = req?.requestType === 'mongodb' || !!req?.mongodb || method === 'MONGO';
+  const databaseCfg = isMongo ? null : normalizeDatabaseRequest(req, method, context);
+  const isDatabase = !!databaseCfg;
+  const isSql = !!databaseCfg && SQL_DATABASE_TYPES.has(databaseCfg.databaseType);
+  const sqlDialect = isSql ? inferSqlDialect(databaseCfg || {}, method, context) : undefined;
+  let url = isMongo
+    ? `mongodb://${resolveVariables(req.mongodb?.database || '', vars)}/${resolveVariables(req.mongodb?.collection || '', vars)}`
+    : isDatabase
+      ? buildDatabaseRequestUrl(databaseCfg, vars)
+      : resolveUrl(req.url, vars);
 
   // Rewrite to mock server base AFTER variable resolution so that URLs like
   // {{baseUrl}}/path resolve to https://real.host/path first, then become
   // http://localhost:PORT/path — not http://localhost:PORT/https://real.host/path.
-  if (mockBase) {
+  if (mockBase && !isMongo && !isDatabase) {
     try {
       const parsed = new URL(url);
       url = mockBase.replace(/\/$/, '') + parsed.pathname + parsed.search + parsed.hash;
@@ -614,17 +1470,23 @@ async function executeRequest(item, context) {
 
   const headers = {};
 
-  Object.assign(headers, resolveHeaderPairs(req.header, vars));
+  if (!isMongo && !isDatabase) {
+    Object.assign(headers, resolveHeaderPairs(req.header, vars));
+  }
 
   const authWarnings = [];
-  url = await applyAuth(req.auth, headers, vars, url, authWarnings);
+  if (!isMongo && !isDatabase) {
+    url = await applyAuth(req.auth, headers, vars, url, authWarnings);
+  }
 
   // Inject cookies from cookie jar
-  const cookieHeader = getCookiesForRequest(cookies, url);
-  if (cookieHeader) headers['Cookie'] = cookieHeader;
+  if (!isMongo && !isDatabase) {
+    const cookieHeader = getCookiesForRequest(cookies, url);
+    if (cookieHeader) headers['Cookie'] = cookieHeader;
+  }
 
   const buildWarnings = [];
-  const data = buildBody(req.body, headers, vars, buildWarnings);
+  const data = (isMongo || isDatabase) ? undefined : buildBody(req.body, headers, vars, buildWarnings);
   const allWarnings = [...authWarnings, ...buildWarnings];
 
   // Capture request body as a loggable string
@@ -643,6 +1505,212 @@ async function executeRequest(item, context) {
   let nextRequestByIdSignal = undefined; // set by pm.execution.setNextRequestById()
 
   try {
+    if (isDatabase) {
+      const databaseResponse = await executeDatabaseOperation(databaseCfg || {}, vars, context, method);
+
+      const testScript = (item.event || []).find(e => e.listen === 'test');
+      let testResults = [];
+      let updatedVars = {};
+      let testEnvMutations = {};
+      let testCollVarMutations = {};
+      let testUpdatedGlobals = {};
+
+      if (testScript) {
+        const code = Array.isArray(testScript.script.exec)
+          ? testScript.script.exec.join('\n')
+          : (testScript.script.exec || '');
+        if (code.trim()) {
+          const scriptDeps = {
+            collectionItems,
+            executeRequestFn: executeRequest,
+            context: {
+              environment,
+              collectionVariables,
+              globals,
+              dataRow,
+              collVars,
+              cookies,
+              mockBase,
+              mongoConnections: context.mongoConnections || {},
+              databases: context.databases || [],
+            },
+            requestId,
+            iteration,
+            dbQueryFn: context.dbQueryFn || null,
+            dbMongoQueryFn: context.dbMongoQueryFn || null,
+            dbRedisCommandFn: context.dbRedisCommandFn || null,
+            dbDynamoOperationFn: context.dbDynamoOperationFn || null,
+          };
+          const result = await runScript(code, {
+            code: databaseResponse.status,
+            status: databaseResponse.statusText,
+            responseTime: databaseResponse.responseTime,
+            headers: {},
+            body: databaseResponse.body,
+            jsonData: databaseResponse.jsonData,
+          }, vars, scriptDeps, vmContext);
+          testResults = result.tests;
+          updatedVars = result.updatedVariables;
+          testEnvMutations = result.updatedEnvMutations || {};
+          testCollVarMutations = result.updatedCollVarMutations || {};
+          testUpdatedGlobals = result.updatedGlobalMutations || {};
+          globals = { ...globals, ...testUpdatedGlobals };
+          scriptLogs = [...scriptLogs, ...result.consoleLogs];
+          testChildRequests = result.childRequests || [];
+          if (result.nextRequest !== undefined) nextRequestSignal = result.nextRequest;
+          if (result.nextRequestById !== undefined) nextRequestByIdSignal = result.nextRequestById;
+          vars = { ...vars, ...updatedVars, ...testUpdatedGlobals };
+        }
+      }
+
+      const updatedEnv = { ...environment, ...testEnvMutations };
+      const updatedCollVars = { ...collectionVariables, ...testCollVarMutations };
+      const trackedKeys = new Set([
+        ...Object.keys(testEnvMutations),
+        ...Object.keys(testCollVarMutations),
+        ...Object.keys(testUpdatedGlobals),
+      ]);
+      Object.entries(updatedVars).forEach(([k, v]) => {
+        if (trackedKeys.has(k)) return;
+        if (originalEnvKeys.has(k)) updatedEnv[k] = v;
+        else updatedCollVars[k] = v;
+      });
+
+      return {
+        protocol: databaseResponse.protocol,
+        sqlDialect: databaseResponse.sqlDialect,
+        sqlConnectionId: databaseResponse.sqlConnectionId,
+        resultView: databaseResponse.resultView,
+        resultTable: databaseResponse.resultTable,
+        status: databaseResponse.status,
+        statusText: databaseResponse.statusText,
+        responseTime: databaseResponse.responseTime,
+        resolvedUrl: url,
+        requestHeaders: {},
+        requestBody: resolveDatabaseRequestBodyForLog(databaseCfg, vars),
+        headers: {},
+        body: databaseResponse.body,
+        size: databaseResponse.size,
+        testResults,
+        scriptLogs,
+        preChildRequests,
+        testChildRequests,
+        updatedEnvironment: updatedEnv,
+        updatedCollectionVariables: updatedCollVars,
+        updatedGlobals: globals,
+        updatedCookies: cookies,
+        networkTimings: null,
+        tlsCertChain: null,
+        redirectChain: [],
+        nextRequest: nextRequestSignal,
+        nextRequestById: nextRequestByIdSignal,
+        warnings: allWarnings,
+        error: null,
+      };
+    }
+
+    if (isMongo) {
+      const mongoResponse = await executeMongoOperation(req.mongodb || {}, vars, context);
+
+      const testScript = (item.event || []).find(e => e.listen === 'test');
+      let testResults = [];
+      let updatedVars = {};
+      let testEnvMutations = {};
+      let testCollVarMutations = {};
+      let testUpdatedGlobals = {};
+
+      if (testScript) {
+        const code = Array.isArray(testScript.script.exec)
+          ? testScript.script.exec.join('\n')
+          : (testScript.script.exec || '');
+        if (code.trim()) {
+          const scriptDeps = {
+            collectionItems,
+            executeRequestFn: executeRequest,
+            context: {
+              environment,
+              collectionVariables,
+              globals,
+              dataRow,
+              collVars,
+              cookies,
+              mockBase,
+              mongoConnections: context.mongoConnections || {},
+              databases: context.databases || [],
+            },
+            requestId,
+            iteration,
+            dbQueryFn: context.dbQueryFn || null,
+            dbMongoQueryFn: context.dbMongoQueryFn || null,
+            dbRedisCommandFn: context.dbRedisCommandFn || null,
+            dbDynamoOperationFn: context.dbDynamoOperationFn || null,
+          };
+          const result = await runScript(code, {
+            code: mongoResponse.status,
+            status: mongoResponse.statusText,
+            responseTime: mongoResponse.responseTime,
+            headers: {},
+            body: mongoResponse.body,
+            jsonData: mongoResponse.jsonData,
+          }, vars, scriptDeps, vmContext);
+          testResults = result.tests;
+          updatedVars = result.updatedVariables;
+          testEnvMutations = result.updatedEnvMutations || {};
+          testCollVarMutations = result.updatedCollVarMutations || {};
+          testUpdatedGlobals = result.updatedGlobalMutations || {};
+          globals = { ...globals, ...testUpdatedGlobals };
+          scriptLogs = [...scriptLogs, ...result.consoleLogs];
+          testChildRequests = result.childRequests || [];
+          if (result.nextRequest !== undefined) nextRequestSignal = result.nextRequest;
+          if (result.nextRequestById !== undefined) nextRequestByIdSignal = result.nextRequestById;
+          vars = { ...vars, ...updatedVars, ...testUpdatedGlobals };
+        }
+      }
+
+      const updatedEnv = { ...environment, ...testEnvMutations };
+      const updatedCollVars = { ...collectionVariables, ...testCollVarMutations };
+      const trackedKeys = new Set([
+        ...Object.keys(testEnvMutations),
+        ...Object.keys(testCollVarMutations),
+        ...Object.keys(testUpdatedGlobals),
+      ]);
+      Object.entries(updatedVars).forEach(([k, v]) => {
+        if (trackedKeys.has(k)) return;
+        if (originalEnvKeys.has(k)) updatedEnv[k] = v;
+        else updatedCollVars[k] = v;
+      });
+
+      return {
+        protocol: 'mongodb',
+        mongoStatus: mongoResponse.mongoStatus,
+        mongoOperation: mongoResponse.mongoOperation,
+        status: mongoResponse.status,
+        statusText: mongoResponse.statusText,
+        responseTime: mongoResponse.responseTime,
+        resolvedUrl: url,
+        requestHeaders: {},
+        requestBody: req.mongodb?.operation === 'script' ? (req.mongodb?.script || '') : JSON.stringify(req.mongodb || {}),
+        headers: {},
+        body: mongoResponse.body,
+        size: mongoResponse.size,
+        testResults,
+        scriptLogs,
+        preChildRequests,
+        testChildRequests,
+        updatedEnvironment: updatedEnv,
+        updatedCollectionVariables: updatedCollVars,
+        updatedGlobals: globals,
+        updatedCookies: cookies,
+        networkTimings: null,
+        tlsCertChain: null,
+        redirectChain: [],
+        nextRequest: nextRequestSignal,
+        nextRequestById: nextRequestByIdSignal,
+        warnings: allWarnings,
+        error: null,
+      };
+    }
+
     // ─── Redirect chain handling ───────────────────────────────────────────
     const MAX_REDIRECTS = executorConfig.followRedirects ? 10 : 0;
     const rejectUnauthorized = executorConfig.sslVerification === true;
@@ -746,9 +1814,23 @@ async function executeRequest(item, context) {
         const scriptDeps = {
           collectionItems,
           executeRequestFn: executeRequest,
-          context: { environment, collectionVariables, globals, dataRow, collVars, cookies, mockBase },
+          context: {
+            environment,
+            collectionVariables,
+            globals,
+            dataRow,
+            collVars,
+            cookies,
+            mockBase,
+            mongoConnections: context.mongoConnections || {},
+            databases: context.databases || [],
+          },
           requestId,
           iteration,
+          dbQueryFn: context.dbQueryFn || null,
+          dbMongoQueryFn: context.dbMongoQueryFn || null,
+          dbRedisCommandFn: context.dbRedisCommandFn || null,
+          dbDynamoOperationFn: context.dbDynamoOperationFn || null,
         };
         const result = await runScript(code, responseData, vars, scriptDeps, vmContext);
         testResults = result.tests;
@@ -836,12 +1918,17 @@ async function executeRequest(item, context) {
   } catch (err) {
     const errorResponseTime = Date.now() - startTime;
     return {
+      protocol: isMongo ? 'mongodb' : isDatabase ? getDatabaseProtocol(databaseCfg) : 'http',
+      mongoStatus: isMongo ? 'error' : undefined,
+      mongoOperation: isMongo ? (req.mongodb?.operation || 'find') : undefined,
+      sqlDialect: isSql ? sqlDialect : undefined,
+      sqlConnectionId: isSql ? resolveVariables(databaseCfg?.connectionId || '', vars) : undefined,
       status: 0,
-      statusText: 'Request Failed',
+      statusText: isMongo ? 'MONGO_ERROR' : isDatabase ? getDatabaseErrorStatusText(databaseCfg) : 'Request Failed',
       responseTime: errorResponseTime,
       resolvedUrl: url,
       requestHeaders: headers,
-      requestBody: requestBodyStr,
+      requestBody: isDatabase ? resolveDatabaseRequestBodyForLog(databaseCfg, vars) : requestBodyStr,
       headers: {},
       body: err.message,
       size: 0,
@@ -939,4 +2026,4 @@ function flattenItemsWithScripts(items, collectionEvents) {
   return walk(items, colPrereq ? [colPrereq] : [], colTest ? [colTest] : []);
 }
 
-module.exports = { executeRequest, flattenItems, flattenItemsWithScripts, setExecutorConfig, resolveVariables, buildBody, buildProxyOption, applyAuth, resolveHeaderPairs, resolveParamPairs };
+module.exports = { executeRequest, flattenItems, flattenItemsWithScripts, setExecutorConfig, resolveVariables, buildBody, buildProxyOption, applyAuth, resolveHeaderPairs, resolveParamPairs, executeMongoTest, executeMongoIntrospect };

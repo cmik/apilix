@@ -12,6 +12,8 @@ try {
 const { executeRequest, flattenItemsWithScripts } = require('./request-engine');
 const { createScriptContext } = require('./script-runtime');
 
+const MAX_RUN_RUNTIME_MS = 1800 * 1000;
+
 /**
  * Represents a client input error that should map to HTTP 400.
  * Thrown by prepareCollectionRun for missing/invalid payload fields.
@@ -117,10 +119,24 @@ function prepareCollectionRun(payload, options = {}) {
 }
 
 function toResultData(item, result, iteration) {
+  const isMongo = result.protocol === 'mongodb' || item.request?.requestType === 'mongodb' || !!item.request?.mongodb;
+  const isSql = result.protocol === 'sql' || item.request?.requestType === 'sql' || !!item.request?.sql || item.request?.method === 'MYSQL' || item.request?.method === 'POSTGRESQL';
+  const mongoOperation = item.request?.mongodb?.operation || result.mongoOperation;
+  const sqlDialect = result.sqlDialect || item.request?.sql?.dialect || (item.request?.method === 'POSTGRESQL' ? 'postgres' : item.request?.method === 'MYSQL' ? 'mysql' : undefined);
+  const methodLabel = isMongo
+    ? `MONGO:${String(mongoOperation || 'op').toUpperCase()}`
+    : isSql
+      ? `SQL:${String(sqlDialect || 'dialect').toUpperCase()}`
+      : (item.request?.method || 'GET');
   return {
     iteration,
     name: item.name,
-    method: item.request?.method || 'GET',
+    method: methodLabel,
+    protocol: isMongo ? 'mongodb' : isSql ? 'sql' : 'http',
+    mongoOperation,
+    mongoStatus: result.mongoStatus,
+    sqlDialect,
+    sqlConnectionId: result.sqlConnectionId || item.request?.sql?.connectionId,
     url: typeof item.request?.url === 'string'
       ? item.request.url
       : item.request?.url?.raw || '',
@@ -146,6 +162,7 @@ function toResultData(item, result, iteration) {
 
 async function executePreparedCollectionRun(prepared, options = {}) {
   const { payload, dataRows, requests, runId } = prepared;
+  const runStart = Date.now();
   const {
     collection,
     environment,
@@ -158,6 +175,12 @@ async function executePreparedCollectionRun(prepared, options = {}) {
     bail,
     allCollectionItems,
     mockBase,
+    mongoConnections,
+    databases,
+    dbQueryFn,
+    dbMongoQueryFn,
+    dbRedisCommandFn,
+    dbDynamoOperationFn,
   } = payload;
   const maxRetries = Math.max(0, Math.min(10, parseInt(payload.maxRetries, 10) || 0));
   const _rawRetryDelay = parseInt(payload.retryDelay, 10);
@@ -181,6 +204,12 @@ async function executePreparedCollectionRun(prepared, options = {}) {
 
   let stopped = false;
   outer: for (let i = 0; i < dataRows.length; i++) {
+    if (Date.now() - runStart > MAX_RUN_RUNTIME_MS) {
+      errors.push(`Run timed out after ${MAX_RUN_RUNTIME_MS}ms`);
+      sendEvent('error', { error: `Run timed out after ${MAX_RUN_RUNTIME_MS}ms` });
+      stopped = true;
+      break;
+    }
     const dataRow = dataRows[i];
     let currentEnv = { ...(environment || {}) };
     let currentCollVars = { ...(collectionVariables || {}) };
@@ -199,6 +228,12 @@ async function executePreparedCollectionRun(prepared, options = {}) {
     const maxPerRequest = requests.length + 1;
 
     while (reqIdx < requests.length) {
+      if (Date.now() - runStart > MAX_RUN_RUNTIME_MS) {
+        errors.push(`Run timed out after ${MAX_RUN_RUNTIME_MS}ms`);
+        sendEvent('error', { error: `Run timed out after ${MAX_RUN_RUNTIME_MS}ms` });
+        stopped = true;
+        break outer;
+      }
       perRequestCount[reqIdx]++;
       if (perRequestCount[reqIdx] > maxPerRequest) {
         const loopName = requests[reqIdx].name;
@@ -227,6 +262,12 @@ async function executePreparedCollectionRun(prepared, options = {}) {
         iteration: i + 1,
         requestId: item.id || '',
         vmContext,
+        mongoConnections: mongoConnections || {},
+        databases: databases || [],
+        dbQueryFn: dbQueryFn || null,
+        dbMongoQueryFn: dbMongoQueryFn || null,
+        dbRedisCommandFn: dbRedisCommandFn || null,
+        dbDynamoOperationFn: dbDynamoOperationFn || null,
       });
 
       if (result.updatedEnvironment) currentEnv = result.updatedEnvironment;
@@ -235,7 +276,7 @@ async function executePreparedCollectionRun(prepared, options = {}) {
       if (result.updatedCookies) currentCookies = result.updatedCookies;
 
       let retryAttempts = 0;
-      if (maxRetries > 0) {
+      if (maxRetries > 0 && result.protocol !== 'mongodb') {
         while (retryAttempts < maxRetries) {
           const hasError = !!result.error;
           const hasFailed = Array.isArray(result.testResults)
@@ -266,6 +307,12 @@ async function executePreparedCollectionRun(prepared, options = {}) {
             iteration: i + 1,
             requestId: item.id || '',
             vmContext,
+            mongoConnections: mongoConnections || {},
+            databases: databases || [],
+            dbQueryFn: dbQueryFn || null,
+            dbMongoQueryFn: dbMongoQueryFn || null,
+            dbRedisCommandFn: dbRedisCommandFn || null,
+            dbDynamoOperationFn: dbDynamoOperationFn || null,
           });
           if (result.updatedEnvironment) currentEnv = result.updatedEnvironment;
           if (result.updatedCollectionVariables) currentCollVars = result.updatedCollectionVariables;

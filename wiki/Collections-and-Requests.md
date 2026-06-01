@@ -6,35 +6,45 @@ Collections are the primary way to organise your API work in Apilix. A collectio
 
 ## Table of Contents
 
-1. [Collections](#collections)
-   - [Creating a Collection](#creating-a-collection)
-   - [Collection Settings](#collection-settings)
-   - [Folders](#folders)
-2. [Requests](#requests)
-   - [Creating a Request](#creating-a-request)
-   - [HTTP Methods](#http-methods)
-   - [URL Bar](#url-bar)
-   - [Query Parameters](#query-parameters)
-   - [Request Headers](#request-headers)
-   - [Request Body](#request-body)
-   - [Authentication](#authentication)
-   - [Pre-request & Test Scripts](#pre-request--test-scripts)
-   - [Request Description](#request-description)
-3. [Sending a Request](#sending-a-request)
-4. [Response Viewer](#response-viewer)
-   - [Body Tab](#body-tab)
-   - [Headers Tab](#headers-tab)
-   - [Cookies Tab](#cookies-tab)
-   - [Timeline Tab](#timeline-tab)
-   - [TLS Certificate Tab](#tls-certificate-tab)
-   - [Redirect Chain Tab](#redirect-chain-tab)
-5. [Response Search](#response-search)
-6. [Body Editor Find & Replace](#body-editor-find--replace)
-7. [JSONPath / JMESPath Tester](#jsonpath--jmespath-tester)
-8. [Tabbed Editing](#tabbed-editing)
-9. [Collection Tree Actions](#collection-tree-actions)
-10. [Cookie Manager](#cookie-manager)
-11. [Console Panel](#console-panel)
+- [Collections \& Requests](#collections--requests)
+  - [Table of Contents](#table-of-contents)
+  - [Collections](#collections)
+    - [Creating a Collection](#creating-a-collection)
+    - [Collection Settings](#collection-settings)
+    - [Folders](#folders)
+  - [Requests](#requests)
+    - [Creating a Request](#creating-a-request)
+    - [HTTP Methods](#http-methods)
+    - [Database Requests](#database-requests)
+    - [URL Bar](#url-bar)
+    - [Query Parameters](#query-parameters)
+    - [Request Headers](#request-headers)
+    - [Request Body](#request-body)
+      - [GraphQL](#graphql)
+    - [Authentication](#authentication)
+    - [Pre-request \& Test Scripts](#pre-request--test-scripts)
+    - [Request Description](#request-description)
+      - [MongoDB Requests](#mongodb-requests)
+      - [SQL, Redis, and DynamoDB Requests](#sql-redis-and-dynamodb-requests)
+  - [Sending a Request](#sending-a-request)
+  - [Response Viewer](#response-viewer)
+    - [Body Tab](#body-tab)
+    - [Headers Tab](#headers-tab)
+    - [Cookies Tab](#cookies-tab)
+    - [Timeline Tab](#timeline-tab)
+    - [TLS Certificate Tab](#tls-certificate-tab)
+    - [Redirect Chain Tab](#redirect-chain-tab)
+  - [Response Search](#response-search)
+  - [Body Editor Find \& Replace](#body-editor-find--replace)
+    - [Opening the bar](#opening-the-bar)
+    - [Navigating matches](#navigating-matches)
+    - [Replacing](#replacing)
+  - [JSONPath / JMESPath Tester](#jsonpath--jmespath-tester)
+  - [Tabbed Editing](#tabbed-editing)
+  - [Collection Tree Actions](#collection-tree-actions)
+  - [Cookie Manager](#cookie-manager)
+  - [Console Panel](#console-panel)
+  - [See Also](#see-also)
 
 ---
 
@@ -115,6 +125,31 @@ Select the method from the dropdown to the left of the URL bar.
 | **OPTIONS** | Check allowed methods / CORS preflight |
 
 The method badge is colour-coded in the collection tree and tab bar for quick visual identification.
+
+### Database Requests
+
+Apilix supports database-backed requests directly inside collections. Select one of these methods from the method dropdown:
+
+- `MONGO`
+- `MYSQL`
+- `POSTGRESQL`
+- `SQLITE`
+- `CASSANDRA`
+- `ORACLE`
+- `MSSQL`
+- `REDIS`
+- `DYNAMODB`
+
+When you choose a database method, the standard URL bar becomes read-only guidance text and the request switches to dedicated tabs for the selected database type.
+
+All database request types support:
+
+- saved connections from **Activity Bar → Database**
+- `{{variable}}` substitution in connection IDs and payload fields
+- **Pre-request**, **Tests**, and **Docs** tabs
+- mixed runs in the **Collection Runner** alongside HTTP requests
+
+Database requests cannot be sent to the **Mock Server** because they do not produce outbound HTTP traffic.
 
 ### URL Bar
 
@@ -222,6 +257,35 @@ A **Script Snippets Library** button opens a panel of reusable code snippets (HM
 ### Request Description
 
 Open the **Settings** tab on a request to add a **Markdown description**. Descriptions are displayed in the collection tree tooltip and in exported Postman collections.
+
+---
+
+#### MongoDB Requests
+
+Select `MONGO` from the method dropdown to switch the request into MongoDB mode.
+
+- The **URL bar** is hidden — the panel switches to a dedicated MongoDB editor.
+- The editor is organised into five tabs: **Query**, **Connection**, **Pre-request**, **Tests**, and **Docs**.
+  - **Query** — database, collection, operation selector, and all operation-specific fields.
+  - **Connection** — URI (direct or named connection) and optional auth override.
+  - **Pre-request / Tests** — standard scripting tabs, identical to HTTP requests.
+  - **Docs** — Markdown notes for this request.
+- The **Database** and **Collection** fields include fetch buttons that query the live server and let you pick names from a dropdown, so you never have to type them manually.
+- MongoDB requests can coexist with HTTP requests inside the same collection and run seamlessly in the Collection Runner.
+
+See [MongoDB Requests](MongoDB-Requests) for a full reference on operations, connections, and scripting patterns.
+
+#### SQL, Redis, and DynamoDB Requests
+
+The non-Mongo database methods use the same five-tab layout: **Connection**, **Query** (or **Command** / **Operation**), **Pre-request**, **Tests**, and **Docs**.
+
+- **SQL/CQL methods** (`MYSQL`, `POSTGRESQL`, `SQLITE`, `CASSANDRA`, `ORACLE`, `MSSQL`) use a query editor plus a JSON params array.
+- **REDIS** uses a command field plus a JSON args array.
+- **DYNAMODB** uses an operation picker plus a JSON input object.
+
+The **Connection** tab prefers matching saved connections from the Database view. If no matching saved connections exist yet, you can still enter a connection ID or `{{variable}}` placeholder manually.
+
+For SQL-like methods, you can choose whether the response is rendered as a **table** or as raw **JSON**.
 
 ---
 

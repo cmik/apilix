@@ -11,6 +11,8 @@ A lightweight, open-source alternative API testing tool — available as a **des
 - **Import** Postman collections (v2.1) and environments
 - **Browser Capture** — attach to Chrome via CDP, inspect live network traffic, filter/sort requests, review headers/cookies, and import selected requests into a collection
 - **Send HTTP requests** (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS)
+- **MongoDB requests** — query, insert, update, delete, aggregate, and run scripts against MongoDB databases directly from a collection; mixed HTTP + MongoDB collections supported in the runner
+- **Database panel** — manage reusable connections and run ad-hoc SQL/CQL, MongoDB, Redis, and DynamoDB operations from a dedicated workspace view
 - **Query params, Headers, Body** (raw JSON/text, form-data, url-encoded)
 - **Authentication** (Bearer, Basic, API Key)
 - **Pre-request & Test scripts** (`apx.*` Postman-compatible API, including `apx.sendRequest()`)
@@ -18,6 +20,7 @@ A lightweight, open-source alternative API testing tool — available as a **des
 - **Headless CLI runner** (`@apilix/cli`) — run collections from CI/CD pipelines without the UI; supports JSON, JUnit, and table reporters, CSV data files, and `setNextRequest()` flow control; ships as a standalone binary (no Node.js required)
 - **Environment variables** with `{{variable}}` substitution
 - **Global variables** — cross-collection variables manageable via the Globals panel and scriptable with `apx.globals.*`
+- **Saved database connections** — workspace-scoped MySQL, PostgreSQL, MongoDB, SQLite, Redis, Cassandra, DynamoDB, Oracle, and MSSQL profiles reusable across requests, scripts, and the Database panel
 - **Tabbed request editing** — open multiple requests simultaneously, save changes independently
 - **Mock Server** — define static or dynamic responses for any endpoint; start a local HTTP server without a real backend
 - **Console panel** — view a log of every request and response with resolved variable values; pop out into a live-updating detached window
@@ -164,12 +167,83 @@ Useful flags:
 
 - `--csv ./data.csv` to run one iteration per CSV row
 - `--iterations 5` to repeat a run without a CSV file
+- `--databases ./databases.json` to enable SQL-like, named MongoDB, Redis, and DynamoDB connections in headless CLI runs
 - `--execute-child-requests` to allow `apx.sendRequest()` inside scripts
 - `--no-conditional-execution` to ignore `setNextRequest()` flow overrides
 - `--timeout 10000` to override the default request timeout
 - `--ssl-verification` to enforce TLS verification in CI
 - `--no-follow-redirects` to surface redirect responses instead of following them automatically
 - `--no-color` to output plain text without ANSI color sequences
+
+Database file shape for `--databases`:
+
+```json
+[
+  {
+    "_id": "mysql_local",
+    "name": "Local MySQL",
+    "type": "mysql",
+    "host": "127.0.0.1",
+    "port": 3306,
+    "username": "root",
+    "password": "{{dbPassword}}",
+    "database": "app",
+    "ssl": false,
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  },
+  {
+    "_id": "pg_ci",
+    "name": "CI PostgreSQL",
+    "type": "postgres",
+    "host": "127.0.0.1",
+    "port": 5432,
+    "username": "postgres",
+    "password": "{{pgPassword}}",
+    "database": "app",
+    "ssl": false,
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  },
+  {
+    "_id": "mongo_named",
+    "name": "Named MongoDB",
+    "type": "mongodb",
+    "connectionUri": "mongodb://127.0.0.1:27017",
+    "ssl": false,
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  },
+  {
+    "_id": "sqlite_local",
+    "name": "Local SQLite",
+    "type": "sqlite",
+    "filePath": "./data/app.sqlite",
+    "readonly": false,
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  },
+  {
+    "_id": "redis_local",
+    "name": "Local Redis",
+    "type": "redis",
+    "host": "127.0.0.1",
+    "port": 6379,
+    "db": 0,
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  },
+  {
+    "_id": "dynamo_local",
+    "name": "Local DynamoDB",
+    "type": "dynamodb",
+    "region": "us-east-1",
+    "endpoint": "http://127.0.0.1:8000",
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  }
+]
+```
+
+Database request IDs in collections map to these entries as follows:
+
+- Preferred: `request.database.connectionId` for SQL-like, Redis, and DynamoDB request types.
+- Legacy SQL compatibility: `request.sql.connectionId` is still supported.
+- MongoDB named connections: `request.mongodb.connection.connectionId`.
 
 Exit codes:
 
@@ -218,6 +292,12 @@ Output directory:
 
 ## Build Desktop Installers
 
+Always run server dist preparation first. This installs production server dependencies and rebuilds native modules (for example `better-sqlite3`) for the packaged Electron runtime.
+
+```bash
+npm run dist:prepare:server
+```
+
 ```bash
 # All platforms
 ./build-all.sh
@@ -227,7 +307,15 @@ npm run dist:mac    # → dist/Apilix-x.x.x.dmg
 npm run dist:win    # → dist/Apilix Setup x.x.x.exe
 ```
 
-> Cross-platform builds (e.g. `.exe` on macOS) may require Wine or Docker for some targets.
+`better-sqlite3` is a native addon. Desktop installers must be built on the same OS/arch they target (for example, build Windows installers on Windows runners).
+
+If you hit an Electron native addon ABI mismatch error (for example `NODE_MODULE_VERSION` mismatch), re-run:
+
+```bash
+npm run dist:prepare:server
+```
+
+> For reliable desktop packaging, prefer host-native builds per platform (for example, CI matrix jobs on macOS + Windows + Linux).
 
 ---
 
@@ -367,6 +455,80 @@ The table headers are sortable for method, domain, URL, type, status, duration, 
 - **Clear** removes the current capture session without affecting collections already imported.
 - The Electron-only **Launch Chrome** button is a convenience wrapper around Chrome's `--remote-debugging-port` startup flag.
 - Binary response bodies are not fully displayed in the panel; they are shown as binary placeholders where applicable.
+
+---
+
+## Database Sidebar and Panel
+
+Open the **Database** icon in the Activity Bar to manage saved connections for the current workspace and run ad-hoc database operations outside a collection.
+
+### Database sidebar
+
+The left side of the Database view is a connection registry.
+
+- Click **+ New** to add a connection.
+- Filter by name/host text or by database type.
+- Use the row menu to **Edit**, **Test**, **Duplicate**, **Copy ID**, **Export**, or **Delete** a connection.
+- Import one or more connection JSON files with the **Import** button or by drag-and-drop.
+
+Supported saved connection types:
+
+- **MySQL**
+- **PostgreSQL**
+- **MongoDB**
+- **SQLite**
+- **Redis**
+- **Cassandra**
+- **DynamoDB**
+- **Oracle**
+- **MSSQL**
+
+### Query editor
+
+The main Database panel has two tabs:
+
+- **Connection** — review the selected connection, re-test it, and open the full editor
+- **Query Editor** — run interactive operations against the selected connection
+
+Query Editor mode depends on the engine:
+
+- **SQL / CQL engines**: enter a query plus an optional JSON params array
+- **MongoDB**: pick a database, pick a collection, choose an operation, then send JSON document/options payloads
+- **Redis**: enter a command plus a JSON args array
+- **DynamoDB**: choose an operation and send a JSON input object
+
+The panel also provides:
+
+- **Export CSV** for SQL-style result grids
+- **Copy JSON** for all result types
+- live MongoDB database/collection discovery when the selected connection resolves successfully
+
+### Import/export and variable resolution
+
+Saved database connections are stored in the active workspace and are reused by:
+
+- database requests in collections
+- `apx.db.*` script helpers
+- the Database panel query editor
+- workspace duplication and workspace sync
+
+Connection fields support `{{variable}}` placeholders. When you test a connection or run a query from the Database view, Apilix resolves those placeholders using the active environment plus globals.
+
+When you export connections, Apilix strips secret fields such as passwords, API keys, and tokens from the JSON file. Re-enter those secrets after import before testing or running queries.
+
+For SQLite connections:
+
+- the **desktop app** includes a **Browse** button in the connection editor
+- **web mode** requires typing the file path manually
+
+### Database requests in collections
+
+Saved connections from the Database view are reused directly in the request builder.
+
+- Select **MONGO**, **MYSQL**, **POSTGRESQL**, **SQLITE**, **CASSANDRA**, **ORACLE**, **MSSQL**, **REDIS**, or **DYNAMODB** from the method dropdown.
+- The request switches from the normal URL editor to dedicated database tabs.
+- Database requests run in the **Collection Runner** alongside HTTP requests.
+- Database requests cannot be sent to the **Mock Server**.
 
 ---
 
@@ -518,6 +680,18 @@ apx.sendRequest({
 }, (err, res) => {
   apx.environment.set("token", res.json().token);
 });
+
+// Database queries (connection IDs from the Database panel)
+const sqlOut = await apx.db.query("main_mysql", "SELECT id FROM users WHERE id = ?", [123]);
+if (!sqlOut.success) throw new Error(sqlOut.error);
+
+const mongoOut = await apx.db.mongoQuery(
+  "main_mongo",
+  "find",
+  { database: "app", collection: "users", query: { status: "active" } },
+  { limit: 10 },
+);
+if (!mongoOut.success) throw new Error(mongoOut.error);
 ```
 
 `apx.sendRequest` accepts a URL string or a Postman-format options object and provides the callback response with `.code`, `.status`, `.headers.get(name)`, `.json()`, and `.text()`.

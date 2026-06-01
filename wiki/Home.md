@@ -29,11 +29,13 @@ Apilix is a lightweight, open-source API development and testing tool built for 
 | 📁 | Collections, folders & tabbed editing | 🔁 | Collection Runner with CSV data-driven testing |
 | 🌍 | Environments & variable scopes | 🎭 | Built-in Mock Server with WebSocket support |
 | ✍️ | Pre-request & test scripts (`pm.*` compatible) | 🔄 | Sync via Git, S3, HTTP, or Team server |
-| 📥 | Import: Postman, OpenAPI, cURL, HAR, Hurl | 🌊 | Chrome CDP browser traffic capture |
-| 📤 | Export: Postman, cURL, Hurl, Code Snippets | 🔍 | Response search, JSONPath/JMESPath tester |
-| 🕸️ | GraphQL with schema introspection | 🏷️ | Network timeline, TLS chain, redirect chain |
-| 🍪 | Cookie manager | 🕐 | Request History with snapshot re-open |
-| ⚡ | Keyboard shortcuts & dark/light theme | 🖥️ | Headless CLI runner — JSON & JUnit reporters, CSV data |
+| 🍃 | MongoDB requests (find, insert, aggregate, script…) | 🗄️ | Database panel (SQL/CQL, MongoDB, Redis, DynamoDB queries) |
+| 🌊 | Chrome CDP browser traffic capture | 📊 | Mixed HTTP + database collections in the runner |
+| 📥 | Import: Postman, OpenAPI, cURL, HAR, Hurl | 🔍 | Response search, JSONPath/JMESPath tester |
+| 📤 | Export: Postman, cURL, Hurl, Code Snippets | 🏷️ | Network timeline, TLS chain, redirect chain |
+| 🕸️ | GraphQL with schema introspection | 🍪 | Cookie manager |
+| 🕐 | Request History with snapshot re-open | ⚡ | Keyboard shortcuts & dark/light theme |
+| 🖥️ | Headless CLI runner — JSON & JUnit reporters, CSV data | 📦 | Desktop app + local web mode from one codebase |
 
 ---
 
@@ -102,7 +104,7 @@ The Apilix UI is divided into five main zones:
 
 | Zone | Description |
 |---|---|
-| **Activity Bar** (far left) | Switch between Collections, Environments, Request History, Globals, Variables, Runner, Mock Server, and Browser Capture |
+| **Activity Bar** (far left) | Switch between Collections, Environments, Request History, Globals, Variables, Runner, Mock Server, Browser Capture, and Database |
 | **Sidebar** | Collection tree — browse, create, and organize collections, folders, and requests |
 | **Tab Bar** | Open requests as tabs; each tab saves independently |
 | **Request Builder** | Main editor — URL bar, method picker, Params / Headers / Body / Auth / Scripts / Settings tabs |
@@ -118,14 +120,14 @@ The Apilix UI is divided into five main zones:
 
 ### Core Concepts
 - [Workspaces](Workspaces) — Create, switch, sync, and snapshot workspaces
-- [Collections & Requests](Collections-and-Requests) — Organize and send HTTP requests
+- [Collections & Requests](Collections-and-Requests) — Organize HTTP requests and database requests in the same collections
 - [Variables & Environments](Variables-and-Environments) — `{{variable}}` scopes, environments, globals
 
 ### Authentication
 - [Authentication](Authentication) — Bearer, Basic, API Key, and full OAuth 2.0
 
 ### Scripting & Testing
-- [Scripting](Scripting) — Pre-request & test scripts, `apx.*` / `pm.*` API, assertions, snippets
+- [Scripting](Scripting) — Pre-request & test scripts, `apx.*` / `pm.*` API, assertions, snippets, and saved database helpers
 
 ### Advanced Workflows
 - [Collection Runner](Collection-Runner) — Data-driven runs, pause/resume/stop, performance metrics, headless CLI
@@ -139,7 +141,7 @@ The Apilix UI is divided into five main zones:
 - [Code Generation](Code-Generation) — Request code snippets in multiple languages
 
 ### Reference
-- [Settings & Configuration](Settings-and-Configuration) — Theme, proxy, SSL, timeouts, CORS
+- [Settings & Configuration](Settings-and-Configuration) — Theme, proxy, SSL, timeouts, CORS, and where database tools live
 - [Keyboard Shortcuts](Keyboard-Shortcuts) — Full shortcut reference table
 - [Security & Encrypted Data](Security-and-Encrypted-Data) — OS keychain, secret variables, remote encryption, TLS, sandbox
 

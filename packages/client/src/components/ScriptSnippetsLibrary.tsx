@@ -12,6 +12,115 @@ interface SnippetCategory {
   snippets: Snippet[];
 }
 
+const DATABASE_REQUEST_SNIPPETS: Snippet[] = [
+  {
+    id: 'db-mysql-query',
+    name: 'MySQL Query',
+    description: 'Run a MySQL query with positional parameters and store rows',
+    code: `const connectionId = apx.environment.get('mysqlConnectionId') ?? 'mysql-connection-id';
+apx.db.query(
+  connectionId,
+  'SELECT id, email FROM users WHERE status = ? LIMIT 20',
+  ['active']
+).then(result => {
+  if (!result.success) throw new Error(result.error || 'MySQL query failed');
+  apx.environment.set('mysqlRows', JSON.stringify(result.rows ?? []));
+}).catch(err => console.error('Query failed:', err));`,
+  },
+  {
+    id: 'db-postgres-query',
+    name: 'PostgreSQL Query',
+    description: 'Run a PostgreSQL query using $1 placeholders',
+    code: `const connectionId = apx.environment.get('postgresConnectionId') ?? 'postgres-connection-id';
+const role = apx.environment.get('role') ?? 'user';
+
+apx.db.query(
+  connectionId,
+  'SELECT id, username FROM accounts WHERE role = $1 ORDER BY created_at DESC LIMIT 10',
+  [role]
+).then(result => {
+  if (!result.success) throw new Error(result.error || 'PostgreSQL query failed');
+  apx.environment.set('postgresRows', JSON.stringify(result.rows ?? []));
+}).catch(err => console.error('Query failed:', err));`,
+  },
+  {
+    id: 'db-sqlite-query',
+    name: 'SQLite Query',
+    description: 'Run a SQLite query and cache the first row id',
+    code: `const connectionId = apx.environment.get('sqliteConnectionId') ?? 'sqlite-connection-id';
+apx.db.query(
+  connectionId,
+  'SELECT id, name FROM projects WHERE archived = ? ORDER BY updated_at DESC LIMIT 1',
+  [0]
+).then(result => {
+  if (!result.success) throw new Error(result.error || 'SQLite query failed');
+  const first = (result.rows ?? [])[0];
+  if (first?.id != null) apx.environment.set('sqliteProjectId', String(first.id));
+}).catch(err => console.error('Query failed:', err));`,
+  },
+  {
+    id: 'db-mssql-query',
+    name: 'MSSQL Query',
+    description: 'Run a Microsoft SQL Server query and store row count',
+    code: `const connectionId = apx.environment.get('mssqlConnectionId') ?? 'mssql-connection-id';
+apx.db.query(
+  connectionId,
+  'SELECT TOP 50 id, status FROM jobs WHERE status = ? ORDER BY id DESC',
+  ['queued']
+).then(result => {
+  if (!result.success) throw new Error(result.error || 'MSSQL query failed');
+  apx.environment.set('mssqlRowCount', String(result.rowCount ?? 0));
+}).catch(err => console.error('Query failed:', err));`,
+  },
+  {
+    id: 'db-oracle-query',
+    name: 'Oracle Query',
+    description: 'Run an Oracle query and capture a value for downstream requests',
+    code: `const connectionId = apx.environment.get('oracleConnectionId') ?? 'oracle-connection-id';
+apx.db.query(
+  connectionId,
+  'SELECT id, status FROM tasks WHERE ROWNUM <= 10'
+).then(result => {
+  if (!result.success) throw new Error(result.error || 'Oracle query failed');
+  const first = (result.rows ?? [])[0];
+  if (first?.status != null) apx.environment.set('oracleTaskStatus', String(first.status));
+}).catch(err => console.error('Query failed:', err));`,
+  },
+  {
+    id: 'db-cassandra-query',
+    name: 'Cassandra CQL',
+    description: 'Run a Cassandra CQL statement through apx.db.query',
+    code: `const connectionId = apx.environment.get('cassandraConnectionId') ?? 'cassandra-connection-id';
+apx.db.query(
+  connectionId,
+  'SELECT id, email FROM users_by_tenant WHERE tenant_id = ? LIMIT 25',
+  [apx.environment.get('tenantId') ?? 'default-tenant']
+).then(result => {
+  if (!result.success) throw new Error(result.error || 'Cassandra query failed');
+  apx.environment.set('cassandraRows', JSON.stringify(result.rows ?? []));
+}).catch(err => console.error('Query failed:', err));`,
+  },
+  {
+    id: 'db-mongo-find',
+    name: 'MongoDB find',
+    description: 'Run a MongoDB find operation and store matched documents',
+    code: `const connectionId = apx.environment.get('mongoConnectionId') ?? 'mongo-connection-id';
+apx.db.mongoQuery(
+  connectionId,
+  'find',
+  {
+    database: apx.environment.get('mongoDatabase') ?? 'app',
+    collection: apx.environment.get('mongoCollection') ?? 'users',
+    query: { status: 'active' },
+  },
+  { limit: 20, sort: { createdAt: -1 } }
+).then(result => {
+  if (!result.success) throw new Error(result.error || 'MongoDB query failed');
+  apx.environment.set('mongoDocs', JSON.stringify(result.data ?? []));
+}).catch(err => console.error('Query failed:', err));`,
+  },
+];
+
 const PRE_REQUEST_CATEGORIES: SnippetCategory[] = [
   {
     label: 'Variables & Environment',
@@ -337,6 +446,118 @@ apx.sendRequest(
         code: `console.log('Debug value:', apx.environment.get('myVar'));`,
       },
     ],
+  },
+  {
+    label: 'MongoDB',
+    snippets: [
+      {
+        id: 'mongo-timestamp-window',
+        name: 'MongoDB Timestamp Window',
+        description: 'Calculate a time window for MongoDB range queries ($gte, $lt)',
+        code: `// Calculate timestamp window for MongoDB range queries
+const now = Date.now();
+const pastMs = 24 * 60 * 60 * 1000; // 24 hours
+const startTime = new Date(now - pastMs);
+const endTime = new Date(now);
+
+apx.environment.set('mongoStartTime', startTime.toISOString());
+apx.environment.set('mongoEndTime', endTime.toISOString());`,
+      },
+      {
+        id: 'mongo-objectid',
+        name: 'Generate MongoDB ObjectId',
+        description: 'Create a new MongoDB ObjectId (client-side)',
+        code: `// Generate a MongoDB-like ObjectId (24-char hex string)
+function generateObjectId() {
+  const timestamp = Math.floor(Date.now() / 1000).toString(16).padStart(8, '0');
+  const random = Math.random().toString(16).slice(2).padStart(16, '0');
+  return timestamp + random.slice(0, 16);
+}
+
+const newId = generateObjectId();
+apx.environment.set('newObjectId', newId);`,
+      },
+      {
+        id: 'mongo-set-filter',
+        name: 'Set MongoDB Filter from Env',
+        description: 'Build a MongoDB query filter from environment variables',
+        code: `// Build a MongoDB filter from environment variables
+const filter = {
+  status: apx.environment.get('filterStatus') ?? 'active',
+  createdAt: {
+    $gte: apx.environment.get('mongoStartTime') ?? '2024-01-01T00:00:00.000Z',
+    $lt: apx.environment.get('mongoEndTime') ?? new Date().toISOString(),
+  },
+};
+
+// Store as JSON string for use in MongoDB request body
+apx.environment.set('mongoFilter', JSON.stringify(filter));`,
+      },
+      {
+        id: 'mongo-set-update',
+        name: 'Set MongoDB Update from Env',
+        description: 'Build a MongoDB update document from environment variables',
+        code: `// Build a MongoDB update document
+const updateDoc = {
+  $set: {
+    status: apx.environment.get('updateStatus') ?? 'updated',
+    updatedAt: new Date().toISOString(),
+    updatedBy: apx.environment.get('userId') ?? 'system',
+  },
+};
+
+apx.environment.set('mongoUpdate', JSON.stringify(updateDoc));`,
+      },
+    ],
+  },
+  {
+    label: 'SQL Databases',
+    snippets: [
+      {
+        id: 'sql-date-range-vars',
+        name: 'Set SQL Date Range Variables',
+        description: 'Prepare start/end timestamps for SQL WHERE filters',
+        code: `const now = new Date();
+const start = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+apx.environment.set('sqlStartAt', start.toISOString());
+apx.environment.set('sqlEndAt', now.toISOString());`,
+      },
+      {
+        id: 'sql-pagination-vars',
+        name: 'Set Pagination Variables',
+        description: 'Compute LIMIT/OFFSET placeholders from page + pageSize',
+        code: `const page = Number(apx.environment.get('page') ?? '1');
+const pageSize = Number(apx.environment.get('pageSize') ?? '50');
+const offset = Math.max(0, (page - 1) * pageSize);
+
+apx.environment.set('sqlLimit', String(pageSize));
+apx.environment.set('sqlOffset', String(offset));`,
+      },
+      {
+        id: 'sql-in-clause',
+        name: 'Build IN Clause Fragment',
+        description: 'Generate a quoted CSV fragment for SQL IN (...) clauses',
+        code: `const raw = apx.environment.get('userIds') ?? '1,2,3';
+const ids = raw.split(',').map(x => x.trim()).filter(Boolean);
+      const quoted = ids.map(id => "'" + id.replace(/'/g, "''") + "'").join(', ');
+
+apx.environment.set('sqlInClause', quoted);`,
+      },
+      {
+        id: 'sql-tenant-schema',
+        name: 'Set Tenant Schema/Table',
+        description: 'Compose schema-qualified table names for multi-tenant SQL',
+        code: `const tenant = apx.environment.get('tenant') ?? 'public';
+      const safeTenant = tenant.replace(/[^a-zA-Z0-9_]/g, '');
+      apx.environment.set('tenantSchema', safeTenant);
+      apx.environment.set('tenantUsersTable', safeTenant + '.users');`,
+      },
+    ],
+  },
+  {
+    label: 'Database Requests',
+    snippets: DATABASE_REQUEST_SNIPPETS,
   },
 ];
 
@@ -748,6 +969,128 @@ if (isV2) {
     ],
   },
   {
+    label: 'SQL Result Assertions',
+    snippets: [
+      {
+        id: 'sql-row-count-positive',
+        name: 'Row count > 0',
+        description: 'Assert query returned at least one row',
+        code: `apx.test('SQL query returned rows', () => {
+  const json = apx.response.json();
+  apx.expect(json.rowCount).to.be.above(0);
+});`,
+      },
+      {
+        id: 'sql-column-exists',
+        name: 'Column exists in result',
+        description: 'Assert a specific column is present in the result set',
+        code: `apx.test('Result contains expected column', () => {
+  const json = apx.response.json();
+  apx.expect(Array.isArray(json.columns)).to.be.true;
+  apx.expect(json.columns).to.include('id');
+});`,
+      },
+      {
+        id: 'sql-first-row-to-env',
+        name: 'Store first row field',
+        description: 'Capture first-row id (or field) to environment for next request',
+        code: `const json = apx.response.json();
+if (Array.isArray(json.rows) && json.rows.length > 0) {
+  const first = json.rows[0];
+  apx.environment.set('firstRowId', String(first.id ?? ''));
+}
+
+apx.test('First row id captured', () => {
+  apx.expect(apx.environment.get('firstRowId')).to.exist;
+});`,
+      },
+      {
+        id: 'sql-assert-cell-value',
+        name: 'Assert first row field value',
+        description: 'Validate a specific field value from the first returned row',
+        code: `apx.test('First row status is active', () => {
+  const json = apx.response.json();
+  apx.expect(Array.isArray(json.rows) && json.rows.length > 0).to.be.true;
+  apx.expect(json.rows[0].status).to.equal('active');
+});`,
+      },
+    ],
+  },
+  {
+    label: 'Database Request Assertions',
+    snippets: [
+      {
+        id: 'db-query-success-test',
+        name: 'SQL-family query succeeds',
+        description: 'Execute apx.db.query and assert successful execution',
+        code: `const connectionId = apx.environment.get('sqlConnectionId') ?? 'sql-connection-id';
+const result = await apx.db.query(connectionId, 'SELECT 1 AS ok');
+
+apx.test('SQL-family query succeeds', () => {
+  apx.expect(result.success).to.equal(true);
+  apx.expect(result.error ?? '').to.equal('');
+});`,
+      },
+      {
+        id: 'db-query-row-count-test',
+        name: 'SQL-family rowCount assertion',
+        description: 'Assert returned rowCount matches expected value',
+        code: `const connectionId = apx.environment.get('sqlConnectionId') ?? 'sql-connection-id';
+const expected = Number(apx.environment.get('expectedRowCount') ?? '1');
+const result = await apx.db.query(connectionId, 'SELECT 1 AS ok');
+
+apx.test('SQL-family rowCount matches expected', () => {
+  apx.expect(result.success).to.equal(true);
+  apx.expect(Number(result.rowCount ?? 0)).to.equal(expected);
+});`,
+      },
+      {
+        id: 'db-mongo-success-test',
+        name: 'MongoDB operation succeeds',
+        description: 'Execute apx.db.mongoQuery and assert success flag',
+        code: `const connectionId = apx.environment.get('mongoConnectionId') ?? 'mongo-connection-id';
+const result = await apx.db.mongoQuery(
+  connectionId,
+  'find',
+  {
+    database: apx.environment.get('mongoDatabase') ?? 'app',
+    collection: apx.environment.get('mongoCollection') ?? 'users',
+    query: {},
+  },
+  { limit: 5 }
+);
+
+apx.test('MongoDB operation succeeds', () => {
+  apx.expect(result.success).to.equal(true);
+});`,
+      },
+      {
+        id: 'db-mongo-array-result-test',
+        name: 'MongoDB returns array data',
+        description: 'Assert MongoDB find result data is an array',
+        code: `const connectionId = apx.environment.get('mongoConnectionId') ?? 'mongo-connection-id';
+const result = await apx.db.mongoQuery(
+  connectionId,
+  'find',
+  {
+    database: apx.environment.get('mongoDatabase') ?? 'app',
+    collection: apx.environment.get('mongoCollection') ?? 'users',
+    query: { status: 'active' },
+  }
+);
+
+apx.test('MongoDB returns array data', () => {
+  apx.expect(result.success).to.equal(true);
+  apx.expect(Array.isArray(result.data)).to.equal(true);
+});`,
+      },
+    ],
+  },
+  {
+    label: 'Database Requests',
+    snippets: DATABASE_REQUEST_SNIPPETS,
+  },
+  {
     label: 'XML / SOAP Responses',
     snippets: [
       {
@@ -801,6 +1144,82 @@ apx.environment.set('userId', userId);
 const statusNode = xpath.select1('//user/@status', doc);
 const status = statusNode ? statusNode.value : null;
 apx.expect(status).to.equal('active');`,
+      },
+    ],
+  },
+  {
+    label: 'MongoDB',
+    snippets: [
+      {
+        id: 'mongo-status-success',
+        name: 'MongoDB Status is 2200',
+        description: 'Assert the MongoDB request succeeded with status 2200',
+        code: `apx.test("MongoDB status is 2200", () => {
+  apx.expect(apx.response.status).to.equal(2200);
+});`,
+      },
+      {
+        id: 'mongo-response-not-empty',
+        name: 'MongoDB Response Not Empty',
+        description: 'Assert the MongoDB operation returned documents',
+        code: `apx.test("MongoDB response is not empty", () => {
+  const json = apx.response.json();
+  apx.expect(json).to.be.an('array');
+  apx.expect(json.length).to.be.greaterThan(0);
+});`,
+      },
+      {
+        id: 'mongo-response-count',
+        name: 'MongoDB Response Count',
+        description: 'Assert the number of documents returned',
+        code: `apx.test("MongoDB returned expected document count", () => {
+  const json = apx.response.json();
+  const expected = parseInt(apx.environment.get('expectedCount') ?? '1', 10);
+  apx.expect(json.length).to.equal(expected);
+});`,
+      },
+      {
+        id: 'mongo-document-has-field',
+        name: 'MongoDB Document Has Field',
+        description: 'Assert a specific field exists in the returned documents',
+        code: `apx.test("MongoDB documents have required fields", () => {
+  const json = apx.response.json();
+  apx.expect(json.length).to.be.greaterThan(0);
+  const doc = json[0];
+  apx.expect(doc).to.have.property('_id');
+  apx.expect(doc).to.have.property('name');
+});`,
+      },
+      {
+        id: 'mongo-store-id',
+        name: 'Store MongoDB Document ID',
+        description: 'Extract the first document ID from MongoDB response',
+        code: `apx.test("Capture MongoDB document ID", () => {
+  const json = apx.response.json();
+  apx.expect(json.length).to.be.greaterThan(0);
+  const docId = json[0]._id?.toString() ?? json[0]._id ?? '';
+  apx.expect(docId).to.not.be.empty;
+  apx.environment.set('lastDocumentId', docId);
+});`,
+      },
+      {
+        id: 'mongo-partial-response',
+        name: 'MongoDB Response Truncated',
+        description: 'Check if the MongoDB response was truncated (status 2400)',
+        code: `apx.test("MongoDB response is complete (not truncated)", () => {
+  const status = apx.response.status;
+  apx.expect(status).to.not.equal(2400);
+  apx.expect([2200, 2300]).to.include(status);
+});`,
+      },
+      {
+        id: 'mongo-error-check',
+        name: 'Check for MongoDB Error',
+        description: 'Assert the MongoDB operation did not error',
+        code: `apx.test("MongoDB operation succeeded", () => {
+  apx.expect(apx.response.status).to.not.equal(0);
+  apx.expect(apx.response.statusText).to.not.include('ERROR');
+});`,
       },
     ],
   },

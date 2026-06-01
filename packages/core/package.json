@@ -37,6 +37,10 @@
       "require": "./src/variable-resolver.js",
       "default": "./src/variable-resolver.js"
     },
+    "./mongo-engine": {
+      "require": "./src/mongo-engine.js",
+      "default": "./src/mongo-engine.js"
+    },
     "./types": "./types/index.ts"
   },
   "files": [
@@ -59,9 +63,14 @@
     "axios": "^1.15.2",
     "csv-parse": "^5.5.3",
     "form-data": "^4.0.0",
+    "json5": "^2.2.3",
+    "mongodb": "^6.21.0",
     "xpath": "^0.0.34"
   },
   "optionalDependencies": {
     "win-ca": "^3.5.1"
+  },
+  "overrides": {
+    "fast-uri": "^3.1.2"
   }
 }

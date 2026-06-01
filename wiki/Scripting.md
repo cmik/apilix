@@ -33,10 +33,12 @@ Apilix has a built-in JavaScript scripting engine that lets you automate work be
   - [Variable Stores](#variable-stores)
   - [Execution Control (Runner)](#execution-control-runner)
   - [`apx.sendRequest()`](#apxsendrequest)
+  - [`apx.db` Database API](#apxdb-database-api)
   - [Modifying the Request from a Script](#modifying-the-request-from-a-script)
   - [Console Output](#console-output)
   - [Test Results Display](#test-results-display)
   - [Snippet Library](#snippet-library)
+  - [MongoDB Request Scripts](#mongodb-request-scripts)
   - [Common Patterns](#common-patterns)
   - [See Also](#see-also)
 
@@ -649,6 +651,104 @@ The callback receives `(err, response)` where `response` exposes the same interf
 
 ---
 
+## `apx.db` Database API
+
+Use `apx.db` to execute database operations against saved connections configured in **Activity Bar → Database**.
+
+`apx.db` currently exposes two script helpers: `query` for SQL-like backends and `mongoQuery` for MongoDB. Redis and DynamoDB are available as database request types in collections and in the Database panel query editor, but they are not exposed as `apx.db.*` helpers yet.
+
+### `apx.db.query(connectionId, sql, params?)`
+
+Execute a SQL-like query (MySQL, PostgreSQL, SQLite, Cassandra CQL, Oracle, or MSSQL) against a saved connection ID.
+
+```js
+const out = await apx.db.query(
+  'main_mysql',
+  'SELECT id, email FROM users WHERE id = ?',
+  [123]
+);
+
+apx.test('SQL query succeeded', () => {
+  apx.expect(out.success).to.equal(true);
+  apx.expect(out.rowCount).to.be.above(0);
+});
+```
+
+Return shape:
+
+| Field | Type | Description |
+|---|---|---|
+| `success` | `boolean` | `true` on success, `false` on error |
+| `rows` | `object[]` | Result rows (on success) |
+| `columns` | `string[]` | Column names (on success) |
+| `rowCount` | `number` | Row count (on success) |
+| `error` | `string` | Error message (on failure) |
+
+### `apx.db.mongoQuery(connectionId, operation, document, options?)`
+
+Execute a MongoDB operation.
+
+```js
+const out = await apx.db.mongoQuery(
+  'main_mongo',
+  'find',
+  {
+    database: 'app',
+    collection: 'users',
+    query: { status: 'active' },
+  },
+  { limit: 10 }
+);
+
+apx.test('Mongo query succeeded', () => {
+  apx.expect(out.success).to.equal(true);
+  apx.expect(Array.isArray(out.data)).to.equal(true);
+});
+```
+
+Return shape:
+
+| Field | Type | Description |
+|---|---|---|
+| `success` | `boolean` | `true` on success, `false` on error |
+| `data` | `any` | Operation result payload (on success) |
+| `error` | `string` | Error message (on failure) |
+
+Supported Mongo operations:
+
+- `findOne`
+- `find`
+- `insertOne`
+- `insertMany`
+- `updateOne`
+- `updateMany`
+- `deleteOne`
+- `deleteMany`
+- `countDocuments`
+- `distinct`
+- `aggregate`
+
+### Variable resolution in DB connections
+
+Connection fields can contain `{{variable}}` tokens.
+
+- Tokens are resolved at execution time using the current script context.
+- In collection runs, runner row values (`iterationData`) are included in resolution.
+- This applies to saved connection fields such as host, username, password, database, MongoDB URI, SQLite file path, and DynamoDB endpoint.
+
+### Error handling pattern
+
+`apx.db.*` methods return `{ success: false, error }` on errors instead of throwing by default.
+
+```js
+const out = await apx.db.query('main_pg', 'SELECT 1');
+if (!out.success) {
+  throw new Error(`DB error: ${out.error}`);
+}
+```
+
+---
+
 ## Modifying the Request from a Script
 
 A pre-request script can add or overwrite headers on the outgoing request using `apx.request.headers.upsert()`:
@@ -890,9 +990,89 @@ if (node) {
 
 ---
 
+## MongoDB Request Scripts
+
+Pre-request and test scripts work exactly the same way for MongoDB requests as for HTTP requests. The `apx.response` object in test scripts contains the MongoDB operation result as the response body.
+
+MongoDB `operation: "script"` requests run inside a Node.js `vm` sandbox. Top-level `await` is not available in that script body. For async MongoDB calls, return an async IIFE (or a Promise chain). The resolved return value becomes the response body; if nothing is returned, Apilix falls back to the `result` variable.
+
+**Mongo `script`: async wrapper pattern:**
+
+```js
+(async () => {
+  const account = await db.collection('accounts')
+    .find({ _id: 'VI_41833' })
+    .limit(1)
+    .toArray();
+
+  const contacts = await db.collection('contacts')
+    .find({ accountId: 'VI_41833' })
+    .toArray();
+
+  return {
+    account,
+    contacts,
+    summary: {
+      accountCount: account.length,
+      contactCount: contacts.length,
+    },
+  };
+})()
+```
+
+**Important:** Avoid placing unresolved Promises inside objects (for example `result = { query }` where `query` is still `toArray()` Promise), because nested Promises are not recursively awaited.
+
+**Assert returned documents:**
+
+```js
+apx.test('Returns active users', () => {
+  const docs = apx.response.json();
+  apx.expect(docs).to.be.an('array');
+  apx.expect(docs.every(d => d.status === 'active')).to.be.true;
+});
+```
+
+**Capture inserted document ID:**
+
+```js
+const result = apx.response.json();
+apx.environment.set('newDocumentId', String(result.insertedId));
+```
+
+**Assert count result:**
+
+```js
+apx.test('Has records', () => {
+  apx.expect(apx.response.json().count).to.be.above(0);
+});
+```
+
+**Assert operation status:**
+
+```js
+// MongoDB success status code is 2200 (MONGO_SUCCESS)
+apx.test('Operation succeeded', () => {
+  apx.expect(apx.response.status).to.equal(2200);
+});
+```
+
+**Pre-request: compute dynamic filter values:**
+
+```js
+// Set a timestamp window for the filter in the MongoDB request body
+const now = Date.now();
+apx.environment.set('now', now.toString());
+apx.environment.set('yesterday', (now - 86400000).toString());
+```
+
+See [MongoDB Requests](MongoDB-Requests#scripting-for-mongodb-requests) for the full scripting reference specific to MongoDB operations.
+
+---
+
 ## See Also
 
 - [Variables & Environments](Variables-and-Environments) — variable stores and scope hierarchy
 - [Authentication](Authentication) — `apx.sendRequest()` for scripted token flows
 - [Collection Runner](Collection-Runner) — `apx.execution.setNextRequest()` and CSV iteration data
 - [Collections & Requests](Collections-and-Requests) — where scripts are attached (collection, folder, request)
+- [MongoDB Requests](MongoDB-Requests#scripting-for-mongodb-requests) — scripting patterns for MongoDB operations

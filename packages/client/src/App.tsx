@@ -18,6 +18,7 @@ import { IconEye } from './components/Icons';
 const RunnerPanel = lazy(() => import('./components/RunnerPanel'));
 const MockServerPanel = lazy(() => import('./components/MockServerPanel'));
 const BrowserCapturePanel = lazy(() => import('./components/BrowserCapturePanel'));
+const DatabasePanel = lazy(() => import('./components/DatabasePanel'));
 const CookieManagerModal = lazy(() => import('./components/CookieManagerModal'));
 const ConflictMergeModal = lazy(() => import('./components/ConflictMergeModal'));
 const SettingsModal = lazy(() => import('./components/SettingsModal'));
@@ -57,10 +58,21 @@ function EnvQuickPanel({ env, onClose }: { env: AppEnvironment; onClose: () => v
   const { dispatch } = useApp();
   const [rows, setRows] = useState(env.values.map(v => ({ ...v })));
   const [showBackdropWarning, setShowBackdropWarning] = useState(false);
+  const [pendingFocusRow, setPendingFocusRow] = useState<number | null>(null);
+  const keyInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
   useEffect(() => {
     setRows(env.values.map(v => ({ ...v })));
   }, [env._id]);
+
+  useEffect(() => {
+    if (pendingFocusRow === null) return;
+    const input = keyInputRefs.current[pendingFocusRow];
+    if (input) {
+      input.focus();
+      setPendingFocusRow(null);
+    }
+  }, [rows, pendingFocusRow]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose(); }
@@ -81,7 +93,11 @@ function EnvQuickPanel({ env, onClose }: { env: AppEnvironment; onClose: () => v
     setRows(r => r.filter((_, idx) => idx !== i));
   }
   function addRow() {
-    setRows(r => [...r, { key: '', value: '', enabled: true, secret: false }]);
+    setRows(r => {
+      const nextRows = [...r, { key: '', value: '', enabled: true, secret: false }];
+      setPendingFocusRow(nextRows.length - 1);
+      return nextRows;
+    });
   }
   function save() {
     const hasErrors = rows.some(r => storageKeyError(r.key) !== null);
@@ -147,6 +163,9 @@ function EnvQuickPanel({ env, onClose }: { env: AppEnvironment; onClose: () => v
                     className="accent-orange-500 shrink-0"
                   />
                   <input
+                    ref={el => {
+                      keyInputRefs.current[i] = el;
+                    }}
                     value={row.key}
                     onChange={e => update(i, 'key', e.target.value)}
                     placeholder="key"
@@ -196,6 +215,12 @@ function EnvQuickPanel({ env, onClose }: { env: AppEnvironment; onClose: () => v
               </div>
             );
           })}
+          <button
+            onClick={addRow}
+            className="mt-2 text-xs text-slate-500 hover:text-orange-400 transition-colors self-start"
+          >
+            + Add variable
+          </button>
         </div>
 
         {/* footer */}
@@ -205,12 +230,6 @@ function EnvQuickPanel({ env, onClose }: { env: AppEnvironment; onClose: () => v
               Fix variable name errors before closing, or press × to discard.
             </p>
           )}
-          <button
-            onClick={addRow}
-            className="text-xs text-slate-500 hover:text-orange-400 transition-colors self-start"
-          >
-            + Add variable
-          </button>
         </div>
       </div>
     </>
@@ -728,6 +747,7 @@ export default function App() {
       collections: state.collections,
       environments: state.environments,
       activeEnvironmentId: state.activeEnvironmentId,
+      databases: state.databases,
       collectionVariables: state.collectionVariables,
       globalVariables: state.globalVariables,
       cookieJar: state.cookieJar,
@@ -1257,6 +1277,13 @@ export default function App() {
           <div className="flex-1 flex flex-col overflow-hidden">
             <Suspense fallback={null}>
               <BrowserCapturePanel />
+            </Suspense>
+          </div>
+        )}
+        {state.view === 'database' && (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <Suspense fallback={null}>
+              <DatabasePanel />
             </Suspense>
           </div>
         )}

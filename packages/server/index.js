@@ -7,11 +7,15 @@ const vm = require('vm');
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const {
   executeRequest, setExecutorConfig,
   prepareCollectionRun, executePreparedCollectionRun, InputError,
   refreshOAuth2Token, exchangeAuthorizationCodeForToken,
+  executeMongoIntrospect,
+  resolveVariables,
 } = require('@apilix/core');
+const dbManager = require('./database-manager');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -67,6 +71,305 @@ app.use(express.urlencoded({ extended: true }));
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
+const MONGO_CONNECTION_ID_RE = /^[a-z0-9_-]{1,64}$/i;
+const MONGO_RESERVED_CONNECTION_IDS = new Set(['__proto__', 'prototype', 'constructor']);
+
+function resolveDatabaseConfigTemplates(config, runtimeVars) {
+  if (!config || typeof config !== 'object') return config;
+  const vars = runtimeVars || {};
+  const resolved = { ...config };
+  const STRING_FIELDS = [
+    'host', 'username', 'password', 'database', 'sslCert',
+    'connectionUri', 'sslCertPath', 'sslKeyPath', 'sslCAPath',
+    'filePath', 'endpoint', 'accessKeyId', 'secretAccessKey',
+    'sessionToken', 'serviceName', 'sid', 'connectString',
+    'instanceName', 'keyspace',
+  ];
+
+  STRING_FIELDS.forEach((field) => {
+    if (typeof resolved[field] === 'string') {
+      resolved[field] = resolveVariables(resolved[field], vars);
+    }
+  });
+
+  if (Array.isArray(resolved.contactPoints)) {
+    resolved.contactPoints = resolved.contactPoints.map((cp) =>
+      (typeof cp === 'string' ? resolveVariables(cp, vars) : cp)
+    );
+  }
+
+  return resolved;
+}
+
+function isReservedMongoConnectionId(id) {
+  return MONGO_RESERVED_CONNECTION_IDS.has(String(id || '').toLowerCase());
+}
+
+function isValidMongoConnectionId(id) {
+  return typeof id === 'string'
+    && MONGO_CONNECTION_ID_RE.test(id)
+    && !isReservedMongoConnectionId(id);
+}
+
+function isIntegerInRange(value, min, max) {
+  return Number.isInteger(value) && value >= min && value <= max;
+}
+
+function validateHttpEndpoint(url) {
+  if (!url || typeof url !== 'string') return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function validateSqliteFilePath(filePath) {
+  if (typeof filePath !== 'string' || !filePath.trim()) return 'filePath is required';
+  if (/\0/.test(filePath)) return 'filePath cannot contain null bytes';
+  // Avoid parent-directory traversal style inputs for local filesystem access.
+  if (/(^|[\\/])\.\.([\\/]|$)/.test(filePath)) return 'filePath cannot contain parent directory traversal (..)';
+  return null;
+}
+
+function validateDatabaseConfig(config, requireId = false) {
+  if (!config || typeof config !== 'object') return 'Invalid database config';
+  if (requireId) {
+    if (typeof config._id !== 'string' || !config._id.trim()) return 'Missing required fields: _id, type';
+  }
+  if (typeof config.type !== 'string') return 'Missing required field: type';
+
+  if (config.connectionTimeout !== undefined && !isIntegerInRange(config.connectionTimeout, 100, 120000)) {
+    return 'connectionTimeout must be an integer between 100 and 120000';
+  }
+  if (config.queryTimeout !== undefined && !isIntegerInRange(config.queryTimeout, 100, 600000)) {
+    return 'queryTimeout must be an integer between 100 and 600000';
+  }
+  if (config.maxConnections !== undefined && !isIntegerInRange(config.maxConnections, 1, 50)) {
+    return 'maxConnections must be an integer between 1 and 50';
+  }
+
+  if (config.type === 'mysql' || config.type === 'postgres') {
+    if (typeof config.host !== 'string' || !config.host.trim()) return 'host is required';
+    if (!isIntegerInRange(config.port, 1, 65535)) return 'port must be an integer between 1 and 65535';
+    if (typeof config.username !== 'string' || !config.username.trim()) return 'username is required';
+    if (typeof config.database !== 'string' || !config.database.trim()) return 'database is required';
+  }
+
+  if (config.type === 'mongodb') {
+    if (typeof config.connectionUri !== 'string' || !config.connectionUri.trim()) {
+      return 'connectionUri is required';
+    }
+    if (!validateMongoUri(config.connectionUri)) {
+      return 'connectionUri must use the mongodb:// or mongodb+srv:// scheme';
+    }
+  }
+
+  if (config.type === 'sqlite') {
+    return validateSqliteFilePath(config.filePath);
+  }
+
+  if (config.type === 'redis') {
+    if (config.connectionUri !== undefined) {
+      if (typeof config.connectionUri !== 'string' || !config.connectionUri.trim()) {
+        return 'connectionUri must be a non-empty string when provided';
+      }
+    } else {
+      if (typeof config.host !== 'string' || !config.host.trim()) return 'host is required';
+      if (!isIntegerInRange(config.port ?? 6379, 1, 65535)) return 'port must be an integer between 1 and 65535';
+    }
+    if (config.db !== undefined && !isIntegerInRange(config.db, 0, 15)) {
+      return 'db must be an integer between 0 and 15';
+    }
+  }
+
+  if (config.type === 'cassandra') {
+    if (!Array.isArray(config.contactPoints) || config.contactPoints.length === 0) {
+      return 'contactPoints is required and must be a non-empty array';
+    }
+    if (config.contactPoints.some((cp) => typeof cp !== 'string' || !cp.trim())) {
+      return 'contactPoints must contain only non-empty strings';
+    }
+    if (typeof config.localDataCenter !== 'string' || !config.localDataCenter.trim()) {
+      return 'localDataCenter is required';
+    }
+    if (!isIntegerInRange(config.port ?? 9042, 1, 65535)) {
+      return 'port must be an integer between 1 and 65535';
+    }
+  }
+
+  if (config.type === 'dynamodb') {
+    if (typeof config.region !== 'string' || !config.region.trim()) {
+      return 'region is required';
+    }
+    if (config.endpoint !== undefined && !validateHttpEndpoint(config.endpoint)) {
+      return 'endpoint must be a valid http:// or https:// URL when provided';
+    }
+  }
+
+  if (config.type === 'oracle') {
+    if (typeof config.username !== 'string' || !config.username.trim()) return 'username is required';
+    if (typeof config.password !== 'string') return 'password is required';
+    if (config.connectString !== undefined) {
+      if (typeof config.connectString !== 'string' || !config.connectString.trim()) {
+        return 'connectString must be a non-empty string when provided';
+      }
+    } else {
+      if (typeof config.host !== 'string' || !config.host.trim()) return 'host is required';
+      if (!isIntegerInRange(config.port ?? 1521, 1, 65535)) return 'port must be an integer between 1 and 65535';
+      if (
+        (typeof config.serviceName !== 'string' || !config.serviceName.trim())
+        && (typeof config.sid !== 'string' || !config.sid.trim())
+        && (typeof config.database !== 'string' || !config.database.trim())
+      ) {
+        return 'serviceName, sid, or database is required when connectString is not provided';
+      }
+    }
+  }
+
+  if (config.type === 'mssql') {
+    if (typeof config.host !== 'string' || !config.host.trim()) return 'host is required';
+    if (!isIntegerInRange(config.port ?? 1433, 1, 65535)) return 'port must be an integer between 1 and 65535';
+    if (typeof config.username !== 'string' || !config.username.trim()) return 'username is required';
+    if (typeof config.password !== 'string') return 'password is required';
+    if (typeof config.database !== 'string' || !config.database.trim()) return 'database is required';
+  }
+
+  return null;
+}
+
+function buildRuntimeVarsFromScriptContext(scriptContext) {
+  if (!scriptContext || typeof scriptContext !== 'object') return {};
+  return {
+    ...(scriptContext.environment || {}),
+    ...(scriptContext.collectionVariables || {}),
+    ...(scriptContext.globals || {}),
+    ...(scriptContext.dataRow || {}),
+  };
+}
+
+function buildDatabasePoolKey(connectionId, resolvedConfig) {
+  const hash = crypto
+    .createHash('sha1')
+    .update(JSON.stringify(resolvedConfig || {}))
+    .digest('hex')
+    .slice(0, 12);
+  return `execute_${connectionId}_${hash}`;
+}
+
+/**
+ * Create a dbQueryFn for use in script sandbox (apx.db.query).
+ * Opens a pool on first use per connectionId; pools are keyed by _id.
+ * @param {Array} databases  DatabaseConnection[] from the workspace
+ */
+function makeDatabaseQueryFn(databases, defaultRuntimeVars = {}) {
+  const activePoolKeyByConnection = new Map();
+  return async function dbQueryFn(connectionId, sql, params, scriptContext) {
+    const config = databases.find(d => d._id === connectionId);
+    if (!config) throw new Error(`Database connection "${connectionId}" not found`);
+
+    const runtimeVars = {
+      ...defaultRuntimeVars,
+      ...buildRuntimeVarsFromScriptContext(scriptContext),
+    };
+    const resolvedConfig = resolveDatabaseConfigTemplates(config, runtimeVars);
+    const poolKey = buildDatabasePoolKey(connectionId, resolvedConfig);
+    const previousKey = activePoolKeyByConnection.get(connectionId);
+
+    if (previousKey && previousKey !== poolKey) {
+      await dbManager.closePool(previousKey);
+    }
+    activePoolKeyByConnection.set(connectionId, poolKey);
+
+    if (!dbManager.hasPool(poolKey)) {
+      await dbManager.createPool(poolKey, resolvedConfig);
+    }
+    return dbManager.executeQuery(poolKey, sql, params);
+  };
+}
+
+/**
+ * Create a dbMongoQueryFn for use in script sandbox (apx.db.mongoQuery).
+ */
+function makeDatabaseMongoQueryFn(databases, defaultRuntimeVars = {}) {
+  const activePoolKeyByConnection = new Map();
+  return async function dbMongoQueryFn(connectionId, operation, document, options, scriptContext) {
+    const config = databases.find(d => d._id === connectionId);
+    if (!config) throw new Error(`Database connection "${connectionId}" not found`);
+
+    const runtimeVars = {
+      ...defaultRuntimeVars,
+      ...buildRuntimeVarsFromScriptContext(scriptContext),
+    };
+    const resolvedConfig = resolveDatabaseConfigTemplates(config, runtimeVars);
+    const poolKey = buildDatabasePoolKey(connectionId, resolvedConfig);
+    const previousKey = activePoolKeyByConnection.get(connectionId);
+
+    if (previousKey && previousKey !== poolKey) {
+      await dbManager.closePool(previousKey);
+    }
+    activePoolKeyByConnection.set(connectionId, poolKey);
+
+    if (!dbManager.hasPool(poolKey)) {
+      await dbManager.createPool(poolKey, resolvedConfig);
+    }
+    return dbManager.mongoQuery(poolKey, operation, document, options);
+  };
+}
+
+function makeDatabaseRedisCommandFn(databases, defaultRuntimeVars = {}) {
+  const activePoolKeyByConnection = new Map();
+  return async function dbRedisCommandFn(connectionId, command, args, scriptContext) {
+    const config = databases.find(d => d._id === connectionId);
+    if (!config) throw new Error(`Database connection "${connectionId}" not found`);
+
+    const runtimeVars = {
+      ...defaultRuntimeVars,
+      ...buildRuntimeVarsFromScriptContext(scriptContext),
+    };
+    const resolvedConfig = resolveDatabaseConfigTemplates(config, runtimeVars);
+    const poolKey = buildDatabasePoolKey(connectionId, resolvedConfig);
+    const previousKey = activePoolKeyByConnection.get(connectionId);
+
+    if (previousKey && previousKey !== poolKey) {
+      await dbManager.closePool(previousKey);
+    }
+    activePoolKeyByConnection.set(connectionId, poolKey);
+
+    if (!dbManager.hasPool(poolKey)) {
+      await dbManager.createPool(poolKey, resolvedConfig);
+    }
+    return dbManager.executeRedisCommand(poolKey, command, args);
+  };
+}
+
+function makeDatabaseDynamoOperationFn(databases, defaultRuntimeVars = {}) {
+  const activePoolKeyByConnection = new Map();
+  return async function dbDynamoOperationFn(connectionId, operation, input, scriptContext) {
+    const config = databases.find(d => d._id === connectionId);
+    if (!config) throw new Error(`Database connection "${connectionId}" not found`);
+
+    const runtimeVars = {
+      ...defaultRuntimeVars,
+      ...buildRuntimeVarsFromScriptContext(scriptContext),
+    };
+    const resolvedConfig = resolveDatabaseConfigTemplates(config, runtimeVars);
+    const poolKey = buildDatabasePoolKey(connectionId, resolvedConfig);
+    const previousKey = activePoolKeyByConnection.get(connectionId);
+
+    if (previousKey && previousKey !== poolKey) {
+      await dbManager.closePool(previousKey);
+    }
+    activePoolKeyByConnection.set(connectionId, poolKey);
+
+    if (!dbManager.hasPool(poolKey)) {
+      await dbManager.createPool(poolKey, resolvedConfig);
+    }
+    return dbManager.executeDynamoOperation(poolKey, operation, input);
+  };
+}
+
 /**
  * Validate that a URL is a safe http/https URL to use as an OAuth token endpoint.
  * Rejects non-http(s) protocols to prevent SSRF via dangerous schemes.
@@ -109,6 +412,115 @@ function normalizeClientCertificates(input) {
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', version: '1.0.0' });
+});
+
+// ─── MongoDB introspect ────────────────────────────────────────────────────────
+
+/**
+ * Validate that a URI uses the mongodb:// or mongodb+srv:// scheme.
+ * Prevents misuse of the introspect endpoints as an SSRF vector against
+ * non-MongoDB services or private infrastructure.
+ */
+function validateMongoUri(uri) {
+  if (!uri || typeof uri !== 'string') return false;
+  try {
+    const parsed = new URL(uri);
+    return parsed.protocol === 'mongodb:' || parsed.protocol === 'mongodb+srv:';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Apply auth override options to a MongoDB URI.
+ * Mirrors the applyMongoAuthOptions function in @apilix/core/request-engine.
+ * The caller is responsible for resolving {{variables}} in auth fields
+ * before passing them here.
+ */
+function applyMongoAuthToUri(uri, auth) {
+  if (!auth || !auth.mode) return uri;
+  try {
+    const parsed = new URL(uri);
+    if (auth.username) parsed.username = auth.username;
+    if (auth.password) parsed.password = auth.password;
+    if (auth.authSource) parsed.searchParams.set('authSource', auth.authSource);
+    if (auth.mode === 'x509') parsed.searchParams.set('authMechanism', 'MONGODB-X509');
+    if (auth.mode === 'ldap-plain') parsed.searchParams.set('authMechanism', 'PLAIN');
+    if (auth.mode === 'oidc') parsed.searchParams.set('authMechanism', 'MONGODB-OIDC');
+    return parsed.toString();
+  } catch {
+    return uri;
+  }
+}
+
+/**
+ * Resolve an introspection URI from either an explicit URI or a saved
+ * connection ID, then apply any auth override.
+ *
+ * Returns an object of shape:
+ *   { uri: string } on success
+ *   { errorStatus: number, error: string } on failure
+ */
+function resolveIntrospectUri(input) {
+  const uri = typeof input?.uri === 'string' ? input.uri.trim() : '';
+  const connectionId = typeof input?.connectionId === 'string' ? input.connectionId.trim() : '';
+  const databases = Array.isArray(input?.databases) ? input.databases : [];
+  // auth fields must already have {{variables}} resolved by the client
+  const auth = input?.auth && typeof input.auth === 'object' ? input.auth : null;
+
+  let resolvedUri;
+
+  if (uri) {
+    if (!validateMongoUri(uri)) {
+      return { errorStatus: 400, error: 'uri must use the mongodb:// or mongodb+srv:// scheme' };
+    }
+    resolvedUri = uri;
+  } else {
+    if (!connectionId) {
+      return { errorStatus: 400, error: 'uri or connectionId is required' };
+    }
+    if (!isValidMongoConnectionId(connectionId)) {
+      return { errorStatus: 400, error: 'Invalid connection id' };
+    }
+    const conn = databases.find(d => d && d.type === 'mongodb' && d._id === connectionId);
+    if (!conn || typeof conn.connectionUri !== 'string' || !conn.connectionUri.trim()) {
+      return { errorStatus: 404, error: 'Connection not found' };
+    }
+    if (!validateMongoUri(conn.connectionUri)) {
+      return { errorStatus: 400, error: 'stored connection URI must use the mongodb:// or mongodb+srv:// scheme' };
+    }
+    resolvedUri = conn.connectionUri;
+  }
+
+  return { uri: applyMongoAuthToUri(resolvedUri, auth) };
+}
+
+app.post('/api/mongo/introspect/databases', async (req, res) => {
+  const resolved = resolveIntrospectUri(req.body || {});
+  if (!resolved.uri) return res.status(resolved.errorStatus).json({ error: resolved.error });
+  try {
+    const result = await executeMongoIntrospect(resolved.uri, 'databases');
+    // result.error means the driver could not connect — treat as a gateway error
+    // (the request was valid; the upstream server was unavailable or rejected us)
+    if (result.error) return res.status(502).json({ error: result.error });
+    return res.json({ databases: result.databases });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/mongo/introspect/collections', async (req, res) => {
+  const { database } = req.body || {};
+  if (!database || typeof database !== 'string') return res.status(400).json({ error: 'database is required' });
+  const resolved = resolveIntrospectUri(req.body || {});
+  if (!resolved.uri) return res.status(resolved.errorStatus).json({ error: resolved.error });
+  try {
+    const result = await executeMongoIntrospect(resolved.uri, 'collections', database);
+    if (result.error) return res.status(502).json({ error: result.error });
+    return res.json({ collections: result.collections });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── WSDL proxy ────────────────────────────────────────────────────────────────
@@ -172,10 +584,17 @@ app.post('/api/settings', (req, res) => {
 
 app.post('/api/execute', async (req, res) => {
   try {
-    const { item, environment, collectionVariables, globals, dataRow, collVars, cookies, collectionItems, mockBase } = req.body;
+    const { item, environment, collectionVariables, globals, dataRow, collVars, cookies, collectionItems, mockBase, mongoConnections, databases } = req.body;
     if (!item || !item.request) {
       return res.status(400).json({ error: 'Missing item.request in body' });
     }
+    const dbList = Array.isArray(databases) ? databases : [];
+    const runtimeVars = {
+      ...(environment || {}),
+      ...(collectionVariables || {}),
+      ...(globals || {}),
+      ...(dataRow || {}),
+    };
     const result = await executeRequest(item, {
       environment: environment || {},
       collectionVariables: collectionVariables || {},
@@ -185,6 +604,12 @@ app.post('/api/execute', async (req, res) => {
       cookies: cookies || {},
       collectionItems: collectionItems || [],
       mockBase: mockBase || null,
+      mongoConnections: mongoConnections || {},
+      databases: dbList,
+      dbQueryFn: makeDatabaseQueryFn(dbList, runtimeVars),
+      dbMongoQueryFn: makeDatabaseMongoQueryFn(dbList, runtimeVars),
+      dbRedisCommandFn: makeDatabaseRedisCommandFn(dbList, runtimeVars),
+      dbDynamoOperationFn: makeDatabaseDynamoOperationFn(dbList, runtimeVars),
     });
     return res.json(result);
   } catch (err) {
@@ -290,6 +715,18 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
         csvText = content;
       }
     }
+    payload.mongoConnections = payload.mongoConnections || {};
+    const dbList = Array.isArray(payload.databases) ? payload.databases : [];
+    const runtimeVars = {
+      ...(payload.environment || {}),
+      ...(payload.collectionVariables || {}),
+      ...(payload.globals || {}),
+    };
+    payload.databases = dbList;
+    payload.dbQueryFn = makeDatabaseQueryFn(dbList, runtimeVars);
+    payload.dbMongoQueryFn = makeDatabaseMongoQueryFn(dbList, runtimeVars);
+    payload.dbRedisCommandFn = makeDatabaseRedisCommandFn(dbList, runtimeVars);
+    payload.dbDynamoOperationFn = makeDatabaseDynamoOperationFn(dbList, runtimeVars);
     const prepared = prepareCollectionRun(payload, { csvText, jsonRows });
 
     if (prepared.requests.length === 0) {
@@ -2005,6 +2442,187 @@ app.post('/api/cdp/disconnect', _cdpLoopbackOnly, (_req, res) => {
   res.json({ ok: true });
 });
 
+// ─── Database connection routes ────────────────────────────────────────────────
+
+async function handleDatabaseTestConnection(req, res) {
+  const payload = req.body || {};
+  const { variables, ...rawConfig } = payload;
+  const config = resolveDatabaseConfigTemplates(rawConfig, variables || {});
+  if (!config || !config.type) {
+    return res.status(400).json({ error: 'Missing required field: type' });
+  }
+  const VALID_TYPES = ['mysql', 'postgres', 'mongodb', 'sqlite', 'redis', 'cassandra', 'dynamodb', 'oracle', 'mssql'];
+  if (!VALID_TYPES.includes(config.type)) {
+    return res.status(400).json({ error: `Invalid database type: "${config.type}". Must be one of: ${VALID_TYPES.join(', ')}` });
+  }
+  const validationError = validateDatabaseConfig(config, false);
+  if (validationError) {
+    return res.status(400).json({ error: validationError });
+  }
+  try {
+    const result = await dbManager.testConnection(config);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+}
+
+/**
+ * POST /api/databases/test
+ * Body: DatabaseConnection config (no _id required)
+ * Response: { ok: boolean, error?: string, latencyMs?: number }
+ */
+app.post('/api/databases/test', handleDatabaseTestConnection);
+
+// Backward-compatible alias
+app.post('/api/databases/test-connection', handleDatabaseTestConnection);
+
+/**
+ * POST /api/databases/query
+ * Execute a SQL, MongoDB, Redis, or DynamoDB operation against an established pool.
+ * Body (SQL):     { connectionId, sql, params? }
+ * Body (Redis):   { connectionId, command, args? }
+ * Body (MongoDB): { connectionId, operation, document, collection?, options? }
+ * Body (Dynamo):  { connectionId, operation, input }
+ * Internal scripting uses injected db function hooks; this endpoint is for
+ * explicit external callers that need direct query execution.
+ */
+app.post('/api/databases/query', async (req, res) => {
+  const {
+    connectionId,
+    sql,
+    params,
+    operation,
+    document: doc,
+    collection,
+    options,
+    command,
+    args,
+    input,
+  } = req.body;
+  if (typeof connectionId !== 'string' || !connectionId.trim()) {
+    return res.status(400).json({ error: 'connectionId is required' });
+  }
+
+  try {
+    if (sql !== undefined) {
+      if (typeof sql !== 'string') {
+        return res.status(400).json({ error: 'sql must be a string' });
+      }
+      if (params !== undefined && !Array.isArray(params)) {
+        return res.status(400).json({ error: 'params must be an array when provided' });
+      }
+      const poolType = dbManager.getPoolType(connectionId);
+      if (!poolType) {
+        return res.status(400).json({ error: 'No open pool for this connectionId. Call /api/databases/pool/open first.' });
+      }
+      if (!['mysql', 'postgres', 'sqlite', 'cassandra', 'oracle', 'mssql'].includes(poolType)) {
+        return res.status(400).json({ error: 'sql is only supported for SQL-like pools' });
+      }
+      const result = await dbManager.executeQuery(connectionId, sql, params || []);
+      res.json({ success: true, ...result });
+    } else if (command !== undefined) {
+      if (typeof command !== 'string') {
+        return res.status(400).json({ error: 'command must be a string' });
+      }
+      if (args !== undefined && !Array.isArray(args)) {
+        return res.status(400).json({ error: 'args must be an array when provided' });
+      }
+      const poolType = dbManager.getPoolType(connectionId);
+      if (!poolType) {
+        return res.status(400).json({ error: 'No open pool for this connectionId. Call /api/databases/pool/open first.' });
+      }
+      if (poolType !== 'redis') {
+        return res.status(400).json({ error: 'command is only supported for redis pools' });
+      }
+      const result = await dbManager.executeRedisCommand(connectionId, command, args || []);
+      res.json({ success: true, ...result });
+    } else if (operation !== undefined) {
+      if (typeof operation !== 'string') {
+        return res.status(400).json({ error: 'operation must be a string' });
+      }
+      const poolType = dbManager.getPoolType(connectionId);
+      if (!poolType) {
+        return res.status(400).json({ error: 'No open pool for this connectionId. Call /api/databases/pool/open first.' });
+      }
+      if (poolType === 'dynamodb') {
+        const dynInput = input ?? doc;
+        if (dynInput !== undefined && (dynInput === null || typeof dynInput !== 'object' || Array.isArray(dynInput))) {
+          return res.status(400).json({ error: 'input must be an object when provided' });
+        }
+        const result = await dbManager.executeDynamoOperation(connectionId, operation, dynInput || {});
+        return res.json({ success: true, ...result });
+      }
+      if (poolType !== 'mongodb') {
+        return res.status(400).json({ error: 'operation is only supported for mongodb or dynamodb pools' });
+      }
+
+      if (doc !== undefined && (doc === null || typeof doc !== 'object' || Array.isArray(doc))) {
+        return res.status(400).json({ error: 'document must be an object when provided' });
+      }
+      if (collection !== undefined && (typeof collection !== 'string' || !collection.trim())) {
+        return res.status(400).json({ error: 'collection must be a non-empty string when provided' });
+      }
+      if (options !== undefined && (options === null || typeof options !== 'object' || Array.isArray(options))) {
+        return res.status(400).json({ error: 'options must be an object when provided' });
+      }
+      const mongoDocument = {
+        ...(doc || {}),
+        ...(collection ? { collection: String(collection).trim() } : {}),
+      };
+      if (!mongoDocument.collection && operation !== 'aggregate') {
+        return res.status(400).json({ error: 'collection is required for mongodb operations' });
+      }
+      const result = await dbManager.mongoQuery(connectionId, operation, mongoDocument, options || {});
+      res.json({ success: true, ...result });
+    } else {
+      res.status(400).json({ error: 'One of "sql", "command", or "operation" must be provided' });
+    }
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/databases/pool/open
+ * Open a persistent pool for a connection.
+ * Body: DatabaseConnection config with _id + optional variables for template resolution
+ */
+app.post('/api/databases/pool/open', async (req, res) => {
+  const payload = req.body || {};
+  const { variables, ...rawConfig } = payload;
+  const config = resolveDatabaseConfigTemplates(rawConfig, variables || {});
+  if (!config || !config._id || !config.type) {
+    return res.status(400).json({ error: 'Missing required fields: _id, type' });
+  }
+  const VALID_TYPES = ['mysql', 'postgres', 'mongodb', 'sqlite', 'redis', 'cassandra', 'dynamodb', 'oracle', 'mssql'];
+  if (!VALID_TYPES.includes(config.type)) {
+    return res.status(400).json({ error: `Invalid database type: "${config.type}". Must be one of: ${VALID_TYPES.join(', ')}` });
+  }
+  const validationError = validateDatabaseConfig(config, true);
+  if (validationError) {
+    return res.status(400).json({ error: validationError });
+  }
+  try {
+    await dbManager.createPool(config._id, config);
+    res.json({ ok: true, poolId: config._id });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/databases/pool/close
+ * Close a persistent pool.
+ * Body: { poolId: string }
+ */
+app.post('/api/databases/pool/close', async (req, res) => {
+  const { poolId } = req.body;
+  if (!poolId) return res.status(400).json({ error: 'poolId is required' });
+  await dbManager.closePool(poolId);
+  res.json({ ok: true });
+});
+
 // ─── Error handler ─────────────────────────────────────────────────────────────
 // Catches errors forwarded by next(err), including CORS rejections.
 // Returns a plain JSON error without leaking internal stack traces.
@@ -2013,6 +2631,61 @@ app.use((err, _req, res, _next) => {
   const status = err.status || 500;
   if (status >= 500) console.error('Server error:', err);
   res.status(status).json({ error: err.message || 'Internal server error' });
+});
+
+// ─── Database Operations (MongoDB) ─────────────────────────────────────────────
+
+const mongoEngine = require('@apilix/core/mongo-engine');
+
+app.post('/api/database/test-connection', async (req, res) => {
+  try {
+    const { uri } = req.body || {};
+    if (!uri || typeof uri !== 'string') {
+      return res.status(400).json({ error: 'Connection URI is required' });
+    }
+    const success = await mongoEngine.testConnection(uri);
+    res.json({ success });
+  } catch (err) {
+    console.error('Database test error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/database/collections', async (req, res) => {
+  try {
+    const { uri, database } = req.body || {};
+    if (!uri || typeof uri !== 'string') {
+      return res.status(400).json({ error: 'Connection URI is required' });
+    }
+    if (!database || typeof database !== 'string') {
+      return res.status(400).json({ error: 'Database name is required' });
+    }
+    const collections = await mongoEngine.listCollections(uri, database);
+    res.json({ collections });
+  } catch (err) {
+    console.error('List collections error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/database/query', async (req, res) => {
+  try {
+    const { uri, database, collection, query, limit } = req.body || {};
+    if (!uri || typeof uri !== 'string') {
+      return res.status(400).json({ error: 'Connection URI is required' });
+    }
+    if (!database || typeof database !== 'string') {
+      return res.status(400).json({ error: 'Database name is required' });
+    }
+    if (!collection || typeof collection !== 'string') {
+      return res.status(400).json({ error: 'Collection name is required' });
+    }
+    const result = await mongoEngine.executeQuery(uri, database, collection, query, limit);
+    res.json(result);
+  } catch (err) {
+    console.error('Database query error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── Start ─────────────────────────────────────────────────────────────────────

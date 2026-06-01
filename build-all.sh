@@ -7,13 +7,24 @@ npm run build
 echo "==> Building CLI binaries..."
 npm run cli:build:binaries
 
-echo "==> Packaging for macOS..."
-DISABLE_DEVTOOLS=1 npx electron-builder --mac
+HOST_OS="$(uname -s)"
 
-echo "==> Packaging for Windows..."
-DISABLE_DEVTOOLS=1 npx electron-builder --win
+if [[ "$HOST_OS" == "Darwin" ]]; then
+	echo "==> Packaging for macOS (host-native only)..."
+	npm run dist:prepare:server
+	DISABLE_DEVTOOLS=1 npx electron-builder --mac
+elif [[ "$HOST_OS" == "Linux" ]]; then
+	echo "==> Packaging for Linux (host-native only)..."
+	npm run dist:prepare:server
+	DISABLE_DEVTOOLS=1 npx electron-builder --linux
+elif [[ "$HOST_OS" == MINGW* || "$HOST_OS" == MSYS* || "$HOST_OS" == CYGWIN* ]]; then
+	echo "==> Packaging for Windows (host-native only)..."
+	npm run dist:prepare:server
+	DISABLE_DEVTOOLS=1 npx electron-builder --win
+else
+	echo "Unsupported host OS: $HOST_OS"
+	exit 1
+fi
 
-echo "==> Packaging for Linux..."
-DISABLE_DEVTOOLS=1 npx electron-builder --linux
-
-echo "==> All builds complete. Output in dist/"
+echo "==> Host-native build complete. Output in dist/"
+echo "==> For additional OS installers, run this script on each target OS (or use CI matrix builds)."

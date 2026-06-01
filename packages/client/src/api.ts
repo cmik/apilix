@@ -1,5 +1,6 @@
 import axios from 'axios';
 import type { CollectionItem, BaseCollection, RequestResponse, RunnerIteration, RunnerIterationResult, ScriptLog, CookieJar } from './types';
+import type { DatabaseConnection } from './types';
 
 // When loaded via file:// (packaged Electron app), relative /api won't work.
 // The preload script exposes the dynamic server port via window.electronAPI.
@@ -21,6 +22,8 @@ export interface ExecutePayload {
   collectionItems?: CollectionItem[];
   /** When set, the server rewrites the request URL to this base after variable resolution. */
   mockBase?: string;
+  mongoConnections?: Record<string, { uri: string; database?: string }>;
+  databases?: DatabaseConnection[];
 }
 
 export interface ChildRequestLog {
@@ -68,6 +71,105 @@ export interface RunPayload {
   retryDelay?: number;
   retryBackoff?: 'fixed' | 'exponential';
   retryOn?: 'failures' | 'errors' | 'both';
+  mongoConnections?: Record<string, { uri: string; database?: string }>;
+  databases?: DatabaseConnection[];
+}
+
+export interface TestDatabaseConnectionResponse {
+  ok: boolean;
+  latencyMs?: number;
+  error?: string;
+}
+
+export async function testDatabaseConnection(
+  config: Partial<DatabaseConnection>,
+  runtimeVars?: Record<string, string>,
+): Promise<TestDatabaseConnectionResponse> {
+  const response = await api.post<TestDatabaseConnectionResponse>('/databases/test', {
+    ...config,
+    variables: runtimeVars || {},
+  });
+  return response.data;
+}
+
+export async function openDatabasePool(config: DatabaseConnection, runtimeVars?: Record<string, string>): Promise<{ ok: boolean; poolId?: string; error?: string }> {
+  const response = await api.post<{ ok: boolean; poolId?: string; error?: string }>('/databases/pool/open', { ...config, variables: runtimeVars || {} });
+  return response.data;
+}
+
+export async function closeDatabasePool(poolId: string): Promise<{ ok: boolean; error?: string }> {
+  const response = await api.post<{ ok: boolean; error?: string }>('/databases/pool/close', { poolId });
+  return response.data;
+}
+
+export interface DbQueryResult {
+  rows: Record<string, unknown>[];
+  columns: string[];
+  rowCount: number;
+}
+
+export interface DbMongoResult {
+  result: unknown;
+}
+
+export interface DbGenericResult {
+  result: unknown;
+}
+
+export async function executeDbQuery(
+  connectionId: string,
+  sql: string,
+  params?: unknown[],
+): Promise<DbQueryResult> {
+  const response = await api.post<DbQueryResult & { success: boolean }>('/databases/query', {
+    connectionId,
+    sql,
+    params,
+  });
+  return response.data;
+}
+
+export async function executeMongoQuery(
+  connectionId: string,
+  operation: string,
+  document: Record<string, unknown>,
+  collection?: string,
+  options?: Record<string, unknown>,
+): Promise<DbMongoResult> {
+  const response = await api.post<DbMongoResult & { success: boolean }>('/databases/query', {
+    connectionId,
+    operation,
+    document,
+    collection,
+    options,
+  });
+  return response.data;
+}
+
+export async function executeRedisCommand(
+  connectionId: string,
+  command: string,
+  args?: unknown[],
+): Promise<DbGenericResult> {
+  const response = await api.post<DbGenericResult & { success: boolean }>('/databases/query', {
+    connectionId,
+    command,
+    args,
+  });
+  return response.data;
+}
+
+export async function executeDynamoOperation(
+  connectionId: string,
+  operation: string,
+  input: Record<string, unknown>,
+): Promise<DbGenericResult> {
+  const response = await api.post<DbGenericResult & { success: boolean }>('/databases/query', {
+    connectionId,
+    operation,
+    input,
+  });
+  return response.data;
 }
 
 export async function runCollection(
@@ -231,6 +333,53 @@ export async function clearMockDb(): Promise<void> {
   await api.delete('/mock-db');
 }
 
+// ─── MongoDB Database API ─────────────────────────────────────────────────────
+
+import type { MongoCollection, MongoQueryResult } from './types';
+
+export async function testMongoDBConnection(uri: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await api.post<{ success: boolean }>('/database/test-connection', { uri });
+    return res.data;
+  } catch (err: any) {
+    return { success: false, error: err.response?.data?.error || err.message };
+  }
+}
+
+export async function fetchMongoDBCollections(uri: string, database: string): Promise<{ collections: MongoCollection[]; error?: string }> {
+  try {
+    const res = await api.post<{ collections: MongoCollection[] }>('/database/collections', { uri, database });
+    return res.data;
+  } catch (err: any) {
+    return { collections: [], error: err.response?.data?.error || err.message };
+  }
+}
+
+export async function executeMongoDBQuery(
+  uri: string,
+  database: string,
+  collection: string,
+  query: string,
+  limit?: number,
+): Promise<MongoQueryResult> {
+  try {
+    const res = await api.post<MongoQueryResult>('/database/query', {
+      uri,
+      database,
+      collection,
+      query,
+      limit: limit || 100,
+    });
+    return res.data;
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err.response?.data?.error || err.message,
+      executionTime: 0,
+    };
+  }
+}
+
 const GRAPHQL_INTROSPECTION_QUERY = `{__schema{queryType{name}mutationType{name}subscriptionType{name}types{kind name fields(includeDeprecated:true){name type{kind name ofType{kind name ofType{kind name ofType{kind name}}}}args{name type{kind name ofType{kind name ofType{kind name}}}}}}}}`;
 
 export async function graphqlIntrospect(
@@ -268,4 +417,44 @@ export async function fetchWsdl(url: string): Promise<string> {
     responseType: 'text',
   });
   return response.data;
+}
+
+/** Extract a human-readable message from an axios error, preferring the server's error body. */
+function extractApiError(err: unknown): Error {
+  if (
+    err !== null &&
+    typeof err === 'object' &&
+    'isAxiosError' in err &&
+    (err as { isAxiosError: boolean }).isAxiosError
+  ) {
+    const axErr = err as { response?: { data?: { error?: string }; status?: number } };
+    const msg = axErr.response?.data?.error;
+    if (msg) return new Error(msg);
+  }
+  return err instanceof Error ? err : new Error('Request failed');
+}
+
+export interface MongoAuthOverride {
+  mode?: string;
+  username?: string;
+  password?: string;
+  authSource?: string;
+}
+
+export async function listMongoDatabases(uri?: string, connectionId?: string, auth?: MongoAuthOverride, databases?: DatabaseConnection[]): Promise<string[]> {
+  try {
+    const res = await api.post<{ databases: string[] }>('/mongo/introspect/databases', { uri, connectionId, auth, databases });
+    return res.data.databases;
+  } catch (err) {
+    throw extractApiError(err);
+  }
+}
+
+export async function listMongoCollections(uri: string | undefined, database: string, connectionId?: string, auth?: MongoAuthOverride, databases?: DatabaseConnection[]): Promise<string[]> {
+  try {
+    const res = await api.post<{ collections: string[] }>('/mongo/introspect/collections', { uri, database, connectionId, auth, databases });
+    return res.data.collections;
+  } catch (err) {
+    throw extractApiError(err);
+  }
 }

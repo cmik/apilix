@@ -16,6 +16,7 @@ Open it by clicking the gear icon (⚙️) in the bottom-left corner of the Acti
   - [Client Certificates (mTLS)](#client-certificates-mtls)
   - [Proxy](#proxy)
   - [CORS](#cors)
+   - [Database Tools](#database-tools)
   - [About](#about)
   - [Settings Reference](#settings-reference)
 
@@ -128,6 +129,100 @@ This is useful when you run Apilix in web mode (e.g. `http://localhost:3001`) an
 
 ---
 
+## Database Tools
+
+The **Settings** modal does not contain the database connection editor. Database tooling lives in the dedicated **Database** Activity Bar view and uses the current workspace for storage.
+
+Use the Database view when you want to:
+
+- maintain reusable connection profiles per workspace
+- verify connectivity with **Test Connection**
+- import or export connection definitions
+- run interactive queries or operations without creating a collection request first
+
+Supported connection types:
+
+| Type | Notes |
+|---|---|
+| **MySQL** | SQL query mode |
+| **PostgreSQL** | SQL query mode |
+| **SQLite** | SQL query mode (`filePath`) |
+| **Cassandra** | CQL query mode |
+| **Oracle** | SQL query mode (`connectString` or host/port + service/SID) |
+| **MSSQL** | SQL query mode |
+| **MongoDB** | Mongo operation mode |
+| **Redis** | Command mode |
+| **DynamoDB** | Operation mode |
+
+### Add a connection
+
+1. Open **Activity Bar → Database**.
+2. Click **+ New** in the sidebar.
+4. Fill in common fields:
+   - Connection Name
+   - Type
+5. Fill type-specific fields for the selected engine.
+6. Click **Test Connection**.
+7. Click **Save**.
+
+The sidebar also lets you filter connections, duplicate them, copy a connection ID, or delete them.
+
+### Run a query or operation
+
+1. Open **Activity Bar → Database**.
+2. Select a saved connection in the sidebar.
+3. Open the **Query Editor** tab in the main panel.
+4. Enter the command payload for the selected mode:
+   - SQL/CQL text + optional JSON params array
+   - Mongo operation + JSON document/options
+   - Redis command + JSON args array
+   - DynamoDB operation + JSON input object
+5. Click **Run**.
+
+Examples:
+
+```sql
+SELECT id, email FROM users WHERE status = ?
+```
+
+```json
+{ "collection": "users", "query": { "status": "active" } }
+```
+
+```text
+Command: GET
+Args: ["session:123"]
+```
+
+```json
+{ "TableName": "Users", "Key": { "id": { "S": "123" } } }
+```
+
+### Variables in connection fields
+
+Connection fields support `{{variable}}` placeholders.
+
+- During query execution, placeholders resolve from active environment variables and globals.
+- During **Test Connection** from the Database panel, placeholders resolve from the same runtime context.
+
+For MongoDB connections, the query editor also attempts to fetch live database and collection names from the resolved connection.
+
+For SQLite connections, the desktop app offers a file picker, while web mode requires typing the file path manually.
+
+### Validation behavior
+
+- SQLite `filePath` cannot be empty, contain null bytes, or include `..` traversal segments.
+- DynamoDB custom `endpoint` must use `http://` or `https://`.
+- Oracle accepts `connectString` directly, or host/port with one of: `serviceName`, `sid`, or `database`.
+
+### Scope and persistence
+
+Database connections are stored in workspace data (`WorkspaceData.databases`) and move with workspace export/sync.
+
+Connection exports omit secret fields such as passwords, API keys, and tokens. Re-enter them after import.
+
+---
+
 ## About
 
 ![Settings — About tab](images/settings-about.png)
@@ -169,3 +264,5 @@ Click **Check for update** to query the [GitHub Releases API](https://api.github
 | `clientCertificates` | `ClientCertificate[]` | `[]` | Client Certificates tab; per-host mTLS certificate entries |
 
 All settings are stored in the active workspace and persist across sessions.
+
+> Database connection entries are tracked separately from `settings` in workspace data (`databases`), and are managed in the **Database** panel.
