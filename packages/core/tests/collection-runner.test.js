@@ -269,6 +269,118 @@ test('executePreparedCollectionRun - executes a single GET request and records r
   });
 });
 
+test('executePreparedCollectionRun - forwards dbRedisCommandFn for database requests', async () => {
+  const calls = [];
+  const payload = makePayload({
+    collection: {
+      info: { name: 'Redis Collection Run' },
+      item: [{
+        id: 'r1',
+        name: 'Redis command',
+        request: {
+          requestType: 'database',
+          method: 'REDIS',
+          url: { raw: '' },
+          database: {
+            connectionId: 'redis-1',
+            databaseType: 'redis',
+            operation: 'command',
+            command: 'GET',
+            args: '["users:1"]',
+            resultView: 'json',
+          },
+        },
+      }],
+    },
+    dbRedisCommandFn: async (connectionId, command, args) => {
+      calls.push({ connectionId, command, args });
+      return { result: '{"id":1}' };
+    },
+  });
+
+  const prepared = prepareCollectionRun(payload);
+  const run = await executePreparedCollectionRun(prepared);
+
+  assert.equal(run.errors.length, 0);
+  assert.deepEqual(calls, [{ connectionId: 'redis-1', command: 'GET', args: ['users:1'] }]);
+  assert.equal(run.iterations[0].results[0].statusText, 'REDIS_SUCCESS');
+});
+
+test('executePreparedCollectionRun - forwards dbDynamoOperationFn for database requests', async () => {
+  const calls = [];
+  const payload = makePayload({
+    collection: {
+      info: { name: 'Dynamo Collection Run' },
+      item: [{
+        id: 'r1',
+        name: 'Dynamo query',
+        request: {
+          requestType: 'database',
+          method: 'DYNAMODB',
+          url: { raw: '' },
+          database: {
+            connectionId: 'ddb-1',
+            databaseType: 'dynamodb',
+            operation: 'Scan',
+            input: '{"TableName":"Users"}',
+            resultView: 'json',
+          },
+        },
+      }],
+    },
+    dbDynamoOperationFn: async (connectionId, operation, input) => {
+      calls.push({ connectionId, operation, input });
+      return { result: { Count: 2 } };
+    },
+  });
+
+  const prepared = prepareCollectionRun(payload);
+  const run = await executePreparedCollectionRun(prepared);
+
+  assert.equal(run.errors.length, 0);
+  assert.deepEqual(calls, [{ connectionId: 'ddb-1', operation: 'Scan', input: { TableName: 'Users' } }]);
+  assert.equal(run.iterations[0].results[0].statusText, 'DYNAMODB_SUCCESS');
+});
+
+test('executePreparedCollectionRun - forwards databases for named mongodb connections', async () => {
+  const payload = makePayload({
+    collection: {
+      info: { name: 'Mongo Named Connection Collection Run' },
+      item: [{
+        id: 'r1',
+        name: 'Mongo count',
+        request: {
+          requestType: 'mongodb',
+          method: 'MONGO',
+          url: { raw: '' },
+          mongodb: {
+            connection: { mode: 'named', connectionId: 'mongo-1' },
+            database: 'sample',
+            collection: 'users',
+            operation: 'count',
+            filter: '{}',
+            maxTimeMS: 1,
+          },
+        },
+      }],
+    },
+    databases: [{
+      _id: 'mongo-1',
+      type: 'mongodb',
+      connectionUri: 'mongodb://127.0.0.1:1',
+      database: 'sample',
+    }],
+  });
+
+  const prepared = prepareCollectionRun(payload);
+  const run = await executePreparedCollectionRun(prepared);
+  const result = run.iterations[0].results[0];
+
+  assert.equal(result.protocol, 'mongodb');
+  assert.equal(result.mongoStatus, 'error');
+  assert.doesNotMatch(result.error || '', /named connection .* not found/i);
+});
+
 test('executePreparedCollectionRun - resolves :path params from request.url.variable entries', async () => {
   let seenPath = '';
   await withServer((req, res) => {

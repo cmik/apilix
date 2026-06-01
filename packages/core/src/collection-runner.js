@@ -176,8 +176,11 @@ async function executePreparedCollectionRun(prepared, options = {}) {
     allCollectionItems,
     mockBase,
     mongoConnections,
+    databases,
     dbQueryFn,
     dbMongoQueryFn,
+    dbRedisCommandFn,
+    dbDynamoOperationFn,
   } = payload;
   const maxRetries = Math.max(0, Math.min(10, parseInt(payload.maxRetries, 10) || 0));
   const _rawRetryDelay = parseInt(payload.retryDelay, 10);
@@ -260,8 +263,11 @@ async function executePreparedCollectionRun(prepared, options = {}) {
         requestId: item.id || '',
         vmContext,
         mongoConnections: mongoConnections || {},
+        databases: databases || [],
         dbQueryFn: dbQueryFn || null,
         dbMongoQueryFn: dbMongoQueryFn || null,
+        dbRedisCommandFn: dbRedisCommandFn || null,
+        dbDynamoOperationFn: dbDynamoOperationFn || null,
       });
 
       if (result.updatedEnvironment) currentEnv = result.updatedEnvironment;
@@ -302,8 +308,11 @@ async function executePreparedCollectionRun(prepared, options = {}) {
             requestId: item.id || '',
             vmContext,
             mongoConnections: mongoConnections || {},
+            databases: databases || [],
             dbQueryFn: dbQueryFn || null,
             dbMongoQueryFn: dbMongoQueryFn || null,
+            dbRedisCommandFn: dbRedisCommandFn || null,
+            dbDynamoOperationFn: dbDynamoOperationFn || null,
           });
           if (result.updatedEnvironment) currentEnv = result.updatedEnvironment;
           if (result.updatedCollectionVariables) currentCollVars = result.updatedCollectionVariables;
