@@ -21,6 +21,18 @@ function sanitizeSemver(value) {
 	return String(value || '').replace(/^[^0-9]*/, '');
 }
 
+function parseCliArgs(argv) {
+	const out = {};
+	for (const arg of argv || []) {
+		if (arg.startsWith('--platform=')) {
+			out.platform = arg.slice('--platform='.length);
+		} else if (arg.startsWith('--arch=')) {
+			out.arch = arg.slice('--arch='.length);
+		}
+	}
+	return out;
+}
+
 function normalizePlatform(value) {
 	const v = String(value || '').toLowerCase();
 	if (!v) return process.platform;
@@ -51,10 +63,11 @@ function assertBuildTargetCompatibility(targetPlatform, targetArch) {
 }
 
 function main() {
+	const cli = parseCliArgs(process.argv.slice(2));
 	const rootPkg = require(path.join(rootDir, 'package.json'));
 	const electronVersion = sanitizeSemver(rootPkg?.devDependencies?.electron);
-	const targetPlatform = normalizePlatform(process.env.APILIX_TARGET_PLATFORM || process.env.npm_config_platform);
-	const targetArch = normalizeArch(process.env.APILIX_TARGET_ARCH || process.env.npm_config_arch);
+	const targetPlatform = normalizePlatform(cli.platform || process.env.APILIX_TARGET_PLATFORM || process.env.npm_config_platform);
+	const targetArch = normalizeArch(cli.arch || process.env.APILIX_TARGET_ARCH || process.env.npm_config_arch);
 
 	if (!electronVersion) {
 		throw new Error('Cannot determine Electron version from root package.json');

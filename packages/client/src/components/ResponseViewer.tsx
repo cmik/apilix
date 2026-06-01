@@ -787,6 +787,19 @@ function applyJsonPath(root: unknown, expr: string): { value: unknown; error?: s
 }
 // ────────────────────────────────────────────────────────────────────────────
 
+// ── HTML preview ────────────────────────────────────────────────────────────
+function HtmlPreviewView({ body }: { body: string }) {
+  return (
+    <iframe
+      srcDoc={body}
+      sandbox="allow-scripts allow-forms"
+      className="w-full h-full border-0 bg-white"
+      title="HTML preview"
+    />
+  );
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 // ── Context-menu position helper ────────────────────────────────────────────
 /** Clamp a context-menu so it stays inside the viewport. */
 function clampMenuPosition(
@@ -818,6 +831,7 @@ export default function ResponseViewer() {
   const [tab, setTab] = useState<RespTab>('Body');
   const [rawMode, setRawMode] = useState(false);
   const [dbBodyMode, setDbBodyMode] = useState<'table' | 'json'>('table');
+  const [htmlViewMode, setHtmlViewMode] = useState<'source' | 'preview'>('source');
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchCaseSensitive, setSearchCaseSensitive] = useState(false);
@@ -904,6 +918,15 @@ export default function ResponseViewer() {
     if (!response) return false;
     const ct = (response.headers?.['content-type'] ?? response.headers?.['Content-Type'] ?? '').toLowerCase();
     return ct.includes('xml') || ct.includes('soap');
+  }, [response]);
+
+  const isHtml = useMemo(() => {
+    if (!response) return false;
+    const ct = (response.headers?.['content-type'] ?? response.headers?.['Content-Type'] ?? '').toLowerCase();
+    if (ct.includes('text/html') || ct.includes('application/xhtml+xml')) return true;
+    // Fallback heuristic when Content-Type is absent
+    const trimmed = response.body.trimStart().toLowerCase();
+    return trimmed.startsWith('<!doctype html') || trimmed.startsWith('<html');
   }, [response]);
 
   const hasDbTable = useMemo(() => {
@@ -1006,6 +1029,7 @@ export default function ResponseViewer() {
     setSearchFallbackNotice(null);
     autoSwitchedSigRef.current = null;
     setRawMode(false);
+    setHtmlViewMode('source');
   }, [activeTabId, state.activeRequest?.item?.id, isLoading]);
 
   // Scroll to current match after render; auto-switch to Raw when tree shows fewer matches than raw body
@@ -1178,13 +1202,30 @@ export default function ResponseViewer() {
                 </button>
               </div>
             )}
+            {isHtml && !hasDbTable && (
+              <div className="flex rounded overflow-hidden border border-slate-600 text-xs">
+                <button
+                  onClick={() => setHtmlViewMode('source')}
+                  className={`px-2 py-0.5 transition-colors ${htmlViewMode === 'source' ? 'bg-slate-600 text-slate-100' : 'bg-slate-800 text-slate-400 hover:text-slate-200'}`}
+                >
+                  Source
+                </button>
+                <button
+                  onClick={() => setHtmlViewMode('preview')}
+                  className={`px-2 py-0.5 transition-colors ${htmlViewMode === 'preview' ? 'bg-slate-600 text-slate-100' : 'bg-slate-800 text-slate-400 hover:text-slate-200'}`}
+                  title="Render as webpage (scripts sandboxed)"
+                >
+                  Preview
+                </button>
+              </div>
+            )}
             <label className="flex items-center gap-1 text-xs text-slate-500 cursor-pointer">
               <input
                 type="checkbox"
                 checked={rawMode}
                 onChange={e => setRawMode(e.target.checked)}
                 className="accent-orange-500"
-                disabled={hasDbTable && dbBodyMode === 'table'}
+                disabled={(hasDbTable && dbBodyMode === 'table') || (isHtml && htmlViewMode === 'preview')}
               />
               Raw
             </label>
@@ -1249,15 +1290,17 @@ export default function ResponseViewer() {
                 $.…
               </button>
             )}
-            <button
-              onClick={() => { setSearchOpen(o => !o); if (!searchOpen) setTimeout(() => searchInputRef.current?.focus(), 50); }}
-              className={`text-xs px-1.5 py-0.5 rounded transition-colors ${
-                searchOpen ? 'text-orange-400 bg-orange-500/10' : 'text-slate-500 hover:text-slate-300'
-              }`}
-              title="Search in body (⌘F)"
-            >
-              <IconSearch className="w-3.5 h-3.5" />
-            </button>
+            {!(isHtml && htmlViewMode === 'preview') && (
+              <button
+                onClick={() => { setSearchOpen(o => !o); if (!searchOpen) setTimeout(() => searchInputRef.current?.focus(), 50); }}
+                className={`text-xs px-1.5 py-0.5 rounded transition-colors ${
+                  searchOpen ? 'text-orange-400 bg-orange-500/10' : 'text-slate-500 hover:text-slate-300'
+                }`}
+                title="Search in body (⌘F)"
+              >
+                <IconSearch className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -1302,7 +1345,7 @@ export default function ResponseViewer() {
       )}
 
       {/* Search bar */}
-      {tab === 'Body' && (!hasDbTable || dbBodyMode === 'json') && searchOpen && (
+      {tab === 'Body' && (!hasDbTable || dbBodyMode === 'json') && searchOpen && !(isHtml && htmlViewMode === 'preview') && (
         <div className="flex items-center gap-2 px-3 py-1.5 border-b border-slate-700 bg-slate-800/80 shrink-0">
           <input
             ref={searchInputRef}
@@ -1387,7 +1430,7 @@ export default function ResponseViewer() {
       )}
 
       {/* Content */}
-      <div ref={bodyContentRef} className="flex-1 overflow-auto">
+      <div ref={bodyContentRef} className={`flex-1 ${isHtml && htmlViewMode === 'preview' && !rawMode ? 'overflow-hidden' : 'overflow-auto'}`}>
         {tab === 'Body' && (() => {
           if (hasDbTable && dbBodyMode === 'table') {
             return (
@@ -1412,6 +1455,9 @@ export default function ResponseViewer() {
             ) : (
               <JsonTreeView body={serialized} searchQuery={searchQuery.trim() ? searchQuery : undefined} searchOptions={{ caseSensitive: searchCaseSensitive, regex: searchUseRegex }} expandSignal={expandSignal} collapseSignal={collapseSignal} />
             );
+          }
+          if (isHtml && htmlViewMode === 'preview' && !rawMode) {
+            return <HtmlPreviewView body={response.body} />;
           }
           return rawMode ? (
             <pre className="p-3 text-sm font-mono text-slate-200 whitespace-pre-wrap break-all">
