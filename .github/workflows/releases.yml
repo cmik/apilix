@@ -219,7 +219,7 @@ jobs:
           $port = 19093
           $serverOut = Join-Path $env:RUNNER_TEMP 'apilix-smoke-server.out.log'
           $serverErr = Join-Path $env:RUNNER_TEMP 'apilix-smoke-server.err.log'
-          $serverScript = "const http=require('http');const server=http.createServer((req,res)=>{res.writeHead(200,{\"content-type\":\"application/json\"});res.end(JSON.stringify({ok:true}));});server.listen($port,'127.0.0.1');"
+          $serverScript = 'const http=require("http");const server=http.createServer((req,res)=>{res.writeHead(200,{"content-type":"application/json"});res.end(JSON.stringify({ok:true}));});server.listen(' + $port + ',"127.0.0.1");'
 
           $server = Start-Process node -ArgumentList @('-e', $serverScript) -PassThru -RedirectStandardOutput $serverOut -RedirectStandardError $serverErr
 
