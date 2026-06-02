@@ -105,6 +105,7 @@
       "category": "public.app-category.developer-tools"
     },
     "win": {
+      "sign": false,
       "target": [
         {
           "target": "nsis",
