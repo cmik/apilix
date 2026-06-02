@@ -217,21 +217,32 @@ jobs:
           }
 
           $port = 19093
-          $server = Start-Process node -ArgumentList '-e', "require('http').createServer((req,res)=>{res.writeHead(200, {'content-type':'application/json'});res.end(JSON.stringify({ok:true}));}).listen($port,'127.0.0.1')" -PassThru
+          $serverOut = Join-Path $env:RUNNER_TEMP 'apilix-smoke-server.out.log'
+          $serverErr = Join-Path $env:RUNNER_TEMP 'apilix-smoke-server.err.log'
+          $serverScript = "const http=require('http');const server=http.createServer((req,res)=>{res.writeHead(200,{\"content-type\":\"application/json\"});res.end(JSON.stringify({ok:true}));});server.listen($port,'127.0.0.1');"
+
+          $server = Start-Process node -ArgumentList @('-e', $serverScript) -PassThru -RedirectStandardOutput $serverOut -RedirectStandardError $serverErr
 
           $ready = $false
-          for ($i = 0; $i -lt 25; $i++) {
+          for ($i = 0; $i -lt 60; $i++) {
             try {
               Invoke-WebRequest -Uri "http://127.0.0.1:$port/ping" -UseBasicParsing -TimeoutSec 1 | Out-Null
               $ready = $true
               break
             } catch {
+              if ($server.HasExited) {
+                $errOutput = if (Test-Path $serverErr) { Get-Content $serverErr -Raw } else { '' }
+                $outOutput = if (Test-Path $serverOut) { Get-Content $serverOut -Raw } else { '' }
+                throw "Smoke server process exited early (code $($server.ExitCode)). stderr: $errOutput stdout: $outOutput"
+              }
               Start-Sleep -Milliseconds 200
             }
           }
           if (-not $ready) {
             Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
-            throw "Smoke server did not become ready on port $port"
+            $errOutput = if (Test-Path $serverErr) { Get-Content $serverErr -Raw } else { '' }
+            $outOutput = if (Test-Path $serverOut) { Get-Content $serverOut -Raw } else { '' }
+            throw "Smoke server did not become ready on port $port. stderr: $errOutput stdout: $outOutput"
           }
 
           try {
