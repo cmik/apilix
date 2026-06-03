@@ -62,12 +62,19 @@ function assertBuildTargetCompatibility(targetPlatform, targetArch) {
 	}
 }
 
+function shouldSkipAuditFix() {
+	if (process.env.APILIX_SKIP_AUDIT_FIX === '1') return true;
+	if (process.env.CI === 'true') return true;
+	return false;
+}
+
 function main() {
 	const cli = parseCliArgs(process.argv.slice(2));
 	const rootPkg = require(path.join(rootDir, 'package.json'));
 	const electronVersion = sanitizeSemver(rootPkg?.devDependencies?.electron);
 	const targetPlatform = normalizePlatform(cli.platform || process.env.APILIX_TARGET_PLATFORM || process.env.npm_config_platform);
 	const targetArch = normalizeArch(cli.arch || process.env.APILIX_TARGET_ARCH || process.env.npm_config_arch);
+	const useCiInstallForServer = process.env.CI === 'true' && fs.existsSync(path.join(serverDir, 'package-lock.json'));
 
 	if (!electronVersion) {
 		throw new Error('Cannot determine Electron version from root package.json');
@@ -84,20 +91,29 @@ function main() {
 	}
 
 	console.log(`[dist:prepare:server] Installing server production dependencies for ${targetPlatform}/${targetArch}...`);
-	run('npm install --prefix packages/server --omit=dev --install-links --no-workspaces', {
-		env: {
-			...process.env,
-			npm_config_platform: targetPlatform,
-			npm_config_arch: targetArch,
-		},
-	});
+	run(
+		useCiInstallForServer
+			? 'npm ci --prefix packages/server --omit=dev --no-workspaces'
+			: 'npm install --prefix packages/server --omit=dev --install-links --no-workspaces',
+		{
+			env: {
+				...process.env,
+				npm_config_platform: targetPlatform,
+				npm_config_arch: targetArch,
+			},
+		}
+	);
 
-	console.log('[dist:prepare:server] Auditing for vulnerabilities...');
-	try {
-		run('npm audit fix --prefix packages/server --no-workspaces');
-	} catch (error) {
-		console.warn('[dist:prepare:server] Warning: npm audit fix encountered an issue.');
-		console.warn('[dist:prepare:server] Some vulnerabilities may remain. Check manually with: npm audit --prefix packages/server');
+	if (shouldSkipAuditFix()) {
+		console.log('[dist:prepare:server] Skipping npm audit fix (CI/APILIX_SKIP_AUDIT_FIX=1).');
+	} else {
+		console.log('[dist:prepare:server] Auditing for vulnerabilities...');
+		try {
+			run('npm audit fix --prefix packages/server --no-workspaces');
+		} catch (error) {
+			console.warn('[dist:prepare:server] Warning: npm audit fix encountered an issue.');
+			console.warn('[dist:prepare:server] Some vulnerabilities may remain. Check manually with: npm audit --prefix packages/server');
+		}
 	}
 
 	// Verify that critical dependencies were installed.
