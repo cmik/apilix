@@ -29,7 +29,7 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Run workspace package tests
         if: matrix.suite == 'workspaces'
@@ -312,14 +312,15 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Build Windows EXE
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DISABLE_DEVTOOLS: '1'
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npm run dist:prepare:server:win && npm run build && npx electron-builder --win nsis --publish never
+          APILIX_SKIP_AUDIT_FIX: '1'
+        run: npm run dist:prepare:server:win && npm run build && npx electron-builder --win nsis --publish never --config.npmRebuild=false
 
       - name: Upload Windows installer artifact
         uses: actions/upload-artifact@v4
