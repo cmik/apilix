@@ -26,9 +26,20 @@ function methodBadge(method: string) {
   );
 }
 
-function statusBadgeClass(code: number | null, hasError: boolean): string {
+function statusBadgeClass(code: number | null, hasError: boolean, statusText = ''): string {
+  const normalizedStatus = statusText.trim().toUpperCase();
   if (hasError && !code) return 'text-red-400 bg-red-400/15';
   if (code === null) return 'text-slate-500 bg-slate-700';
+  if (code === 0) return 'text-slate-500 bg-slate-700';
+  if (normalizedStatus.endsWith('_SUCCESS')) return 'text-green-400 bg-green-400/15';
+  if (normalizedStatus.endsWith('_PARTIAL')) return 'text-yellow-400 bg-yellow-400/15';
+  if (normalizedStatus.endsWith('_ERROR')) return 'text-red-400 bg-red-400/15';
+  // Database requests use synthetic ranges (e.g. 2200 success, 2400 partial).
+  if (code >= 2000 && code < 3000) {
+    if (code < 2300) return 'text-green-400 bg-green-400/15';
+    if (code < 2500) return 'text-yellow-400 bg-yellow-400/15';
+    return 'text-red-400 bg-red-400/15';
+  }
   if (code < 300) return 'text-green-400 bg-green-400/15';
   if (code < 400) return 'text-sky-400 bg-sky-400/15';
   if (code < 500) return 'text-yellow-400 bg-yellow-400/15';
@@ -170,7 +181,7 @@ export default function HistoryPanel() {
                   <div className="flex items-center gap-1.5 mb-1">
                     {methodBadge(entry.method)}
                     {entry.statusCode !== null ? (
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${statusBadgeClass(entry.statusCode, !!entry.error)}`}>
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${statusBadgeClass(entry.statusCode, !!entry.error, entry.statusText)}`}>
                         {entry.statusCode}
                       </span>
                     ) : entry.error ? (
