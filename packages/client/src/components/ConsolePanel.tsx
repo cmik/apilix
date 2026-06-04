@@ -2,11 +2,31 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useApp } from '../store';
 import type { ConsoleEntry } from '../types';
 import { maskSecrets } from '../utils/secretMask';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import '@xterm/xterm/css/xterm.css';
 
 const MIN_HEIGHT = 120;
 const MAX_HEIGHT = 600;
 const BROADCAST_CHANNEL = 'apilix-console-v1';
 const INTEGRATED_DETAIL_MODE_KEY = 'apilix_console_integrated_detail_mode';
+
+// ─── Electron terminal API (stable reference — set once by preload) ───────────
+
+type ElectronTerminalAPI = {
+  terminalStart: (opts: { shellPath?: string; cwd?: string; cols?: number; rows?: number }) => Promise<{ sessionId: string; pid: number; cwd: string; shell: string }>;
+  terminalInput: (sessionId: string, data: string) => Promise<void>;
+  terminalResize: (sessionId: string, cols: number, rows: number) => Promise<void>;
+  terminalStop: (sessionId: string) => Promise<void>;
+  terminalOnData: (cb: (sessionId: string, data: string) => void) => () => void;
+  terminalOnExit: (cb: (sessionId: string, exitCode: number | null) => void) => () => void;
+};
+
+function getElectronTerminalAPI(): ElectronTerminalAPI | null {
+  const api = (window as unknown as { electronAPI?: Record<string, unknown> }).electronAPI;
+  if (api && typeof api.terminalStart === 'function') return api as unknown as ElectronTerminalAPI;
+  return null;
+}
 
 type DetailMode = 'compact' | 'focus';
 
@@ -17,6 +37,23 @@ function loadDetailMode(storageKey: string): DetailMode {
   } catch {
     return 'compact';
   }
+}
+
+function getXtermTheme(theme: 'dark' | 'light') {
+  if (theme === 'light') {
+    return {
+      background: '#f8fafc',
+      foreground: '#0f172a',
+      cursor: '#ea580c',
+      selectionBackground: '#cbd5e1',
+    };
+  }
+  return {
+    background: '#020617',
+    foreground: '#e2e8f0',
+    cursor: '#fb923c',
+    selectionBackground: '#334155',
+  };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -693,13 +730,173 @@ interface ConsolePanelProps {
   onHeightChange: (h: number) => void;
   onClose: () => void;
   theme: 'dark' | 'light';
+  /** Active bottom-panel mode: 'console' (default) or 'terminal'. */
+  mode: 'console' | 'terminal';
+  onModeChange: (m: 'console' | 'terminal') => void;
 }
 
-export default function ConsolePanel({ height, onHeightChange, onClose, theme }: ConsolePanelProps) {
+export default function ConsolePanel({ height, onHeightChange, onClose, theme, mode, onModeChange }: ConsolePanelProps) {
   const { state, dispatch, secretSet } = useApp();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailMode, setDetailMode] = useState<DetailMode>(() => loadDetailMode(INTEGRATED_DETAIL_MODE_KEY));
   const logs = state.consoleLogs;
+
+  // Terminal state
+  const terminalSession = state.terminalSession;
+  const [termStopping, setTermStopping] = useState(false);
+  const xtermContainerRef = useRef<HTMLDivElement | null>(null);
+  const termRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  // Use a ref so data-listener callbacks always see the current sessionId
+  // without being torn down and re-registered on every state change (fix for
+  // the stale-closure bug that dropped the shell's initial prompt).
+  const sessionIdRef = useRef<string | null>(null);
+  sessionIdRef.current = terminalSession.sessionId;
+
+  const termFontSize = (state.settings?.terminalFontSize as number | undefined) ?? 13;
+  const termScrollback = (state.settings?.terminalScrollbackLimit as number | undefined) ?? 2000;
+
+  const eAPI = getElectronTerminalAPI();
+  const isElectron = eAPI !== null;
+
+  // Create xterm when Terminal mode is shown.
+  // This avoids the default Console-mode mount race where the container ref is
+  // absent on first render and initialization would otherwise never run.
+  useEffect(() => {
+    if (!isElectron || mode !== 'terminal' || !xtermContainerRef.current || termRef.current) return;
+
+    const term = new Terminal({
+      cursorBlink: true,
+      fontSize: termFontSize,
+      scrollback: termScrollback,
+      theme: getXtermTheme(theme),
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+    });
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(xtermContainerRef.current);
+    fitAddon.fit();
+    term.writeln('\x1b[90mPress Start to open a terminal session.\x1b[0m');
+
+    const keyboardSub = term.onData((data: string) => {
+      if (!eAPI || !sessionIdRef.current) return;
+      eAPI.terminalInput(sessionIdRef.current, data).catch(() => {});
+    });
+
+    termRef.current = term;
+    fitAddonRef.current = fitAddon;
+
+    return () => {
+      keyboardSub.dispose();
+      term.dispose();
+      termRef.current = null;
+      fitAddonRef.current = null;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isElectron, mode, eAPI]);
+
+  // Register terminal data / exit listeners once on mount.
+  // Callbacks read sessionIdRef.current so they are never stale.
+  useEffect(() => {
+    if (!eAPI) return;
+
+    const removeData = eAPI.terminalOnData((sessionId, data) => {
+      if (sessionId !== sessionIdRef.current) return;
+      termRef.current?.write(data);
+    });
+
+    const removeExit = eAPI.terminalOnExit((sessionId, exitCode) => {
+      if (sessionId !== sessionIdRef.current) return;
+      dispatch({ type: 'TERMINAL_SESSION_ENDED', payload: { exitCode } });
+      termRef.current?.write(`\r\n\x1b[90mProcess exited with code ${exitCode ?? '?'}\x1b[0m\r\n`);
+    });
+
+    return () => {
+      removeData();
+      removeExit();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally empty — eAPI is stable; sessionId read via ref
+
+  // Update terminal appearance when settings/theme change.
+  useEffect(() => {
+    if (!termRef.current) return;
+    termRef.current.options.fontSize = termFontSize;
+    fitAddonRef.current?.fit();
+  }, [termFontSize]);
+
+  useEffect(() => {
+    if (!termRef.current) return;
+    termRef.current.options.scrollback = termScrollback;
+  }, [termScrollback]);
+
+  useEffect(() => {
+    if (!termRef.current) return;
+    termRef.current.options.theme = getXtermTheme(theme);
+  }, [theme]);
+
+  // Keep xterm focused/fitted when the panel becomes active.
+  useEffect(() => {
+    if (mode === 'terminal') {
+      fitAddonRef.current?.fit();
+      termRef.current?.focus();
+    }
+  }, [mode]);
+
+  // Keep xterm dimensions in sync with bottom panel drag-resize.
+  // ResizeObserver usually handles this, but an explicit height hook prevents
+  // stale terminal viewport sizes on some platforms/render cycles.
+  useEffect(() => {
+    if (!isElectron || mode !== 'terminal' || !termRef.current) return;
+    fitAddonRef.current?.fit();
+    if (eAPI && sessionIdRef.current) {
+      eAPI.terminalResize(sessionIdRef.current, termRef.current.cols, termRef.current.rows).catch(() => {});
+    }
+  }, [height, mode, isElectron, eAPI]);
+
+  // Resize PTY when terminal viewport changes size.
+  useEffect(() => {
+    if (!isElectron || !xtermContainerRef.current) return;
+
+    const ro = new ResizeObserver(() => {
+      fitAddonRef.current?.fit();
+      if (eAPI && sessionIdRef.current && termRef.current) {
+        eAPI.terminalResize(sessionIdRef.current, termRef.current.cols, termRef.current.rows).catch(() => {});
+      }
+    });
+
+    ro.observe(xtermContainerRef.current);
+    return () => ro.disconnect();
+  }, [isElectron, eAPI]);
+
+  async function handleTerminalStart() {
+    if (!eAPI) return;
+    try {
+      termRef.current?.clear();
+      fitAddonRef.current?.fit();
+      const shellPath = state.settings?.terminalShellPath as string | undefined;
+      const cols = termRef.current?.cols ?? 80;
+      const rows = termRef.current?.rows ?? 24;
+      const result = await eAPI.terminalStart({ shellPath, cols, rows });
+      dispatch({ type: 'TERMINAL_SESSION_STARTED', payload: result });
+      termRef.current?.write(`\x1b[90mShell: ${result.shell}  CWD: ${result.cwd}\x1b[0m\r\n`);
+      termRef.current?.focus();
+    } catch (err) {
+      termRef.current?.write(`\x1b[31mFailed to start terminal: ${(err as Error).message}\x1b[0m\r\n`);
+    }
+  }
+
+  async function handleTerminalStop() {
+    if (!eAPI || !terminalSession.sessionId || termStopping) return;
+    setTermStopping(true);
+    try {
+      await eAPI.terminalStop(terminalSession.sessionId);
+      dispatch({ type: 'TERMINAL_SESSION_ENDED', payload: { exitCode: null } });
+      termRef.current?.write('\r\n\x1b[90mSession stopped.\x1b[0m\r\n');
+    } finally {
+      setTermStopping(false);
+    }
+  }
 
   const shouldMask = state.settings?.maskSecrets !== false;
   const mask = (v: string) => shouldMask ? maskSecrets(v, secretSet) : v;
@@ -858,29 +1055,85 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme }:
           <polyline points="4 17 10 11 4 5" />
           <line x1="12" y1="19" x2="20" y2="19" />
         </svg>
-        <span className="text-xs font-semibold text-slate-300 uppercase tracking-wide">Console</span>
-        <span className="text-xs text-slate-600">{logs.length}</span>
+
+        {/* Mode tabs */}
+        <button
+          onClick={() => onModeChange('console')}
+          className={`text-xs px-2 py-0.5 rounded transition-colors ${mode === 'console' ? 'text-orange-400 bg-orange-900/20' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800'}`}
+        >
+          Console
+          {mode === 'console' && <span className="ml-1 text-slate-600">{logs.length}</span>}
+        </button>
+        <button
+          onClick={() => onModeChange('terminal')}
+          className={`text-xs px-2 py-0.5 rounded transition-colors ${mode === 'terminal' ? 'text-orange-400 bg-orange-900/20' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800'}`}
+        >
+          Terminal
+          {mode === 'terminal' && terminalSession.connected && (
+            <span className="ml-1.5 w-1.5 h-1.5 rounded-full bg-green-400 inline-block" />
+          )}
+        </button>
 
         <div className="flex-1" />
 
-        <button
-          onClick={() => { dispatch({ type: 'CLEAR_CONSOLE_LOGS' }); }}
-          className="text-xs text-slate-500 hover:text-slate-200 px-2 py-0.5 rounded hover:bg-slate-800 transition-colors"
-          title="Clear"
-        >
-          Clear
-        </button>
+        {mode === 'console' && (
+          <>
+            <button
+              onClick={() => { dispatch({ type: 'CLEAR_CONSOLE_LOGS' }); }}
+              className="text-xs text-slate-500 hover:text-slate-200 px-2 py-0.5 rounded hover:bg-slate-800 transition-colors"
+              title="Clear"
+            >
+              Clear
+            </button>
 
-        <button
-          onClick={openInNewWindow}
-          className="flex items-center gap-1 text-xs text-slate-500 hover:text-orange-400 px-2 py-0.5 rounded hover:bg-slate-800 transition-colors"
-          title="Open in new window"
-        >
-          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-          </svg>
-          <span>New window</span>
-        </button>
+            <button
+              onClick={openInNewWindow}
+              className="flex items-center gap-1 text-xs text-slate-500 hover:text-orange-400 px-2 py-0.5 rounded hover:bg-slate-800 transition-colors"
+              title="Open in new window"
+            >
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+              <span>New window</span>
+            </button>
+          </>
+        )}
+
+        {mode === 'terminal' && (
+          <>
+            {terminalSession.connected ? (
+              <button
+                onClick={handleTerminalStop}
+                disabled={termStopping}
+                className="text-xs text-red-400 hover:text-red-300 px-2 py-0.5 rounded hover:bg-slate-800 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                title="Stop terminal session"
+              >
+                {termStopping ? 'Stopping…' : 'Stop'}
+              </button>
+            ) : (
+              <button
+                onClick={handleTerminalStart}
+                disabled={!isElectron}
+                className="text-xs text-green-400 hover:text-green-300 px-2 py-0.5 rounded hover:bg-slate-800 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                title={isElectron ? 'Start terminal session' : 'Terminal only available in the desktop app'}
+              >
+                Start
+              </button>
+            )}
+            <button
+              onClick={() => {
+                termRef.current?.clear();
+                if (!terminalSession.connected) {
+                  termRef.current?.writeln('\x1b[90mPress Start to open a terminal session.\x1b[0m');
+                }
+              }}
+              className="text-xs text-slate-500 hover:text-slate-200 px-2 py-0.5 rounded hover:bg-slate-800 transition-colors"
+              title="Clear output"
+            >
+              Clear
+            </button>
+          </>
+        )}
 
         <button
           onClick={onClose}
@@ -891,7 +1144,32 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme }:
         </button>
       </div>
 
+      {/* Terminal pane */}
+      {mode === 'terminal' && (
+        <div className="flex-1 flex flex-col min-h-0 bg-slate-950">
+          {!isElectron ? (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center px-6 py-8 max-w-sm">
+                <svg className="w-8 h-8 text-slate-600 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <polyline points="4 17 10 11 4 5" />
+                  <line x1="12" y1="19" x2="20" y2="19" />
+                </svg>
+                <p className="text-sm font-medium text-slate-400 mb-1">Terminal not available</p>
+                <p className="text-xs text-slate-600">The integrated terminal is only available in the Apilix desktop app.</p>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex-1 min-h-0 p-2">
+                <div ref={xtermContainerRef} className="w-full h-full overflow-hidden" />
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Log list */}
+      {mode === 'console' && (
       <div className="flex-1 overflow-y-auto min-h-0">
         {logs.length === 0 ? (
           <div className="h-full flex items-center justify-center text-xs text-slate-700 italic select-none">
@@ -960,6 +1238,7 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme }:
           ))
         )}
       </div>
+      )}
     </div>
   );
 }

@@ -15,6 +15,7 @@ All global shortcuts use **⌘** (Cmd) on macOS and **Ctrl** on Windows/Linux. S
   - [Modal and Panel Shortcuts](#modal-and-panel-shortcuts)
   - [Script Editor Shortcuts](#script-editor-shortcuts)
   - [Body Editor Shortcuts](#body-editor-shortcuts)
+  - [Integrated Terminal Shortcuts](#integrated-terminal-shortcuts)
 
 ---
 
@@ -112,3 +113,25 @@ The raw body editors (Raw, GraphQL query, XML) support an inline find bar and a 
 | **Escape** | Close the Find / Find & Replace bar |
 
 > Pressing **⌘ F** or **⌘ H** again while the bar is already open in the same mode **closes** it. Switch between Find and Replace via the **Find / Replace** tabs inside the bar.
+
+---
+
+## Integrated Terminal Shortcuts
+
+The integrated terminal uses a real PTY and renders via xterm.js, so **all standard terminal key sequences are passed directly to the shell**. The table below lists the most commonly referenced shortcuts; any key combination your shell or terminal program recognises will work.
+
+| Shortcut | Action |
+|---|---|
+| Any printable character | Input sent to the shell |
+| **Enter** | Execute the current command |
+| **Ctrl C** | Interrupt / send SIGINT to the foreground process |
+| **Ctrl D** | Send EOF (exit interactive shell or program) |
+| **Ctrl Z** | Suspend the foreground process (send SIGTSTP) |
+| **Ctrl L** | Clear the terminal screen (same as `clear`) |
+| **↑ / ↓** | Shell history navigation (handled by the shell) |
+| **Tab** | Shell autocomplete (handled by the shell) |
+| **Ctrl A / Ctrl E** | Jump to beginning / end of line (readline shells) |
+
+> Because all keys are forwarded to the PTY, standard Apilix app shortcuts (**⌘ Enter**, **⌘ S**, etc.) are **inactive** while the terminal pane has keyboard focus. Click outside the terminal surface to restore global shortcuts.
+
+> The terminal is only available in the **Electron desktop app**. See [Integrated Terminal](Integrated-Terminal.md) for full documentation.

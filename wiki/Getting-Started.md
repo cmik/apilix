@@ -51,6 +51,23 @@ Download the installer for your platform from the [Releases](https://github.com/
 | Windows | `Apilix-x.x.x-portable.exe` | Portable — double-click to run, no installation required |
 | Linux | `Apilix-x.x.x.AppImage` | `chmod +x` the file, then run it |
 
+To grab the latest release asset from a terminal, use GitHub CLI:
+
+```bash
+gh release download --repo cmik/apilix --latest --pattern "Apilix*"
+```
+
+Or use curl for a direct download (macOS example):
+
+```bash
+DMG_URL=$(curl -fsSL https://api.github.com/repos/cmik/apilix/releases/latest \
+  | grep browser_download_url \
+  | grep -E 'Apilix.*\.dmg' \
+  | head -n 1 \
+  | cut -d '"' -f 4)
+curl -fL -o Apilix.dmg "$DMG_URL"
+```
+
 > **macOS Gatekeeper:** If macOS blocks the app on first launch, go to **System Settings → Privacy & Security** and click **Open Anyway**.
 
 > **Linux AppImage:** Make the file executable before running:
@@ -124,6 +141,12 @@ To run the full Electron desktop experience from source:
 npm run setup          # install all dependencies
 npm run electron:dev   # start server + client + Electron shell
 ```
+
+> **Native modules:** The Integrated Terminal feature uses `node-pty`, a native Node.js addon. After `npm run setup` (or after upgrading the Electron version), rebuild native modules against the Electron headers:
+> ```bash
+> npm run rebuild:native
+> ```
+> Skip this step if you do not need the Integrated Terminal, or if you are running in web mode only.
 
 ---
 

@@ -29,13 +29,11 @@ Apilix is a lightweight, open-source API development and testing tool built for 
 | 📁 | Collections, folders & tabbed editing | 🔁 | Collection Runner with CSV data-driven testing |
 | 🌍 | Environments & variable scopes | 🎭 | Built-in Mock Server with WebSocket support |
 | ✍️ | Pre-request & test scripts (`pm.*` compatible) | 🔄 | Sync via Git, S3, HTTP, or Team server |
-| 🍃 | MongoDB requests (find, insert, aggregate, script…) | 🗄️ | Database panel (SQL/CQL, MongoDB, Redis, DynamoDB queries) |
-| 🌊 | Chrome CDP browser traffic capture | 📊 | Mixed HTTP + database collections in the runner |
-| 📥 | Import: Postman, OpenAPI, cURL, HAR, Hurl | 🔍 | Response search, JSONPath/JMESPath tester |
-| 📤 | Export: Postman, cURL, Hurl, Code Snippets | 🏷️ | Network timeline, TLS chain, redirect chain |
-| 🕸️ | GraphQL with schema introspection | 🍪 | Cookie manager |
-| 🕐 | Request History with snapshot re-open | ⚡ | Keyboard shortcuts & dark/light theme |
-| 🖥️ | Headless CLI runner — JSON & JUnit reporters, CSV data | 📦 | Desktop app + local web mode from one codebase |
+| 📥 | Import: Postman, OpenAPI, cURL, HAR, Hurl | 🌊 | Chrome CDP browser traffic capture |
+| 📤 | Export: Postman, cURL, Hurl, Code Snippets | 🔍 | Response search, JSONPath/JMESPath tester |
+| 🕸️ | GraphQL with schema introspection | 🏷️ | Network timeline, TLS chain, redirect chain |
+| 🍪 | Cookie manager | 🕐 | Request History with snapshot re-open |
+| ⚡ | Keyboard shortcuts & dark/light theme | 🖥️ | Headless CLI runner — JSON & JUnit reporters, CSV data |
 
 ---
 
@@ -50,6 +48,23 @@ Download the installer for your platform from the [Releases](https://github.com/
 | macOS | `Apilix-x.x.x.dmg` |
 | Windows | `Apilix-x.x.x-portable.exe` (portable, no installation required) |
 | Linux | `Apilix-x.x.x.AppImage` |
+
+To download the latest release asset from the terminal, use GitHub CLI:
+
+```bash
+gh release download --repo cmik/apilix --latest --pattern "Apilix*"
+```
+
+Or use curl for a direct download (macOS example):
+
+```bash
+DMG_URL=$(curl -fsSL https://api.github.com/repos/cmik/apilix/releases/latest \
+	| grep browser_download_url \
+	| grep -E 'Apilix.*\.dmg' \
+	| head -n 1 \
+	| cut -d '"' -f 4)
+curl -fL -o Apilix.dmg "$DMG_URL"
+```
 
 ### From Source (Web Mode)
 

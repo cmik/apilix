@@ -42,6 +42,23 @@ Pre-built installers are available on the [**GitHub Releases page**](https://git
 
 Download the installer for your platform from the [releases page](https://github.com/cmik/apilix/releases/latest), install, and launch — no Node.js required.
 
+If you want the latest macOS installer from the terminal, use GitHub CLI:
+
+```bash
+gh release download --repo cmik/apilix --latest --pattern "Apilix*.dmg"
+```
+
+Or use curl for a direct download:
+
+```bash
+DMG_URL=$(curl -fsSL https://api.github.com/repos/cmik/apilix/releases/latest \
+  | grep browser_download_url \
+  | grep -E 'Apilix.*\.dmg' \
+  | head -n 1 \
+  | cut -d '"' -f 4)
+curl -fL -o Apilix.dmg "$DMG_URL"
+```
+
 Data (collections, environments) is stored locally in the app profile:
 - **macOS:** `~/Library/Application Support/Apilix/`
 - **Windows:** `%APPDATA%\Apilix\`
@@ -271,6 +288,18 @@ Pre-built `apilix` binaries for macOS, Linux, and Windows are available on the [
 | Windows | `apilix-win.exe` |
 
 Download the binary, make it executable (macOS/Linux: `chmod +x apilix-macos`), and run it directly:
+
+If you want to fetch the latest binary from the terminal, GitHub CLI is the easiest option:
+
+```bash
+gh release download --repo cmik/apilix --latest --pattern "apilix-*"
+```
+
+Or use curl for a direct download:
+
+```bash
+curl -L -o apilix-macos https://github.com/cmik/apilix/releases/latest/download/apilix-macos
+```
 
 ```bash
 ./apilix-macos run ./collection.json -e ./environment.json

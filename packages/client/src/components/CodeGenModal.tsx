@@ -77,7 +77,7 @@ export default function CodeGenModal({ params, onClose }: Props) {
 
         {/* Code block */}
         <div className="flex-1 overflow-auto min-h-0">
-          <pre className="p-4 text-sm font-mono text-slate-100 leading-relaxed whitespace-pre">
+          <pre className="p-4 text-sm font-mono text-slate-100 leading-relaxed whitespace-pre-wrap break-words">
             <code>{code}</code>
           </pre>
         </div>

@@ -93,6 +93,14 @@ export const initialState: AppState = {
   recentRuns: [],
   savedRuns: [],
   runnerLoadedRun: null,
+  terminalSession: {
+    connected: false,
+    sessionId: null,
+    cwd: null,
+    shell: null,
+    pid: null,
+    exitCode: null,
+  },
   captureViewState: {
     search: '',
     filterDomain: '',
@@ -675,6 +683,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         mockCollections: data.mockCollections ?? [],
         mockRoutes: data.mockRoutes ?? [],
         mockPort: data.mockPort ?? 3002,
+        terminalSession: { connected: false, sessionId: null, cwd: null, shell: null, pid: null, exitCode: null },
       };
     }
 
@@ -708,6 +717,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         recentRuns: [],
         savedRuns: [],
         runnerLoadedRun: null,
+        terminalSession: { connected: false, sessionId: null, cwd: null, shell: null, pid: null, exitCode: null },
       };
 
     case 'SWITCH_WORKSPACE': {
@@ -744,6 +754,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         recentRuns: [],
         savedRuns: [],
         runnerLoadedRun: null,
+        terminalSession: { connected: false, sessionId: null, cwd: null, shell: null, pid: null, exitCode: null },
       };
     }
 
@@ -804,6 +815,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         recentRuns: [],
         savedRuns: [],
         runnerLoadedRun: null,
+        terminalSession: { connected: false, sessionId: null, cwd: null, shell: null, pid: null, exitCode: null },
       };
     }
 
@@ -836,6 +848,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         mockCollections: data.mockCollections ?? [],
         mockRoutes: data.mockRoutes ?? [],
         mockPort: data.mockPort ?? 3002,
+        terminalSession: { connected: false, sessionId: null, cwd: null, shell: null, pid: null, exitCode: null },
       };
     }
 
@@ -927,6 +940,33 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'CLEAR_LOADED_RUNNER_RUN':
       return { ...state, runnerLoadedRun: null };
+
+    // ── Terminal ──────────────────────────────────────────────────────────────────
+    case 'TERMINAL_SESSION_STARTED':
+      return {
+        ...state,
+        terminalSession: {
+          ...state.terminalSession,
+          connected: true,
+          sessionId: action.payload.sessionId,
+          pid: action.payload.pid,
+          cwd: action.payload.cwd,
+          shell: action.payload.shell,
+          exitCode: null,
+        },
+      };
+
+    case 'TERMINAL_SESSION_ENDED':
+      return {
+        ...state,
+        terminalSession: {
+          ...state.terminalSession,
+          connected: false,
+          sessionId: null,
+          pid: null,
+          exitCode: action.payload.exitCode,
+        },
+      };
 
     default:
       return state;

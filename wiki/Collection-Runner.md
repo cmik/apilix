@@ -289,6 +289,18 @@ npm run cli:build:binaries
 
 After building binaries, run Apilix directly without `npm run`.
 
+To download the latest CLI binary from the terminal, use GitHub CLI:
+
+```bash
+gh release download --repo cmik/apilix --latest --pattern "apilix-*"
+```
+
+Or use curl for a direct download (macOS example):
+
+```bash
+curl -L -o apilix-macos https://github.com/cmik/apilix/releases/latest/download/apilix-macos
+```
+
 macOS:
 
 ```bash

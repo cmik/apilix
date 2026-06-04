@@ -7,11 +7,11 @@ import Sidebar from './components/Sidebar';
 import ActivityBar from './components/ActivityBar';
 import RequestBuilder from './components/RequestBuilder';
 import ResponseViewer from './components/ResponseViewer';
-import EnvironmentPanel from './components/EnvironmentPanel';
-import ConsolePanel from './components/ConsolePanel';
+const EnvironmentPanel = lazy(() => import('./components/EnvironmentPanel'));
+const ConsolePanel = lazy(() => import('./components/ConsolePanel'));
 import StatusBar from './components/StatusBar';
 import TabBar from './components/TabBar';
-import GlobalVariablesPanel from './components/GlobalVariablesPanel';
+const GlobalVariablesPanel = lazy(() => import('./components/GlobalVariablesPanel'));
 import ConfirmModal from './components/ConfirmModal';
 import { IconEye } from './components/Icons';
 
@@ -51,6 +51,8 @@ import {
   getQuickSyncSuccessMessage,
 } from './utils/quickSyncFlow';
 import { isVersionGreater, fetchLatestGitHubVersion } from './utils/versionUtils';
+
+
 
 // --- Env Quick Panel ---
 
@@ -380,6 +382,8 @@ const MIN_SIDEBAR = 160;
 const MAX_SIDEBAR = 520;
 const DEFAULT_SIDEBAR = 256;
 const DEFAULT_CONSOLE_HEIGHT = 240;
+const MIN_CONSOLE_PANEL_HEIGHT = 120;
+const MAX_CONSOLE_PANEL_HEIGHT = 600;
 const MIN_REQUEST_PANEL_HEIGHT = 220;
 const MIN_RESPONSE_PANEL_HEIGHT = 160;
 const DEFAULT_RESPONSE_PANEL_HEIGHT = 320;
@@ -473,7 +477,12 @@ export default function App() {
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR);
   const [envQuickOpen, setEnvQuickOpen] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
-  const [consoleHeight, setConsoleHeight] = useState(DEFAULT_CONSOLE_HEIGHT);
+  const [consoleHeight, setConsoleHeight] = useState(() => {
+    const saved = Number(localStorage.getItem('apilix_console_panel_height'));
+    if (!Number.isFinite(saved) || saved <= 0) return DEFAULT_CONSOLE_HEIGHT;
+    return Math.min(MAX_CONSOLE_PANEL_HEIGHT, Math.max(MIN_CONSOLE_PANEL_HEIGHT, saved));
+  });
+  const [consolePanelMode, setConsolePanelMode] = useState<'console' | 'terminal'>('console');
   const [responsePanelHeight, setResponsePanelHeight] = useState(() => {
     const saved = Number(localStorage.getItem('apilix_response_panel_height'));
     return Number.isFinite(saved) && saved > 0 ? saved : DEFAULT_RESPONSE_PANEL_HEIGHT;
@@ -547,6 +556,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('apilix_request_split_width', String(Math.round(requestSplitWidth)));
   }, [requestSplitWidth]);
+
+  useEffect(() => {
+    localStorage.setItem('apilix_console_panel_height', String(Math.round(consoleHeight)));
+  }, [consoleHeight]);
 
   const openSettings = useCallback((tab: SettingsTab = 'appearance') => {
     setSettingsInitialTab(tab);
@@ -1296,6 +1309,8 @@ export default function App() {
             onHeightChange={setConsoleHeight}
             onClose={() => setConsoleOpen(false)}
             theme={theme}
+            mode={consolePanelMode}
+            onModeChange={setConsolePanelMode}
           />
         </div>
       </div>
@@ -1310,6 +1325,8 @@ export default function App() {
         serverStatus={serverStatus}
         updateAvailable={updateAvailable}
         latestVersion={latestVersion}
+        terminalSessionActive={state.terminalSession.connected}
+        onSwitchToTerminal={() => { setConsoleOpen(true); setConsolePanelMode('terminal'); }}
       />
 
       {/* Env quick panel */}

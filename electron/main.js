@@ -4,6 +4,9 @@ const { app, BrowserWindow, shell, ipcMain, dialog, safeStorage, Menu } = requir
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
+const pty = require('node-pty');
+const os = require('os');
+const crypto = require('crypto');
 
 const isDev = !app.isPackaged;
 // DevTools are always available in dev. In packaged builds they are disabled  
@@ -479,6 +482,113 @@ ipcMain.handle('cdp-kill-chrome', async () => {
   return { ok: true };
 });
 
+// ─── Terminal IPC ─────────────────────────────────────────────────────────────
+
+
+/** Map of sessionId -> { proc, shell, cwd, pid } */
+const terminalSessions = new Map();
+
+function getDefaultShell() {
+  if (process.platform === 'win32') return process.env.COMSPEC || 'cmd.exe';
+  if (process.env.SHELL) return process.env.SHELL;
+  // .desktop launches on Linux often omit SHELL; prefer POSIX sh there.
+  return process.platform === 'darwin' ? '/bin/zsh' : '/bin/sh';
+}
+
+function resolveTerminalCwd(requestedCwd) {
+  const homedir = os.homedir();
+  if (!requestedCwd) return homedir;
+  try {
+    const stats = fs.statSync(requestedCwd);
+    if (stats.isDirectory()) return requestedCwd;
+  } catch (_) {}
+  return homedir;
+}
+
+ipcMain.handle('terminal-start', async (_event, rawOpts = {}) => {
+  const opts = rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
+  // Validate shellPath: must be an absolute path to an existing file.
+  const shell = (() => {
+    const candidate = opts.shellPath;
+    if (candidate && typeof candidate === 'string' && path.isAbsolute(candidate)) {
+      try { if (fs.statSync(candidate).isFile()) return candidate; } catch (_) {}
+    }
+    return getDefaultShell();
+  })();
+  const workingDir = resolveTerminalCwd(opts.cwd);
+  const sessionId = crypto.randomUUID();
+  const cols = Number.isFinite(opts.cols) && opts.cols > 0 ? Math.floor(opts.cols) : 80;
+  const rows = Number.isFinite(opts.rows) && opts.rows > 0 ? Math.floor(opts.rows) : 24;
+
+  const proc = pty.spawn(shell, [], {
+    name: 'xterm-256color',
+    cols,
+    rows,
+    cwd: workingDir,
+    env: process.env,
+  });
+
+  terminalSessions.set(sessionId, { proc, shell, cwd: workingDir, pid: proc.pid });
+
+  proc.onData((data) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('terminal-data', sessionId, data);
+    }
+  });
+
+  proc.onExit(({ exitCode }) => {
+    terminalSessions.delete(sessionId);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('terminal-exit', sessionId, exitCode ?? null);
+    }
+  });
+
+  return { sessionId, pid: proc.pid, cwd: workingDir, shell };
+});
+
+ipcMain.handle('terminal-input', async (_event, payload = {}) => {
+  if (!payload || typeof payload !== 'object') return { ok: false };
+  const { sessionId, data } = payload;
+  if (!sessionId || typeof sessionId !== 'string') return { ok: false };
+  if (typeof data !== 'string') return { ok: false };
+  const session = terminalSessions.get(sessionId);
+  if (session) {
+    session.proc.write(data);
+  }
+  return { ok: true };
+});
+
+ipcMain.handle('terminal-resize', async (_event, payload = {}) => {
+  if (!payload || typeof payload !== 'object') return { ok: false };
+  const { sessionId, cols, rows } = payload;
+  if (!sessionId || typeof sessionId !== 'string') return { ok: false };
+  if (!Number.isFinite(cols) || !Number.isFinite(rows)) return { ok: false };
+  const session = terminalSessions.get(sessionId);
+  if (session) {
+    session.proc.resize(Math.max(1, Math.floor(cols)), Math.max(1, Math.floor(rows)));
+  }
+  return { ok: true };
+});
+
+ipcMain.handle('terminal-stop', async (_event, payload = {}) => {
+  if (!payload || typeof payload !== 'object') return { ok: false };
+  const { sessionId } = payload;
+  if (!sessionId || typeof sessionId !== 'string') return { ok: false };
+  const session = terminalSessions.get(sessionId);
+  if (session) {
+    try { session.proc.kill(); } catch (_) {}
+    terminalSessions.delete(sessionId);
+  }
+  return { ok: true };
+});
+
+function killAllTerminalSessions() {
+  for (const [, session] of terminalSessions) {
+    try { session.proc.kill(); } catch (_) {}
+  }
+  terminalSessions.clear();
+}
+
 // Renderer confirmed it is safe to close.
 ipcMain.on('app:close-response', (_, { confirmed }) => {
   if (closeGuardTimeout) {
@@ -491,6 +601,7 @@ ipcMain.on('app:close-response', (_, { confirmed }) => {
 });
 
 app.on('window-all-closed', () => {
+  killAllTerminalSessions();
   if (serverProcess) {
     serverProcess.kill();
     serverProcess = null;
@@ -499,6 +610,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  killAllTerminalSessions();
   if (serverProcess) {
     serverProcess.kill();
     serverProcess = null;
