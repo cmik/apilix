@@ -80,7 +80,7 @@ jobs:
           chmod +x "$BIN"
 
           export PORT=19091
-          node -e "require('http').createServer((req,res)=>{res.writeHead(200, {'content-type':'application/json'});res.end(JSON.stringify({ok:true}));}).listen(process.env.PORT,'127.0.0.1')" &
+          node scripts/smoke-server.js "$PORT" &
           SERVER_PID=$!
           trap 'kill $SERVER_PID >/dev/null 2>&1 || true' EXIT
           for i in {1..25}; do
@@ -157,7 +157,7 @@ jobs:
           chmod +x "$BIN"
 
           export PORT=19092
-          node -e "require('http').createServer((req,res)=>{res.writeHead(200, {'content-type':'application/json'});res.end(JSON.stringify({ok:true}));}).listen(process.env.PORT,'127.0.0.1')" &
+          node scripts/smoke-server.js "$PORT" &
           SERVER_PID=$!
           trap 'kill $SERVER_PID >/dev/null 2>&1 || true' EXIT
           for i in {1..25}; do
@@ -219,9 +219,8 @@ jobs:
           $port = 19093
           $serverOut = Join-Path $env:RUNNER_TEMP 'apilix-smoke-server.out.log'
           $serverErr = Join-Path $env:RUNNER_TEMP 'apilix-smoke-server.err.log'
-          $serverScript = 'const http=require("http");const server=http.createServer((req,res)=>{res.writeHead(200,{"content-type":"application/json"});res.end(JSON.stringify({ok:true}));});server.listen(' + $port + ',"127.0.0.1");'
 
-          $server = Start-Process node -ArgumentList @('-e', $serverScript) -PassThru -RedirectStandardOutput $serverOut -RedirectStandardError $serverErr
+          $server = Start-Process node -ArgumentList @('scripts/smoke-server.js', $port) -PassThru -RedirectStandardOutput $serverOut -RedirectStandardError $serverErr
 
           $ready = $false
           for ($i = 0; $i -lt 60; $i++) {

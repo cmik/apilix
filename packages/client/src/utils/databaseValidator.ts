@@ -13,6 +13,8 @@ function supportsMaxConnections(type: DatabaseConnection['type'] | undefined): b
   return !!type && ['mysql', 'postgres', 'mongodb', 'redis', 'cassandra', 'oracle', 'mssql'].includes(type);
 }
 
+const MONGO_AUTH_MODES = new Set(['scram', 'x509', 'ldap-plain', 'oidc']);
+
 export function validateDatabaseConnection(config: Partial<DatabaseConnection>): DatabaseValidationResult {
   const errors: string[] = [];
 
@@ -52,6 +54,27 @@ export function validateDatabaseConnection(config: Partial<DatabaseConnection>):
         errors.push('MongoDB connection URI is required.');
       } else if (!uri.includes('{{') && !/^mongodb(\+srv)?:\/\//i.test(uri)) {
         errors.push('MongoDB URI must start with mongodb:// or mongodb+srv://.');
+      }
+      if (mongoConfig.auth !== undefined) {
+        if (!mongoConfig.auth || typeof mongoConfig.auth !== 'object') {
+          errors.push('MongoDB auth settings must be an object.');
+        } else {
+          const mode = String(mongoConfig.auth.mode || '').trim();
+          if (!mode) {
+            errors.push('MongoDB auth mode is required when auth settings are provided.');
+          } else if (!MONGO_AUTH_MODES.has(mode)) {
+            errors.push('MongoDB auth mode must be one of: scram, x509, ldap-plain, oidc.');
+          }
+
+          if (mode === 'scram' || mode === 'ldap-plain') {
+            if (!String(mongoConfig.auth.username || '').trim()) {
+              errors.push('MongoDB auth username is required for SCRAM/LDAP auth.');
+            }
+            if (!String(mongoConfig.auth.password || '').trim()) {
+              errors.push('MongoDB auth password is required for SCRAM/LDAP auth.');
+            }
+          }
+        }
       }
       break;
     }

@@ -163,12 +163,23 @@ Supported connection types:
 
 1. Open **Activity Bar → Database**.
 2. Click **+ New** in the sidebar.
-4. Fill in common fields:
+3. Fill in common fields:
    - Connection Name
    - Type
 5. Fill type-specific fields for the selected engine.
 6. Click **Test Connection**.
 7. Click **Save**.
+
+For **MongoDB** connections in the Database view editor, you can set:
+
+- **Connection URI**
+- **Default Database (optional)**
+- **Authentication Settings**
+   - Auth Mode: `scram`, `x509`, `ldap-plain`, or `oidc`
+   - Auth Source DB (optional)
+   - Login + Password for `scram` and `ldap-plain`
+
+When you switch Auth Mode to `x509` or `oidc`, Apilix clears hidden Login and Password values so those credentials are not saved for non-password modes.
 
 The sidebar also lets you filter connections, duplicate them, copy a connection ID, or delete them.
 
@@ -211,6 +222,10 @@ Connection fields support `{{variable}}` placeholders.
 - During **Test Connection** from the Database panel, placeholders resolve from the same runtime context.
 
 For MongoDB connections, the query editor also attempts to fetch live database and collection names from the resolved connection.
+
+If a MongoDB connection has a **Default Database**, the query editor uses it first when choosing the active database, then falls back to the database segment from the URI.
+
+If a MongoDB connection has **Authentication Settings**, Apilix applies them when discovering databases and collections from the Database view query editor.
 
 For SQLite connections, the desktop app offers a file picker, while web mode requires typing the file path manually.
 

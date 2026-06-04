@@ -13,6 +13,12 @@ import { resolveVariables } from '../utils/variableResolver';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type MainTab = 'Connection' | 'Query' | 'Pre-request' | 'Tests' | 'Docs';
+type ResolvedMongoAuth = {
+  mode?: string;
+  username?: string;
+  password?: string;
+  authSource?: string;
+};
 
 export interface MongoRequestPanelProps {
   bodyRaw: string;
@@ -100,14 +106,30 @@ export default function MongoRequestPanel({
   const resolvedUri = connMode === 'named' ? resolvedNamedUri : resolvedDirectUri;
   const resolvedDatabase = resolveVariables(rawDatabase, resolvedVars);
 
-  // Resolve auth override — only pass it if at least mode is set
+  // Resolve auth with precedence: request-level override > named connection auth.
   const rawAuth = parsedCfg?.auth;
-  const resolvedAuth = rawAuth?.mode ? {
+  const namedAuth = connMode === 'named' ? matchedNamedConnection?.auth : undefined;
+  const resolvedNamedAuth: ResolvedMongoAuth | undefined = namedAuth?.mode ? {
+    mode: resolveVariables(namedAuth.mode, resolvedVars),
+    username: namedAuth.username ? resolveVariables(namedAuth.username, resolvedVars) : undefined,
+    password: namedAuth.password ? resolveVariables(namedAuth.password, resolvedVars) : undefined,
+    authSource: namedAuth.authSource ? resolveVariables(namedAuth.authSource, resolvedVars) : undefined,
+  } : undefined;
+  const resolvedRequestAuth: ResolvedMongoAuth | undefined = rawAuth?.mode ? {
     mode: rawAuth.mode,
     username: rawAuth.username ? resolveVariables(rawAuth.username, resolvedVars) : undefined,
     password: rawAuth.password ? resolveVariables(rawAuth.password, resolvedVars) : undefined,
     authSource: rawAuth.authSource ? resolveVariables(rawAuth.authSource, resolvedVars) : undefined,
   } : undefined;
+  const resolvedAuth = (() => {
+    if (!resolvedNamedAuth && !resolvedRequestAuth) return undefined;
+    const merged: ResolvedMongoAuth = { ...(resolvedNamedAuth || {}) };
+    if (resolvedRequestAuth?.mode !== undefined) merged.mode = resolvedRequestAuth.mode;
+    if (resolvedRequestAuth?.username !== undefined) merged.username = resolvedRequestAuth.username;
+    if (resolvedRequestAuth?.password !== undefined) merged.password = resolvedRequestAuth.password;
+    if (resolvedRequestAuth?.authSource !== undefined) merged.authSource = resolvedRequestAuth.authSource;
+    return merged.mode ? merged : undefined;
+  })();
 
   const TABS: { id: MainTab; hasError?: boolean }[] = [
     { id: 'Connection' },
