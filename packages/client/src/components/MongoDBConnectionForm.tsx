@@ -8,7 +8,12 @@ interface Props {
   variableSuggestions?: VariableSuggestion[];
 }
 
+type AuthMode = NonNullable<MongoDBConnectionConfig['auth']>['mode'];
+type AuthModeSelectValue = AuthMode | 'none';
+
 export default function MongoDBConnectionForm({ value, onChange, variableSuggestions }: Props) {
+  const selectedAuthMode: AuthModeSelectValue = value.auth?.mode || 'none';
+
   function set<K extends keyof MongoDBConnectionConfig>(key: K, nextValue: MongoDBConnectionConfig[K]) {
     onChange({ ...value, [key]: nextValue });
   }
@@ -21,6 +26,32 @@ export default function MongoDBConnectionForm({ value, onChange, variableSuggest
         ...(value.auth || {}),
         [key]: nextValue,
       },
+    });
+  }
+
+  function setAuthMode(nextMode: AuthModeSelectValue) {
+    if (nextMode === 'none') {
+      onChange({
+        ...value,
+        auth: undefined,
+      });
+      return;
+    }
+
+    const nextAuth: NonNullable<MongoDBConnectionConfig['auth']> = {
+      ...(value.auth || {}),
+      mode: nextMode,
+    };
+
+    if (nextMode === 'x509' || nextMode === 'oidc') {
+      // Keep non-password auth modes clean to avoid stale hidden credentials.
+      delete nextAuth.username;
+      delete nextAuth.password;
+    }
+
+    onChange({
+      ...value,
+      auth: nextAuth,
     });
   }
 
@@ -55,10 +86,11 @@ export default function MongoDBConnectionForm({ value, onChange, variableSuggest
           <div>
             <label className="block text-xs font-medium text-slate-400 mb-1">Auth Mode</label>
             <select
-              value={value.auth?.mode || 'scram'}
-              onChange={e => setAuthField('mode', e.target.value as NonNullable<MongoDBConnectionConfig['auth']>['mode'])}
+              value={selectedAuthMode}
+              onChange={e => setAuthMode(e.target.value as AuthModeSelectValue)}
               className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-orange-500"
             >
+              <option value="none">None</option>
               <option value="scram">SCRAM (username + password)</option>
               <option value="x509">X.509 certificate</option>
               <option value="ldap-plain">LDAP / PLAIN</option>
@@ -76,7 +108,7 @@ export default function MongoDBConnectionForm({ value, onChange, variableSuggest
             />
           </div>
         </div>
-        {(!value.auth?.mode || value.auth.mode === 'scram' || value.auth.mode === 'ldap-plain') && (
+        {(selectedAuthMode === 'scram' || selectedAuthMode === 'ldap-plain') && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-1">Login</label>

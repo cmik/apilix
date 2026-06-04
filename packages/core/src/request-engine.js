@@ -355,6 +355,13 @@ function mergeMongoAuth(baseAuth, overrideAuth) {
   const merged = { ...(baseAuth || {}) };
   if (!overrideAuth) return merged;
 
+  // A mode override defines the effective credential shape. For non-password
+  // modes, never carry username/password from base auth.
+  if (overrideAuth.mode === 'x509' || overrideAuth.mode === 'oidc') {
+    merged.username = undefined;
+    merged.password = undefined;
+  }
+
   if (overrideAuth.mode !== undefined) merged.mode = overrideAuth.mode;
   if (overrideAuth.username !== undefined) merged.username = overrideAuth.username;
   if (overrideAuth.password !== undefined) merged.password = overrideAuth.password;
