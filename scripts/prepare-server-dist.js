@@ -150,6 +150,20 @@ function main() {
 			},
 		}
 	);
+
+	if (targetPlatform === 'win32') {
+		console.log(`[dist:prepare:server] Rebuilding node-pty for Electron ${electronVersion} on ${targetPlatform}/${targetArch}...`);
+		run(
+			`npx --yes @electron/rebuild -f -w node-pty -v ${electronVersion} -m ${JSON.stringify(rootDir)}`,
+			{
+				env: {
+					...process.env,
+					npm_config_platform: targetPlatform,
+					npm_config_arch: targetArch,
+				},
+			}
+		);
+	}
 }
 
 main();
