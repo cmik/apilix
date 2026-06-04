@@ -670,7 +670,7 @@ export interface MongoDBConnectionConfig extends DatabaseConnectionBase {
   connectionUri: string; // e.g., 'mongodb://user:pass@host:27017/dbname?authSource=admin'; supports {{variables}}
   database?: string;     // Optional default database for query editor and script runtime
   auth?: MongoConnectionAuthSettings; // Optional auth settings applied to URI at runtime/test time
-  authMechanism?: 'SCRAM-SHA-1' | 'SCRAM-SHA-256' | 'MONGODB-X509' | 'MONGODB-CR'; // Default: auto-detect
+  authMechanism?: 'SCRAM-SHA-1' | 'SCRAM-SHA-256' | 'MONGODB-X509' | 'MONGODB-CR' | 'PLAIN' | 'MONGODB-OIDC'; // Default: auto-detect
   sslCertPath?: string;  // For X509 auth
   sslKeyPath?: string;   // For X509 auth
   sslCAPath?: string;    // CA bundle for SSL verification
