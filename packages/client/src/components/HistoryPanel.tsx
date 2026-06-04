@@ -30,6 +30,7 @@ function statusBadgeClass(code: number | null, hasError: boolean, statusText = '
   const normalizedStatus = statusText.trim().toUpperCase();
   if (hasError && !code) return 'text-red-400 bg-red-400/15';
   if (code === null) return 'text-slate-500 bg-slate-700';
+  if (code === 0) return 'text-slate-500 bg-slate-700';
   if (normalizedStatus.endsWith('_SUCCESS')) return 'text-green-400 bg-green-400/15';
   if (normalizedStatus.endsWith('_PARTIAL')) return 'text-yellow-400 bg-yellow-400/15';
   if (normalizedStatus.endsWith('_ERROR')) return 'text-red-400 bg-red-400/15';
