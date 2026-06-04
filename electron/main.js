@@ -490,7 +490,9 @@ const terminalSessions = new Map();
 
 function getDefaultShell() {
   if (process.platform === 'win32') return process.env.COMSPEC || 'cmd.exe';
-  return process.env.SHELL || '/bin/zsh';
+  if (process.env.SHELL) return process.env.SHELL;
+  // .desktop launches on Linux often omit SHELL; prefer POSIX sh there.
+  return process.platform === 'darwin' ? '/bin/zsh' : '/bin/sh';
 }
 
 function resolveTerminalCwd(requestedCwd) {
