@@ -23,54 +23,9 @@ export default defineConfig({
     },
     rollupOptions: {
       output: {
-        manualChunks(id) {
-          if (id.includes('node_modules/react') || id.includes('node_modules/react-dom')) {
-            return 'vendor-react';
-          }
-
-          if (id.includes('node_modules/prismjs')) {
-            return 'vendor-prism';
-          }
-
-          if (id.includes('node_modules/ajv')) {
-            return 'vendor-ajv';
-          }
-
-          if (id.includes('node_modules/axios') || id.includes('node_modules/js-yaml') || id.includes('node_modules/marked')) {
-            return 'vendor-libs';
-          }
-
-          if (id.includes('/src/components/CodeEditor') || id.includes('/src/components/ScriptEditor')) {
-            return 'editor-core';
-          }
-
-          if (id.includes('/src/components/GraphQLPanel') || id.includes('/src/components/MongoPanel') || id.includes('/src/components/MongoRequestPanel')) {
-            return 'editor-panels';
-          }
-
-          if (id.includes('/src/utils/postmanValidator') || id.includes('/src/schemas/postman-v2.0.json') || id.includes('/src/schemas/postman-v2.1.json')) {
-            return 'postman-validation';
-          }
-
-          // Sync/snapshot utilities (used only when sync is configured)
-          if (id.includes('/src/utils/syncEngine') || id.includes('/src/utils/snapshotEngine') || id.includes('/src/utils/quickSyncFlow')) {
-            return 'sync-utils';
-          }
-
-          // Import/export utilities (used only in modals)
-          if (id.includes('/src/utils/openApiUtils') || id.includes('/src/utils/insomniaUtils') || id.includes('/src/utils/harUtils') || id.includes('/src/utils/curlUtils') || id.includes('/src/utils/hurlUtils') || id.includes('/src/utils/wsdlUtils')) {
-            return 'import-export-utils';
-          }
-
-          // Database utilities
-          if (id.includes('/src/utils/databasePanelMongoHelpers') || id.includes('/src/utils/databaseValidator') || id.includes('/src/utils/databaseConnectionTransfer') || id.includes('/src/components/DatabasePanel') || id.includes('/src/components/MongoRequestPanel')) {
-            return 'database-utils';
-          }
-
-          // Storage driver (used primarily on app init and in sync flows)
-          if (id.includes('/src/utils/storageDriver')) {
-            return 'storage-driver';
-          }
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom'],
+          'vendor-libs': ['axios', 'js-yaml', 'marked'],
         },
       },
     },

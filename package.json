@@ -37,12 +37,8 @@
     "dist:mac": "npm run dist:prepare:server:mac && npm run build && electron-builder --mac",
     "dist:win": "npm run dist:prepare:server:win && npm run build && electron-builder --win",
     "dist:prod": "npm run dist:prepare:server && npm run build && DISABLE_DEVTOOLS=1 electron-builder",
-    "dist:prod:mac": "npm run dist:prepare:server:mac && npm run build && DISABLE_DEVTOOLS=1 electron-builder --mac",
-    "dist:prod:win": "npm run dist:prepare:server:win && npm run build && DISABLE_DEVTOOLS=1 electron-builder --win",
-    "rebuild:native": "electron-rebuild -f -w node-pty"
-  },
-  "dependencies": {
-    "node-pty": "^1.1.0"
+    "dist:prod:mac": "npm run dist:prepare:server && npm run build && DISABLE_DEVTOOLS=1 electron-builder --mac",
+    "dist:prod:win": "npm run dist:prepare:server && npm run build && DISABLE_DEVTOOLS=1 electron-builder --win"
   },
   "devDependencies": {
     "@apilix/server": "*",
