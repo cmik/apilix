@@ -42,12 +42,12 @@
     "rebuild:native": "electron-rebuild -f -w node-pty"
   },
   "dependencies": {
-    "node-pty": "^1.0.0"
+    "node-pty": "^1.1.0"
   },
   "devDependencies": {
+    "@apilix/server": "*",
     "@electron/rebuild": "^3.7.2",
     "@yao-pkg/pkg": "^6.18.2",
-    "@apilix/server": "*",
     "concurrently": "^8.2.2",
     "electron": "^41.1.1",
     "electron-builder": "^26.8.1",

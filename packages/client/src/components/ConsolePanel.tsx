@@ -778,7 +778,7 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme, m
     fitAddon.fit();
     term.writeln('\x1b[90mPress Start to open a terminal session.\x1b[0m');
 
-    const keyboardSub = term.onData((data) => {
+    const keyboardSub = term.onData((data: string) => {
       if (!eAPI || !sessionIdRef.current) return;
       eAPI.terminalInput(sessionIdRef.current, data).catch(() => {});
     });
@@ -842,6 +842,17 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme, m
       termRef.current?.focus();
     }
   }, [mode]);
+
+  // Keep xterm dimensions in sync with bottom panel drag-resize.
+  // ResizeObserver usually handles this, but an explicit height hook prevents
+  // stale terminal viewport sizes on some platforms/render cycles.
+  useEffect(() => {
+    if (!isElectron || mode !== 'terminal' || !termRef.current) return;
+    fitAddonRef.current?.fit();
+    if (eAPI && sessionIdRef.current) {
+      eAPI.terminalResize(sessionIdRef.current, termRef.current.cols, termRef.current.rows).catch(() => {});
+    }
+  }, [height, mode, isElectron, eAPI]);
 
   // Resize PTY when terminal viewport changes size.
   useEffect(() => {

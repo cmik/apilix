@@ -51,6 +51,26 @@ export default defineConfig({
           if (id.includes('/src/utils/postmanValidator') || id.includes('/src/schemas/postman-v2.0.json') || id.includes('/src/schemas/postman-v2.1.json')) {
             return 'postman-validation';
           }
+
+          // Sync/snapshot utilities (used only when sync is configured)
+          if (id.includes('/src/utils/syncEngine') || id.includes('/src/utils/snapshotEngine') || id.includes('/src/utils/quickSyncFlow')) {
+            return 'sync-utils';
+          }
+
+          // Import/export utilities (used only in modals)
+          if (id.includes('/src/utils/openApiUtils') || id.includes('/src/utils/insomniaUtils') || id.includes('/src/utils/harUtils') || id.includes('/src/utils/curlUtils') || id.includes('/src/utils/hurlUtils') || id.includes('/src/utils/wsdlUtils')) {
+            return 'import-export-utils';
+          }
+
+          // Database utilities
+          if (id.includes('/src/utils/databasePanelMongoHelpers') || id.includes('/src/utils/databaseValidator') || id.includes('/src/utils/databaseConnectionTransfer') || id.includes('/src/components/DatabasePanel') || id.includes('/src/components/MongoRequestPanel')) {
+            return 'database-utils';
+          }
+
+          // Storage driver (used primarily on app init and in sync flows)
+          if (id.includes('/src/utils/storageDriver')) {
+            return 'storage-driver';
+          }
         },
       },
     },
