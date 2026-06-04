@@ -51,6 +51,23 @@ Download the installer for your platform from the [Releases](https://github.com/
 | Windows | `Apilix-x.x.x-portable.exe` (portable, no installation required) |
 | Linux | `Apilix-x.x.x.AppImage` |
 
+To download the latest release asset from the terminal, use GitHub CLI:
+
+```bash
+gh release download --repo cmik/apilix --latest --pattern "Apilix*"
+```
+
+Or use curl for a direct download (macOS example):
+
+```bash
+DMG_URL=$(curl -fsSL https://api.github.com/repos/cmik/apilix/releases/latest \
+	| grep browser_download_url \
+	| grep -E 'Apilix.*\.dmg' \
+	| head -n 1 \
+	| cut -d '"' -f 4)
+curl -fL -o Apilix.dmg "$DMG_URL"
+```
+
 ### From Source (Web Mode)
 
 **Prerequisites:** Node.js v20.19.0+ and npm v9+
