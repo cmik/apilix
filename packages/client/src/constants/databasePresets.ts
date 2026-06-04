@@ -30,6 +30,7 @@ export function makeDatabasePreset(type: DatabaseType): DatabaseConnection {
       ...base,
       type: 'mongodb',
       connectionUri: 'mongodb://localhost:27017',
+      database: '',
       authMechanism: 'SCRAM-SHA-256',
       sslCAPath: '',
       sslCertPath: '',

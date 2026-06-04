@@ -173,8 +173,9 @@ Use the **Database** Activity Bar view for day-to-day connection management.
 2. Click **+ New** in the sidebar.
 3. Choose **MongoDB** as the connection type.
 4. Enter a connection name and the MongoDB URI.
-5. Click **Test Connection**.
-6. Click **Save**.
+5. Optional: set a default database and authentication settings.
+6. Click **Test Connection**.
+7. Click **Save**.
 
 The Database sidebar also lets you:
 
@@ -183,6 +184,10 @@ The Database sidebar also lets you:
 - duplicate a connection to create a variant quickly
 - copy the connection ID for use in variables or JSON
 - export/import connection JSON files
+
+For saved MongoDB connections, the Database query editor uses the saved default database first, then falls back to the database in the URI when needed.
+
+When a saved MongoDB connection includes authentication settings, those settings are applied when listing databases and collections from the Database query editor.
 
 When you export connections, Apilix strips secret fields from the JSON file. Re-enter credentials after import before using the connection.
 

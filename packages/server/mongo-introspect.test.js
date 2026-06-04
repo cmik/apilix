@@ -114,6 +114,24 @@ function resolveIntrospectUri(input) {
   return { uri: applyMongoAuthToUri(resolvedUri, auth) };
 }
 
+test('resolveIntrospectUri applies auth override credentials to resolved URI', () => {
+  const resolved = resolveIntrospectUri({
+    uri: 'mongodb://base-user:base-pass@127.0.0.1:27017/app',
+    auth: {
+      mode: 'scram',
+      username: 'override-user',
+      password: 'override-pass',
+      authSource: 'admin',
+    },
+  });
+
+  assert.equal(typeof resolved.uri, 'string');
+  const parsed = new URL(resolved.uri);
+  assert.equal(parsed.username, 'override-user');
+  assert.equal(parsed.password, 'override-pass');
+  assert.equal(parsed.searchParams.get('authSource'), 'admin');
+});
+
 /**
  * Standalone server that replicates the two introspect route handlers from
  * packages/server/index.js exactly.

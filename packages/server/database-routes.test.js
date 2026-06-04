@@ -6,6 +6,7 @@ const http = require('node:http');
 
 const MONGO_CONNECTION_ID_RE = /^[a-z0-9_-]{1,64}$/i;
 const MONGO_RESERVED_CONNECTION_IDS = new Set(['__proto__', 'prototype', 'constructor']);
+const MONGO_AUTH_MODES = new Set(['scram', 'x509', 'ldap-plain', 'oidc']);
 
 function validateMongoUri(uri) {
   if (!uri || typeof uri !== 'string') return false;
@@ -78,6 +79,16 @@ function validateDatabaseConfig(config, requireId = false) {
     }
     if (!validateMongoUri(config.connectionUri)) {
       return 'connectionUri must use the mongodb:// or mongodb+srv:// scheme';
+    }
+    if (config.auth !== undefined) {
+      if (!config.auth || typeof config.auth !== 'object') {
+        return 'auth must be an object when provided';
+      }
+      if (config.auth.mode !== undefined) {
+        if (typeof config.auth.mode !== 'string' || !MONGO_AUTH_MODES.has(config.auth.mode)) {
+          return `auth.mode must be one of: ${Array.from(MONGO_AUTH_MODES).join(', ')}`;
+        }
+      }
     }
   }
 
@@ -374,6 +385,18 @@ test('databases test route rejects invalid mongodb URI scheme', async () => {
   });
   assert.equal(res.status, 400);
   assert.match(res.body.error, /mongodb:\/\//i);
+});
+
+test('databases test route rejects invalid mongodb auth mode', async () => {
+  const res = await postJson(fixture.server, '/api/databases/test', {
+    type: 'mongodb',
+    connectionUri: 'mongodb://localhost:27017/app',
+    auth: {
+      mode: 'bad-mode',
+    },
+  });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /auth\.mode must be one of/i);
 });
 
 test('databases test route accepts valid SQL config and calls db manager', async () => {

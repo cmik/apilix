@@ -66,4 +66,27 @@ describe('DatabaseConnectionForm', () => {
     expect(screen.getByText('Database File Path')).toBeInTheDocument();
     expect(screen.getByText('Open read-only')).toBeInTheDocument();
   });
+
+  it('renders mongodb auth and default database controls', () => {
+    render(
+      <DatabaseConnectionForm
+        value={makeBaseConnection({
+          type: 'mongodb',
+          connectionUri: 'mongodb://localhost:27017',
+          database: 'app',
+          auth: { mode: 'scram', username: 'tester', password: 'secret', authSource: 'admin' },
+        })}
+        onChange={() => {}}
+        onTestConnection={() => {}}
+        testing={false}
+        testResult={null}
+        validationErrors={[]}
+      />
+    );
+
+    expect(screen.getByText('Default Database')).toBeInTheDocument();
+    expect(screen.getByText('Authentication Settings')).toBeInTheDocument();
+    expect(screen.getByText('Login')).toBeInTheDocument();
+    expect(screen.getByText('Password')).toBeInTheDocument();
+  });
 });
