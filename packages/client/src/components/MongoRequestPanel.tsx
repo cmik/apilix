@@ -13,6 +13,12 @@ import { resolveVariables } from '../utils/variableResolver';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type MainTab = 'Connection' | 'Query' | 'Pre-request' | 'Tests' | 'Docs';
+type ResolvedMongoAuth = {
+  mode?: string;
+  username?: string;
+  password?: string;
+  authSource?: string;
+};
 
 export interface MongoRequestPanelProps {
   bodyRaw: string;
@@ -87,6 +93,21 @@ export default function MongoRequestPanel({
     onBodyChange(JSON.stringify({ ...current, auth: { ...(current.auth ?? {}), ...patch } }, null, 2));
   }, [bodyRaw, onBodyChange]);
 
+  const patchAuthMode = useCallback((mode: NonNullable<MongoConfig['auth']>['mode']) => {
+    const current = parseMongoConfig(bodyRaw) ?? {};
+    const nextAuth = {
+      ...(current.auth ?? {}),
+      mode,
+    } as NonNullable<MongoConfig['auth']>;
+
+    if (mode === 'x509' || mode === 'oidc') {
+      delete nextAuth.username;
+      delete nextAuth.password;
+    }
+
+    onBodyChange(JSON.stringify({ ...current, auth: nextAuth }, null, 2));
+  }, [bodyRaw, onBodyChange]);
+
   // Compute resolved URI and database for fetch buttons
   const rawUri = parsedCfg?.connection?.uri ?? '';
   const rawConnectionId = parsedCfg?.connection?.connectionId ?? '';
@@ -100,14 +121,35 @@ export default function MongoRequestPanel({
   const resolvedUri = connMode === 'named' ? resolvedNamedUri : resolvedDirectUri;
   const resolvedDatabase = resolveVariables(rawDatabase, resolvedVars);
 
-  // Resolve auth override — only pass it if at least mode is set
+  // Resolve auth with precedence: request-level override > named connection auth.
   const rawAuth = parsedCfg?.auth;
-  const resolvedAuth = rawAuth?.mode ? {
-    mode: rawAuth.mode,
-    username: rawAuth.username ? resolveVariables(rawAuth.username, resolvedVars) : undefined,
-    password: rawAuth.password ? resolveVariables(rawAuth.password, resolvedVars) : undefined,
+  const namedAuth = connMode === 'named' ? matchedNamedConnection?.auth : undefined;
+  const resolvedNamedAuth: ResolvedMongoAuth | undefined = namedAuth?.mode ? {
+    mode: resolveVariables(namedAuth.mode, resolvedVars),
+    username: namedAuth.username ? resolveVariables(namedAuth.username, resolvedVars) : undefined,
+    password: namedAuth.password ? resolveVariables(namedAuth.password, resolvedVars) : undefined,
+    authSource: namedAuth.authSource ? resolveVariables(namedAuth.authSource, resolvedVars) : undefined,
+  } : undefined;
+  const resolvedRequestMode = rawAuth?.mode ? resolveVariables(rawAuth.mode, resolvedVars) : undefined;
+  const resolvedRequestAuth: ResolvedMongoAuth | undefined = rawAuth?.mode ? {
+    mode: resolvedRequestMode,
+    username: (resolvedRequestMode === 'scram' || resolvedRequestMode === 'ldap-plain')
+      ? (rawAuth.username ? resolveVariables(rawAuth.username, resolvedVars) : undefined)
+      : undefined,
+    password: (resolvedRequestMode === 'scram' || resolvedRequestMode === 'ldap-plain')
+      ? (rawAuth.password ? resolveVariables(rawAuth.password, resolvedVars) : undefined)
+      : undefined,
     authSource: rawAuth.authSource ? resolveVariables(rawAuth.authSource, resolvedVars) : undefined,
   } : undefined;
+  const resolvedAuth = (() => {
+    if (!resolvedNamedAuth && !resolvedRequestAuth) return undefined;
+    const merged: ResolvedMongoAuth = { ...(resolvedNamedAuth || {}) };
+    if (resolvedRequestAuth?.mode !== undefined) merged.mode = resolvedRequestAuth.mode;
+    if (resolvedRequestAuth?.username !== undefined) merged.username = resolvedRequestAuth.username;
+    if (resolvedRequestAuth?.password !== undefined) merged.password = resolvedRequestAuth.password;
+    if (resolvedRequestAuth?.authSource !== undefined) merged.authSource = resolvedRequestAuth.authSource;
+    return merged.mode ? merged : undefined;
+  })();
 
   const TABS: { id: MainTab; hasError?: boolean }[] = [
     { id: 'Connection' },
@@ -258,7 +300,7 @@ export default function MongoRequestPanel({
                       <div className="text-xs text-slate-400 mb-1">Auth Mode</div>
                       <select
                         value={parsedCfg?.auth?.mode ?? 'scram'}
-                        onChange={e => patchAuth({ mode: e.target.value })}
+                        onChange={e => patchAuthMode(e.target.value as NonNullable<MongoConfig['auth']>['mode'])}
                         className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-orange-500"
                       >
                         <option value="scram">SCRAM (username + password)</option>

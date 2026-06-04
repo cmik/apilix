@@ -5,6 +5,7 @@ import type {
   DatabaseConnection,
   SQLConnectionConfig,
   MongoDBConnectionConfig,
+  MongoConnectionAuthSettings,
   SQLiteConnectionConfig,
   RedisConnectionConfig,
   CassandraConnectionConfig,
@@ -22,6 +23,7 @@ import {
   executeDynamoOperation,
   listMongoDatabases,
   listMongoCollections,
+  type MongoAuthOverride,
   type DbQueryResult,
   type DbMongoResult,
   type DbGenericResult,
@@ -128,6 +130,11 @@ export function ConnectionEditorModal({ initial, runtimeVars, onSave, onClose }:
 
   // Mongo
   const [uri, setUri] = useState((initial as MongoDBConnectionConfig)?.connectionUri ?? '');
+  const [mongoDatabase, setMongoDatabase] = useState((initial as MongoDBConnectionConfig)?.database ?? '');
+  const [mongoAuthMode, setMongoAuthMode] = useState<string>((initial as MongoDBConnectionConfig)?.auth?.mode ?? '');
+  const [mongoAuthUsername, setMongoAuthUsername] = useState((initial as MongoDBConnectionConfig)?.auth?.username ?? '');
+  const [mongoAuthPassword, setMongoAuthPassword] = useState((initial as MongoDBConnectionConfig)?.auth?.password ?? '');
+  const [mongoAuthSource, setMongoAuthSource] = useState((initial as MongoDBConnectionConfig)?.auth?.authSource ?? '');
 
   // SQLite
   const [filePath, setFilePath] = useState((initial as SQLiteConnectionConfig)?.filePath ?? '');
@@ -181,6 +188,15 @@ export function ConnectionEditorModal({ initial, runtimeVars, onSave, onClose }:
     setTestResult(null);
   }
 
+  function onMongoAuthModeChange(nextMode: string) {
+    setMongoAuthMode(nextMode);
+    if (nextMode === 'x509' || nextMode === 'oidc') {
+      // Avoid carrying hidden SCRAM/LDAP credentials into non-password auth modes.
+      setMongoAuthUsername('');
+      setMongoAuthPassword('');
+    }
+  }
+
   function buildConfig(): DatabaseConnection {
     const base = {
       _id: initial?._id ?? generateId(),
@@ -192,8 +208,24 @@ export function ConnectionEditorModal({ initial, runtimeVars, onSave, onClose }:
     };
 
     switch (type) {
-      case 'mongodb':
-        return { ...base, type: 'mongodb', connectionUri: uri } as MongoDBConnectionConfig;
+      case 'mongodb': {
+        const includePasswordCredentials = mongoAuthMode === 'scram' || mongoAuthMode === 'ldap-plain';
+        const mongoAuth: MongoConnectionAuthSettings | undefined = mongoAuthMode
+          ? {
+              mode: mongoAuthMode as MongoConnectionAuthSettings['mode'],
+              username: includePasswordCredentials ? (mongoAuthUsername || undefined) : undefined,
+              password: includePasswordCredentials ? (mongoAuthPassword || undefined) : undefined,
+              authSource: mongoAuthSource || undefined,
+            }
+          : undefined;
+        return {
+          ...base,
+          type: 'mongodb',
+          connectionUri: uri,
+          database: mongoDatabase || undefined,
+          auth: mongoAuth,
+        } as MongoDBConnectionConfig;
+      }
       case 'sqlite':
         return { ...base, type: 'sqlite', filePath, readonly: sqliteReadonly } as SQLiteConnectionConfig;
       case 'redis':
@@ -351,10 +383,51 @@ export function ConnectionEditorModal({ initial, runtimeVars, onSave, onClose }:
 
           {/* MongoDB */}
           {type === 'mongodb' && (
-            <div>
-              <label className={labelClass}>Connection URI</label>
-              <input className={inputClass} value={uri} onChange={e => setUri(e.target.value)} placeholder="mongodb://user:pass@host:27017/db" />
-            </div>
+            <>
+              <div>
+                <label className={labelClass}>Connection URI</label>
+                <input className={inputClass} value={uri} onChange={e => setUri(e.target.value)} placeholder="mongodb://user:pass@host:27017/db" />
+              </div>
+              <div>
+                <label className={labelClass}>Default Database (optional)</label>
+                <input className={inputClass} value={mongoDatabase} onChange={e => setMongoDatabase(e.target.value)} placeholder="app" />
+              </div>
+              <div className="rounded border border-slate-700 bg-slate-900/60 px-3 py-3 space-y-3">
+                <div className="text-xs font-medium text-slate-300">Authentication Settings</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className={labelClass}>Auth Mode</label>
+                    <select
+                      value={mongoAuthMode}
+                      onChange={e => onMongoAuthModeChange(e.target.value)}
+                      className={inputClass}
+                    >
+                      <option value="">None (use URI credentials)</option>
+                      <option value="scram">SCRAM (username + password)</option>
+                      <option value="x509">X.509 certificate</option>
+                      <option value="ldap-plain">LDAP / PLAIN</option>
+                      <option value="oidc">OIDC workload identity</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className={labelClass}>Auth Source DB</label>
+                    <input className={inputClass} value={mongoAuthSource} onChange={e => setMongoAuthSource(e.target.value)} placeholder="admin" />
+                  </div>
+                </div>
+                {(!mongoAuthMode || mongoAuthMode === 'scram' || mongoAuthMode === 'ldap-plain') && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className={labelClass}>Login</label>
+                      <input className={inputClass} value={mongoAuthUsername} onChange={e => setMongoAuthUsername(e.target.value)} placeholder="{{mongoUser}}" />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Password</label>
+                      <input className={inputClass} type="password" value={mongoAuthPassword} onChange={e => setMongoAuthPassword(e.target.value)} placeholder="••••••••" />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
           )}
 
           {/* SQLite */}
@@ -738,12 +811,20 @@ function QueryEditor({ selectedConn, runtimeVars }: QueryEditorProps) {
       return;
     }
 
-    const preferredDatabase = getMongoDatabaseFromUri(resolvedConn.connectionUri || '');
+    const preferredDatabase = (resolvedConn.database || '').trim() || getMongoDatabaseFromUri(resolvedConn.connectionUri || '');
+    const resolvedAuth: MongoAuthOverride | undefined = resolvedConn.auth?.mode
+      ? {
+          mode: resolvedConn.auth.mode,
+          username: resolvedConn.auth.username,
+          password: resolvedConn.auth.password,
+          authSource: resolvedConn.auth.authSource,
+        }
+      : undefined;
     let cancelled = false;
     setMongoDatabasesLoading(true);
     setMongoDatabasesError('');
 
-    listMongoDatabases(undefined, selectedConn._id, undefined, [resolvedConn])
+    listMongoDatabases(undefined, selectedConn._id, resolvedAuth, [resolvedConn])
       .then((databases) => {
         if (cancelled) return;
         setMongoDatabases(databases);
@@ -795,11 +876,20 @@ function QueryEditor({ selectedConn, runtimeVars }: QueryEditorProps) {
       return;
     }
 
+    const resolvedAuth: MongoAuthOverride | undefined = resolvedConn.auth?.mode
+      ? {
+          mode: resolvedConn.auth.mode,
+          username: resolvedConn.auth.username,
+          password: resolvedConn.auth.password,
+          authSource: resolvedConn.auth.authSource,
+        }
+      : undefined;
+
     let cancelled = false;
     setMongoCollectionsLoading(true);
     setMongoCollectionsError('');
 
-    listMongoCollections(undefined, mongoDatabase.trim(), selectedConn._id, undefined, [resolvedConn])
+    listMongoCollections(undefined, mongoDatabase.trim(), selectedConn._id, resolvedAuth, [resolvedConn])
       .then((collections) => {
         if (cancelled) return;
         setMongoCollections(collections);

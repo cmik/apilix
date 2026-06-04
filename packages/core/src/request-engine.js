@@ -338,15 +338,43 @@ function applyMongoAuthOptions(uri, auth) {
   }
 }
 
+function resolveMongoAuthTemplates(auth, vars) {
+  if (!auth) return auth;
+  return {
+    ...auth,
+    mode: resolveVariables(auth.mode || '', vars) || undefined,
+    username: resolveVariables(auth.username || '', vars) || undefined,
+    password: resolveVariables(auth.password || '', vars) || undefined,
+    authSource: resolveVariables(auth.authSource || '', vars) || undefined,
+    oidcAccessToken: resolveVariables(auth.oidcAccessToken || '', vars) || undefined,
+  };
+}
+
+function mergeMongoAuth(baseAuth, overrideAuth) {
+  if (!baseAuth && !overrideAuth) return undefined;
+  const merged = { ...(baseAuth || {}) };
+  if (!overrideAuth) return merged;
+
+  // A mode override defines the effective credential shape. For non-password
+  // modes, never carry username/password from base auth.
+  if (overrideAuth.mode === 'x509' || overrideAuth.mode === 'oidc') {
+    merged.username = undefined;
+    merged.password = undefined;
+  }
+
+  if (overrideAuth.mode !== undefined) merged.mode = overrideAuth.mode;
+  if (overrideAuth.username !== undefined) merged.username = overrideAuth.username;
+  if (overrideAuth.password !== undefined) merged.password = overrideAuth.password;
+  if (overrideAuth.authSource !== undefined) merged.authSource = overrideAuth.authSource;
+  if (overrideAuth.oidcAccessToken !== undefined) merged.oidcAccessToken = overrideAuth.oidcAccessToken;
+
+  return merged;
+}
+
 function extractMongoConnection(config, vars, context) {
   const resolvedDatabase = resolveVariables(config.database || '', vars);
-  // Resolve {{variable}} tokens in auth credentials before injecting into the URI.
-  const resolvedAuth = config.auth ? {
-    ...config.auth,
-    username: resolveVariables(config.auth.username || '', vars) || undefined,
-    password: resolveVariables(config.auth.password || '', vars) || undefined,
-    authSource: resolveVariables(config.auth.authSource || '', vars) || undefined,
-  } : config.auth;
+  // Resolve {{variable}} tokens in request-level auth credentials before URI injection.
+  const resolvedRequestAuth = resolveMongoAuthTemplates(config.auth, vars);
 
   if (!config.connection || !config.connection.mode) {
     throw new Error('MongoDB request is missing a connection reference');
@@ -354,7 +382,7 @@ function extractMongoConnection(config, vars, context) {
   if (config.connection.mode === 'direct') {
     const uri = resolveVariables(config.connection.uri || '', vars);
     if (!uri) throw new Error('MongoDB direct connection URI is empty');
-    return { uri: applyMongoAuthOptions(uri, resolvedAuth), database: resolvedDatabase };
+    return { uri: applyMongoAuthOptions(uri, resolvedRequestAuth), database: resolvedDatabase };
   }
 
   const registry = (context && context.mongoConnections) || {};
@@ -369,6 +397,7 @@ function extractMongoConnection(config, vars, context) {
       found = {
         uri: dbEntry.connectionUri,
         database: dbEntry.database || '',
+        auth: dbEntry.auth,
       };
     }
   }
@@ -377,9 +406,12 @@ function extractMongoConnection(config, vars, context) {
     throw new Error(`MongoDB named connection "${config.connection.connectionId}" not found`);
   }
   const uri = resolveVariables(found.uri, vars);
+  const resolvedConnectionAuth = resolveMongoAuthTemplates(found.auth, vars);
+  // Request-level auth override has higher priority than connection-level auth.
+  const effectiveAuth = mergeMongoAuth(resolvedConnectionAuth, resolvedRequestAuth);
   const db = resolvedDatabase || resolveVariables(found.database || '', vars);
   if (!db) throw new Error('MongoDB database is required');
-  return { uri: applyMongoAuthOptions(uri, resolvedAuth), database: db };
+  return { uri: applyMongoAuthOptions(uri, effectiveAuth), database: db };
 }
 
 function buildMongoDbApi(db, session) {

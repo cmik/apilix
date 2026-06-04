@@ -73,6 +73,32 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 
 const MONGO_CONNECTION_ID_RE = /^[a-z0-9_-]{1,64}$/i;
 const MONGO_RESERVED_CONNECTION_IDS = new Set(['__proto__', 'prototype', 'constructor']);
+const MONGO_AUTH_MODES = new Set(['scram', 'x509', 'ldap-plain', 'oidc']);
+
+function normalizeMongoAuthSettings(auth) {
+  if (!auth || typeof auth !== 'object') return undefined;
+  const normalized = {
+    mode: typeof auth.mode === 'string' ? auth.mode.trim() : '',
+    username: typeof auth.username === 'string' ? auth.username : undefined,
+    password: typeof auth.password === 'string' ? auth.password : undefined,
+    authSource: typeof auth.authSource === 'string' ? auth.authSource : undefined,
+    oidcAccessToken: typeof auth.oidcAccessToken === 'string' ? auth.oidcAccessToken : undefined,
+  };
+  if (!normalized.mode) return undefined;
+  return normalized;
+}
+
+function applyMongoConnectionAuth(config) {
+  if (!config || config.type !== 'mongodb') return config;
+  const normalizedAuth = normalizeMongoAuthSettings(config.auth);
+  if (!normalizedAuth) return config;
+
+  return {
+    ...config,
+    auth: normalizedAuth,
+    connectionUri: applyMongoAuthToUri(config.connectionUri, normalizedAuth),
+  };
+}
 
 function resolveDatabaseConfigTemplates(config, runtimeVars) {
   if (!config || typeof config !== 'object') return config;
@@ -98,7 +124,18 @@ function resolveDatabaseConfigTemplates(config, runtimeVars) {
     );
   }
 
-  return resolved;
+  if (resolved.auth && typeof resolved.auth === 'object') {
+    const auth = { ...resolved.auth };
+    const authFields = ['mode', 'username', 'password', 'authSource', 'oidcAccessToken'];
+    authFields.forEach((field) => {
+      if (typeof auth[field] === 'string') {
+        auth[field] = resolveVariables(auth[field], vars);
+      }
+    });
+    resolved.auth = auth;
+  }
+
+  return applyMongoConnectionAuth(resolved);
 }
 
 function isReservedMongoConnectionId(id) {
@@ -163,6 +200,16 @@ function validateDatabaseConfig(config, requireId = false) {
     }
     if (!validateMongoUri(config.connectionUri)) {
       return 'connectionUri must use the mongodb:// or mongodb+srv:// scheme';
+    }
+    if (config.auth !== undefined) {
+      if (!config.auth || typeof config.auth !== 'object') {
+        return 'auth must be an object when provided';
+      }
+      if (config.auth.mode !== undefined) {
+        if (typeof config.auth.mode !== 'string' || !MONGO_AUTH_MODES.has(config.auth.mode)) {
+          return `auth.mode must be one of: ${Array.from(MONGO_AUTH_MODES).join(', ')}`;
+        }
+      }
     }
   }
 

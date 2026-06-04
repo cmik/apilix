@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { validateDatabaseConnection } from './databaseValidator';
+import { makeDatabasePreset } from '../constants/databasePresets';
 
 describe('validateDatabaseConnection', () => {
   it('accepts a valid mysql config', () => {
@@ -68,6 +69,60 @@ describe('validateDatabaseConnection', () => {
 
     expect(result.valid).toBe(false);
     expect(result.errors).toContain('MongoDB URI must start with mongodb:// or mongodb+srv://.');
+  });
+
+  it('accepts mongodb auth settings with scram credentials', () => {
+    const result = validateDatabaseConnection({
+      name: 'Mongo Auth',
+      type: 'mongodb',
+      connectionUri: 'mongodb://localhost:27017/app',
+      auth: {
+        mode: 'scram',
+        username: '{{mongoUser}}',
+        password: '{{mongoPassword}}',
+        authSource: 'admin',
+      },
+    });
+
+    expect(result.valid).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
+  it('rejects mongodb auth settings with invalid mode', () => {
+    const result = validateDatabaseConnection({
+      name: 'Mongo Bad Auth',
+      type: 'mongodb',
+      connectionUri: 'mongodb://localhost:27017/app',
+      auth: {
+        mode: 'bad-mode' as 'scram',
+      },
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('MongoDB auth mode must be one of: scram, x509, ldap-plain, oidc.');
+  });
+
+  it('rejects scram auth settings when username/password are missing', () => {
+    const result = validateDatabaseConnection({
+      name: 'Mongo Missing Creds',
+      type: 'mongodb',
+      connectionUri: 'mongodb://localhost:27017/app',
+      auth: {
+        mode: 'scram',
+      },
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('MongoDB auth username is required for SCRAM/LDAP auth.');
+    expect(result.errors).toContain('MongoDB auth password is required for SCRAM/LDAP auth.');
+  });
+
+  it('accepts the default mongodb preset without requiring auth credentials', () => {
+    const preset = { ...makeDatabasePreset('mongodb'), name: 'Mongo Preset' };
+    const result = validateDatabaseConnection(preset);
+
+    expect(result.valid).toBe(true);
+    expect(result.errors).toEqual([]);
   });
 
   it('validates timeout and pool ranges', () => {

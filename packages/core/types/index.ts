@@ -77,6 +77,14 @@ export interface MongoRequestAuth {
   oidcAccessToken?: string;
 }
 
+export interface MongoConnectionAuthSettings {
+  mode?: 'scram' | 'x509' | 'ldap-plain' | 'oidc';
+  username?: string;
+  password?: string;
+  authSource?: string;
+  oidcAccessToken?: string;
+}
+
 export type MongoRequestOperation =
   | 'find'
   | 'aggregate'
@@ -644,7 +652,9 @@ export interface SQLConnectionConfig extends DatabaseConnectionBase {
 export interface MongoDBConnectionConfig extends DatabaseConnectionBase {
   type: 'mongodb';
   connectionUri: string; // e.g., 'mongodb://user:pass@host:27017/dbname?authSource=admin'; supports {{variables}}
-  authMechanism?: 'SCRAM-SHA-1' | 'SCRAM-SHA-256' | 'MONGODB-X509' | 'MONGODB-CR'; // Default: auto-detect
+  database?: string;     // Optional default database for query editor and script runtime
+  auth?: MongoConnectionAuthSettings; // Optional auth settings applied to URI at runtime/test time
+  authMechanism?: 'SCRAM-SHA-1' | 'SCRAM-SHA-256' | 'MONGODB-X509' | 'MONGODB-CR' | 'PLAIN' | 'MONGODB-OIDC'; // Default: auto-detect
   sslCertPath?: string;  // For X509 auth
   sslKeyPath?: string;   // For X509 auth
   sslCAPath?: string;    // CA bundle for SSL verification
