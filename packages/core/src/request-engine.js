@@ -1732,7 +1732,7 @@ async function executeRequest(item, context) {
         responseTime: mongoResponse.responseTime,
         resolvedUrl: url,
         requestHeaders: {},
-        requestBody: req.mongodb?.operation === 'script' ? (req.mongodb?.script || '') : JSON.stringify(req.mongodb || {}),
+        requestBody: req.mongodb?.operation === 'script' ? resolveVariables(req.mongodb?.script || '', vars) : JSON.stringify(req.mongodb || {}),
         headers: {},
         body: mongoResponse.body,
         size: mongoResponse.size,
