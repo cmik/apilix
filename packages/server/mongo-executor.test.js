@@ -332,6 +332,7 @@ test('db.getSiblingDB throws synchronously with empty or non-string name (unit)'
   assert.equal(siblingDbName, 'analytics');
   assert.equal(typeof sibling.collection, 'function');
   assert.equal(typeof sibling.getSiblingDB, 'function');
+});
 
 test('script operation: db.collection still works after getSiblingDB is added (regression)', async () => {
   // Plain db.collection(...) path must be unaffected by the getSiblingDB addition.
