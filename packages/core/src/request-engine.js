@@ -414,7 +414,7 @@ function extractMongoConnection(config, vars, context) {
   return { uri: applyMongoAuthOptions(uri, effectiveAuth), database: db };
 }
 
-function buildMongoDbApi(db, session) {
+function buildMongoDbApi(db, session, client) {
   return {
     collection(name) {
       const coll = db.collection(name);
@@ -430,6 +430,12 @@ function buildMongoDbApi(db, session) {
         countDocuments: (filter = {}, options = {}) => coll.countDocuments(filter, { ...options, session }),
         distinct: (field, filter = {}, options = {}) => coll.distinct(field, filter, { ...options, session }),
       };
+    },
+    getSiblingDB(name) {
+      if (!name || typeof name !== 'string') {
+        throw new Error('getSiblingDB requires a non-empty database name');
+      }
+      return buildMongoDbApi(client.db(name), session, client);
     },
     ObjectId,
   };
@@ -478,7 +484,7 @@ async function executeMongoOperation(mongoCfg, vars, context) {
       const payload = await runInSession(async () => {
         if (operation === 'script') {
           const sandbox = {
-            db: buildMongoDbApi(db, session),
+            db: buildMongoDbApi(db, session, client),
             BSON: { ObjectId },
             ObjectId,
             result: null,
@@ -572,8 +578,8 @@ async function executeMongoOperation(mongoCfg, vars, context) {
         size: Buffer.byteLength(body, 'utf8'),
       };
     } finally {
-      if (session) await session.endSession();
-      await client.close();
+      if (session) await session.endSession().catch(() => {});
+      await client.close().catch(() => {});
     }
   })();
 
@@ -2058,4 +2064,4 @@ function flattenItemsWithScripts(items, collectionEvents) {
   return walk(items, colPrereq ? [colPrereq] : [], colTest ? [colTest] : []);
 }
 
-module.exports = { executeRequest, flattenItems, flattenItemsWithScripts, setExecutorConfig, resolveVariables, buildBody, buildProxyOption, applyAuth, resolveHeaderPairs, resolveParamPairs, executeMongoTest, executeMongoIntrospect };
+module.exports = { executeRequest, flattenItems, flattenItemsWithScripts, setExecutorConfig, resolveVariables, buildBody, buildProxyOption, applyAuth, resolveHeaderPairs, resolveParamPairs, executeMongoTest, executeMongoIntrospect, buildMongoDbApi };

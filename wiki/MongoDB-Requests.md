@@ -539,6 +539,7 @@ Resolve the query first:
 |---|---|
 | `db` | MongoDB `Db` instance with session threading |
 | `db.collection(name)` | Returns a wrapped collection with all CRUD methods |
+| `db.getSiblingDB(name)` | Returns a wrapped DB API for a different database on the same connection |
 | `ObjectId` | BSON `ObjectId` constructor |
 | `BSON.ObjectId` | Alias for `ObjectId` |
 | `result` | Output variable — set this to the value you want returned |
@@ -550,6 +551,29 @@ Resolve the query first:
 | `Buffer` | Node.js `Buffer` for binary data |
 
 > **Note:** The script runs in a Node.js `vm` sandbox. `require`, `process`, and file-system access are not available. Network calls outside MongoDB are not permitted.
+
+### Cross-database queries with getSiblingDB
+
+Use `db.getSiblingDB(name)` to query a different database on the same connection without opening a second request. The returned object supports the same collection helpers as `db` and participates in the same transaction session when **Use Transaction** is enabled.
+
+```js
+(async () => {
+  const analytics = db.getSiblingDB('analytics');
+
+  const users = await db.collection('users')
+    .find({ active: true })
+    .toArray();
+
+  const events = await analytics.collection('events')
+    .find({ userId: { $in: users.map(u => u._id) } })
+    .limit(100)
+    .toArray();
+
+  return { users, events };
+})()
+```
+
+> `getSiblingDB` is available only inside a MongoDB request `operation: "script"` body. It is not available in pre-request/test scripts — use a second `apx.db.mongoQuery` call with a different `database` field for that context.
 
 ---
 

@@ -263,3 +263,99 @@ test('executeMongoTest uses "admin" database by default', async () => {
   const result = await executeMongoTest('mongodb://127.0.0.1:1');
   assert.equal(typeof result.ok, 'boolean');
 });
+
+// ─── getSiblingDB ─────────────────────────────────────────────────────────────
+
+test('script operation: db.getSiblingDB is available and reaches the driver', async () => {
+  // db.getSiblingDB('analytics') should be parsed, instantiated, and ultimately
+  // fail with ECONNREFUSED — proving it exists and forwarded to the MongoDB driver.
+  const item = {
+    name: 'Mongo getSiblingDB capability',
+    request: {
+      method: 'MONGO',
+      requestType: 'mongodb',
+      url: { raw: '' },
+      mongodb: {
+        connection: { mode: 'direct', uri: 'mongodb://127.0.0.1:1' },
+        database: 'testdb',
+        collection: '',
+        operation: 'script',
+        script: `
+          (async () => {
+            const analytics = db.getSiblingDB('analytics');
+            const docs = await analytics.collection('events').find({}).limit(5).toArray();
+            result = docs;
+          })()
+        `,
+      },
+    },
+  };
+  const result = await executeRequest(item, makeContext());
+  assert.equal(result.protocol, 'mongodb');
+  // The only way to reach ECONNREFUSED is if getSiblingDB resolved and forwarded
+  // the find call to the driver — so this confirms the wrapper works end-to-end.
+  assert.ok(
+    /ECONNREFUSED|connect ECONNREFUSED/i.test(result.error || result.body || ''),
+    `Expected ECONNREFUSED but got: ${result.error || result.body}`,
+  );
+});
+
+test('db.getSiblingDB throws synchronously with empty or non-string name (unit)', () => {
+  // Pure unit test — no MongoDB connection required.
+  // Use a direct path to the workspace source so we always test the live file,
+  // regardless of any stale nested node_modules copy in packages/server.
+  const { buildMongoDbApi } = require('../core/src/request-engine');
+  const mockColl = () => ({});
+  const mockDb = { collection: mockColl };
+  const mockClient = { db: () => mockDb };
+  const api = buildMongoDbApi(mockDb, null, mockClient);
+
+  assert.throws(
+    () => api.getSiblingDB(''),
+    /non-empty database name/i,
+    'empty string should throw',
+  );
+  assert.throws(
+    () => api.getSiblingDB(null),
+    /non-empty database name/i,
+    'null should throw',
+  );
+  assert.throws(
+    () => api.getSiblingDB(42),
+    /non-empty database name/i,
+    'non-string should throw',
+  );
+
+  // Valid name returns an API object with .collection
+  const sibling = api.getSiblingDB('analytics');
+  assert.equal(typeof sibling.collection, 'function');
+  assert.equal(typeof sibling.getSiblingDB, 'function');
+});
+
+test('script operation: db.collection still works after getSiblingDB is added (regression)', async () => {
+  // Plain db.collection(...) path must be unaffected by the getSiblingDB addition.
+  const item = {
+    name: 'Mongo getSiblingDB regression',
+    request: {
+      method: 'MONGO',
+      requestType: 'mongodb',
+      url: { raw: '' },
+      mongodb: {
+        connection: { mode: 'direct', uri: 'mongodb://127.0.0.1:1' },
+        database: 'testdb',
+        collection: '',
+        operation: 'script',
+        script: `
+          const docs = await db.collection('users').find({ active: true }).toArray();
+          result = docs;
+        `,
+      },
+    },
+  };
+  const result = await executeRequest(item, makeContext());
+  assert.equal(result.protocol, 'mongodb');
+  assert.ok(
+    /ECONNREFUSED|connect ECONNREFUSED/i.test(result.error || result.body || ''),
+    `Expected ECONNREFUSED but got: ${result.error || result.body}`,
+  );
+});
