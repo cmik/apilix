@@ -14,7 +14,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -139,7 +139,7 @@ jobs:
   build-cli-mac:
     runs-on: macos-latest
     needs: test
-    timeout-minutes: 15
+    timeout-minutes: 30
     if: (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && success()
     permissions:
       contents: write
@@ -229,7 +229,7 @@ jobs:
   build-cli-windows:
     runs-on: windows-latest
     needs: test
-    timeout-minutes: 15
+    timeout-minutes: 30
     if: (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && success()
     permissions:
       contents: write
