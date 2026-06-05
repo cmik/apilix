@@ -142,7 +142,7 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Build macOS CLI binary
         run: npx pkg . --no-bytecode --public --public-packages "*" --compress GZip --targets node20-macos-x64 --out-path dist/cli
