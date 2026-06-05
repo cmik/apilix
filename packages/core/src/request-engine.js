@@ -435,7 +435,7 @@ function buildMongoDbApi(db, session, client) {
       if (typeof name !== 'string' || !name.trim()) {
         throw new Error('getSiblingDB requires a non-empty database name');
       }
-      return buildMongoDbApi(client.db(name), session, client);
+      return buildMongoDbApi(client.db(name.trim()), session, client);
     },
     ObjectId,
   };
