@@ -53,6 +53,8 @@ jobs:
     if: (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && success()
     permissions:
       contents: write
+    env:
+      PKG_CACHE_PATH: ${{ github.workspace }}/.pkg-cache
     steps:
       - uses: actions/checkout@v4
 
@@ -62,10 +64,18 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Restore pkg cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.PKG_CACHE_PATH }}
+          key: ${{ runner.os }}-pkg-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-pkg-
 
       - name: Build Linux CLI binary
-        run: npx pkg . --no-bytecode --public --public-packages "*" --compress GZip --targets node20-linux-x64 --out-path dist/cli
+        run: npm run cli:build:linux
 
       - name: Smoke test Linux CLI binary
         shell: bash
@@ -133,6 +143,8 @@ jobs:
     if: (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && success()
     permissions:
       contents: write
+    env:
+      PKG_CACHE_PATH: ${{ github.workspace }}/.pkg-cache
     steps:
       - uses: actions/checkout@v4
 
@@ -144,8 +156,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Restore pkg cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.PKG_CACHE_PATH }}
+          key: ${{ runner.os }}-pkg-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-pkg-
+
       - name: Build macOS CLI binary
-        run: npx pkg . --no-bytecode --public --public-packages "*" --compress GZip --targets node20-macos-x64 --out-path dist/cli
+        run: npm run cli:build:mac
 
       - name: Smoke test macOS CLI binary
         shell: bash
@@ -213,6 +233,8 @@ jobs:
     if: (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && success()
     permissions:
       contents: write
+    env:
+      PKG_CACHE_PATH: ${{ github.workspace }}\.pkg-cache
     steps:
       - uses: actions/checkout@v4
 
@@ -224,9 +246,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Restore pkg cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.PKG_CACHE_PATH }}
+          key: ${{ runner.os }}-pkg-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-pkg-
+
       - name: Build Windows CLI binary
         shell: pwsh
-        run: npx pkg . --no-bytecode --public --public-packages "*" --compress GZip --targets node20-win-x64 --out-path dist/cli
+        run: npm run cli:build:win
 
       - name: Smoke test Windows CLI binary
         shell: pwsh
