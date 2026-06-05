@@ -346,8 +346,10 @@ test('script operation: db.collection still works after getSiblingDB is added (r
         collection: '',
         operation: 'script',
         script: `
-          const docs = await db.collection('users').find({ active: true }).toArray();
-          result = docs;
+          (async () => {
+            const docs = await db.collection('users').find({ active: true }).toArray();
+            result = docs;
+          })()
         `,
       },
     },
