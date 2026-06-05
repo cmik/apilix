@@ -82,7 +82,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          BIN="$(find dist/cli -maxdepth 1 -type f | grep -E 'linux|Linux' | head -n 1 || true)"
+          BIN="$(find dist/cli -maxdepth 1 -type f | head -n 1 || true)"
           if [[ -z "$BIN" ]]; then
             echo "Linux CLI binary not found in dist/cli"
             exit 1
@@ -172,7 +172,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          BIN="$(find dist/cli -maxdepth 1 -type f | grep -E 'macos|darwin|MacOS|macOS' | head -n 1 || true)"
+          BIN="$(find dist/cli -maxdepth 1 -type f | head -n 1 || true)"
           if [[ -z "$BIN" ]]; then
             echo "macOS CLI binary not found in dist/cli"
             exit 1
@@ -263,7 +263,10 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $bin = Get-ChildItem dist/cli -File | Where-Object { $_.Name -match 'win|windows' } | Select-Object -First 1
+          $bin = Get-ChildItem dist/cli -File | Where-Object { $_.Extension -eq '.exe' } | Select-Object -First 1
+          if (-not $bin) {
+            $bin = Get-ChildItem dist/cli -File | Select-Object -First 1
+          }
           if (-not $bin) {
             throw 'Windows CLI binary not found in dist/cli'
           }
