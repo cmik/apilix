@@ -200,7 +200,7 @@ function parseJsonArray(text, fallback = [], options = {}) {
   }
 }
 
-function parseMongoOperationInput(mongoCfg, vars, maxTimeMS) {
+function parseMongoOperationInput(mongoCfg, vars, maxTimeMS, preResolvedScript) {
   const operation = mongoCfg.operation || 'find';
   const collectionName = resolveVariables(mongoCfg.collection || '', vars);
   const limit = Math.max(1, Math.min(5000, parseInt(mongoCfg.limit, 10) || DEFAULT_MONGO_LIMIT));
@@ -210,7 +210,7 @@ function parseMongoOperationInput(mongoCfg, vars, maxTimeMS) {
       operation,
       collectionName,
       limit,
-      script: resolveVariables(mongoCfg.script || '', vars),
+      script: preResolvedScript !== undefined ? preResolvedScript : resolveVariables(mongoCfg.script || '', vars),
     };
   }
 
@@ -446,11 +446,11 @@ function buildMongoDbApi(db, session, client) {
   };
 }
 
-async function executeMongoOperation(mongoCfg, vars, context) {
+async function executeMongoOperation(mongoCfg, vars, context, options = {}) {
   const opStart = Date.now();
   const { uri, database } = extractMongoConnection(mongoCfg, vars, context);
   const maxTimeMS = Math.max(1, Math.min(MAX_RUNTIME_MS, parseInt(mongoCfg.maxTimeMS, 10) || MAX_RUNTIME_MS));
-  const mongoInput = parseMongoOperationInput(mongoCfg, vars, maxTimeMS);
+  const mongoInput = parseMongoOperationInput(mongoCfg, vars, maxTimeMS, options.resolvedScript);
   const operation = mongoInput.operation;
   // Declared outside execPromise so the timeout handler can force-close it
   // if the race resolves before the operation completes.
@@ -1653,7 +1653,12 @@ async function executeRequest(item, context) {
     }
 
     if (isMongo) {
-      const mongoResponse = await executeMongoOperation(req.mongodb || {}, vars, context);
+      const resolvedMongoScript = req.mongodb?.operation === 'script'
+        ? resolveVariables(req.mongodb?.script || '', vars)
+        : undefined;
+      const mongoResponse = await executeMongoOperation(req.mongodb || {}, vars, context, {
+        resolvedScript: resolvedMongoScript,
+      });
 
       const testScript = (item.event || []).find(e => e.listen === 'test');
       let testResults = [];
@@ -1732,7 +1737,7 @@ async function executeRequest(item, context) {
         responseTime: mongoResponse.responseTime,
         resolvedUrl: url,
         requestHeaders: {},
-        requestBody: req.mongodb?.operation === 'script' ? resolveVariables(req.mongodb?.script || '', vars) : JSON.stringify(req.mongodb || {}),
+        requestBody: req.mongodb?.operation === 'script' ? resolvedMongoScript : JSON.stringify(req.mongodb || {}),
         headers: {},
         body: mongoResponse.body,
         size: mongoResponse.size,

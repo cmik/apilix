@@ -148,3 +148,29 @@ test('mongodb script operation: unknown variable token is left unchanged', async
   assert.equal(JSON.parse(result.body), '{{undefinedVar}}');
   assert.ok(result.requestBody.includes('{{undefinedVar}}'), 'unresolved token should remain in requestBody');
 });
+
+test('mongodb script operation: requestBody matches the exact resolved dynamic script value', async (t) => {
+  mockMongoClient(t);
+
+  const item = {
+    name: 'Mongo Script Dynamic Variable Consistency Test',
+    request: {
+      method: 'MONGO',
+      requestType: 'mongodb',
+      url: { raw: '' },
+      mongodb: {
+        connection: { mode: 'direct', uri: 'mongodb://127.0.0.1:27017' },
+        database: 'testdb',
+        operation: 'script',
+        script: 'result = "{{$guid}}";',
+      },
+    },
+  };
+
+  const ctx = makeContext();
+  const result = await executeRequest(item, ctx);
+
+  assert.equal(result.mongoStatus, 'success');
+  const executedGuid = JSON.parse(result.body);
+  assert.ok(result.requestBody.includes(executedGuid), 'requestBody should contain the same resolved guid that was executed');
+});
