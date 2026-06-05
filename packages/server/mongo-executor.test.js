@@ -307,7 +307,8 @@ test('db.getSiblingDB throws synchronously with empty or non-string name (unit)'
   const { buildMongoDbApi } = require('../core/src/request-engine');
   const mockColl = () => ({});
   const mockDb = { collection: mockColl };
-  const mockClient = { db: () => mockDb };
+  let siblingDbName;
+  const mockClient = { db: (name) => { siblingDbName = name; return mockDb; } };
   const api = buildMongoDbApi(mockDb, null, mockClient);
 
   assert.throws(
