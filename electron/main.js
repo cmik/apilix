@@ -4,9 +4,16 @@ const { app, BrowserWindow, shell, ipcMain, dialog, safeStorage, Menu } = requir
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
-const pty = require('node-pty');
 const os = require('os');
 const crypto = require('crypto');
+
+let pty = null;
+let ptyLoadError = null;
+try {
+  pty = require('node-pty');
+} catch (err) {
+  ptyLoadError = err;
+}
 
 const isDev = !app.isPackaged;
 // DevTools are always available in dev. In packaged builds they are disabled  
@@ -506,6 +513,10 @@ function resolveTerminalCwd(requestedCwd) {
 }
 
 ipcMain.handle('terminal-start', async (_event, rawOpts = {}) => {
+  if (!pty || typeof pty.spawn !== 'function') {
+    const details = ptyLoadError ? ` (${ptyLoadError.message})` : '';
+    throw new Error(`Integrated terminal is unavailable because node-pty could not be loaded${details}.`);
+  }
   const opts = rawOpts && typeof rawOpts === 'object' ? rawOpts : {};
   // Validate shellPath: must be an absolute path to an existing file.
   const shell = (() => {
