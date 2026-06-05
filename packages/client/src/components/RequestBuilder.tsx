@@ -2143,6 +2143,20 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
           requestNames={flattenRequestNames(col?.item ?? [])}
           requestItems={flattenRequestItems(col?.item ?? [])}
           resolvedVars={allVars}
+          envVars={envVars}
+          collVars={collVars}
+          globals={state.globalVariables}
+          collectionDefinitionVars={collectionDefinitionVars}
+          hasActiveEnv={!!state.activeEnvironmentId}
+          onVarEdit={(name, value, scope) => {
+            if (scope === 'env') {
+              dispatch({ type: 'UPDATE_ACTIVE_ENV_VARS', payload: { [name]: value } });
+            } else if (scope === 'coll') {
+              dispatch({ type: 'UPDATE_COLLECTION_VARS', payload: { collectionId: activeReq.collectionId, vars: { [name]: value } } });
+            } else {
+              dispatch({ type: 'UPDATE_GLOBAL_VARS', payload: { [name]: value } });
+            }
+          }}
           onBodyChange={v => setEdit(x => x ? { ...x, bodyRaw: v } : x)}
           onPreRequestChange={v => setEdit(x => x ? { ...x, preRequestScript: v } : x)}
           onTestChange={v => setEdit(x => x ? { ...x, testScript: v } : x)}
