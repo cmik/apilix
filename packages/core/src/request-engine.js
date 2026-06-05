@@ -432,7 +432,7 @@ function buildMongoDbApi(db, session, client) {
       };
     },
     getSiblingDB(name) {
-      if (!name || typeof name !== 'string') {
+      if (typeof name !== 'string' || !name.trim()) {
         throw new Error('getSiblingDB requires a non-empty database name');
       }
       return buildMongoDbApi(client.db(name), session, client);
