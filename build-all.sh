@@ -4,10 +4,21 @@ set -e
 echo "==> Building client..."
 npm run build
 
-echo "==> Building CLI binaries..."
-npm run cli:build:binaries
-
 HOST_OS="$(uname -s)"
+
+if [[ "$HOST_OS" == "Darwin" ]]; then
+	echo "==> Building macOS CLI binary..."
+	npm run cli:build:mac
+elif [[ "$HOST_OS" == "Linux" ]]; then
+	echo "==> Building Linux CLI binary..."
+	npm run cli:build:linux
+elif [[ "$HOST_OS" == MINGW* || "$HOST_OS" == MSYS* || "$HOST_OS" == CYGWIN* ]]; then
+	echo "==> Building Windows CLI binary..."
+	npm run cli:build:win
+else
+	echo "Unsupported host OS: $HOST_OS"
+	exit 1
+fi
 
 if [[ "$HOST_OS" == "Darwin" ]]; then
 	echo "==> Packaging for macOS (host-native only)..."
