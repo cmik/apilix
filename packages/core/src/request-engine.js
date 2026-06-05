@@ -206,7 +206,12 @@ function parseMongoOperationInput(mongoCfg, vars, maxTimeMS) {
   const limit = Math.max(1, Math.min(5000, parseInt(mongoCfg.limit, 10) || DEFAULT_MONGO_LIMIT));
 
   if (operation === 'script') {
-    return { operation, collectionName, limit };
+    return {
+      operation,
+      collectionName,
+      limit,
+      script: resolveVariables(mongoCfg.script || '', vars),
+    };
   }
 
   if (!collectionName) {
@@ -506,7 +511,7 @@ async function executeMongoOperation(mongoCfg, vars, context) {
             isNaN,
             isFinite,
           };
-          const script = new vm.Script(String(mongoCfg.script || ''), { filename: 'apilix-mongo-script.js' });
+          const script = new vm.Script(String(mongoInput.script || ''), { filename: 'apilix-mongo-script.js' });
           // Limit synchronous CPU time to 30 s regardless of maxTimeMS to avoid
           // blocking the event loop. Async/wall-clock timeout is handled by timeoutPromise.
           const vmSyncTimeout = Math.min(30000, maxTimeMS);
