@@ -329,9 +329,9 @@ test('db.getSiblingDB throws synchronously with empty or non-string name (unit)'
 
   // Valid name returns an API object with .collection
   const sibling = api.getSiblingDB('analytics');
+  assert.equal(siblingDbName, 'analytics');
   assert.equal(typeof sibling.collection, 'function');
   assert.equal(typeof sibling.getSiblingDB, 'function');
-});
 
 test('script operation: db.collection still works after getSiblingDB is added (regression)', async () => {
   // Plain db.collection(...) path must be unaffected by the getSiblingDB addition.
