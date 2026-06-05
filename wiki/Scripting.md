@@ -996,6 +996,8 @@ Pre-request and test scripts work exactly the same way for MongoDB requests as f
 
 MongoDB `operation: "script"` requests run inside a Node.js `vm` sandbox. Top-level `await` is not available in that script body. For async MongoDB calls, return an async IIFE (or a Promise chain). The resolved return value becomes the response body; if nothing is returned, Apilix falls back to the `result` variable.
 
+> **Cross-database access:** Inside a Mongo `operation: "script"` body, `db.getSiblingDB('otherDb')` returns a wrapped DB API for a different database on the same connection. It is **not** available in pre-request/test scripts (use a second `apx.db.mongoQuery` call with a different `database` field there).
+
 **Mongo `script`: async wrapper pattern:**
 
 ```js

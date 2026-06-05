@@ -1,4 +1,4 @@
-import { useState, useEffect, lazy, Suspense } from 'react';
+import { useState, useEffect, lazy, Suspense, startTransition } from 'react';
 import { useApp } from '../store';
 import apilixLogo from '../assets/apilix.svg';
 import {
@@ -82,7 +82,7 @@ export default function ActivityBar({
           return (
             <button
               key={key}
-              onClick={() => dispatch({ type: 'SET_VIEW', payload: key })}
+              onClick={() => startTransition(() => dispatch({ type: 'SET_VIEW', payload: key }))}
               title={label}
               className={`relative w-full flex flex-col items-center justify-center gap-0.5 py-2.5 rounded transition-colors ${
                 active
