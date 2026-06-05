@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { marked } from 'marked';
 import MongoPanel from './MongoPanel';
 import type { MongoConfig, ConnectionMode } from './MongoPanel';
@@ -10,6 +10,7 @@ import type { VariableSuggestion } from '../utils/variableAutocomplete';
 import type { MongoDBConnectionConfig } from '../types';
 import { resolveVariables, extractUsedVariables } from '../utils/variableResolver';
 import type { MongoUsedVariable, MongoUsedVarScope } from '../utils/variableResolver';
+import { IconEye, IconEyeOff } from './Icons';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -69,15 +70,22 @@ const DEFAULT_EDIT_SCOPE: 'env' | 'coll' | 'global' = 'env';
 export function UsedVariablesSection({
   usedVars,
   hasActiveEnv,
+  secretKeys,
   onVarEdit,
 }: {
   usedVars: MongoUsedVariable[];
   hasActiveEnv: boolean;
+  /** Keys whose values should be masked (bullets) until the user reveals them */
+  secretKeys?: Set<string>;
   onVarEdit: (name: string, value: string, scope: 'env' | 'coll' | 'global') => void;
 }) {
   const [open, setOpen] = useState(true);
   const [pendingEdits, setPendingEdits] = useState<Record<string, string>>({});
   const [createScopes, setCreateScopes] = useState<Record<string, 'env' | 'coll' | 'global'>>({});
+  const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
+
+  // Reset revealed state whenever the active environment changes (secretKeys reference changes)
+  useEffect(() => { setRevealedKeys(new Set()); }, [secretKeys]);
 
   if (usedVars.length === 0) return null;
 
@@ -99,6 +107,14 @@ export function UsedVariablesSection({
 
   function handleKeyDown(e: React.KeyboardEvent, v: MongoUsedVariable) {
     if (e.key === 'Enter') { e.preventDefault(); handleApply(v); }
+  }
+
+  function toggleReveal(name: string) {
+    setRevealedKeys(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
   }
 
   return (
@@ -142,6 +158,8 @@ export function UsedVariablesSection({
                 const pendingValue = pendingEdits[v.name];
                 const displayValue = pendingValue !== undefined ? pendingValue : v.resolvedValue;
                 const isDirty = pendingValue !== undefined && pendingValue !== v.resolvedValue;
+                const isSecret = secretKeys?.has(v.name) ?? false;
+                const isRevealed = revealedKeys.has(v.name);
 
                 return (
                   <tr key={v.name} className="border-t border-slate-800 hover:bg-slate-800/30">
@@ -181,7 +199,7 @@ export function UsedVariablesSection({
                       ) : (
                         <div className="flex items-center gap-1">
                           <input
-                            type="text"
+                            type={isSecret && !isRevealed ? 'password' : 'text'}
                             value={displayValue}
                             onChange={e => setPendingEdits(prev => ({ ...prev, [v.name]: e.target.value }))}
                             onKeyDown={e => handleKeyDown(e, v)}
@@ -194,6 +212,19 @@ export function UsedVariablesSection({
                                   : 'border-slate-600 focus:border-orange-500'
                             }`}
                           />
+                          {isSecret && (
+                            <button
+                              type="button"
+                              onClick={() => toggleReveal(v.name)}
+                              aria-label={isRevealed ? 'Hide value' : 'Reveal value'}
+                              title={isRevealed ? 'Hide value' : 'Reveal value'}
+                              className="shrink-0 p-0.5 rounded text-slate-500 hover:text-slate-300 transition-colors"
+                            >
+                              {isRevealed
+                                ? <IconEyeOff className="w-3 h-3" />
+                                : <IconEye className="w-3 h-3" />}
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => handleApply(v)}
@@ -250,7 +281,7 @@ export default function MongoRequestPanel({
   onPreRequestSyntaxCheck,
   onTestSyntaxCheck,
 }: MongoRequestPanelProps) {
-  const { state } = useApp();
+  const { state, getActiveEnvironment } = useApp();
   const [activeTab, setActiveTab] = useState<MainTab>('Query');
   const [docsMode, setDocsMode] = useState<'edit' | 'preview'>('edit');
 
@@ -343,6 +374,15 @@ export default function MongoRequestPanel({
     () => extractUsedVariables(bodyRaw, envVars, collVars, globals, collectionDefinitionVars),
     [bodyRaw, envVars, collVars, globals, collectionDefinitionVars],
   );
+  const secretEnvKeys = useMemo<Set<string>>(() => {
+    const activeEnv = getActiveEnvironment();
+    if (!activeEnv) return new Set<string>();
+    return new Set(
+      activeEnv.values
+        .filter(v => v.secret && v.enabled !== false)
+        .map(v => v.key),
+    );
+  }, [getActiveEnvironment]);
 
   const TABS: { id: MainTab; hasError?: boolean }[] = [
     { id: 'Connection' },
@@ -393,6 +433,7 @@ export default function MongoRequestPanel({
             <UsedVariablesSection
               usedVars={usedVars}
               hasActiveEnv={hasActiveEnv}
+              secretKeys={secretEnvKeys}
               onVarEdit={onVarEdit}
             />
           </>

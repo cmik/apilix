@@ -295,3 +295,150 @@ describe('UsedVariablesSection — interaction', () => {
     expect(screen.queryByRole('button', { name: /apply|create/i })).not.toBeInTheDocument();
   });
 });
+
+// ─── secret masking ───────────────────────────────────────────────────────────
+
+describe('UsedVariablesSection — secret masking', () => {
+  it('masks an ENV secret: input type is "password" by default', () => {
+    const { container } = render(
+      <UsedVariablesSection
+        usedVars={[envVar('apiKey', 'super-secret')]}
+        hasActiveEnv={true}
+        secretKeys={new Set(['apiKey'])}
+        onVarEdit={vi.fn()}
+      />
+    );
+    const input = container.querySelector('input[name], input[type]') as HTMLInputElement;
+    expect(input).not.toBeNull();
+    expect(input.type).toBe('password');
+  });
+
+  it('shows eye (reveal) button for a secret variable', () => {
+    render(
+      <UsedVariablesSection
+        usedVars={[envVar('apiKey', 'super-secret')]}
+        hasActiveEnv={true}
+        secretKeys={new Set(['apiKey'])}
+        onVarEdit={vi.fn()}
+      />
+    );
+    expect(screen.getByRole('button', { name: 'Reveal value' })).toBeInTheDocument();
+  });
+
+  it('does not show an eye button for a non-secret variable', () => {
+    render(
+      <UsedVariablesSection
+        usedVars={[envVar('host', 'localhost')]}
+        hasActiveEnv={true}
+        secretKeys={new Set()} // host is not secret
+        onVarEdit={vi.fn()}
+      />
+    );
+    expect(screen.queryByRole('button', { name: /reveal|hide/i })).not.toBeInTheDocument();
+  });
+
+  it('reveals the value (type becomes "text") when the eye button is clicked', async () => {
+    const user = userEvent.setup();
+    render(
+      <UsedVariablesSection
+        usedVars={[envVar('apiKey', 'super-secret')]}
+        hasActiveEnv={true}
+        secretKeys={new Set(['apiKey'])}
+        onVarEdit={vi.fn()}
+      />
+    );
+    await user.click(screen.getByRole('button', { name: 'Reveal value' }));
+    expect(screen.getByDisplayValue('super-secret')).toHaveAttribute('type', 'text');
+  });
+
+  it('switches from "Reveal value" to "Hide value" button after reveal', async () => {
+    const user = userEvent.setup();
+    render(
+      <UsedVariablesSection
+        usedVars={[envVar('apiKey', 'super-secret')]}
+        hasActiveEnv={true}
+        secretKeys={new Set(['apiKey'])}
+        onVarEdit={vi.fn()}
+      />
+    );
+    await user.click(screen.getByRole('button', { name: 'Reveal value' }));
+    expect(screen.getByRole('button', { name: 'Hide value' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reveal value' })).not.toBeInTheDocument();
+  });
+
+  it('re-masks the value (type back to "password") when Hide is clicked', async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <UsedVariablesSection
+        usedVars={[envVar('apiKey', 'super-secret')]}
+        hasActiveEnv={true}
+        secretKeys={new Set(['apiKey'])}
+        onVarEdit={vi.fn()}
+      />
+    );
+    await user.click(screen.getByRole('button', { name: 'Reveal value' }));
+    await user.click(screen.getByRole('button', { name: 'Hide value' }));
+    const input = container.querySelector('input') as HTMLInputElement;
+    expect(input.type).toBe('password');
+  });
+
+  it('non-secret variables are not affected when secretKeys is provided', () => {
+    render(
+      <UsedVariablesSection
+        usedVars={[envVar('host', 'localhost'), envVar('apiKey', 'secret')]}
+        hasActiveEnv={true}
+        secretKeys={new Set(['apiKey'])}
+        onVarEdit={vi.fn()}
+      />
+    );
+    const inputs = screen.getAllByRole('textbox', { hidden: true });
+    const hostInput = inputs.find(i => i.getAttribute('value') === 'localhost');
+    expect(hostInput).toHaveAttribute('type', 'text');
+  });
+
+  it('calls onVarEdit correctly for a revealed secret after editing', async () => {
+    const user = userEvent.setup();
+    const onVarEdit = vi.fn();
+    render(
+      <UsedVariablesSection
+        usedVars={[envVar('apiKey', 'old-secret')]}
+        hasActiveEnv={true}
+        secretKeys={new Set(['apiKey'])}
+        onVarEdit={onVarEdit}
+      />
+    );
+    await user.click(screen.getByRole('button', { name: 'Reveal value' }));
+    const input = screen.getByDisplayValue('old-secret');
+    await user.clear(input);
+    await user.type(input, 'new-secret');
+    await user.click(screen.getByRole('button', { name: 'Apply value' }));
+    expect(onVarEdit).toHaveBeenCalledWith('apiKey', 'new-secret', 'env');
+  });
+
+  it('resets revealed state when secretKeys prop changes (simulating env switch)', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <UsedVariablesSection
+        usedVars={[envVar('apiKey', 'secret-a')]}
+        hasActiveEnv={true}
+        secretKeys={new Set(['apiKey'])}
+        onVarEdit={vi.fn()}
+      />
+    );
+    // Reveal the key
+    await user.click(screen.getByRole('button', { name: 'Reveal value' }));
+    expect(screen.getByRole('button', { name: 'Hide value' })).toBeInTheDocument();
+
+    // Simulate environment switch by passing a new Set reference
+    rerender(
+      <UsedVariablesSection
+        usedVars={[envVar('apiKey', 'secret-b')]}
+        hasActiveEnv={true}
+        secretKeys={new Set(['apiKey'])}
+        onVarEdit={vi.fn()}
+      />
+    );
+    // After the rerender the key should be masked again
+    expect(screen.getByRole('button', { name: 'Reveal value' })).toBeInTheDocument();
+  });
+});
