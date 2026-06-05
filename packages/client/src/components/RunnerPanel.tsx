@@ -314,7 +314,12 @@ function ResultRow({ result }: { result: RunnerIterationResult }) {
         <span className={`font-bold w-16 shrink-0 ${statusColor(result.status)}`}>
           {result.error ? 'ERR' : result.status}
         </span>
-        <span className="font-medium text-slate-400 w-16 shrink-0">{result.method}</span>
+        <span
+          className="font-medium text-slate-400 w-32 shrink-0 truncate"
+          title={result.method}
+        >
+          {result.method}
+        </span>
         <span className="flex-1 text-slate-300 truncate font-medium">{result.name}</span>
         {hasChildren && (
           <span className="text-xs text-slate-500 shrink-0">{children.length} child{children.length !== 1 ? 'ren' : ''}</span>
