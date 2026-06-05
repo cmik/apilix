@@ -339,6 +339,11 @@ export default function MongoRequestPanel({
     return merged.mode ? merged : undefined;
   })();
 
+  const usedVars = useMemo(
+    () => extractUsedVariables(bodyRaw, envVars, collVars, globals, collectionDefinitionVars),
+    [bodyRaw, envVars, collVars, globals, collectionDefinitionVars],
+  );
+
   const TABS: { id: MainTab; hasError?: boolean }[] = [
     { id: 'Connection' },
     { id: 'Query' },
@@ -386,7 +391,7 @@ export default function MongoRequestPanel({
               resolvedAuth={resolvedAuth}
             />
             <UsedVariablesSection
-              usedVars={extractUsedVariables(bodyRaw, envVars, collVars, globals, collectionDefinitionVars)}
+              usedVars={usedVars}
               hasActiveEnv={hasActiveEnv}
               onVarEdit={onVarEdit}
             />
