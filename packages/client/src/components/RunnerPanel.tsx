@@ -204,7 +204,7 @@ function SelectionNode({ item, depth, selectedIds, onToggleRequest, onToggleFold
         onClick={e => e.stopPropagation()}
         className="accent-orange-500 shrink-0 cursor-pointer"
       />
-      <span className={`text-xs font-bold w-14 shrink-0 ${methodColor}`}>{method}</span>
+      <span className={`text-xs font-bold w-20 shrink-0 truncate ${methodColor}`}>{method}</span>
       <span className="text-sm text-slate-300 truncate">{item.name}</span>
       <span className="ml-auto flex items-center gap-1 shrink-0">
         {usesChildRequests && (
@@ -558,7 +558,7 @@ function childBarColor(time: number): string {
 
 function ResponseTimeChart({ dataPoints, max }: { dataPoints: PerfDataPoint[]; max: number }) {
   const chartHeight = 100;
-  const barWidth = Math.max(6, Math.min(28, Math.floor(560 / Math.max(dataPoints.length, 1)) - 2));
+  const barWidth = Math.max(6, Math.min( method , Math.floor(560 / Math.max(dataPoints.length, 1)) - 2));
   const gap = 2;
   const svgWidth = Math.max(dataPoints.length * (barWidth + gap), 400);
 
@@ -1331,7 +1331,7 @@ export default function RunnerPanel() {
                         <circle cx="9" cy="12" r="1.5" /><circle cx="15" cy="12" r="1.5" />
                         <circle cx="9" cy="19" r="1.5" /><circle cx="15" cy="19" r="1.5" />
                       </svg>
-                      <span className={`text-xs font-bold w-14 shrink-0 ${methodColor}`}>{method}</span>
+                      <span className={`text-xs font-bold w-20 shrink-0 truncate ${methodColor}`}>{method}</span>
                       <span className="text-sm text-slate-300 truncate">{item.name}</span>
                     </div>
                   );
