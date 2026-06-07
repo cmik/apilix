@@ -558,7 +558,7 @@ function childBarColor(time: number): string {
 
 function ResponseTimeChart({ dataPoints, max }: { dataPoints: PerfDataPoint[]; max: number }) {
   const chartHeight = 100;
-  const barWidth = Math.max(6, Math.min( method , Math.floor(560 / Math.max(dataPoints.length, 1)) - 2));
+  const barWidth = Math.max(6, Math.min(max, Math.floor(560 / Math.max(dataPoints.length, 1)) - 2));
   const gap = 2;
   const svgWidth = Math.max(dataPoints.length * (barWidth + gap), 400);
 
