@@ -98,12 +98,16 @@ function startServer(port) {
 }
 
 function createWindow() {
+  const iconExt = process.platform === 'win32' ? 'ico' : process.platform === 'darwin' ? 'icns' : 'png';
+  const iconPath = path.join(__dirname, '..', 'public', `icon.${iconExt}`);
+
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 900,
     minHeight: 600,
     title: 'Apilix',
+    icon: fs.existsSync(iconPath) ? iconPath : undefined,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
