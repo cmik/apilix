@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { startTransition, useEffect, useRef, useState } from 'react';
 import { useApp, generateId } from '../store';
 import type { AppEnvironment } from '../types';
 import ConfirmModal from './ConfirmModal';
@@ -184,7 +184,7 @@ function EnvGlobalsTabBar() {
   return (
     <div className="flex border-b border-slate-700 shrink-0 -mx-4 px-4 mb-2">
       <button
-        onClick={() => dispatch({ type: 'SET_VIEW', payload: 'environments' })}
+        onClick={() => startTransition(() => dispatch({ type: 'SET_VIEW', payload: 'environments' }))}
         className={`mr-4 pb-2 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 ${
           state.view === 'environments'
             ? 'text-orange-400 border-orange-400'
@@ -195,7 +195,7 @@ function EnvGlobalsTabBar() {
         Environments
       </button>
       <button
-        onClick={() => dispatch({ type: 'SET_VIEW', payload: 'globals' })}
+        onClick={() => startTransition(() => dispatch({ type: 'SET_VIEW', payload: 'globals' }))}
         className={`mr-4 pb-2 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 ${
           state.view === 'globals'
             ? 'text-orange-400 border-orange-400'
@@ -206,7 +206,7 @@ function EnvGlobalsTabBar() {
         Globals
       </button>
       <button
-        onClick={() => dispatch({ type: 'SET_VIEW', payload: 'variables' })}
+        onClick={() => startTransition(() => dispatch({ type: 'SET_VIEW', payload: 'variables' }))}
         className={`pb-2 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5 ${
           state.view === 'variables'
             ? 'text-orange-400 border-orange-400'

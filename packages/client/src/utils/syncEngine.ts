@@ -28,6 +28,67 @@ export type ConflictResolution = 'keep-local' | 'keep-remote';
 /** Payload that may be pushed to a remote provider: plain or encrypted. */
 export type SyncPushPayload = WorkspaceData | EncryptedDataEnvelope;
 
+function isEnvSyncEnabled(syncConfig: SyncConfig): boolean {
+  return syncConfig.syncEnvironments !== false;
+}
+
+function isGlobalSyncEnabled(syncConfig: SyncConfig): boolean {
+  return syncConfig.syncGlobalVariables !== false;
+}
+
+export function applyScopedLocalOverrides(
+  target: WorkspaceData,
+  localData: WorkspaceData,
+  syncConfig: SyncConfig,
+): WorkspaceData {
+  return {
+    ...target,
+    environments: isEnvSyncEnabled(syncConfig) ? target.environments : localData.environments,
+    activeEnvironmentId: isEnvSyncEnabled(syncConfig) ? target.activeEnvironmentId : localData.activeEnvironmentId,
+    globalVariables: isGlobalSyncEnabled(syncConfig) ? target.globalVariables : localData.globalVariables,
+  };
+}
+
+function buildOutboundWorkspaceData(
+  localData: WorkspaceData,
+  remoteData: WorkspaceData | null,
+  syncConfig: SyncConfig,
+): WorkspaceData {
+  return {
+    ...localData,
+    environments: isEnvSyncEnabled(syncConfig) ? localData.environments : (remoteData?.environments ?? []),
+    activeEnvironmentId: isEnvSyncEnabled(syncConfig) ? localData.activeEnvironmentId : (remoteData?.activeEnvironmentId ?? null),
+    globalVariables: isGlobalSyncEnabled(syncConfig) ? localData.globalVariables : (remoteData?.globalVariables ?? {}),
+  };
+}
+
+async function fetchRemoteResult(
+  adapter: SyncAdapter,
+  syncConfig: SyncConfig,
+): Promise<SyncPullResult> {
+  let result: SyncPullResult;
+  if (adapter.pullWithMeta) {
+    result = await adapter.pullWithMeta(syncConfig.workspaceId, syncConfig.config);
+  } else {
+    const [data, remoteState] = await Promise.all([
+      adapter.pull(syncConfig.workspaceId, syncConfig.config),
+      getAdapterRemoteState(adapter, syncConfig.workspaceId, syncConfig.config),
+    ]);
+    result = { data, remoteState };
+  }
+
+  if (result.data && isEncryptedEnvelope(result.data)) {
+    if (!syncConfig.remotePassphrase) {
+      throw new Error(
+        'Remote data is encrypted — enter the workspace passphrase in Sync settings to pull.',
+      );
+    }
+    result = { ...result, data: await decryptWorkspaceData(result.data, syncConfig.remotePassphrase) };
+  }
+
+  return result;
+}
+
 export interface SyncConflict {
   workspaceId: string;
   localLastSaved: string;
@@ -66,9 +127,13 @@ export interface SyncAdapter {
  */
 export async function push(syncConfig: SyncConfig, data: WorkspaceData): Promise<void> {
   const adapter = getAdapter(syncConfig.provider as string);
+  const remoteData = (!isEnvSyncEnabled(syncConfig) || !isGlobalSyncEnabled(syncConfig))
+    ? (await fetchRemoteResult(adapter, syncConfig)).data ?? null
+    : null;
+  const outboundData = buildOutboundWorkspaceData(data, remoteData, syncConfig);
   const payload: SyncPushPayload = syncConfig.encryptRemote && syncConfig.remotePassphrase
-    ? await encryptWorkspaceData(data, syncConfig.remotePassphrase)
-    : data;
+    ? await encryptWorkspaceData(outboundData, syncConfig.remotePassphrase)
+    : outboundData;
   await adapter.push(syncConfig.workspaceId, payload, syncConfig.config);
 }
 
@@ -78,9 +143,13 @@ export async function applyMerged(
   expectedVersion: string,
 ): Promise<void> {
   const adapter = getAdapter(syncConfig.provider as string);
+  const remoteData = (!isEnvSyncEnabled(syncConfig) || !isGlobalSyncEnabled(syncConfig))
+    ? (await fetchRemoteResult(adapter, syncConfig)).data ?? null
+    : null;
+  const outboundData = buildOutboundWorkspaceData(mergedData, remoteData, syncConfig);
   const payload: SyncPushPayload = syncConfig.encryptRemote && syncConfig.remotePassphrase
-    ? await encryptWorkspaceData(mergedData, syncConfig.remotePassphrase)
-    : mergedData;
+    ? await encryptWorkspaceData(outboundData, syncConfig.remotePassphrase)
+    : outboundData;
   if (adapter.applyMerged) {
     await adapter.applyMerged(syncConfig.workspaceId, payload, syncConfig.config, expectedVersion);
     return;
@@ -126,28 +195,7 @@ export async function pullWithMeta(
     return { data: null, remoteState: await getAdapterRemoteState(adapter, syncConfig.workspaceId, syncConfig.config) };
   }
 
-  let result: SyncPullResult;
-  if (adapter.pullWithMeta) {
-    result = await adapter.pullWithMeta(syncConfig.workspaceId, syncConfig.config);
-  } else {
-    const [data, remoteState] = await Promise.all([
-      adapter.pull(syncConfig.workspaceId, syncConfig.config),
-      getAdapterRemoteState(adapter, syncConfig.workspaceId, syncConfig.config),
-    ]);
-    result = { data, remoteState };
-  }
-
-  // Transparent decryption — detect an encrypted envelope and unwrap it
-  if (result.data && isEncryptedEnvelope(result.data)) {
-    if (!syncConfig.remotePassphrase) {
-      throw new Error(
-        'Remote data is encrypted — enter the workspace passphrase in Sync settings to pull.',
-      );
-    }
-    result = { ...result, data: await decryptWorkspaceData(result.data, syncConfig.remotePassphrase) };
-  }
-
-  return result;
+  return fetchRemoteResult(adapter, syncConfig);
 }
 
 /**
@@ -220,8 +268,10 @@ export async function pullForMerge(
   const remoteData = remoteResult.data ?? localData;
 
   const baseData = await resolveMergeBaseData(syncConfig, localData);
+  const scopedLocalData = applyScopedLocalOverrides(localData, localData, syncConfig);
+  const scopedRemoteData = applyScopedLocalOverrides(remoteData, localData, syncConfig);
 
-  const mergeResult = mergeWorkspaces(baseData, localData, remoteData);
+  const mergeResult = mergeWorkspaces(baseData, scopedLocalData, scopedRemoteData);
 
   return {
     baseData,
@@ -246,7 +296,7 @@ export async function hasLocalUnpushedChanges(
     return true;
   }
   const baseData = await resolveMergeBaseData(syncConfig, localData);
-  return !deepEqual(baseData, localData);
+  return !deepEqual(applyScopedLocalOverrides(baseData, localData, syncConfig), localData);
 }
 
 async function resolveMergeBaseData(
@@ -309,7 +359,9 @@ export async function rebaseAfterStale(
 
   const remoteWasEmpty = remoteResult.data === null;
   const remoteData = remoteResult.data ?? localData;
-  const mergeResult = mergeWorkspaces(previousRemoteData, localData, remoteData);
+  const scopedLocalData = applyScopedLocalOverrides(localData, localData, syncConfig);
+  const scopedRemoteData = applyScopedLocalOverrides(remoteData, localData, syncConfig);
+  const mergeResult = mergeWorkspaces(previousRemoteData, scopedLocalData, scopedRemoteData);
 
   return {
     baseData: previousRemoteData,

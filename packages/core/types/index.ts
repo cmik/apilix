@@ -869,6 +869,10 @@ export interface SyncConfig {
   config: Record<string, string>;
   metadata?: SyncMetadata;
   lastSynced?: string;
+  /** When false, environment data remains local and is never pushed or overwritten. */
+  syncEnvironments?: boolean;
+  /** When false, global variables remain local and is never pushed or overwritten. */
+  syncGlobalVariables?: boolean;
   /** When true, push operations are blocked — workspace syncs in pull-only mode */
   readOnly?: boolean;
   /** When true, workspace data is encrypted before being pushed to the remote. */
