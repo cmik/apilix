@@ -219,6 +219,10 @@ export interface StoredSyncConfig {
   metadata?: SyncMetadata;
   /** legacy key kept for backward compatibility */
   lastSynced?: string;
+  /** When false, environment data stays local and is never pushed or overwritten. */
+  syncEnvironments?: boolean;
+  /** When false, global variables stay local and is never pushed or overwritten. */
+  syncGlobalVariables?: boolean;
   /** When true, push operations are blocked — workspace syncs in pull-only mode */
   readOnly?: boolean;
   /** When true, workspace data is encrypted before being pushed to the remote. */
@@ -271,6 +275,8 @@ export async function readSyncConfig(workspaceId: string): Promise<StoredSyncCon
   const config = (raw.config && typeof raw.config === 'object') ? raw.config as Record<string, string> : {};
   const metadata = (raw.metadata && typeof raw.metadata === 'object') ? raw.metadata as SyncMetadata : undefined;
   const lastSynced = typeof raw.lastSynced === 'string' ? raw.lastSynced : undefined;
+  const syncEnvironments = raw.syncEnvironments === false ? false : raw.syncEnvironments === true ? true : undefined;
+  const syncGlobalVariables = raw.syncGlobalVariables === false ? false : raw.syncGlobalVariables === true ? true : undefined;
   const readOnly = raw.readOnly === true ? true : undefined;
   const encryptRemote = raw.encryptRemote === true ? true : undefined;
   const encryptedRemotePassphrase = typeof raw.encryptedRemotePassphrase === 'string' ? raw.encryptedRemotePassphrase : undefined;
@@ -289,7 +295,7 @@ export async function readSyncConfig(workspaceId: string): Promise<StoredSyncCon
     remotePassphrase = await decryptValue(encryptedRemotePassphrase);
   }
 
-  return { provider, config, metadata, lastSynced, readOnly, encryptRemote, encryptedRemotePassphrase, remotePassphrase, isShared, sharePolicy, importedEncrypted };
+  return { provider, config, metadata, lastSynced, syncEnvironments, syncGlobalVariables, readOnly, encryptRemote, encryptedRemotePassphrase, remotePassphrase, isShared, sharePolicy, importedEncrypted };
 }
 
 /** Write the sync config for a specific workspace (merges into the store file). */
@@ -302,6 +308,8 @@ export async function writeSyncConfig(
   opts?: {
     encryptRemote?: boolean;
     remotePassphrase?: string;
+    syncEnvironments?: boolean;
+    syncGlobalVariables?: boolean;
     isShared?: boolean;
     sharePolicy?: SyncSharePolicy;
     importedEncrypted?: boolean;
@@ -321,6 +329,8 @@ export async function writeSyncConfig(
     config,
     metadata,
     lastSynced: metadata?.lastSyncedAt,
+    ...(opts?.syncEnvironments === false ? { syncEnvironments: false } : { syncEnvironments: true }),
+    ...(opts?.syncGlobalVariables === false ? { syncGlobalVariables: false } : { syncGlobalVariables: true }),
     ...(readOnly ? { readOnly: true } : {}),
     ...(opts?.encryptRemote ? { encryptRemote: true } : {}),
     ...(encryptedRemotePassphrase ? { encryptedRemotePassphrase } : {}),

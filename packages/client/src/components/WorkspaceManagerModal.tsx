@@ -920,6 +920,8 @@ export async function cloneWorkspaceSyncConfig(sourceWorkspaceId: string, target
     {
       encryptRemote: srcSync.encryptRemote,
       remotePassphrase: srcSync.remotePassphrase,
+      syncEnvironments: srcSync.syncEnvironments,
+      syncGlobalVariables: srcSync.syncGlobalVariables,
       isShared: srcSync.isShared,
       sharePolicy: srcSync.sharePolicy,
       importedEncrypted: srcSync.importedEncrypted,
@@ -1186,6 +1188,8 @@ function SyncTab() {
   const [loaded, setLoaded] = useState(false);
   const [status, setStatus] = useState<'idle' | 'busy' | 'ok' | 'error'>('idle');
   const [msg, setMsg] = useState('');
+  const [syncEnvironments, setSyncEnvironments] = useState(true);
+  const [syncGlobalVariables, setSyncGlobalVariables] = useState(true);
   const [readOnly, setReadOnly] = useState(false);
   const [encryptRemote, setEncryptRemote] = useState(false);
   const [remotePassphrase, setRemotePassphrase] = useState('');
@@ -1231,6 +1235,8 @@ function SyncTab() {
           [loadedProvider]: loadedConfig,
         }));
         setSyncMetadata(cfg.metadata ?? (cfg.lastSynced ? { lastSyncedAt: cfg.lastSynced } : undefined));
+        setSyncEnvironments(cfg.syncEnvironments !== false);
+        setSyncGlobalVariables(cfg.syncGlobalVariables !== false);
         setReadOnly(cfg.readOnly === true);
         setEncryptRemote(cfg.encryptRemote === true);
         setRemotePassphrase(cfg.remotePassphrase ?? '');
@@ -1245,6 +1251,8 @@ function SyncTab() {
           [initialProvider]: initialConfig,
         }));
         setSyncMetadata(undefined);
+        setSyncEnvironments(true);
+        setSyncGlobalVariables(true);
         setReadOnly(false);
         setEncryptRemote(false);
         setRemotePassphrase('');
@@ -1280,6 +1288,8 @@ function SyncTab() {
     await StorageDriver.writeSyncConfig(workspaceId, provider, fields, syncMetadata, readOnly, {
       encryptRemote,
       remotePassphrase: remotePassphrase || undefined,
+      syncEnvironments,
+      syncGlobalVariables,
       isShared,
       sharePolicy,
       importedEncrypted: importedEncrypted || undefined,
@@ -1393,6 +1403,8 @@ function SyncTab() {
       await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata, readOnly, {
         encryptRemote,
         remotePassphrase: remotePassphrase || undefined,
+        syncEnvironments,
+        syncGlobalVariables,
         isShared,
         sharePolicy,
       });
@@ -1425,7 +1437,7 @@ function SyncTab() {
           lastMergeBaseSnapshotId: mergeBaseSnapshotId,
         };
         setSyncMetadata(nextMetadata);
-        await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata, readOnly, { encryptRemote, remotePassphrase: remotePassphrase || undefined, isShared, sharePolicy });
+        await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata, readOnly, { encryptRemote, remotePassphrase: remotePassphrase || undefined, syncEnvironments, syncGlobalVariables, isShared, sharePolicy });
         await logActivity('pull', 'success', 'Pull completed', result.remoteState.version ? `Version ${result.remoteState.version.slice(0, 8)}` : undefined);
         setStatus('ok'); setMsg('Pulled successfully');
       } else {
@@ -1461,7 +1473,7 @@ function SyncTab() {
               lastMergeBaseSnapshotId: mergeBaseSnapshotId,
             };
             setSyncMetadata(nextMetadata);
-            await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata, readOnly, { encryptRemote, remotePassphrase: remotePassphrase || undefined, isShared, sharePolicy });
+            await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata, readOnly, { encryptRemote, remotePassphrase: remotePassphrase || undefined, syncEnvironments, syncGlobalVariables, isShared, sharePolicy });
             dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...mergedData, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
             await StorageDriver.writeWorkspace(workspaceId, mergedData);
             await logActivity('merge-applied', 'success', 'Auto-merge applied (no manual conflicts)');
@@ -1507,7 +1519,7 @@ function SyncTab() {
         lastMergeBaseSnapshotId: mergeBaseSnapshotId,
       };
       setSyncMetadata(nextMetadata);
-      await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata, readOnly, { encryptRemote, remotePassphrase: remotePassphrase || undefined, isShared, sharePolicy });
+      await StorageDriver.writeSyncConfig(workspaceId, provider, fields, nextMetadata, readOnly, { encryptRemote, remotePassphrase: remotePassphrase || undefined, syncEnvironments, syncGlobalVariables, isShared, sharePolicy });
       dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...mergedData, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
       await StorageDriver.writeWorkspace(workspaceId, mergedData);
       await logActivity('merge-applied', 'success', 'Merged workspace applied', readOnly ? 'local only (read-only)' : remoteState.version ? `Version ${remoteState.version.slice(0, 8)}` : undefined);
@@ -1581,6 +1593,42 @@ function SyncTab() {
   return (
     <>
       <div className="space-y-4">
+      <div className="space-y-2">
+        <div className="flex items-center justify-between py-2 px-3 rounded-lg bg-slate-800/40 border border-slate-800">
+          <div className="min-w-0">
+            <p id="sync-environments-label" className="text-xs font-medium text-slate-300">Sync environments</p>
+            <p className="text-[10px] text-slate-500 mt-0.5">When off, environments stay local and are not overwritten by sync</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => !isShared && setSyncEnvironments(v => !v)}
+            disabled={isShared}
+            className={`relative shrink-0 ml-4 w-9 h-5 rounded-full transition-colors ${syncEnvironments ? 'bg-orange-500' : 'bg-slate-700'}`}
+            role="switch"
+            aria-checked={syncEnvironments}
+            aria-labelledby="sync-environments-label"
+          >
+            <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${syncEnvironments ? 'translate-x-4' : 'translate-x-0'}`} />
+          </button>
+        </div>
+        <div className="flex items-center justify-between py-2 px-3 rounded-lg bg-slate-800/40 border border-slate-800">
+          <div className="min-w-0">
+            <p id="sync-globals-label" className="text-xs font-medium text-slate-300">Sync global variables</p>
+            <p className="text-[10px] text-slate-500 mt-0.5">When off, globals stay local and are not overwritten by sync</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => !isShared && setSyncGlobalVariables(v => !v)}
+            disabled={isShared}
+            className={`relative shrink-0 ml-4 w-9 h-5 rounded-full transition-colors ${syncGlobalVariables ? 'bg-orange-500' : 'bg-slate-700'}`}
+            role="switch"
+            aria-checked={syncGlobalVariables}
+            aria-labelledby="sync-globals-label"
+          >
+            <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${syncGlobalVariables ? 'translate-x-4' : 'translate-x-0'}`} />
+          </button>
+        </div>
+      </div>
       {/* Provider selector — hidden for shared workspaces */}
       {!isShared && (
         <div>
