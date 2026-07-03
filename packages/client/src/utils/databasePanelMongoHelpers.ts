@@ -1,4 +1,4 @@
-import type { DatabaseConnection, MongoConnectionAuthSettings, MongoDBConnectionConfig } from '../types';
+import type { DatabaseConnection, MongoDBConnectionConfig } from '../types';
 import { resolveVariables } from './variableResolver';
 
 export function getMongoDatabaseFromUri(uri: string): string {
@@ -18,17 +18,6 @@ export function resolveMongoConnectionTemplates(conn: DatabaseConnection, runtim
   const mongoConn = conn as MongoDBConnectionConfig;
   return {
     ...mongoConn,
-    database: resolveVariables(mongoConn.database || '', runtimeVars),
-    auth: mongoConn.auth
-      ? {
-          ...mongoConn.auth,
-          mode: (resolveVariables(mongoConn.auth.mode || '', runtimeVars) || undefined) as MongoConnectionAuthSettings['mode'],
-          username: resolveVariables(mongoConn.auth.username || '', runtimeVars) || undefined,
-          password: resolveVariables(mongoConn.auth.password || '', runtimeVars) || undefined,
-          authSource: resolveVariables(mongoConn.auth.authSource || '', runtimeVars) || undefined,
-          oidcAccessToken: resolveVariables(mongoConn.auth.oidcAccessToken || '', runtimeVars) || undefined,
-        }
-      : undefined,
     connectionUri: resolveVariables(mongoConn.connectionUri || '', runtimeVars),
   };
 }

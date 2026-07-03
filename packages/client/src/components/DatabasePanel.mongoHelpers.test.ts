@@ -27,38 +27,6 @@ describe('DatabasePanel mongo helpers', () => {
     expect(resolved?.connectionUri).toBe('mongodb://localhost:27017/usersdb');
   });
 
-  it('resolves template variables in Mongo default database and auth settings', () => {
-    const conn: DatabaseConnection = {
-      _id: 'mongo-auth-1',
-      name: 'Mongo Auth',
-      type: 'mongodb',
-      ssl: false,
-      createdAt: '2026-01-01T00:00:00.000Z',
-      connectionUri: 'mongodb://localhost:27017/{{dbName}}',
-      database: '{{dbName}}',
-      auth: {
-        mode: 'scram',
-        username: '{{mongoUser}}',
-        password: '{{mongoPass}}',
-        authSource: '{{authDb}}',
-      },
-    };
-
-    const resolved = resolveMongoConnectionTemplates(conn, {
-      dbName: 'usersdb',
-      mongoUser: 'admin',
-      mongoPass: 'secret',
-      authDb: 'admin',
-    });
-
-    expect(resolved).not.toBeNull();
-    expect(resolved?.database).toBe('usersdb');
-    expect(resolved?.auth?.mode).toBe('scram');
-    expect(resolved?.auth?.username).toBe('admin');
-    expect(resolved?.auth?.password).toBe('secret');
-    expect(resolved?.auth?.authSource).toBe('admin');
-  });
-
   it('returns null for non-mongodb connections', () => {
     const conn: DatabaseConnection = {
       _id: 'pg-1',
