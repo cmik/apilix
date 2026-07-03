@@ -1,10 +1,11 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useApp, generateId } from '../store';
 import { useDatabaseConnectionActions } from '../hooks/useDatabaseConnectionActions';
 import type {
   DatabaseConnection,
   SQLConnectionConfig,
   MongoDBConnectionConfig,
+  MongoConnectionAuthSettings,
   SQLiteConnectionConfig,
   RedisConnectionConfig,
   CassandraConnectionConfig,
@@ -22,12 +23,16 @@ import {
   executeDynamoOperation,
   listMongoDatabases,
   listMongoCollections,
+  type MongoAuthOverride,
   type DbQueryResult,
   type DbMongoResult,
   type DbGenericResult,
 } from '../api';
-import { IconDatabase, IconDelete, IconSuccess, IconError } from './Icons';
+import { IconDatabase, IconSuccess, IconError } from './Icons';
 import { getMongoDatabaseFromUri, resolveMongoConnectionTemplates } from '../utils/databasePanelMongoHelpers';
+import {
+  buildDatabaseConnectionsExportPackage,
+} from '../utils/databaseConnectionTransfer';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -125,6 +130,11 @@ export function ConnectionEditorModal({ initial, runtimeVars, onSave, onClose }:
 
   // Mongo
   const [uri, setUri] = useState((initial as MongoDBConnectionConfig)?.connectionUri ?? '');
+  const [mongoDatabase, setMongoDatabase] = useState((initial as MongoDBConnectionConfig)?.database ?? '');
+  const [mongoAuthMode, setMongoAuthMode] = useState<string>((initial as MongoDBConnectionConfig)?.auth?.mode ?? '');
+  const [mongoAuthUsername, setMongoAuthUsername] = useState((initial as MongoDBConnectionConfig)?.auth?.username ?? '');
+  const [mongoAuthPassword, setMongoAuthPassword] = useState((initial as MongoDBConnectionConfig)?.auth?.password ?? '');
+  const [mongoAuthSource, setMongoAuthSource] = useState((initial as MongoDBConnectionConfig)?.auth?.authSource ?? '');
 
   // SQLite
   const [filePath, setFilePath] = useState((initial as SQLiteConnectionConfig)?.filePath ?? '');
@@ -178,6 +188,15 @@ export function ConnectionEditorModal({ initial, runtimeVars, onSave, onClose }:
     setTestResult(null);
   }
 
+  function onMongoAuthModeChange(nextMode: string) {
+    setMongoAuthMode(nextMode);
+    if (nextMode === 'x509' || nextMode === 'oidc') {
+      // Avoid carrying hidden SCRAM/LDAP credentials into non-password auth modes.
+      setMongoAuthUsername('');
+      setMongoAuthPassword('');
+    }
+  }
+
   function buildConfig(): DatabaseConnection {
     const base = {
       _id: initial?._id ?? generateId(),
@@ -189,8 +208,24 @@ export function ConnectionEditorModal({ initial, runtimeVars, onSave, onClose }:
     };
 
     switch (type) {
-      case 'mongodb':
-        return { ...base, type: 'mongodb', connectionUri: uri } as MongoDBConnectionConfig;
+      case 'mongodb': {
+        const includePasswordCredentials = mongoAuthMode === 'scram' || mongoAuthMode === 'ldap-plain';
+        const mongoAuth: MongoConnectionAuthSettings | undefined = mongoAuthMode
+          ? {
+              mode: mongoAuthMode as MongoConnectionAuthSettings['mode'],
+              username: includePasswordCredentials ? (mongoAuthUsername || undefined) : undefined,
+              password: includePasswordCredentials ? (mongoAuthPassword || undefined) : undefined,
+              authSource: mongoAuthSource || undefined,
+            }
+          : undefined;
+        return {
+          ...base,
+          type: 'mongodb',
+          connectionUri: uri,
+          database: mongoDatabase || undefined,
+          auth: mongoAuth,
+        } as MongoDBConnectionConfig;
+      }
       case 'sqlite':
         return { ...base, type: 'sqlite', filePath, readonly: sqliteReadonly } as SQLiteConnectionConfig;
       case 'redis':
@@ -348,10 +383,51 @@ export function ConnectionEditorModal({ initial, runtimeVars, onSave, onClose }:
 
           {/* MongoDB */}
           {type === 'mongodb' && (
-            <div>
-              <label className={labelClass}>Connection URI</label>
-              <input className={inputClass} value={uri} onChange={e => setUri(e.target.value)} placeholder="mongodb://user:pass@host:27017/db" />
-            </div>
+            <>
+              <div>
+                <label className={labelClass}>Connection URI</label>
+                <input className={inputClass} value={uri} onChange={e => setUri(e.target.value)} placeholder="mongodb://user:pass@host:27017/db" />
+              </div>
+              <div>
+                <label className={labelClass}>Default Database (optional)</label>
+                <input className={inputClass} value={mongoDatabase} onChange={e => setMongoDatabase(e.target.value)} placeholder="app" />
+              </div>
+              <div className="rounded border border-slate-700 bg-slate-900/60 px-3 py-3 space-y-3">
+                <div className="text-xs font-medium text-slate-300">Authentication Settings</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className={labelClass}>Auth Mode</label>
+                    <select
+                      value={mongoAuthMode}
+                      onChange={e => onMongoAuthModeChange(e.target.value)}
+                      className={inputClass}
+                    >
+                      <option value="">None (use URI credentials)</option>
+                      <option value="scram">SCRAM (username + password)</option>
+                      <option value="x509">X.509 certificate</option>
+                      <option value="ldap-plain">LDAP / PLAIN</option>
+                      <option value="oidc">OIDC workload identity</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className={labelClass}>Auth Source DB</label>
+                    <input className={inputClass} value={mongoAuthSource} onChange={e => setMongoAuthSource(e.target.value)} placeholder="admin" />
+                  </div>
+                </div>
+                {(!mongoAuthMode || mongoAuthMode === 'scram' || mongoAuthMode === 'ldap-plain') && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className={labelClass}>Login</label>
+                      <input className={inputClass} value={mongoAuthUsername} onChange={e => setMongoAuthUsername(e.target.value)} placeholder="{{mongoUser}}" />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Password</label>
+                      <input className={inputClass} type="password" value={mongoAuthPassword} onChange={e => setMongoAuthPassword(e.target.value)} placeholder="••••••••" />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
           )}
 
           {/* SQLite */}
@@ -359,7 +435,28 @@ export function ConnectionEditorModal({ initial, runtimeVars, onSave, onClose }:
             <>
               <div>
                 <label className={labelClass}>Database File Path</label>
-                <input className={inputClass} value={filePath} onChange={e => setFilePath(e.target.value)} placeholder="/path/to/database.sqlite" />
+                <div className="flex gap-2">
+                  <input className={inputClass} value={filePath} onChange={e => setFilePath(e.target.value)} placeholder="/path/to/database.sqlite" />
+                  <button
+                    onClick={async () => {
+                      const eAPI = (window as any).electronAPI ?? null;
+                      if (eAPI?.openFileDialog) {
+                        try {
+                          const selected: string | null = await eAPI.openFileDialog([
+                            { name: 'SQLite files', extensions: ['db', 'sqlite', 'sqlite3'] },
+                            { name: 'All files', extensions: ['*'] },
+                          ]);
+                          if (selected) setFilePath(selected);
+                        } catch (err: unknown) {
+                          console.error('File dialog error:', err instanceof Error ? err.message : String(err));
+                        }
+                      }
+                    }}
+                    className="px-2 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-slate-100 text-xs rounded font-medium transition-colors shrink-0"
+                  >
+                    Browse
+                  </button>
+                </div>
               </div>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" className="accent-orange-500" checked={sqliteReadonly} onChange={e => setSqliteReadonly(e.target.checked)} />
@@ -714,12 +811,20 @@ function QueryEditor({ selectedConn, runtimeVars }: QueryEditorProps) {
       return;
     }
 
-    const preferredDatabase = getMongoDatabaseFromUri(resolvedConn.connectionUri || '');
+    const preferredDatabase = (resolvedConn.database || '').trim() || getMongoDatabaseFromUri(resolvedConn.connectionUri || '');
+    const resolvedAuth: MongoAuthOverride | undefined = resolvedConn.auth?.mode
+      ? {
+          mode: resolvedConn.auth.mode,
+          username: resolvedConn.auth.username,
+          password: resolvedConn.auth.password,
+          authSource: resolvedConn.auth.authSource,
+        }
+      : undefined;
     let cancelled = false;
     setMongoDatabasesLoading(true);
     setMongoDatabasesError('');
 
-    listMongoDatabases(undefined, selectedConn._id, undefined, [resolvedConn])
+    listMongoDatabases(undefined, selectedConn._id, resolvedAuth, [resolvedConn])
       .then((databases) => {
         if (cancelled) return;
         setMongoDatabases(databases);
@@ -771,11 +876,20 @@ function QueryEditor({ selectedConn, runtimeVars }: QueryEditorProps) {
       return;
     }
 
+    const resolvedAuth: MongoAuthOverride | undefined = resolvedConn.auth?.mode
+      ? {
+          mode: resolvedConn.auth.mode,
+          username: resolvedConn.auth.username,
+          password: resolvedConn.auth.password,
+          authSource: resolvedConn.auth.authSource,
+        }
+      : undefined;
+
     let cancelled = false;
     setMongoCollectionsLoading(true);
     setMongoCollectionsError('');
 
-    listMongoCollections(undefined, mongoDatabase.trim(), selectedConn._id, undefined, [resolvedConn])
+    listMongoCollections(undefined, mongoDatabase.trim(), selectedConn._id, resolvedAuth, [resolvedConn])
       .then((collections) => {
         if (cancelled) return;
         setMongoCollections(collections);
@@ -1136,6 +1250,19 @@ export default function DatabasePanel() {
     setEditorOpen(false);
   }
 
+  function handleExportSelected() {
+    if (!selectedConn) return;
+    const payload = buildDatabaseConnectionsExportPackage([selectedConn]);
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const safeName = selectedConn.name.replace(/[^a-z0-9_\-. ]/gi, '_') || 'connection';
+    a.download = `apilix-db-${safeName}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden bg-slate-900">
       {/* Header */}
@@ -1144,15 +1271,24 @@ export default function DatabasePanel() {
           <IconDatabase className="w-4 h-4 text-orange-400" />
           <span className="text-sm font-medium text-slate-100">Database</span>
         </div>
-        {selectedConn && tab === 'connection' && (
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => handleTest(selectedConn)}
-            disabled={testingId === selectedConn._id}
+            onClick={handleExportSelected}
+            disabled={!selectedConn}
             className="px-3 py-1 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 text-xs rounded font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
           >
-            {testingId === selectedConn._id ? 'Testing…' : 'Test Connection'}
+            Export
           </button>
-        )}
+          {selectedConn && tab === 'connection' && (
+            <button
+              onClick={() => handleTest(selectedConn)}
+              disabled={testingId === selectedConn._id}
+              className="px-3 py-1 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 text-xs rounded font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              {testingId === selectedConn._id ? 'Testing…' : 'Test Connection'}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Tab bar */}
