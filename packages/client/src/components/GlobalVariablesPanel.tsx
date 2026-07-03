@@ -47,20 +47,29 @@ function EnvGlobalsTabBar() {
 interface Row {
   key: string;
   value: string;
+  secret?: boolean;
 }
 
 export default function GlobalVariablesPanel() {
   const { state, dispatch } = useApp();
   const [rows, setRows] = useState<Row[]>(() =>
-    Object.entries(state.globalVariables).map(([key, value]) => ({ key, value }))
+    Object.entries(state.globalVariables).map(([key, value]) => ({
+      key,
+      value,
+      secret: state.globalVariableMeta?.[key]?.secret === true,
+    }))
   );
   const [filter, setFilter] = useState('');
   const [saved, setSaved] = useState(false);
 
   // Re-sync local rows if globalVariables changes externally (e.g. from a script)
   useEffect(() => {
-    setRows(Object.entries(state.globalVariables).map(([key, value]) => ({ key, value })));
-  }, [state.globalVariables]);
+    setRows(Object.entries(state.globalVariables).map(([key, value]) => ({
+      key,
+      value,
+      secret: state.globalVariableMeta?.[key]?.secret === true,
+    })));
+  }, [state.globalVariables, state.globalVariableMeta]);
 
   function updateRow(i: number, field: 'key' | 'value', val: string) {
     setRows(r => r.map((row, idx) => (idx === i ? { ...row, [field]: val } : row)));
@@ -74,15 +83,23 @@ export default function GlobalVariablesPanel() {
     setRows(r => [...r, { key: '', value: '' }]);
   }
 
+  function toggleSecret(i: number) {
+    setRows(r => r.map((row, idx) => (idx === i ? { ...row, secret: !row.secret } : row)));
+  }
+
   function save() {
     const hasErrors = rows.some(r => storageKeyError(r.key) !== null);
     if (hasErrors) return;
     const result: Record<string, string> = {};
+    const meta: Record<string, { secret?: boolean }> = {};
     rows.forEach(r => {
       const normalized = normalizeVariableName(r.key);
-      if (normalized) result[normalized] = r.value;
+      if (normalized) {
+        result[normalized] = r.value;
+        if (r.secret) meta[normalized] = { secret: true };
+      }
     });
-    dispatch({ type: 'SET_GLOBAL_VARS', payload: result });
+    dispatch({ type: 'SET_GLOBAL_VARS_WITH_META', payload: { values: result, meta } });
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   }
@@ -93,7 +110,7 @@ export default function GlobalVariablesPanel() {
       name: 'Apilix Globals',
       values: rows
         .filter(r => r.key.trim())
-        .map(r => ({ key: r.key, value: r.value, enabled: true, type: 'any' })),
+        .map(r => ({ key: r.key, value: r.value, enabled: true, type: 'any', secret: r.secret === true })),
       _postman_variable_scope: 'globals',
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -116,11 +133,11 @@ export default function GlobalVariablesPanel() {
       reader.onload = e => {
         try {
           const parsed = JSON.parse(e.target?.result as string);
-          const values: Array<{ key: string; value: string; enabled?: boolean }> =
+          const values: Array<{ key: string; value: string; enabled?: boolean; secret?: boolean }> =
             Array.isArray(parsed.values) ? parsed.values : [];
           const imported = values
             .filter(v => v.enabled !== false && v.key)
-            .map(v => ({ key: v.key, value: v.value ?? '' }));
+            .map(v => ({ key: v.key, value: v.value ?? '', secret: v.secret === true }));
           setRows(imported);
         } catch {
           alert('Failed to parse the JSON file.');
@@ -233,6 +250,7 @@ export default function GlobalVariablesPanel() {
                 <tr className="text-xs text-slate-500 uppercase border-b border-slate-700">
                   <th className="py-1.5 text-left pr-2">Variable</th>
                   <th className="py-1.5 text-left">Value</th>
+                  <th className="py-1.5 w-6" title="Secret"></th>
                   <th className="w-6"></th>
                 </tr>
               </thead>
@@ -254,11 +272,38 @@ export default function GlobalVariablesPanel() {
                       </td>
                       <td className="py-1 pr-2">
                         <input
+                          type={row.secret ? 'password' : 'text'}
                           value={row.value}
                           onChange={e => updateRow(i, 'value', e.target.value)}
                           placeholder="value"
                           className="w-full bg-slate-700/50 border border-transparent focus:border-slate-500 rounded px-2 py-0.5 text-slate-200 font-mono text-xs focus:outline-none placeholder-slate-600"
                         />
+                      </td>
+                      <td className="py-1 pr-1">
+                        <button
+                          onClick={() => toggleSecret(i)}
+                          title={row.secret ? 'Secret — value is encrypted on disk (local only). Remote sync sends plaintext unless "Encrypt remote data" is enabled. Click to make plain.' : 'Make secret — value will be encrypted on disk (local only). Enable "Encrypt remote data" in sync settings to protect it remotely.'}
+                          className={`p-0.5 rounded transition-colors ${
+                            row.secret
+                              ? 'text-orange-400 hover:text-orange-300'
+                              : 'text-slate-600 hover:text-slate-400'
+                          }`}
+                        >
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                            {row.secret ? (
+                              <>
+                                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                              </>
+                            ) : (
+                              <>
+                                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                                <path d="M7 11V7a5 5 0 0 1 9.9-1" />
+                                <line x1="2" y1="2" x2="22" y2="22" />
+                              </>
+                            )}
+                          </svg>
+                        </button>
                       </td>
                       <td className="py-1">
                         <button

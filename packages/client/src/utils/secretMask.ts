@@ -1,4 +1,6 @@
 import type { AppEnvironment } from '../types';
+import type { GlobalVariableMeta } from '../types';
+import { collectGlobalSecretValues } from './globalVariables';
 
 const MIN_SECRET_LEN = 4;
 export const SECRET_MASK = '••••••••';
@@ -10,15 +12,22 @@ export const SECRET_MASK = '••••••••';
 export function buildSecretSet(
   environments: AppEnvironment[],
   activeEnvironmentId: string | null,
+  globalVariables: Record<string, string> = {},
+  globalVariableMeta: Record<string, GlobalVariableMeta> = {},
 ): Set<string> {
   const active = environments.find(e => e._id === activeEnvironmentId);
-  if (!active) return new Set();
   const secrets = new Set<string>();
-  for (const v of active.values) {
-    if (v.secret && v.enabled !== false && v.value.length >= MIN_SECRET_LEN) {
-      secrets.add(v.value);
+  if (active) {
+    for (const v of active.values) {
+      if (v.secret && v.enabled !== false && v.value.length >= MIN_SECRET_LEN) {
+        secrets.add(v.value);
+      }
     }
   }
+
+  const globalSecrets = collectGlobalSecretValues(globalVariables, globalVariableMeta, MIN_SECRET_LEN);
+  for (const value of globalSecrets) secrets.add(value);
+
   return secrets;
 }
 

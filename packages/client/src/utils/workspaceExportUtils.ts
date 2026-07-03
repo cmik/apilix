@@ -1,4 +1,5 @@
 import type { WorkspaceData, WorkspaceExportPackage, WorkspaceExportVersion } from '../types';
+import { sanitizeGlobalMeta } from './globalVariables';
 
 const CURRENT_VERSION: WorkspaceExportVersion = '1';
 
@@ -93,6 +94,7 @@ export function parseWorkspaceExportPackage(raw: unknown): WorkspaceExportPackag
     databases: Array.isArray(d.databases) ? d.databases as WorkspaceData['databases'] : [],
     collectionVariables: sanitizeNestedStringRecord(d.collectionVariables),
     globalVariables: sanitizeStringRecord(d.globalVariables),
+    globalVariableMeta: sanitizeGlobalMeta(d.globalVariableMeta),
     cookieJar: (d.cookieJar && typeof d.cookieJar === 'object' && !Array.isArray(d.cookieJar))
       ? d.cookieJar as WorkspaceData['cookieJar']
       : {},

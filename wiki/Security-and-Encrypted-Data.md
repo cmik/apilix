@@ -6,20 +6,45 @@ Apilix is designed to keep your credentials, tokens, and secrets safe at rest an
 
 ## Table of Contents
 
-- [Secret Environment Variables](#secret-environment-variables)
-- [UI Secret Masking](#ui-secret-masking)
-- [OS Keychain Encryption (Electron)](#os-keychain-encryption-electron)
-- [Browser Mode Limitations](#browser-mode-limitations)
-- [Sync Credential Encryption](#sync-credential-encryption)
-- [Remote Data Encryption](#remote-data-encryption)
-- [TLS and SSL Verification](#tls-and-ssl-verification)
-- [OAuth 2.0 Security](#oauth-20-security)
-- [S3 Presigned URLs](#s3-presigned-urls)
-- [Electron Security Model](#electron-security-model)
-- [Script Sandbox Isolation](#script-sandbox-isolation)
-- [File System Path Protection](#file-system-path-protection)
-- [Proxy and Traffic Interception](#proxy-and-traffic-interception)
-- [Security Best Practices](#security-best-practices)
+- [Security and Encrypted Data](#security-and-encrypted-data)
+  - [Table of Contents](#table-of-contents)
+  - [Secret Environment Variables](#secret-environment-variables)
+    - [Marking a variable as secret](#marking-a-variable-as-secret)
+    - [What the secret flag does — and does not — protect](#what-the-secret-flag-does--and-does-not--protect)
+  - [Secret Global Variables](#secret-global-variables)
+  - [UI Secret Masking](#ui-secret-masking)
+    - [What gets masked](#what-gets-masked)
+    - [Which values are considered secrets](#which-values-are-considered-secrets)
+    - [Important scope note](#important-scope-note)
+    - [Turning masking off](#turning-masking-off)
+  - [OS Keychain Encryption (Electron)](#os-keychain-encryption-electron)
+    - [Key properties](#key-properties)
+    - [What happens when decryption fails](#what-happens-when-decryption-fails)
+  - [Browser Mode Limitations](#browser-mode-limitations)
+  - [Sync Credential Encryption](#sync-credential-encryption)
+  - [Remote Data Encryption](#remote-data-encryption)
+    - [How it works](#how-it-works)
+    - [Shared workspaces](#shared-workspaces)
+  - [TLS and SSL Verification](#tls-and-ssl-verification)
+    - [SSL verification setting](#ssl-verification-setting)
+    - [Per-request SSL control (OAuth token endpoints)](#per-request-ssl-control-oauth-token-endpoints)
+    - [HTTPS agents](#https-agents)
+  - [OAuth 2.0 Security](#oauth-20-security)
+    - [PKCE (Proof Key for Code Exchange)](#pkce-proof-key-for-code-exchange)
+    - [Token storage](#token-storage)
+    - [Automatic token refresh](#automatic-token-refresh)
+  - [S3 Presigned URLs](#s3-presigned-urls)
+  - [Electron Security Model](#electron-security-model)
+  - [Script Sandbox Isolation](#script-sandbox-isolation)
+  - [File System Path Protection](#file-system-path-protection)
+  - [Proxy and Traffic Interception](#proxy-and-traffic-interception)
+  - [MongoDB Connection Registry](#mongodb-connection-registry)
+    - [What is encrypted](#what-is-encrypted)
+    - [Connection API validation](#connection-api-validation)
+    - [Introspect endpoints](#introspect-endpoints)
+    - [Rotating the encryption key](#rotating-the-encryption-key)
+    - [Browser mode](#browser-mode)
+  - [Security Best Practices](#security-best-practices)
 
 ---
 
@@ -54,6 +79,20 @@ Any environment variable value can be marked as **secret**. Secret variables are
 
 ---
 
+## Secret Global Variables
+
+Global variables can also be marked as **secret** from the Globals panel using the lock icon on each row.
+
+Secret global variables follow the same protection model as secret environment variables:
+
+- Masked in the Globals editor by default.
+- Encrypted on disk in Electron using OS keychain-backed `safeStorage`.
+- Included in UI redaction when **Mask secret variable values in console, logs, and history** is enabled.
+
+Like environment secrets, secret globals are still resolved normally at runtime and sent in requests where referenced.
+
+---
+
 ## UI Secret Masking
 
 Apilix can redact known secret values in user-facing logs to reduce accidental exposure during demos, screenshots, and screen sharing.
@@ -70,10 +109,15 @@ When **Mask secret variable values in console, logs, and history** is enabled (d
 
 ### Which values are considered secrets
 
-Redaction values are built from the **active environment** only, using rows that are:
+Redaction values are built from:
+
+- Secret rows in the **active environment** (enabled rows only)
+- Secret **global variables**
+
+Rows/values are included only when they are:
 
 - Marked secret (lock enabled)
-- Enabled
+- Enabled (for environment rows)
 - At least 4 characters long
 
 ### Important scope note
@@ -124,7 +168,7 @@ When Apilix runs in a browser (no Electron wrapper), `window.electronAPI` is abs
 
 ## Sync Credential Encryption
 
-Sync provider credentials (S3 access keys, Git tokens, HTTP auth headers, team API tokens) are written to `sync-config.json` in the userData directory. In Electron mode these credentials are encrypted with `safeStorage` before being persisted, matching the same mechanism used for secret environment variables.
+Sync provider credentials (S3 access keys, Git tokens, HTTP auth headers, team API tokens) are written to `sync-config.json` in the userData directory. In Electron mode these credentials are encrypted with `safeStorage` before being persisted, matching the same mechanism used for secret environment and secret global variables.
 
 In browser mode, sync credentials are stored in `localStorage` as plaintext.
 

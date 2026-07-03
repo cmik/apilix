@@ -764,6 +764,7 @@ export default function App() {
       databases: state.databases,
       collectionVariables: state.collectionVariables,
       globalVariables: state.globalVariables,
+      globalVariableMeta: state.globalVariableMeta,
       cookieJar: state.cookieJar,
       mockCollections: state.mockCollections,
       mockRoutes: state.mockRoutes,

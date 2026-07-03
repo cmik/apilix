@@ -374,15 +374,19 @@ export default function MongoRequestPanel({
     () => extractUsedVariables(bodyRaw, envVars, collVars, globals, collectionDefinitionVars),
     [bodyRaw, envVars, collVars, globals, collectionDefinitionVars],
   );
-  const secretEnvKeys = useMemo<Set<string>>(() => {
+  const secretVarKeys = useMemo<Set<string>>(() => {
+    const keys = new Set<string>();
     const activeEnv = getActiveEnvironment();
-    if (!activeEnv) return new Set<string>();
-    return new Set(
-      activeEnv.values
-        .filter(v => v.secret && v.enabled !== false)
-        .map(v => v.key),
-    );
-  }, [getActiveEnvironment]);
+    if (activeEnv) {
+      for (const v of activeEnv.values) {
+        if (v.secret && v.enabled !== false) keys.add(v.key);
+      }
+    }
+    for (const [key, meta] of Object.entries(state.globalVariableMeta ?? {})) {
+      if (meta?.secret === true) keys.add(key);
+    }
+    return keys;
+  }, [getActiveEnvironment, state.globalVariableMeta]);
 
   const TABS: { id: MainTab; hasError?: boolean }[] = [
     { id: 'Connection' },
@@ -433,7 +437,7 @@ export default function MongoRequestPanel({
             <UsedVariablesSection
               usedVars={usedVars}
               hasActiveEnv={hasActiveEnv}
-              secretKeys={secretEnvKeys}
+              secretKeys={secretVarKeys}
               onVarEdit={onVarEdit}
             />
           </>

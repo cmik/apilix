@@ -240,6 +240,14 @@ export interface BaseEnvironment {
   }>;
 }
 
+export interface GlobalVariableMeta {
+  /** When true the value is encrypted at rest on disk (Electron: OS keychain via safeStorage). */
+  secret?: boolean;
+  /** Reserved for future parity with environment rows. */
+  enabled?: boolean;
+  type?: string;
+}
+
 // ─── App-level Types ──────────────────────────────────────────────────────────
 
 export interface Cookie {
@@ -808,6 +816,8 @@ export interface WorkspaceData {
   activeEnvironmentId: string | null;
   collectionVariables: Record<string, Record<string, string>>;
   globalVariables: Record<string, string>;
+  /** Per-key metadata for global variables (backward compatible: may be absent in legacy snapshots). */
+  globalVariableMeta?: Record<string, GlobalVariableMeta>;
   cookieJar: CookieJar;
   mockCollections: MockCollection[];
   mockRoutes: MockRoute[];
@@ -1053,6 +1063,7 @@ export interface AppState {
   isRunning: boolean;
   collectionVariables: Record<string, Record<string, string>>;
   globalVariables: Record<string, string>;
+  globalVariableMeta?: Record<string, GlobalVariableMeta>;
   cookieJar: CookieJar;
   mockCollections: MockCollection[];
   mockRoutes: MockRoute[];
@@ -1123,6 +1134,7 @@ export type AppAction =
   | { type: 'UPDATE_COLLECTION_VARS'; payload: { collectionId: string; vars: Record<string, string> } }
   | { type: 'UPDATE_GLOBAL_VARS'; payload: Record<string, string> }
   | { type: 'SET_GLOBAL_VARS'; payload: Record<string, string> }
+  | { type: 'SET_GLOBAL_VARS_WITH_META'; payload: { values: Record<string, string>; meta: Record<string, GlobalVariableMeta> } }
   | { type: 'UPDATE_ACTIVE_ENV_VARS'; payload: Record<string, string> }
   | { type: 'UPDATE_COLLECTION'; payload: AppCollection }
   | { type: 'ADD_CONSOLE_LOG'; payload: ConsoleEntry }

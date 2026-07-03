@@ -96,6 +96,40 @@ describe('buildSecretSet', () => {
     expect(set.has('secretone')).toBe(true);
     expect(set.has('secrettwo')).toBe(true);
   });
+
+  it('includes secret global values when metadata marks key as secret', () => {
+    const envs = [makeEnv('e1', [])];
+    const set = buildSecretSet(
+      envs,
+      'e1',
+      { globalToken: 'global-secret-token' },
+      { globalToken: { secret: true } },
+    );
+    expect(set.has('global-secret-token')).toBe(true);
+  });
+
+  it('excludes global values when key metadata is not secret', () => {
+    const envs = [makeEnv('e1', [])];
+    const set = buildSecretSet(
+      envs,
+      'e1',
+      { globalToken: 'global-secret-token' },
+      { globalToken: { secret: false } },
+    );
+    expect(set.has('global-secret-token')).toBe(false);
+  });
+
+  it('deduplicates overlapping env and global secret values', () => {
+    const envs = [makeEnv('e1', [{ key: 'TOKEN', value: 'shared-secret', enabled: true, secret: true }])];
+    const set = buildSecretSet(
+      envs,
+      'e1',
+      { globalToken: 'shared-secret' },
+      { globalToken: { secret: true } },
+    );
+    expect(set.size).toBe(1);
+    expect(set.has('shared-secret')).toBe(true);
+  });
 });
 
 // ─── maskSecrets ─────────────────────────────────────────────────────────────

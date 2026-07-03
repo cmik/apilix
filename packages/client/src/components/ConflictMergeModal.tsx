@@ -534,8 +534,27 @@ function applyResolution(
       return;
     }
     case 'globalVariables': {
-      const key = conflict.id.replace('global#', '');
-      data.globalVariables[key] = value;
+      if (conflict.id.startsWith('global-meta#')) {
+        // Metadata conflict: parse selected value as JSON and update metadata
+        const key = conflict.id.slice('global-meta#'.length);
+        try {
+          const meta = JSON.parse(value);
+          if (!data.globalVariableMeta) data.globalVariableMeta = {};
+          if (Object.keys(meta).length > 0) {
+            data.globalVariableMeta[key] = meta;
+          } else {
+            delete data.globalVariableMeta[key];
+          }
+        } catch {
+          // Invalid JSON — clear metadata for this key
+          if (!data.globalVariableMeta) data.globalVariableMeta = {};
+          delete data.globalVariableMeta[key];
+        }
+      } else {
+        // Standard value conflict
+        const key = conflict.id.replace('global#', '');
+        data.globalVariables[key] = value;
+      }
       return;
     }
     case 'collectionVariables': {

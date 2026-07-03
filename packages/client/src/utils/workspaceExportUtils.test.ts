@@ -364,6 +364,18 @@ describe('parseWorkspaceExportPackage — malformed data fields', () => {
     expect(parsed.data.globalVariables).toEqual({});
   });
 
+  it('backfills globalVariableMeta when value is not an object', () => {
+    const parsed = parseWorkspaceExportPackage(makeRaw({ globalVariableMeta: 'bad' }));
+    expect(parsed.data.globalVariableMeta).toEqual({});
+  });
+
+  it('preserves valid globalVariableMeta secret flags', () => {
+    const parsed = parseWorkspaceExportPackage(
+      makeRaw({ globalVariableMeta: { apiKey: { secret: true } } }),
+    );
+    expect(parsed.data.globalVariableMeta).toEqual({ apiKey: { secret: true } });
+  });
+
   it('backfills cookieJar when value is an array', () => {
     const parsed = parseWorkspaceExportPackage(makeRaw({ cookieJar: [] }));
     expect(parsed.data.cookieJar).toEqual({});
@@ -409,6 +421,13 @@ describe('parseWorkspaceExportPackage — prototype-pollution guard', () => {
     const parsed = parseWorkspaceExportPackage(raw);
     expect(Object.prototype.hasOwnProperty.call(parsed.data.globalVariables, '__proto__')).toBe(false);
     expect((parsed.data.globalVariables as Record<string, string>).safe).toBe('val');
+  });
+
+  it('strips forbidden keys from globalVariableMeta', () => {
+    const raw = makeRaw({ globalVariableMeta: { '__proto__': { secret: true }, ok: { secret: true } } });
+    const parsed = parseWorkspaceExportPackage(raw);
+    expect(Object.prototype.hasOwnProperty.call(parsed.data.globalVariableMeta ?? {}, '__proto__')).toBe(false);
+    expect(parsed.data.globalVariableMeta).toEqual({ ok: { secret: true } });
   });
 
   it('strips constructor and prototype keys from globalVariables', () => {
