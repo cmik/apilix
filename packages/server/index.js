@@ -903,8 +903,9 @@ function safeDecode(str) {
 }
 
 /**
- * Attempt to match a path against a route pattern that may contain :params.
+ * Attempt to match a path against a route pattern that may contain :params or :params(regex).
  * Returns param map if matched, null otherwise.
+ * Supports syntax like /api/users/:id([0-9]+)/orders
  */
 function matchPath(pattern, incoming) {
   const patParts = pattern.replace(/\/+$/, '').split('/');
@@ -912,9 +913,45 @@ function matchPath(pattern, incoming) {
   if (patParts.length !== incParts.length) return null;
   const params = {};
   for (let i = 0; i < patParts.length; i++) {
-    if (patParts[i].startsWith(':')) {
-      params[patParts[i].slice(1)] = safeDecode(incParts[i]);
-    } else if (patParts[i] !== incParts[i]) {
+    const segment = patParts[i];
+    if (segment.startsWith(':')) {
+      // Parse :name or :name(pattern)
+      const parenIdx = segment.indexOf('(');
+      let paramName, regexPattern = null;
+      
+      if (parenIdx > 0) {
+        paramName = segment.slice(1, parenIdx);
+        const closeIdx = segment.lastIndexOf(')');
+        // Constraint: closing paren must exist and be at segment end
+        if (closeIdx !== segment.length - 1 || closeIdx <= parenIdx) {
+          return null; // malformed constraint syntax
+        }
+        regexPattern = segment.slice(parenIdx + 1, closeIdx);
+        // Constraint: pattern must not be empty and not exceed 200 chars
+        if (!regexPattern || regexPattern.length > 200) {
+          return null;
+        }
+      } else {
+        paramName = segment.slice(1);
+      }
+      
+      const incomingSegment = safeDecode(incParts[i]);
+      
+      // If regex constraint exists, validate it
+      if (regexPattern) {
+        try {
+          const regex = new RegExp('^' + regexPattern + '$');
+          if (!regex.test(incomingSegment)) {
+            return null; // regex mismatch
+          }
+        } catch (e) {
+          // Bad regex pattern — fail the match silently
+          return null;
+        }
+      }
+      
+      params[paramName] = incomingSegment;
+    } else if (segment !== incParts[i]) {
       return null;
     }
   }
