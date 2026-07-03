@@ -41,7 +41,7 @@ export interface WorkspaceDiff {
   collections: EntityChange<AppCollection>[];
   requests: EntityChange<CollectionItem>[];
   environments: EntityChange<AppEnvironment>[];
-  globalVariables: EntityChange<Record<string, string>>[];
+  globalVariables: EntityChange<Record<string, unknown>>[];
   collectionVariables: EntityChange<Record<string, string>>[];
   mockRoutes: EntityChange<MockRoute>[];
 }
@@ -57,10 +57,23 @@ export function diffWorkspace(base: WorkspaceData, changed: WorkspaceData): Work
     collections: diffCollectionShapes(base, changed),
     requests: diffRequests(base, changed),
     environments: diffEnvironments(base.environments, changed.environments),
-    globalVariables: diffFlatRecord('global', base.globalVariables, changed.globalVariables),
+    globalVariables: diffGlobalVariables(base, changed),
     collectionVariables: diffCollectionVars(base.collectionVariables, changed.collectionVariables),
     mockRoutes: diffMockRoutes(base.mockRoutes, changed.mockRoutes),
   };
+}
+
+function diffGlobalVariables(base: WorkspaceData, changed: WorkspaceData): EntityChange<Record<string, unknown>>[] {
+  const baseShape = {
+    values: base.globalVariables,
+    meta: base.globalVariableMeta ?? {},
+  };
+  const changedShape = {
+    values: changed.globalVariables,
+    meta: changed.globalVariableMeta ?? {},
+  };
+  if (deepEqual(baseShape, changedShape)) return [];
+  return [{ kind: 'modified', id: 'global', label: 'global', base: baseShape, theirs: changedShape }];
 }
 
 // ─── Collections (top-level shape only, not items) ───────────────────────────

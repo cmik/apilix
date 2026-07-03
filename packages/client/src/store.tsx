@@ -6,6 +6,7 @@ import * as SnapshotEngine from './utils/snapshotEngine';
 import { API_BASE } from './api';
 import type { PostmanVersion } from './utils/postmanValidator';
 import { buildSecretSet } from './utils/secretMask';
+import { normalizeGlobalState, mergeGlobalMetaWithValues } from './utils/globalVariables';
 
 const STORAGE_KEY = 'apilix_persist'; // legacy key — kept for migration only
 
@@ -26,7 +27,7 @@ type PersistedTabRef = { id: string; collectionId: string; itemId: string };
 
 type PersistedState = Pick<
   AppState,
-  'collections' | 'environments' | 'activeEnvironmentId' | 'collectionVariables' | 'globalVariables' | 'cookieJar' | 'mockCollections' | 'mockRoutes' | 'mockPort' | 'databases' | 'activeDatabaseId'
+  'collections' | 'environments' | 'activeEnvironmentId' | 'collectionVariables' | 'globalVariables' | 'globalVariableMeta' | 'cookieJar' | 'mockCollections' | 'mockRoutes' | 'mockPort' | 'databases' | 'activeDatabaseId'
 > & {
   tabSession?: { tabs: PersistedTabRef[]; activeTabId: string | null };
 };
@@ -49,6 +50,24 @@ function loadPersisted(): PersistedState | null {
   } catch {
     return null;
   }
+}
+
+function normalizeWorkspaceDataShape(data: Partial<WorkspaceData>): WorkspaceData {
+  const globals = normalizeGlobalState(data.globalVariables, data.globalVariableMeta);
+  return {
+    collections: data.collections ?? [],
+    environments: data.environments ?? [],
+    activeEnvironmentId: data.activeEnvironmentId ?? null,
+    databases: data.databases ?? [],
+    activeDatabaseId: data.activeDatabaseId ?? null,
+    collectionVariables: data.collectionVariables ?? {},
+    globalVariables: globals.values,
+    globalVariableMeta: globals.meta,
+    cookieJar: data.cookieJar ?? {},
+    mockCollections: data.mockCollections ?? [],
+    mockRoutes: data.mockRoutes ?? [],
+    mockPort: data.mockPort ?? 3002,
+  };
 }
 
 export const initialState: AppState = {
@@ -80,6 +99,7 @@ export const initialState: AppState = {
   isRunning: false,
   collectionVariables: {},
   globalVariables: {},
+  globalVariableMeta: {},
   cookieJar: {},
   mockCollections: [],
   mockRoutes: [],
@@ -551,10 +571,27 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
 
     case 'UPDATE_GLOBAL_VARS':
-      return { ...state, globalVariables: { ...state.globalVariables, ...action.payload } };
+      return {
+        ...state,
+        globalVariables: { ...state.globalVariables, ...action.payload },
+        globalVariableMeta: mergeGlobalMetaWithValues({ ...state.globalVariables, ...action.payload }, state.globalVariableMeta ?? {}),
+      };
 
     case 'SET_GLOBAL_VARS':
-      return { ...state, globalVariables: action.payload };
+      return {
+        ...state,
+        globalVariables: action.payload,
+        globalVariableMeta: mergeGlobalMetaWithValues(action.payload, state.globalVariableMeta ?? {}),
+      };
+
+    case 'SET_GLOBAL_VARS_WITH_META': {
+      const globals = normalizeGlobalState(action.payload.values, action.payload.meta);
+      return {
+        ...state,
+        globalVariables: globals.values,
+        globalVariableMeta: globals.meta,
+      };
+    }
 
     case 'ADD_CONSOLE_LOG': {
       const prev = state.consoleLogs;
@@ -662,6 +699,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'HYDRATE_WORKSPACE': {
       const { workspaces, activeWorkspaceId, ...data } = action.payload;
+      const normalized = normalizeWorkspaceDataShape(data);
       const restoredCollections = (data.collections ?? []).map(col => ({
         ...col,
         item: ensureIds(col.item),
@@ -672,17 +710,18 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         activeWorkspaceId,
         storageReady: true,
         collections: restoredCollections,
-        environments: data.environments ?? [],
-        activeEnvironmentId: data.activeEnvironmentId ?? null,
-        databases: data.databases ?? [],
-        activeDatabaseId: data.activeDatabaseId ?? null,
+        environments: normalized.environments,
+        activeEnvironmentId: normalized.activeEnvironmentId,
+        databases: normalized.databases ?? [],
+        activeDatabaseId: normalized.activeDatabaseId ?? null,
         mongoQueryState: { collections: [], queryTabs: [], activeQueryTabId: null },
-        collectionVariables: data.collectionVariables ?? {},
-        globalVariables: data.globalVariables ?? {},
-        cookieJar: data.cookieJar ?? {},
-        mockCollections: data.mockCollections ?? [],
-        mockRoutes: data.mockRoutes ?? [],
-        mockPort: data.mockPort ?? 3002,
+        collectionVariables: normalized.collectionVariables,
+        globalVariables: normalized.globalVariables,
+        globalVariableMeta: normalized.globalVariableMeta ?? {},
+        cookieJar: normalized.cookieJar,
+        mockCollections: normalized.mockCollections,
+        mockRoutes: normalized.mockRoutes,
+        mockPort: normalized.mockPort,
         terminalSession: { connected: false, sessionId: null, cwd: null, shell: null, pid: null, exitCode: null },
       };
     }
@@ -700,6 +739,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         mongoQueryState: { collections: [], queryTabs: [], activeQueryTabId: null },
         collectionVariables: {},
         globalVariables: {},
+        globalVariableMeta: {},
         cookieJar: {},
         mockCollections: [],
         mockRoutes: [],
@@ -722,6 +762,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'SWITCH_WORKSPACE': {
       const { workspace, data } = action.payload;
+      const normalized = normalizeWorkspaceDataShape(data);
       const restoredCollections = (data.collections ?? []).map(col => ({
         ...col,
         item: ensureIds(col.item),
@@ -730,17 +771,18 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         activeWorkspaceId: workspace.id,
         collections: restoredCollections,
-        environments: data.environments ?? [],
-        activeEnvironmentId: data.activeEnvironmentId ?? null,
-        databases: data.databases ?? [],
-        activeDatabaseId: data.activeDatabaseId ?? null,
+        environments: normalized.environments,
+        activeEnvironmentId: normalized.activeEnvironmentId,
+        databases: normalized.databases ?? [],
+        activeDatabaseId: normalized.activeDatabaseId ?? null,
         mongoQueryState: { collections: [], queryTabs: [], activeQueryTabId: null },
-        collectionVariables: data.collectionVariables ?? {},
-        globalVariables: data.globalVariables ?? {},
-        cookieJar: data.cookieJar ?? {},
-        mockCollections: data.mockCollections ?? [],
-        mockRoutes: data.mockRoutes ?? [],
-        mockPort: data.mockPort ?? 3002,
+        collectionVariables: normalized.collectionVariables,
+        globalVariables: normalized.globalVariables,
+        globalVariableMeta: normalized.globalVariableMeta ?? {},
+        cookieJar: normalized.cookieJar,
+        mockCollections: normalized.mockCollections,
+        mockRoutes: normalized.mockRoutes,
+        mockPort: normalized.mockPort,
         tabs: [],
         activeTabId: null,
         activeRequest: null,
@@ -782,6 +824,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'DUPLICATE_WORKSPACE': {
       const { workspace, data } = action.payload;
+      const normalized = normalizeWorkspaceDataShape(data);
       const restoredCollections = (data.collections ?? []).map(col => ({
         ...col,
         item: ensureIds(col.item),
@@ -791,17 +834,18 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         workspaces: [...state.workspaces, workspace],
         activeWorkspaceId: workspace.id,
         collections: restoredCollections,
-        environments: data.environments ?? [],
-        activeEnvironmentId: data.activeEnvironmentId ?? null,
-        databases: data.databases ?? [],
-        activeDatabaseId: data.activeDatabaseId ?? null,
+        environments: normalized.environments,
+        activeEnvironmentId: normalized.activeEnvironmentId,
+        databases: normalized.databases ?? [],
+        activeDatabaseId: normalized.activeDatabaseId ?? null,
         mongoQueryState: { collections: [], queryTabs: [], activeQueryTabId: null },
-        collectionVariables: data.collectionVariables ?? {},
-        globalVariables: data.globalVariables ?? {},
-        cookieJar: data.cookieJar ?? {},
-        mockCollections: data.mockCollections ?? [],
-        mockRoutes: data.mockRoutes ?? [],
-        mockPort: data.mockPort ?? 3002,
+        collectionVariables: normalized.collectionVariables,
+        globalVariables: normalized.globalVariables,
+        globalVariableMeta: normalized.globalVariableMeta ?? {},
+        cookieJar: normalized.cookieJar,
+        mockCollections: normalized.mockCollections,
+        mockRoutes: normalized.mockRoutes,
+        mockPort: normalized.mockPort,
         tabs: [],
         activeTabId: null,
         activeRequest: null,
@@ -829,7 +873,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, syncConfigVersion: state.syncConfigVersion + 1 };
 
     case 'RESTORE_SNAPSHOT': {
-      const data = action.payload;
+      const data = normalizeWorkspaceDataShape(action.payload);
       const restoredCollections = (data.collections ?? []).map(col => ({
         ...col,
         item: ensureIds(col.item),
@@ -844,6 +888,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         mongoQueryState: { collections: [], queryTabs: [], activeQueryTabId: null },
         collectionVariables: data.collectionVariables ?? {},
         globalVariables: data.globalVariables ?? {},
+        globalVariableMeta: data.globalVariableMeta ?? {},
         cookieJar: data.cookieJar ?? {},
         mockCollections: data.mockCollections ?? [],
         mockRoutes: data.mockRoutes ?? [],
@@ -1015,6 +1060,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             activeDatabaseId: legacy.activeDatabaseId ?? null,
             collectionVariables: legacy.collectionVariables ?? {},
             globalVariables: legacy.globalVariables ?? {},
+            globalVariableMeta: legacy.globalVariableMeta ?? {},
             cookieJar: legacy.cookieJar ?? {},
             mockCollections: legacy.mockCollections ?? [],
             mockRoutes: legacy.mockRoutes ?? [],
@@ -1054,6 +1100,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             activeDatabaseId: null,
             collectionVariables: {},
             globalVariables: {},
+            globalVariableMeta: {},
             cookieJar: {},
             mockCollections: [],
             mockRoutes: [],
@@ -1094,6 +1141,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         activeDatabaseId: state.activeDatabaseId,
         collectionVariables: state.collectionVariables,
         globalVariables: state.globalVariables,
+        globalVariableMeta: state.globalVariableMeta,
         cookieJar: state.cookieJar,
         mockCollections: state.mockCollections,
         mockRoutes: state.mockRoutes,
@@ -1107,7 +1155,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSaveTimer(t);
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.collections, state.environments, state.activeEnvironmentId, state.databases, state.activeDatabaseId, state.collectionVariables, state.globalVariables, state.cookieJar, state.mockCollections, state.mockRoutes, state.mockPort, state.workspaces, state.activeWorkspaceId, state.storageReady]);
+  }, [state.collections, state.environments, state.activeEnvironmentId, state.databases, state.activeDatabaseId, state.collectionVariables, state.globalVariables, state.globalVariableMeta, state.cookieJar, state.mockCollections, state.mockRoutes, state.mockPort, state.workspaces, state.activeWorkspaceId, state.storageReady]);
   const historyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const historyLoadedWorkspaceRef = useRef<string | null>(null);
   const skipNextHistoryPersistRef = useRef(false);
@@ -1351,8 +1399,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }
 
   const secretSet = useMemo(
-    () => buildSecretSet(state.environments, state.activeEnvironmentId),
-    [state.environments, state.activeEnvironmentId],
+    () => buildSecretSet(state.environments, state.activeEnvironmentId, state.globalVariables, state.globalVariableMeta ?? {}),
+    [state.environments, state.activeEnvironmentId, state.globalVariables, state.globalVariableMeta],
   );
 
   // Show a simple loading screen until storage has been read from disk

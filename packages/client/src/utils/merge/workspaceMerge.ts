@@ -23,6 +23,7 @@ import type {
   AppEnvironment,
   CollectionItem,
   MockRoute,
+  GlobalVariableMeta,
   MergeResult,
   MergeConflictNode,
   ConflictDomain,
@@ -44,11 +45,23 @@ export function mergeWorkspaces(
   const conflicts: MergeConflictNode[] = [];
   let autoMergedCount = 0;
 
+  const mergedGlobals = mergeGlobalVariables(
+    base.globalVariables,
+    base.globalVariableMeta ?? {},
+    local.globalVariables,
+    local.globalVariableMeta ?? {},
+    remote.globalVariables,
+    remote.globalVariableMeta ?? {},
+    conflicts,
+    () => autoMergedCount++,
+  );
+
   const merged: WorkspaceData = {
     ...base,
     collections: mergeCollections(base, local, remote, localDiff, remoteDiff, conflicts, () => autoMergedCount++),
     environments: mergeEnvironments(base.environments, local.environments, remote.environments, localDiff, remoteDiff, conflicts, () => autoMergedCount++),
-    globalVariables: mergeFlatRecord('global', 'globalVariables', base.globalVariables, local.globalVariables, remote.globalVariables, conflicts, () => autoMergedCount++),
+    globalVariables: mergedGlobals.values,
+    ...(Object.keys(mergedGlobals.meta).length > 0 ? { globalVariableMeta: mergedGlobals.meta } : {}),
     collectionVariables: mergeCollectionVars(base.collectionVariables, local.collectionVariables, remote.collectionVariables, conflicts, () => autoMergedCount++),
     mockRoutes: mergeMockRoutes(base.mockRoutes, local.mockRoutes, remote.mockRoutes, localDiff, remoteDiff, conflicts, () => autoMergedCount++),
     mockCollections: local.mockCollections, // last-write-wins (rarely edited by teams)
@@ -483,6 +496,44 @@ function mergeEnvironments(
 
 // ─── Global variables ─────────────────────────────────────────────────────────
 
+function mergeGlobalVariables(
+  baseValues: Record<string, string>,
+  baseMeta: Record<string, GlobalVariableMeta>,
+  localValues: Record<string, string>,
+  localMeta: Record<string, GlobalVariableMeta>,
+  remoteValues: Record<string, string>,
+  remoteMeta: Record<string, GlobalVariableMeta>,
+  conflicts: MergeConflictNode[],
+  onAuto: () => void,
+): { values: Record<string, string>; meta: Record<string, GlobalVariableMeta> } {
+  const mergedValues = mergeFlatRecord(
+    'global',
+    'globalVariables',
+    baseValues,
+    localValues,
+    remoteValues,
+    conflicts,
+    onAuto,
+  );
+
+  const mergedMeta = mergeFlatMetaRecord(
+    baseMeta,
+    localMeta,
+    remoteMeta,
+    conflicts,
+    onAuto,
+  );
+
+  const prunedMeta: Record<string, GlobalVariableMeta> = {};
+  for (const key of Object.keys(mergedValues)) {
+    if (mergedMeta[key] && Object.keys(mergedMeta[key]).length > 0) {
+      prunedMeta[key] = mergedMeta[key];
+    }
+  }
+
+  return { values: mergedValues, meta: prunedMeta };
+}
+
 function mergeFlatRecord(
   id: string,
   domain: ConflictDomain,
@@ -527,6 +578,67 @@ function mergeFlatRecord(
         });
       }
     }
+  }
+
+  return merged;
+}
+
+function mergeFlatMetaRecord(
+  base: Record<string, GlobalVariableMeta>,
+  local: Record<string, GlobalVariableMeta>,
+  remote: Record<string, GlobalVariableMeta>,
+  conflicts: MergeConflictNode[],
+  onAuto: () => void,
+): Record<string, GlobalVariableMeta> {
+  const merged: Record<string, GlobalVariableMeta> = { ...local };
+  const allKeys = new Set([...Object.keys(base), ...Object.keys(local), ...Object.keys(remote)]);
+
+  for (const key of allKeys) {
+    const b = base[key] ?? {};
+    const l = local[key] ?? {};
+    const r = remote[key] ?? {};
+    const bStr = JSON.stringify(b);
+    const lStr = JSON.stringify(l);
+    const rStr = JSON.stringify(r);
+    const lChanged = lStr !== bStr;
+    const rChanged = rStr !== bStr;
+
+    if (!lChanged && !rChanged) {
+      if (Object.keys(l).length > 0) merged[key] = l;
+      else delete merged[key];
+      continue;
+    }
+    if (lChanged && !rChanged) {
+      if (Object.keys(l).length > 0) merged[key] = l;
+      else delete merged[key];
+      onAuto();
+      continue;
+    }
+    if (!lChanged && rChanged) {
+      if (Object.keys(r).length > 0) merged[key] = r;
+      else delete merged[key];
+      onAuto();
+      continue;
+    }
+
+    if (lStr === rStr) {
+      if (Object.keys(l).length > 0) merged[key] = l;
+      else delete merged[key];
+      onAuto();
+      continue;
+    }
+
+    if (Object.keys(l).length > 0) merged[key] = l;
+    else delete merged[key];
+    conflicts.push({
+      id: `global-meta#${key}`,
+      domain: 'globalVariables',
+      kind: 'field-overlap',
+      label: `${key} metadata`,
+      base: bStr || null,
+      local: lStr,
+      remote: rStr,
+    });
   }
 
   return merged;

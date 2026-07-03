@@ -612,6 +612,8 @@ On every **Pull ↓**, Apilix detects the encrypted envelope (a JSON object with
 | Requests, headers, body, scripts | Workspace metadata on the remote (object key / path) |
 | Mock routes, cookie jar | |
 
+**Secret variable note:** Secret flags for Environment and Global variables protect local-at-rest storage in Electron. During sync, values are only protected on the remote when **Encrypt remote data** is enabled.
+
 ---
 
 ## Sharing Sync Configuration

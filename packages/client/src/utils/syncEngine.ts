@@ -41,11 +41,15 @@ export function applyScopedLocalOverrides(
   localData: WorkspaceData,
   syncConfig: SyncConfig,
 ): WorkspaceData {
+  const scopedMeta = isGlobalSyncEnabled(syncConfig)
+    ? (target.globalVariableMeta ?? {})
+    : (localData.globalVariableMeta ?? {});
   return {
     ...target,
     environments: isEnvSyncEnabled(syncConfig) ? target.environments : localData.environments,
     activeEnvironmentId: isEnvSyncEnabled(syncConfig) ? target.activeEnvironmentId : localData.activeEnvironmentId,
     globalVariables: isGlobalSyncEnabled(syncConfig) ? target.globalVariables : localData.globalVariables,
+    globalVariableMeta: scopedMeta,
   };
 }
 
@@ -54,11 +58,15 @@ function buildOutboundWorkspaceData(
   remoteData: WorkspaceData | null,
   syncConfig: SyncConfig,
 ): WorkspaceData {
+  const scopedMeta = isGlobalSyncEnabled(syncConfig)
+    ? (localData.globalVariableMeta ?? {})
+    : (remoteData?.globalVariableMeta ?? {});
   return {
     ...localData,
     environments: isEnvSyncEnabled(syncConfig) ? localData.environments : (remoteData?.environments ?? []),
     activeEnvironmentId: isEnvSyncEnabled(syncConfig) ? localData.activeEnvironmentId : (remoteData?.activeEnvironmentId ?? null),
     globalVariables: isGlobalSyncEnabled(syncConfig) ? localData.globalVariables : (remoteData?.globalVariables ?? {}),
+    globalVariableMeta: scopedMeta,
   };
 }
 

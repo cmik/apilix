@@ -163,6 +163,15 @@ describe('encryptWorkspaceSecrets — browser mode', () => {
     expect(result.environments[0].values[0].value).toBe('https://api.example.com');
   });
 
+  it('passes global values through unchanged in browser mode', async () => {
+    const data = makeData({
+      globalVariables: { API_KEY: 'secret-value' },
+      globalVariableMeta: { API_KEY: { secret: true } },
+    });
+    const result = await encryptWorkspaceSecrets(data);
+    expect(result.globalVariables.API_KEY).toBe('secret-value');
+  });
+
   it('handles multiple environments correctly', async () => {
     const data = makeData({
       environments: [
@@ -229,6 +238,15 @@ describe('decryptWorkspaceSecrets — browser mode', () => {
     const result = await decryptWorkspaceSecrets(data);
     expect(result.environments[0].values[0].value).toBe('https://api.example.com');
   });
+
+  it('passes global values through unchanged in browser mode', async () => {
+    const data = makeData({
+      globalVariables: { API_KEY: 'ENC:xyz' },
+      globalVariableMeta: { API_KEY: { secret: true } },
+    });
+    const result = await decryptWorkspaceSecrets(data);
+    expect(result.globalVariables.API_KEY).toBe('ENC:xyz');
+  });
 });
 
 // ─── encryptWorkspaceSecrets / decryptWorkspaceSecrets — Electron mode ────────
@@ -281,6 +299,26 @@ describe('encryptWorkspaceSecrets — Electron mode', () => {
     expect(row.enabled).toBe(false);
     expect(row.key).toBe('TOKEN');
     expect(row.value).toBe('ENC:result');
+  });
+
+  it('encrypts secret global values and leaves non-secret globals unchanged', async () => {
+    const mockEncrypt = vi.fn().mockImplementation((v: string) => Promise.resolve(`ENC(${v})`));
+    (window as unknown as Record<string, unknown>).electronAPI = { encryptString: mockEncrypt };
+
+    const data = makeData({
+      globalVariables: {
+        SECRET_GLOBAL: 'token-123',
+        PUBLIC_GLOBAL: 'https://api.example.com',
+      },
+      globalVariableMeta: {
+        SECRET_GLOBAL: { secret: true },
+      },
+    });
+
+    const result = await encryptWorkspaceSecrets(data);
+    expect(result.globalVariables.SECRET_GLOBAL).toBe('ENC(token-123)');
+    expect(result.globalVariables.PUBLIC_GLOBAL).toBe('https://api.example.com');
+    expect(mockEncrypt).toHaveBeenCalledWith('token-123');
   });
 });
 
@@ -360,6 +398,26 @@ describe('decryptWorkspaceSecrets — Electron mode', () => {
 
     expect(decrypted.environments[0].values[0].value).toBe('super-secret');
     expect(decrypted.environments[0].values[1].value).toBe('https://api.example.com');
+  });
+
+  it('decrypts secret global values and preserves non-secret globals', async () => {
+    const mockDecrypt = vi.fn().mockImplementation((v: string) => Promise.resolve(`DEC(${v})`));
+    (window as unknown as Record<string, unknown>).electronAPI = { decryptString: mockDecrypt };
+
+    const data = makeData({
+      globalVariables: {
+        SECRET_GLOBAL: 'ENC:token-abc',
+        PUBLIC_GLOBAL: 'https://api.example.com',
+      },
+      globalVariableMeta: {
+        SECRET_GLOBAL: { secret: true },
+      },
+    });
+
+    const result = await decryptWorkspaceSecrets(data);
+    expect(result.globalVariables.SECRET_GLOBAL).toBe('DEC(ENC:token-abc)');
+    expect(result.globalVariables.PUBLIC_GLOBAL).toBe('https://api.example.com');
+    expect(mockDecrypt).toHaveBeenCalledWith('ENC:token-abc');
   });
 });
 

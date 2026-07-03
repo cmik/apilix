@@ -188,6 +188,15 @@ export default function VariableScopeInspector() {
     );
   }, [activeEnv]);
 
+  const secretGlobalKeys = useMemo<Set<string>>(
+    () => new Set(
+      Object.entries(state.globalVariableMeta ?? {})
+        .filter(([, meta]) => meta?.secret === true)
+        .map(([key]) => key),
+    ),
+    [state.globalVariableMeta],
+  );
+
   // Reset resolved reveal state when active environment or its secret keys change
   useEffect(() => {
     setRevealedResolved(new Set());
@@ -225,7 +234,10 @@ export default function VariableScopeInspector() {
   }
 
   function isResolvedSecret(key: string): boolean {
-    return winningScope(key) === 'ENV' && secretEnvKeys.has(key);
+    const winner = winningScope(key);
+    if (winner === 'ENV') return secretEnvKeys.has(key);
+    if (winner === 'GLOBAL') return secretGlobalKeys.has(key);
+    return false;
   }
 
   function toggleResolvedReveal(key: string) {
@@ -241,7 +253,7 @@ export default function VariableScopeInspector() {
       if (!filter) return true;
       const lc = filter.toLowerCase();
       if (k.toLowerCase().includes(lc)) return true;
-      // Don't leak secret ENV values via filter match
+      // Don't leak secret values via filter match
       if (isResolvedSecret(k)) return false;
       return resolved[k]?.toLowerCase().includes(lc);
     })
@@ -371,6 +383,7 @@ export default function VariableScopeInspector() {
             filter={filter}
             defaultOpen={false}
             icon={<IconGlobals className="w-3.5 h-3.5" />}
+            secretKeys={secretGlobalKeys}
           />
         </div>
       </div>

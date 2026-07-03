@@ -179,7 +179,17 @@ Global variables are **cross-collection** — they are available in every collec
 
 ![Globals panel](images/variables-globals-panel.png)
 
-The Globals editor works exactly like the Environment editor: key/value rows with enable/disable toggles.
+The Globals editor provides key/value rows and supports marking a row as **secret** using the lock icon.
+
+### Marking Global Variables as Secret
+
+In the Globals editor, click the **lock** control on a row to mark that value as secret.
+
+- Secret values are visually hidden in the Globals table.
+- In the desktop app (Electron), secret globals are encrypted at rest using the OS keychain.
+- Secret globals participate in the optional UI redaction layer in Console and Request History when **Mask secret variable values in console, logs, and history** is enabled.
+
+> Like environment secrets, the secret flag does not change runtime resolution. The value is still used normally where referenced.
 
 **Typical use cases for globals:**
 
@@ -270,7 +280,7 @@ Each variable is listed with:
 
 The Scope Inspector is read-only — edit values in the respective panel (Environments, Globals, or Collection Settings).
 
-**Secret variables:** Environment variables marked as secret (🔒) have their values hidden by default in both the *Resolved Variables* table and the *By Scope* section. Click the eye / eye-off icon next to a masked value to temporarily reveal it. Clicking again re-masks it. Reveal state is not persisted and resets when you navigate away.
+**Secret variables:** Variables marked as secret (currently Environment and Globals) have their values hidden by default in both the *Resolved Variables* table and the *By Scope* section whenever that scope is the winner. Click the eye / eye-off icon next to a masked value to temporarily reveal it. Clicking again re-masks it. Reveal state is not persisted and resets when you navigate away.
 
 ---
 

@@ -428,7 +428,16 @@ export async function encryptWorkspaceSecrets(data: WorkspaceData): Promise<Work
       ),
     }))
   );
-  return { ...data, environments };
+  const globalVariableMeta = data.globalVariableMeta ?? {};
+  const globalVariables: Record<string, string> = { ...data.globalVariables };
+  await Promise.all(
+    Object.entries(globalVariables).map(async ([key, value]) => {
+      if (globalVariableMeta[key]?.secret) {
+        globalVariables[key] = await encryptValue(value);
+      }
+    }),
+  );
+  return { ...data, environments, globalVariables };
 }
 
 /**
@@ -446,7 +455,16 @@ export async function decryptWorkspaceSecrets(data: WorkspaceData): Promise<Work
       ),
     }))
   );
-  return { ...data, environments };
+  const globalVariableMeta = data.globalVariableMeta ?? {};
+  const globalVariables: Record<string, string> = { ...data.globalVariables };
+  await Promise.all(
+    Object.entries(globalVariables).map(async ([key, value]) => {
+      if (globalVariableMeta[key]?.secret) {
+        globalVariables[key] = await decryptValue(value);
+      }
+    }),
+  );
+  return { ...data, environments, globalVariables };
 }
 
 // ─── Snapshot helpers ─────────────────────────────────────────────────────────
