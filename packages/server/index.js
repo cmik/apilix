@@ -940,7 +940,9 @@ function matchPath(pattern, incoming) {
       // If regex constraint exists, validate it
       if (regexPattern) {
         try {
-          const regex = new RegExp('^' + regexPattern + '$');
+          // Group user pattern before anchoring so top-level alternation
+          // cannot bypass full-segment matching.
+          const regex = new RegExp('^(?:' + regexPattern + ')$');
           if (!regex.test(incomingSegment)) {
             return null; // regex mismatch
           }

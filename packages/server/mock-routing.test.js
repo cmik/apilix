@@ -50,7 +50,9 @@ function matchPath(pattern, incoming) {
       // If regex constraint exists, validate it
       if (regexPattern) {
         try {
-          const regex = new RegExp('^' + regexPattern + '$');
+          // Group user pattern before anchoring so top-level alternation
+          // cannot bypass full-segment matching.
+          const regex = new RegExp('^(?:' + regexPattern + ')$');
           if (!regex.test(incomingSegment)) {
             return null; // regex mismatch
           }
@@ -298,6 +300,21 @@ test('regex param: matches when segment satisfies regex', () => {
   assert.ok(result);
   assert.equal(result.route.path, '/items/:id([0-9]+)');
   assert.deepEqual(result.pathParams, { id: '42' });
+});
+
+test('regex param: alternation is still full-segment anchored', () => {
+  buildRouteIndex([makeRoute('GET', '/users/:role(user|admin)')]);
+
+  const exactUser = lookupHttpRoute('GET', '/users/user');
+  assert.ok(exactUser);
+  assert.deepEqual(exactUser.pathParams, { role: 'user' });
+
+  const exactAdmin = lookupHttpRoute('GET', '/users/admin');
+  assert.ok(exactAdmin);
+  assert.deepEqual(exactAdmin.pathParams, { role: 'admin' });
+
+  assert.equal(lookupHttpRoute('GET', '/users/user123'), null);
+  assert.equal(lookupHttpRoute('GET', '/users/123admin'), null);
 });
 
 test('regex param: no match when segment fails regex', () => {
