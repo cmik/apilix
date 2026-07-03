@@ -23,9 +23,47 @@ function matchPath(pattern, incoming) {
   if (patParts.length !== incParts.length) return null;
   const params = {};
   for (let i = 0; i < patParts.length; i++) {
-    if (patParts[i].startsWith(':')) {
-      params[patParts[i].slice(1)] = safeDecode(incParts[i]);
-    } else if (patParts[i] !== incParts[i]) {
+    const segment = patParts[i];
+    if (segment.startsWith(':')) {
+      // Parse :name or :name(pattern)
+      const parenIdx = segment.indexOf('(');
+      let paramName, regexPattern = null;
+      
+      if (parenIdx > 0) {
+        paramName = segment.slice(1, parenIdx);
+        const closeIdx = segment.lastIndexOf(')');
+        // Constraint: closing paren must exist and be at segment end
+        if (closeIdx !== segment.length - 1 || closeIdx <= parenIdx) {
+          return null; // malformed constraint syntax
+        }
+        regexPattern = segment.slice(parenIdx + 1, closeIdx);
+        // Constraint: pattern must not be empty and not exceed 200 chars
+        if (!regexPattern || regexPattern.length > 200) {
+          return null;
+        }
+      } else {
+        paramName = segment.slice(1);
+      }
+      
+      const incomingSegment = safeDecode(incParts[i]);
+      
+      // If regex constraint exists, validate it
+      if (regexPattern) {
+        try {
+          // Group user pattern before anchoring so top-level alternation
+          // cannot bypass full-segment matching.
+          const regex = new RegExp('^(?:' + regexPattern + ')$');
+          if (!regex.test(incomingSegment)) {
+            return null; // regex mismatch
+          }
+        } catch (e) {
+          // Bad regex pattern — fail the match silently
+          return null;
+        }
+      }
+      
+      params[paramName] = incomingSegment;
+    } else if (segment !== incParts[i]) {
       return null;
     }
   }
@@ -254,6 +292,99 @@ test('multiple parametric routes: first match in list order wins', () => {
   assert.deepEqual(result.pathParams, { type: 'orders' });
 });
 
+// ─── Regex parameter tests ────────────────────────────────────────────────────
+
+test('regex param: matches when segment satisfies regex', () => {
+  buildRouteIndex([makeRoute('GET', '/items/:id([0-9]+)')]);
+  const result = lookupHttpRoute('GET', '/items/42');
+  assert.ok(result);
+  assert.equal(result.route.path, '/items/:id([0-9]+)');
+  assert.deepEqual(result.pathParams, { id: '42' });
+});
+
+test('regex param: alternation is still full-segment anchored', () => {
+  buildRouteIndex([makeRoute('GET', '/users/:role(user|admin)')]);
+
+  const exactUser = lookupHttpRoute('GET', '/users/user');
+  assert.ok(exactUser);
+  assert.deepEqual(exactUser.pathParams, { role: 'user' });
+
+  const exactAdmin = lookupHttpRoute('GET', '/users/admin');
+  assert.ok(exactAdmin);
+  assert.deepEqual(exactAdmin.pathParams, { role: 'admin' });
+
+  assert.equal(lookupHttpRoute('GET', '/users/user123'), null);
+  assert.equal(lookupHttpRoute('GET', '/users/123admin'), null);
+});
+
+test('regex param: no match when segment fails regex', () => {
+  buildRouteIndex([makeRoute('GET', '/items/:id([0-9]+)')]);
+  const result = lookupHttpRoute('GET', '/items/abc');
+  assert.equal(result, null);
+});
+
+test('regex param: captured name available in pathParams', () => {
+  buildRouteIndex([makeRoute('GET', '/users/:username([a-z-]+)/posts')]);
+  const result = lookupHttpRoute('GET', '/users/john-doe/posts');
+  assert.ok(result);
+  assert.deepEqual(result.pathParams, { username: 'john-doe' });
+});
+
+test('regex param: bad regex pattern does not throw — returns null', () => {
+  buildRouteIndex([makeRoute('GET', '/api/:id([invalid(regex)])')]);
+  // Malformed regex should silently fail the match, not throw
+  const result = lookupHttpRoute('GET', '/api/123');
+  assert.equal(result, null);
+});
+
+test('regex param: mixed static + regex + plain param in same path', () => {
+  buildRouteIndex([makeRoute('GET', '/api/:type([a-z]+)/:id([0-9]+)/detail')]);
+  const result = lookupHttpRoute('GET', '/api/users/42/detail');
+  assert.ok(result);
+  assert.deepEqual(result.pathParams, { type: 'users', id: '42' });
+});
+
+test('regex param: plain :param and regex :param(regex) coexist', () => {
+  const routes = [
+    makeRoute('GET', '/api/:id'),           // matches anything
+    makeRoute('GET', '/api/:id([0-9]+)'),   // matches only digits
+  ];
+  buildRouteIndex(routes);
+  // /api/42 should match the first route (index 0)
+  const result = lookupHttpRoute('GET', '/api/42');
+  assert.ok(result);
+  assert.equal(result.route.path, '/api/:id');
+});
+
+test('regex param: trailing text after closing paren fails constraint', () => {
+  buildRouteIndex([makeRoute('GET', '/api/:id([0-9]+)extra')]);
+  // Malformed syntax — closing paren not at segment end
+  const result = lookupHttpRoute('GET', '/api/123extra');
+  assert.equal(result, null);
+});
+
+test('regex param: unclosed paren fails constraint', () => {
+  buildRouteIndex([makeRoute('GET', '/api/:id([0-9]+')]);
+  // Malformed syntax — no closing paren
+  const result = lookupHttpRoute('GET', '/api/123');
+  assert.equal(result, null);
+});
+
+test('regex param: empty pattern fails constraint', () => {
+  buildRouteIndex([makeRoute('GET', '/api/:id()')]);
+  // Malformed syntax — empty pattern
+  const result = lookupHttpRoute('GET', '/api/123');
+  assert.equal(result, null);
+});
+
+test('regex param: overly long pattern (>200 chars) fails constraint', () => {
+  const longPattern = 'a'.repeat(201);
+  buildRouteIndex([makeRoute('GET', `/api/:id(${longPattern})`)]);
+  // Pattern too long to prevent ReDoS
+  const result = lookupHttpRoute('GET', '/api/123');
+  assert.equal(result, null);
+});
+
 // ─── WebSocket route tests ────────────────────────────────────────────────────
 
 test('static WS: matches by path', () => {
@@ -289,7 +420,20 @@ test('HTTP routes are not returned by WS lookup', () => {
   const result = lookupWsRoute('/ws/chat');
   assert.equal(result, null);
 });
+test('parametric WS: regex param matches incoming segment', () => {
+  buildRouteIndex([makeWsRoute('/ws/room/:id([0-9]+)')]);
+  const result = lookupWsRoute('/ws/room/42');
+  assert.ok(result);
+  assert.deepEqual(result.pathParams, { id: '42' });
+});
 
+test('parametric WS: regex param no match when constraint fails', () => {
+  buildRouteIndex([makeWsRoute('/ws/room/:id([0-9]+)')]);
+  const result = lookupWsRoute('/ws/room/abc');
+  assert.equal(result, null);
+});
+
+// ─── Index rebuild and integration tests ────────────────────────────────────
 test('index rebuilt correctly after second buildRouteIndex call', () => {
   buildRouteIndex([makeRoute('GET', '/old')]);
   assert.ok(lookupHttpRoute('GET', '/old'));
@@ -374,6 +518,32 @@ test('integration: parametric route matched via real HTTP request', async () => 
     assert.equal(status, 200);
     assert.equal(body.matched, '/items/:id');
     assert.equal(body.params.id, '99');
+  });
+});
+
+test('integration: regex-constrained param route matches valid segment', async () => {
+  const routes = [makeRoute('GET', '/items/:id([0-9]+)')];
+  await withServer(buildMinimalHandler(routes), async port => {
+    const { status, body } = await requestJson('GET', `http://127.0.0.1:${port}/items/42`);
+    assert.equal(status, 200);
+    assert.equal(body.matched, '/items/:id([0-9]+)');
+    assert.equal(body.params.id, '42');
+  });
+});
+
+test('integration: regex-constrained param route rejects non-matching segment', async () => {
+  const routes = [makeRoute('GET', '/items/:id([0-9]+)')];
+  await withServer(buildMinimalHandler(routes), async port => {
+    const { status } = await requestJson('GET', `http://127.0.0.1:${port}/items/abc`);
+    assert.equal(status, 404);
+  });
+});
+
+test('integration: malformed regex-constrained route is ignored at match time', async () => {
+  const routes = [makeRoute('GET', '/items/:id([0-9]+)extra')];
+  await withServer(buildMinimalHandler(routes), async port => {
+    const { status } = await requestJson('GET', `http://127.0.0.1:${port}/items/123extra`);
+    assert.equal(status, 404);
   });
 });
 

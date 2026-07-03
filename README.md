@@ -392,11 +392,21 @@ The **🎭 Mock** tab lets you spin up a local HTTP server that returns custom r
 | Field | Description |
 |---|---|
 | Method | HTTP verb or `*` (any) |
-| Path | URL path, supports `:param` segments (e.g. `/api/users/:id`) |
+| Path | URL path, supports `:param` and `:param(regex)` segments (e.g. `/api/users/:id`, `/api/users/:id([0-9]+)`) |
 | Status Code | HTTP status to return |
 | Response Headers | Custom headers (e.g. `Content-Type`) |
 | Response Body | Static text, JSON, or a template with substitutions |
 | Delay (ms) | Artificial delay before the response is sent |
+
+Path pattern examples:
+
+```text
+/api/users/:id
+/api/users/:id([0-9]+)
+/posts/:slug([a-z-]+)
+```
+
+Regex constraints apply to a single path segment and must match the full segment.
 
 ### Dynamic substitution
 

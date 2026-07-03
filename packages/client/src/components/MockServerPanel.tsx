@@ -434,6 +434,9 @@ function RouteEditorModal({ initial, collections, onSave, onClose }: {
                   <div className="flex-1">
                     <label className="block text-xs text-slate-400 mb-1">Path</label>
                     <input value={route.path} onChange={e => updateField('path', e.target.value)} placeholder="/api/users/:id" className="w-full bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none" />
+                    <p className="text-xs text-slate-500 mt-1">
+                      Supports <code className="font-mono">:param</code> or <code className="font-mono">:param(regex)</code>, e.g. <code className="font-mono">:id([0-9]+)</code>
+                    </p>
                   </div>
                 </div>
                 <div className="flex gap-2">

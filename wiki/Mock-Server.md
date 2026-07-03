@@ -160,6 +160,24 @@ Click **✕** on a route row. The deletion is immediate.
 
 Path parameters declared with `:name` are available in response body templates as `{{param.name}}` and in scripts as `req.params.name`.
 
+You can also constrain a path parameter with a regex at the segment level using `:name(pattern)`:
+
+- `:id([0-9]+)` matches digits only
+- `:slug([a-z-]+)` matches lowercase slugs with dashes
+
+Examples:
+
+- `/orders/:id([0-9]+)`
+- `/users/:username([a-z0-9_-]+)/posts/:postId([0-9]+)`
+
+Matching behavior:
+
+- Regex constraints are anchored to the full segment (the entire segment must match)
+- Malformed constrained segments do not match requests
+- Routes are still matched in route order; first enabled match wins
+
+Route matching behavior is the same in Electron desktop and browser mode because matching runs in the backend mock server.
+
 ### Status Code and Delay
 
 | Field | Description |
