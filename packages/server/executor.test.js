@@ -34,6 +34,72 @@ function makeContext() {
   };
 }
 
+test('executeRequest requestSettings.timeout overrides global requestTimeout', async () => {
+  setExecutorConfig({ followRedirects: false, requestTimeout: 1000, sslVerification: false });
+
+  await withServer((req, res) => {
+    setTimeout(() => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    }, 100);
+  }, async (url) => {
+    const item = {
+      name: 'Timeout override request',
+      request: {
+        method: 'GET',
+        url,
+        requestSettings: { timeout: 50 },
+      },
+    };
+
+    const result = await executeRequest(item, makeContext());
+    assert.equal(result.status, 0);
+    assert.equal(result.error !== null, true);
+    assert.match(result.error || '', /timeout|exceeded/i);
+  });
+});
+
+test('executeRequest requestSettings.followRedirects overrides global followRedirects', async () => {
+  setExecutorConfig({ followRedirects: false, requestTimeout: 3000, sslVerification: false });
+
+  await withServer((req, res) => {
+    if (req.url === '/redirect') {
+      res.writeHead(302, { location: '/final' });
+      res.end();
+      return;
+    }
+    if (req.url === '/final') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+    res.writeHead(404, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: 'not found' }));
+  }, async (url) => {
+    const redirectUrl = url.replace('/test', '/redirect');
+    const baseItem = {
+      name: 'Redirect request',
+      request: {
+        method: 'GET',
+        url: redirectUrl,
+      },
+    };
+
+    const noOverride = await executeRequest(baseItem, makeContext());
+    assert.equal(noOverride.status, 302);
+
+    const withOverride = await executeRequest({
+      ...baseItem,
+      request: {
+        ...baseItem.request,
+        requestSettings: { followRedirects: true },
+      },
+    }, makeContext());
+    assert.equal(withOverride.status, 200);
+    assert.match(withOverride.resolvedUrl || '', /\/final$/);
+  });
+});
+
 test('executeRequest routes new environment mutations from test scripts into updatedEnvironment', async () => {
   setExecutorConfig({ followRedirects: false, requestTimeout: 3000, sslVerification: false });
 
