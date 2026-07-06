@@ -193,6 +193,16 @@ export interface CollectionItem {
   description?: string;
 }
 
+export interface RequestSettings {
+  timeout?: number;
+  followRedirects?: boolean;
+  sslVerification?: boolean;
+  proxyEnabled?: boolean;
+  httpProxy?: string;
+  httpsProxy?: string;
+  noProxy?: string;
+}
+
 export interface CollectionRequest {
   requestType?: 'http' | 'mongodb' | 'sql' | 'database';
   method: string;
@@ -203,6 +213,7 @@ export interface CollectionRequest {
   mongodb?: MongoRequestConfig;
   sql?: SqlRequestConfig;
   database?: DatabaseRequestConfig;
+  requestSettings?: RequestSettings;
   description?: string;
 }
 

@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { CollectionItem, BaseCollection, RequestResponse, RunnerIteration, RunnerIterationResult, ScriptLog, CookieJar } from './types';
+import type { CollectionItem, BaseCollection, RequestResponse, RunnerIteration, RunnerIterationResult, ScriptLog, CookieJar, RequestSettings } from './types';
 import type { DatabaseConnection } from './types';
 
 // When loaded via file:// (packaged Electron app), relative /api won't work.
@@ -22,6 +22,8 @@ export interface ExecutePayload {
   collectionItems?: CollectionItem[];
   /** When set, the server rewrites the request URL to this base after variable resolution. */
   mockBase?: string;
+  /** Optional request-level network behavior overrides. */
+  requestSettings?: RequestSettings;
   mongoConnections?: Record<string, { uri: string; database?: string }>;
   databases?: DatabaseConnection[];
 }

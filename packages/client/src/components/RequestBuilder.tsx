@@ -232,7 +232,7 @@ function buildEditStateForMethod(edit: ReturnType<typeof itemToEditState>, metho
   return { ...edit, method };
 }
 
-const TABS = ['Params', 'Auth', 'Headers', 'Body', 'Pre-request', 'Tests', 'Docs'] as const;
+const TABS = ['Params', 'Auth', 'Headers', 'Body', 'Pre-request', 'Tests', 'Settings', 'Docs'] as const;
 type Tab = typeof TABS[number];
 type RawLanguage = NonNullable<NonNullable<NonNullable<CollectionBody['options']>['raw']>['language']>;
 
@@ -330,6 +330,13 @@ function itemToEditState(item: CollectionItem) {
     bodySoapAction: req.body?.soap?.action ?? '',
     bodySoapVersion: (req.body?.soap?.version ?? '1.1') as '1.1' | '1.2',
     bodySoapWsdlUrl: req.body?.soap?.wsdlUrl ?? '',
+    reqTimeout: req.requestSettings?.timeout,
+    reqFollowRedirects: req.requestSettings?.followRedirects,
+    reqSslVerification: req.requestSettings?.sslVerification,
+    reqProxyEnabled: req.requestSettings?.proxyEnabled,
+    reqHttpProxy: req.requestSettings?.httpProxy ?? '',
+    reqHttpsProxy: req.requestSettings?.httpsProxy ?? '',
+    reqNoProxy: req.requestSettings?.noProxy ?? '',
     bodyFile: null as File | null,
     description: item.description ?? req.description ?? '',
   };
@@ -394,6 +401,38 @@ function injectSoapHeaders(headers: CollectionHeader[], action: string, version:
     if (action) out.push({ key: 'SOAPAction', value: `"${action}"` });
   }
   return out;
+}
+
+function stripProxyCredentials(url: string): string {
+  if (!url) return url;
+  try {
+    const parsed = new URL(url);
+    parsed.username = '';
+    parsed.password = '';
+    return parsed.toString();
+  } catch {
+    return url; // return as-is if not a valid URL
+  }
+}
+
+function buildRequestSettings(edit: EditState): CollectionRequest['requestSettings'] | undefined {
+  const hasTimeout = edit.reqTimeout !== undefined;
+  const hasFollowRedirects = edit.reqFollowRedirects !== undefined;
+  const hasSslVerification = edit.reqSslVerification !== undefined;
+  const hasProxy = edit.reqProxyEnabled !== undefined;
+  if (!hasTimeout && !hasFollowRedirects && !hasSslVerification && !hasProxy) return undefined;
+
+  return {
+    ...(hasTimeout ? { timeout: edit.reqTimeout } : {}),
+    ...(hasFollowRedirects ? { followRedirects: edit.reqFollowRedirects } : {}),
+    ...(hasSslVerification ? { sslVerification: edit.reqSslVerification } : {}),
+    ...(hasProxy ? {
+      proxyEnabled: edit.reqProxyEnabled,
+      httpProxy: stripProxyCredentials(edit.reqHttpProxy),
+      httpsProxy: stripProxyCredentials(edit.reqHttpsProxy),
+      noProxy: edit.reqNoProxy,
+    } : {}),
+  };
 }
 
 function buildUpdatedRequestItem(item: CollectionItem, edit: EditState): CollectionItem {
@@ -466,6 +505,7 @@ function buildUpdatedRequestItem(item: CollectionItem, edit: EditState): Collect
         }
       ) : undefined,
       auth: buildAuth(edit),
+      requestSettings: buildRequestSettings(edit),
     },
     event: buildEvents(edit),
   };
@@ -1395,6 +1435,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
           }
         ) : undefined,
         auth: (isMongo || isDatabase) ? undefined : resolvedAuth,
+        requestSettings: (!isMongo && !isDatabase) ? buildRequestSettings(edit) : undefined,
         mongodb: isMongo ? (() => {
           try { return JSON.parse(edit.bodyRaw || '{}'); } catch { return undefined; }
         })() : undefined,
@@ -1412,6 +1453,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
         collVars: col?.variable ?? [],
         cookies: state.cookieJar,
         collectionItems: authResolvedItems,
+        requestSettings: item.request?.requestSettings,
         databases: state.databases,
       });
 
@@ -2707,6 +2749,141 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             requestNames={flattenRequestNames(col?.item ?? [])}
             requestItems={flattenRequestItems(col?.item ?? [])}
           />
+        )}
+
+        {activeRequestTab === 'Settings' && (
+          <div className="flex flex-col gap-4">
+            <div className="rounded border border-slate-700 bg-slate-900/40 p-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-slate-300">Override request timeout</label>
+                <input
+                  type="checkbox"
+                  checked={edit.reqTimeout !== undefined}
+                  onChange={e => setEdit(x => x ? { ...x, reqTimeout: e.target.checked ? (x.reqTimeout ?? (state.settings.requestTimeout ?? 30000)) : undefined } : x)}
+                  className="accent-orange-500"
+                />
+              </div>
+              <p className="text-xs text-slate-500">App default: {state.settings.requestTimeout ?? 30000} ms</p>
+              {edit.reqTimeout !== undefined && (
+                <input
+                  type="number"
+                  min={0}
+                  value={edit.reqTimeout}
+                  onChange={e => {
+                    const n = parseInt(e.target.value, 10);
+                    setEdit(x => x ? { ...x, reqTimeout: Number.isNaN(n) ? 0 : Math.max(0, n) } : x);
+                  }}
+                  className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-orange-500"
+                />
+              )}
+            </div>
+
+            <div className="rounded border border-slate-700 bg-slate-900/40 p-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-slate-300">Override follow redirects</label>
+                <input
+                  type="checkbox"
+                  checked={edit.reqFollowRedirects !== undefined}
+                  onChange={e => setEdit(x => x ? { ...x, reqFollowRedirects: e.target.checked ? (x.reqFollowRedirects ?? (state.settings.followRedirects !== false)) : undefined } : x)}
+                  className="accent-orange-500"
+                />
+              </div>
+              <p className="text-xs text-slate-500">App default: {state.settings.followRedirects !== false ? 'On' : 'Off'}</p>
+              {edit.reqFollowRedirects !== undefined && (
+                <label className="flex items-center gap-2 text-sm text-slate-200">
+                  <input
+                    type="checkbox"
+                    checked={edit.reqFollowRedirects}
+                    onChange={e => setEdit(x => x ? { ...x, reqFollowRedirects: e.target.checked } : x)}
+                    className="accent-orange-500"
+                  />
+                  Follow redirects
+                </label>
+              )}
+            </div>
+
+            <div className="rounded border border-slate-700 bg-slate-900/40 p-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-slate-300">Override SSL certificate verification</label>
+                <input
+                  type="checkbox"
+                  checked={edit.reqSslVerification !== undefined}
+                  onChange={e => setEdit(x => x ? { ...x, reqSslVerification: e.target.checked ? (x.reqSslVerification ?? (state.settings.sslVerification === true)) : undefined } : x)}
+                  className="accent-orange-500"
+                />
+              </div>
+              <p className="text-xs text-slate-500">App default: {state.settings.sslVerification === true ? 'On' : 'Off'}</p>
+              {edit.reqSslVerification !== undefined && (
+                <label className="flex items-center gap-2 text-sm text-slate-200">
+                  <input
+                    type="checkbox"
+                    checked={edit.reqSslVerification}
+                    onChange={e => setEdit(x => x ? { ...x, reqSslVerification: e.target.checked } : x)}
+                    className="accent-orange-500"
+                  />
+                  Verify server certificate
+                </label>
+              )}
+            </div>
+
+            <div className="rounded border border-slate-700 bg-slate-900/40 p-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-slate-300">Override proxy settings</label>
+                <input
+                  type="checkbox"
+                  checked={edit.reqProxyEnabled !== undefined}
+                  onChange={e => setEdit(x => x ? {
+                    ...x,
+                    reqProxyEnabled: e.target.checked ? (x.reqProxyEnabled ?? (state.settings.proxyEnabled === true)) : undefined,
+                  } : x)}
+                  className="accent-orange-500"
+                />
+              </div>
+              <p className="text-xs text-slate-500">App default: {state.settings.proxyEnabled === true ? 'On' : 'Off'}</p>
+              {edit.reqProxyEnabled !== undefined && (
+                <div className="space-y-3">
+                  <label className="flex items-center gap-2 text-sm text-slate-200">
+                    <input
+                      type="checkbox"
+                      checked={edit.reqProxyEnabled === true}
+                      onChange={e => setEdit(x => x ? { ...x, reqProxyEnabled: e.target.checked } : x)}
+                      className="accent-orange-500"
+                    />
+                    Enable proxy for this request
+                  </label>
+                  <div className={edit.reqProxyEnabled === true ? 'space-y-2' : 'space-y-2 opacity-50 pointer-events-none'}>
+                    <div>
+                      <label className="text-xs text-slate-400">HTTP Proxy URL</label>
+                      <input
+                        value={edit.reqHttpProxy}
+                        onChange={e => setEdit(x => x ? { ...x, reqHttpProxy: e.target.value } : x)}
+                        className="mt-1 w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-orange-500"
+                        placeholder={state.settings.httpProxy || 'http://proxy.example.com:8080'}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-400">HTTPS Proxy URL</label>
+                      <input
+                        value={edit.reqHttpsProxy}
+                        onChange={e => setEdit(x => x ? { ...x, reqHttpsProxy: e.target.value } : x)}
+                        className="mt-1 w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-orange-500"
+                        placeholder={state.settings.httpsProxy || 'http://proxy.example.com:8080'}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-400">No proxy (comma-separated hosts)</label>
+                      <input
+                        value={edit.reqNoProxy}
+                        onChange={e => setEdit(x => x ? { ...x, reqNoProxy: e.target.value } : x)}
+                        className="mt-1 w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-orange-500"
+                        placeholder={state.settings.noProxy || 'localhost, 127.0.0.1'}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         )}
 
         {activeRequestTab === 'Docs' && (

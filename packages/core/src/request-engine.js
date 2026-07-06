@@ -945,11 +945,11 @@ function matchSpecificity(pattern) {
  *   exact host  >  *.wildcard (longer suffix first)  >  bare *
  * This makes selection deterministic regardless of list order.
  */
-function buildAgentExtra(url) {
+function buildAgentExtra(url, cfg = executorConfig) {
   const extra = {};
-  if (executorConfig.customCAs) extra.ca = executorConfig.customCAs;
+  if (cfg.customCAs) extra.ca = cfg.customCAs;
   const hostname = (() => { try { return new URL(url).hostname; } catch { return ''; } })();
-  const match = (executorConfig.clientCertificates ?? [])
+  const match = (cfg.clientCertificates ?? [])
     .filter(c => c.enabled !== false && matchesHost(c.host, hostname))
     .sort((a, b) => matchSpecificity(b.host) - matchSpecificity(a.host))[0];
   if (match) {
@@ -960,15 +960,15 @@ function buildAgentExtra(url) {
   return extra;
 }
 
-function buildProxyOption(proxyUrl, targetUrl) {
+function buildProxyOption(proxyUrl, targetUrl, cfg = executorConfig) {
   if (!proxyUrl) return undefined;
   try {
     const parsed = new URL(proxyUrl);
     // Check noProxy list
-    if (executorConfig.noProxy) {
+    if (cfg.noProxy) {
       try {
         const targetHost = new URL(targetUrl).hostname;
-        const noProxyList = executorConfig.noProxy.split(',').map(h => h.trim()).filter(Boolean);
+        const noProxyList = cfg.noProxy.split(',').map(h => h.trim()).filter(Boolean);
         if (noProxyList.some(h => targetHost === h || targetHost.endsWith('.' + h))) return undefined;
       } catch { /* ignore */ }
     }
@@ -1325,7 +1325,7 @@ function serializeCertChain(cert) {
   return chain;
 }
 
-function makeTimingAndCertContext(rejectUnauthorized = false, url = '') {
+function makeTimingAndCertContext(rejectUnauthorized = false, url = '', cfg = executorConfig) {
   const timings = { dns: 0, tcp: 0, tls: 0 };
   const certHolder = { chain: null };
   let captured = false;
@@ -1350,7 +1350,7 @@ function makeTimingAndCertContext(rejectUnauthorized = false, url = '') {
     }
   }
 
-  const httpsTimingAgent = makeHttpsAgent(rejectUnauthorized, buildAgentExtra(url || ''));
+  const httpsTimingAgent = makeHttpsAgent(rejectUnauthorized, buildAgentExtra(url || '', cfg));
   const _origHttps = httpsTimingAgent.createConnection.bind(httpsTimingAgent);
   httpsTimingAgent.createConnection = function (opts, cb) {
     const sock = _origHttps(opts, cb);
@@ -1484,6 +1484,19 @@ async function executeRequest(item, context) {
   }
 
   const req = item.request;
+  const requestSettings = req?.requestSettings || {};
+  const contextSettings = (context.requestSettings && typeof context.requestSettings === 'object') ? context.requestSettings : {};
+  const rawRequestSettings = { ...requestSettings, ...contextSettings };
+  const effectiveConfig = {
+    ...executorConfig,
+    ...(typeof rawRequestSettings.timeout === 'number' && rawRequestSettings.timeout >= 0 ? { requestTimeout: rawRequestSettings.timeout } : {}),
+    ...(typeof rawRequestSettings.followRedirects === 'boolean' ? { followRedirects: rawRequestSettings.followRedirects } : {}),
+    ...(typeof rawRequestSettings.sslVerification === 'boolean' ? { sslVerification: rawRequestSettings.sslVerification } : {}),
+    ...(typeof rawRequestSettings.proxyEnabled === 'boolean' ? { proxyEnabled: rawRequestSettings.proxyEnabled } : {}),
+    ...(typeof rawRequestSettings.httpProxy === 'string' ? { httpProxy: rawRequestSettings.httpProxy } : {}),
+    ...(typeof rawRequestSettings.httpsProxy === 'string' ? { httpsProxy: rawRequestSettings.httpsProxy } : {}),
+    ...(typeof rawRequestSettings.noProxy === 'string' ? { noProxy: rawRequestSettings.noProxy } : {}),
+  };
   const method = (req.method || 'GET').toUpperCase();
   const isMongo = req?.requestType === 'mongodb' || !!req?.mongodb || method === 'MONGO';
   const databaseCfg = isMongo ? null : normalizeDatabaseRequest(req, method, context);
@@ -1541,7 +1554,7 @@ async function executeRequest(item, context) {
   }
 
   // Per-request agent with timing and TLS capture
-  const _tc = makeTimingAndCertContext(executorConfig.sslVerification === true, url);
+  const _tc = makeTimingAndCertContext(effectiveConfig.sslVerification === true, url, effectiveConfig);
   const startTime = Date.now();
   let testChildRequests = [];
   let nextRequestSignal = undefined; // set by pm.execution.setNextRequest()
@@ -1760,8 +1773,8 @@ async function executeRequest(item, context) {
     }
 
     // ─── Redirect chain handling ───────────────────────────────────────────
-    const MAX_REDIRECTS = executorConfig.followRedirects ? 10 : 0;
-    const rejectUnauthorized = executorConfig.sslVerification === true;
+    const MAX_REDIRECTS = effectiveConfig.followRedirects ? 10 : 0;
+    const rejectUnauthorized = effectiveConfig.sslVerification === true;
     const redirectChain = [];
     let curMethod = method;
     let curUrl = url;
@@ -1773,7 +1786,7 @@ async function executeRequest(item, context) {
       const _isHopHttps = curUrl.toLowerCase().startsWith('https://');
       // Per-hop HTTPS agent — only build when used (non-initial HTTPS hops).
       const hopHttpsAgent = (hop > 0 && _isHopHttps)
-        ? makeHttpsAgent(rejectUnauthorized, buildAgentExtra(curUrl))
+        ? makeHttpsAgent(rejectUnauthorized, buildAgentExtra(curUrl, effectiveConfig))
         : undefined;
       // Only instrument the timing agent on the first hop (timing agent reuses same TLS setting)
       const agentOpts = hop === 0
@@ -1781,16 +1794,16 @@ async function executeRequest(item, context) {
         : (_isHopHttps ? { httpsAgent: hopHttpsAgent } : {});
       // Proxy option — always set `proxy` key so axios never falls back to env vars (HTTP_PROXY etc.)
       const proxyOpt = (() => {
-        if (!executorConfig.proxyEnabled) return { proxy: false };
-        const pUrl = _isHopHttps ? (executorConfig.httpsProxy || executorConfig.httpProxy) : executorConfig.httpProxy;
-        const p = buildProxyOption(pUrl, curUrl);
+        if (!effectiveConfig.proxyEnabled) return { proxy: false };
+        const pUrl = _isHopHttps ? (effectiveConfig.httpsProxy || effectiveConfig.httpProxy) : effectiveConfig.httpProxy;
+        const p = buildProxyOption(pUrl, curUrl, effectiveConfig);
         return p ? { proxy: p } : { proxy: false };
       })();
       const hopStart = Date.now();
       axiosResponse = await httpClient.request({
         method: curMethod, url: curUrl, headers: curHeaders, data: curData,
         maxRedirects: 0,
-        timeout: executorConfig.requestTimeout ?? 30000,
+        timeout: effectiveConfig.requestTimeout ?? 30000,
         ...agentOpts,
         ...proxyOpt,
       });

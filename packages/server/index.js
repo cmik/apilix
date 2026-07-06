@@ -631,7 +631,7 @@ app.post('/api/settings', (req, res) => {
 
 app.post('/api/execute', async (req, res) => {
   try {
-    const { item, environment, collectionVariables, globals, dataRow, collVars, cookies, collectionItems, mockBase, mongoConnections, databases } = req.body;
+    const { item, environment, collectionVariables, globals, dataRow, collVars, cookies, collectionItems, mockBase, requestSettings, mongoConnections, databases } = req.body;
     if (!item || !item.request) {
       return res.status(400).json({ error: 'Missing item.request in body' });
     }
@@ -651,6 +651,7 @@ app.post('/api/execute', async (req, res) => {
       cookies: cookies || {},
       collectionItems: collectionItems || [],
       mockBase: mockBase || null,
+      requestSettings: (requestSettings && typeof requestSettings === 'object') ? requestSettings : null,
       mongoConnections: mongoConnections || {},
       databases: dbList,
       dbQueryFn: makeDatabaseQueryFn(dbList, runtimeVars),
