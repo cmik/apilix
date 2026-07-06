@@ -575,48 +575,44 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
 
       {/* Delete confirmation */}
       {confirmDelete && (
-        <div className="mt-3 p-3 bg-red-950/40 border border-red-800/50 rounded-lg text-xs text-slate-300">
-          <p className="mb-2">Delete <strong>{state.workspaces.find(w => w.id === confirmDelete)?.name}</strong>? This cannot be undone.</p>
-          <div className="flex gap-2">
-            <button onClick={() => handleDelete(confirmDelete)} className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded transition-colors">Delete</button>
-            <button onClick={() => setConfirmDelete(null)} className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors">Cancel</button>
-          </div>
-        </div>
+        <ConfirmModal
+          title="Delete workspace?"
+          message={<>Delete <strong>{state.workspaces.find(w => w.id === confirmDelete)?.name}</strong>? This cannot be undone.</>
+          }
+          confirmLabel="Delete"
+          danger={true}
+          onConfirm={() => handleDelete(confirmDelete)}
+          onCancel={() => setConfirmDelete(null)}
+        />
       )}
 
       {/* Empty workspace confirmation */}
       {confirmClear && (
-        <div className="mt-3 p-3 bg-red-950/40 border border-red-800/50 rounded-lg text-xs text-slate-300">
-          <p className="mb-2">Remove all collections from <strong>{state.workspaces.find(w => w.id === confirmClear)?.name}</strong>? This cannot be undone.</p>
-          <div className="flex gap-2">
-            <button onClick={() => handleClearCollections(confirmClear)} className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded transition-colors">Empty workspace</button>
-            <button onClick={() => setConfirmClear(null)} className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors">Cancel</button>
-          </div>
-        </div>
+        <ConfirmModal
+          title="Remove all collections?"
+          message={<>Remove all collections from <strong>{state.workspaces.find(w => w.id === confirmClear)?.name}</strong>? This cannot be undone.</>
+          }
+          confirmLabel="Empty workspace"
+          danger={true}
+          onConfirm={() => handleClearCollections(confirmClear)}
+          onCancel={() => setConfirmClear(null)}
+        />
       )}
 
       {/* Export secret-variables confirmation */}
       {confirmExportSecrets && (
-        <div className="mt-3 p-3 bg-yellow-950/40 border border-yellow-700/50 rounded-lg text-xs text-slate-300">
-          <p className="mb-1 font-medium text-yellow-400">⚠ Export contains secret variables</p>
-          <p className="mb-2 text-slate-400">
-            This workspace has environment variables marked as secret. The exported file will contain their values in <strong>plain text</strong> — anyone with the file can read them.
-          </p>
-          <div className="flex gap-2">
-            <button
-              onClick={() => { const w = confirmExportSecrets; setConfirmExportSecrets(null); doExportWorkspace(w); }}
-              className="px-3 py-1 bg-yellow-600 hover:bg-yellow-500 text-white rounded transition-colors"
-            >
-              Export anyway
-            </button>
-            <button
-              onClick={() => setConfirmExportSecrets(null)}
-              className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
+        <ConfirmModal
+          title="Export contains secret variables"
+          message={<>
+            <p className="mb-2 font-medium text-yellow-300">⚠ This workspace has environment variables marked as secret.</p>
+            <p>The exported file will contain their values in <strong>plain text</strong> — anyone with the file can read them.</p>
+          </>
+          }
+          confirmLabel="Export anyway"
+          danger={false}
+          onConfirm={() => { const w = confirmExportSecrets; setConfirmExportSecrets(null); doExportWorkspace(w); }}
+          onCancel={() => setConfirmExportSecrets(null)}
+        />
       )}
 
       {/* Export error */}
