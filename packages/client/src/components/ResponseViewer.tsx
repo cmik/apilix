@@ -4,6 +4,8 @@ import { useApp } from '../store';
 import type { TestResult, TlsCertInfo, NetworkTimings, RedirectHop } from '../types';
 import SaveToVarModal from './SaveToVarModal';
 import TestValueModal from './TestValueModal';
+import UpdateVarModal from './UpdateVarModal';
+import type { VarEntry } from './UpdateVarModal';
 import { buildSaveToVarSnippet } from '../utils/testSnippetUtils';
 import { INJECT_TEST_SNIPPET } from '../utils/appEvents';
 import type { InjectTestSnippetDetail } from '../utils/appEvents';
@@ -743,7 +745,7 @@ export function applyJsonPathForTest(root: unknown, expr: string): { value: unkn
 
 export default function ResponseViewer() {
   const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().startsWith('MAC');
-  const { state } = useApp();
+  const { state, dispatch } = useApp();
   const [tab, setTab] = useState<RespTab>('Body');
   const [rawMode, setRawMode] = useState(false);
   const [dbBodyMode, setDbBodyMode] = useState<'table' | 'json'>('table');
@@ -765,6 +767,7 @@ export default function ResponseViewer() {
   const [ctxMenu, setCtxMenu] = useState<{ left: number; top: number; path: (string | number)[]; value: unknown; tabId: string | null; collectionId: string | null } | null>(null);
   const [saveToVarTarget, setSaveToVarTarget] = useState<{ path: (string | number)[]; value: unknown; tabId: string | null; collectionId: string | null } | null>(null);
   const [testValueTarget, setTestValueTarget] = useState<{ path: (string | number)[]; value: unknown; tabId: string | null } | null>(null);
+  const [updateVarTarget, setUpdateVarTarget] = useState<{ path: (string | number)[]; value: unknown; collectionId: string | null } | null>(null);
 
   const activeTabId = state.activeTabId;
   const activeCollectionId = state.activeRequest?.collectionId ?? null;
@@ -844,6 +847,37 @@ export default function ResponseViewer() {
     const trimmed = response.body.trimStart().toLowerCase();
     return trimmed.startsWith('<!doctype html') || trimmed.startsWith('<html');
   }, [response]);
+
+  const varEntries = useMemo<VarEntry[]>(() => {
+    const entries: VarEntry[] = [];
+
+    // Environment variables
+    const activeEnv = state.environments?.find(e => e._id === state.activeEnvironmentId);
+    if (activeEnv?.values) {
+      activeEnv.values.forEach(v => {
+        const strVal = String(v.value);
+        entries.push({ name: v.key, currentValue: strVal, scope: 'environment' });
+      });
+    }
+
+    // Collection variables
+    if (activeCollectionId && state.collectionVariables?.[activeCollectionId]) {
+      Object.entries(state.collectionVariables[activeCollectionId]).forEach(([name, val]) => {
+        const strVal = typeof val === 'object' ? JSON.stringify(val) : String(val);
+        entries.push({ name, currentValue: strVal, scope: 'collection' });
+      });
+    }
+
+    // Global variables
+    if (state.globalVariables) {
+      Object.entries(state.globalVariables).forEach(([name, val]) => {
+        const strVal = typeof val === 'object' ? JSON.stringify(val) : String(val);
+        entries.push({ name, currentValue: strVal, scope: 'globals' });
+      });
+    }
+
+    return entries;
+  }, [state.environments, state.activeEnvironmentId, state.collectionVariables, activeCollectionId, state.globalVariables]);
 
   const hasDbTable = useMemo(() => {
     if (!response || !response.resultTable) return false;
@@ -1462,6 +1496,15 @@ export default function ResponseViewer() {
             >
               Test this value…
             </button>
+            <button
+              className="block w-full text-left px-4 py-2 text-slate-200 hover:bg-slate-700 transition-colors whitespace-nowrap"
+              onClick={() => {
+                setUpdateVarTarget({ path: ctxMenu.path, value: ctxMenu.value, collectionId: ctxMenu.collectionId });
+                setCtxMenu(null);
+              }}
+            >
+              Update existing variable…
+            </button>
           </div>
         </>
       )}
@@ -1489,6 +1532,34 @@ export default function ResponseViewer() {
           value={testValueTarget.value}
           tabId={testValueTarget.tabId}
           onClose={() => setTestValueTarget(null)}
+        />
+      )}
+
+      {updateVarTarget && (
+        <UpdateVarModal
+          path={updateVarTarget.path}
+          value={updateVarTarget.value}
+          entries={varEntries}
+          onConfirm={(name, scope) => {
+            // Convert value to string
+            const strVal = typeof updateVarTarget.value === 'object' 
+              ? JSON.stringify(updateVarTarget.value) 
+              : String(updateVarTarget.value);
+
+            if (scope === 'environment') {
+              dispatch({ type: 'UPDATE_ACTIVE_ENV_VARS', payload: { [name]: strVal } });
+            } else if (scope === 'collection') {
+              dispatch({
+                type: 'UPDATE_COLLECTION_VARS',
+                payload: { collectionId: updateVarTarget.collectionId!, vars: { [name]: strVal } }
+              });
+            } else if (scope === 'globals') {
+              dispatch({ type: 'UPDATE_GLOBAL_VARS', payload: { [name]: strVal } });
+            }
+
+            setUpdateVarTarget(null);
+          }}
+          onClose={() => setUpdateVarTarget(null)}
         />
       )}
     </div>
