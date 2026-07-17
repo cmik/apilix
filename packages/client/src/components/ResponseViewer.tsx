@@ -1,4 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, createContext, useContext } from 'react';
+import { JSONPath } from 'jsonpath-plus';
 import { useApp } from '../store';
 import type { TestResult, TlsCertInfo, NetworkTimings, RedirectHop } from '../types';
 import SaveToVarModal from './SaveToVarModal';
@@ -677,113 +678,24 @@ function JsonTreeView({ body, searchQuery, searchOptions, onSaveToVar, expandSig
 }
 
 // ── JSONPath evaluator ──────────────────────────────────────────────────────
-function collectAll(node: unknown, key: string, acc: unknown[]) {
-  if (key === '*') {
-    if (Array.isArray(node)) { node.forEach(v => { acc.push(v); collectAll(v, key, acc); }); }
-    else if (node && typeof node === 'object') { Object.values(node as object).forEach(v => { acc.push(v); collectAll(v, key, acc); }); }
-  } else {
-    if (Array.isArray(node)) { node.forEach(v => collectAll(v, key, acc)); }
-    else if (node && typeof node === 'object') {
-      const o = node as Record<string, unknown>;
-      if (key in o) acc.push(o[key]);
-      Object.values(o).forEach(v => collectAll(v, key, acc));
-    }
-  }
-}
-
+/**
+ * Wrapper around jsonpath-plus that maintains the error contract.
+ * Returns a single value if one result, array if multiple, null if no matches.
+ */
 function applyJsonPath(root: unknown, expr: string): { value: unknown; error?: string } {
   const path = expr.trim();
   if (!path || path === '$') return { value: root };
+  
+  // Basic validation
   if (!path.startsWith('$')) return { value: undefined, error: 'Expression must start with $' };
-  let current: unknown[] = [root];
-  let i = 1;
+  
   try {
-    while (i < path.length) {
-      const next: unknown[] = [];
-      if (path[i] === '.') {
-        if (path[i + 1] === '.') {
-          i += 2;
-          let key = '';
-          if (i < path.length && path[i] === '[') {
-            i++;
-            while (i < path.length && path[i] !== ']') key += path[i++];
-            i++;
-            key = key.trim().replace(/^['"]|['"]$/g, '');
-          } else {
-            while (i < path.length && path[i] !== '.' && path[i] !== '[') key += path[i++];
-          }
-          current.forEach(c => collectAll(c, key, next));
-        } else {
-          i++;
-          let key = '';
-          if (i < path.length && path[i] === '*') { i++; key = '*'; }
-          else { while (i < path.length && path[i] !== '.' && path[i] !== '[') key += path[i++]; }
-          if (key === '*') {
-            current.forEach(c => {
-              if (Array.isArray(c)) c.forEach(v => next.push(v));
-              else if (c && typeof c === 'object') Object.values(c as object).forEach(v => next.push(v));
-            });
-          } else {
-            current.forEach(c => {
-              if (c && typeof c === 'object' && !Array.isArray(c)) {
-                const o = c as Record<string, unknown>;
-                if (key in o) next.push(o[key]);
-              }
-            });
-          }
-        }
-      } else if (path[i] === '[') {
-        i++;
-        let inner = '';
-        while (i < path.length && path[i] !== ']') inner += path[i++];
-        i++;
-        inner = inner.trim();
-        if (inner === '*') {
-          current.forEach(c => {
-            if (Array.isArray(c)) c.forEach(v => next.push(v));
-            else if (c && typeof c === 'object') Object.values(c as object).forEach(v => next.push(v));
-          });
-        } else if (/^-?\d+$/.test(inner)) {
-          const idx = parseInt(inner, 10);
-          current.forEach(c => {
-            if (Array.isArray(c)) { const a = idx < 0 ? c.length + idx : idx; if (a >= 0 && a < c.length) next.push(c[a]); }
-          });
-        } else if (/^(-?\d*):(-?\d*)$/.test(inner)) {
-          const [, s, e] = inner.match(/^(-?\d*):(-?\d*)$/)!;
-          current.forEach(c => {
-            if (Array.isArray(c)) {
-              const st = s ? parseInt(s, 10) : 0;
-              const en = e ? parseInt(e, 10) : c.length;
-              const as2 = st < 0 ? Math.max(c.length + st, 0) : Math.min(st, c.length);
-              const ae2 = en < 0 ? Math.max(c.length + en, 0) : Math.min(en, c.length);
-              c.slice(as2, ae2).forEach(v => next.push(v));
-            }
-          });
-        } else if (inner.includes(',')) {
-          inner.split(',').map(p => p.trim().replace(/^['"]|['"]$/g, '')).forEach(p => {
-            if (/^-?\d+$/.test(p)) {
-              const idx = parseInt(p, 10);
-              current.forEach(c => { if (Array.isArray(c)) { const a = idx < 0 ? c.length + idx : idx; if (a >= 0 && a < c.length) next.push(c[a]); } });
-            } else {
-              current.forEach(c => { if (c && typeof c === 'object' && !Array.isArray(c)) { const o = c as Record<string, unknown>; if (p in o) next.push(o[p]); } });
-            }
-          });
-        } else {
-          const key = inner.replace(/^['"]|['"]$/g, '');
-          current.forEach(c => {
-            if (c && typeof c === 'object' && !Array.isArray(c)) {
-              const o = c as Record<string, unknown>;
-              if (key in o) next.push(o[key]);
-            }
-          });
-        }
-      } else { break; }
-      current = next;
-      if (current.length === 0) break;
-    }
-  } catch (e) { return { value: undefined, error: String(e) }; }
-  if (current.length === 0) return { value: null };
-  return { value: current.length === 1 ? current[0] : current };
+    const result = JSONPath({ path, json: root }) as unknown[];
+    if (result.length === 0) return { value: null };
+    return { value: result.length === 1 ? result[0] : result };
+  } catch (e) {
+    return { value: undefined, error: String(e) };
+  }
 }
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -824,6 +736,10 @@ function clampMenuPosition(
   return { left, top };
 }
 // ────────────────────────────────────────────────────────────────────────────
+
+export function applyJsonPathForTest(root: unknown, expr: string): { value: unknown; error?: string } {
+  return applyJsonPath(root, expr);
+}
 
 export default function ResponseViewer() {
   const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().startsWith('MAC');

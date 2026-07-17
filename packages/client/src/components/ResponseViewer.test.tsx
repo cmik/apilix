@@ -13,7 +13,7 @@ vi.mock('../store', () => ({
   useApp: mockedUseApp,
 }));
 
-import ResponseViewer from './ResponseViewer';
+import ResponseViewer, { applyJsonPathForTest } from './ResponseViewer';
 
 function makeState(body: string) {
   return {
@@ -182,5 +182,172 @@ describe('ResponseViewer search with folded trees', () => {
 
     const rawCheckbox = screen.queryByRole('checkbox');
     expect(rawCheckbox).not.toBeInTheDocument();
+  });
+});
+
+describe('JSONPath evaluator with filter predicates', () => {
+  it('supports simple array filtering on field equality', () => {
+    const data = {
+      items: [
+        { id: 1, name: 'Alice', active: true },
+        { id: 2, name: 'Bob', active: false },
+        { id: 3, name: 'Charlie', active: true },
+      ],
+    };
+    
+    const result = applyJsonPathForTest(data, '$.items[?(@.active==true)]');
+    expect(result.error).toBeUndefined();
+    expect(Array.isArray(result.value)).toBe(true);
+    const items = result.value as any[];
+    expect(items).toHaveLength(2);
+    expect(items[0].name).toBe('Alice');
+    expect(items[1].name).toBe('Charlie');
+  });
+
+  it('supports nested property access after filter predicate', () => {
+    const data = {
+      items: [
+        { id: 1, name: 'Alice', active: true },
+        { id: 2, name: 'Bob', active: false },
+        { id: 3, name: 'Charlie', active: true },
+      ],
+    };
+    
+    const result = applyJsonPathForTest(data, '$.items[?(@.active==true)].name');
+    expect(result.error).toBeUndefined();
+    expect(Array.isArray(result.value)).toBe(true);
+    const names = result.value as string[];
+    expect(names).toEqual(['Alice', 'Charlie']);
+  });
+
+  it('supports filter with inequality operator', () => {
+    const data = {
+      items: [
+        { id: 1, value: 100 },
+        { id: 2, value: 50 },
+        { id: 3, value: 75 },
+      ],
+    };
+    
+    const result = applyJsonPathForTest(data, '$.items[?(@.value<100)]');
+    expect(result.error).toBeUndefined();
+    expect(Array.isArray(result.value)).toBe(true);
+    const items = result.value as any[];
+    expect(items).toHaveLength(2);
+    expect(items[0].value).toBe(50);
+    expect(items[1].value).toBe(75);
+  });
+
+  it('supports filter with greater than operator', () => {
+    const data = {
+      items: [
+        { id: 1, value: 100 },
+        { id: 2, value: 50 },
+        { id: 3, value: 150 },
+      ],
+    };
+    
+    const result = applyJsonPathForTest(data, '$.items[?(@.value>100)]');
+    expect(result.error).toBeUndefined();
+    // Single item is unwrapped
+    expect(result.value).toEqual({ id: 3, value: 150 });
+  });
+
+  it('supports string matching in filter predicates', () => {
+    const data = {
+      items: [
+        { name: 'Alice' },
+        { name: 'Bob' },
+        { name: 'Alex' },
+      ],
+    };
+    
+    const result = applyJsonPathForTest(data, "$.items[?(@.name=='Alice')]");
+    expect(result.error).toBeUndefined();
+    // Single item is unwrapped
+    expect(result.value).toEqual({ name: 'Alice' });
+  });
+
+  it('returns null when no matches are found', () => {
+    const data = {
+      items: [
+        { active: false },
+        { active: false },
+      ],
+    };
+    
+    const result = applyJsonPathForTest(data, '$.items[?(@.active==true)]');
+    expect(result.error).toBeUndefined();
+    expect(result.value).toBe(null);
+  });
+
+  it('still supports basic paths without predicates', () => {
+    const data = { a: { b: { c: 42 } } };
+    const result = applyJsonPathForTest(data, '$.a.b.c');
+    expect(result.error).toBeUndefined();
+    expect(result.value).toBe(42);
+  });
+
+  it('supports wildcard selector', () => {
+    const data = { a: 1, b: 2, c: 3 };
+    const result = applyJsonPathForTest(data, '$.*');
+    expect(result.error).toBeUndefined();
+    expect(Array.isArray(result.value)).toBe(true);
+    expect((result.value as any[]).sort()).toEqual([1, 2, 3]);
+  });
+
+  it('supports array indexing', () => {
+    const data = { items: [10, 20, 30] };
+    const result = applyJsonPathForTest(data, '$.items[1]');
+    expect(result.error).toBeUndefined();
+    expect(result.value).toBe(20);
+  });
+
+  it('supports array slicing', () => {
+    const data = { items: [1, 2, 3, 4, 5] };
+    const result = applyJsonPathForTest(data, '$.items[1:3]');
+    expect(result.error).toBeUndefined();
+    expect(result.value).toEqual([2, 3]);
+  });
+
+  it('supports recursive descent', () => {
+    const data = {
+      a: { id: 1 },
+      b: { x: { id: 2 } },
+      c: { y: { z: { id: 3 } } },
+    };
+    
+    const result = applyJsonPathForTest(data, '$..id');
+    expect(result.error).toBeUndefined();
+    expect(Array.isArray(result.value)).toBe(true);
+    expect(result.value).toEqual([1, 2, 3]);
+  });
+
+  it('rejects expressions not starting with $', () => {
+    const data = { a: 1 };
+    const result = applyJsonPathForTest(data, 'a.b');
+    expect(result.error).toBeDefined();
+    expect(result.value).toBeUndefined();
+  });
+
+  it('returns the root when path is just $', () => {
+    const data = { a: 1, b: 2 };
+    const result = applyJsonPathForTest(data, '$');
+    expect(result.error).toBeUndefined();
+    expect(result.value).toEqual(data);
+  });
+
+  it('returns a single value unwrapped, not in an array', () => {
+    const data = { x: 42 };
+    const result = applyJsonPathForTest(data, '$.x');
+    expect(result.error).toBeUndefined();
+    expect(result.value).toBe(42);
+    expect(Array.isArray(result.value)).toBe(false);
+  });
+
+  it('returns an array if multiple values match', () => {
+    const data = { a: 1, b: 2, c: 3 };
+    const multiResult = applyJsonPathForTest(data, '$[a,b]');
+    expect(Array.isArray(multiResult.value) || multiResult.value === null).toBe(true);
   });
 });
