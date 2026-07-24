@@ -228,6 +228,16 @@ The Authorization Code flow with PKCE is supported. Apilix:
 2. Derives the **code challenge** by SHA-256 hashing the verifier and base64url-encoding the result.
 3. Sends only the challenge to the authorization server; the verifier never leaves the client until the token exchange step.
 
+### Authorization Code without PKCE (legacy providers)
+
+For providers that do not support PKCE, Apilix offers the **Authorization Code (no PKCE)** grant type. Because there is no PKCE binding between the authorization request and the token exchange, this flow enforces a mandatory **Client Secret** — the secret authenticates the application at the token endpoint, compensating for the absent verifier.
+
+- `code_challenge` and `code_challenge_method` are **not** sent to the authorization server.
+- The `code_verifier` is **not** sent during token exchange.
+- A missing or blank `clientSecret` is rejected with an error before any request is made.
+
+Use the PKCE variant wherever the provider supports it.
+
 ### Token storage
 
 Access tokens and refresh tokens are stored within the collection/request auth configuration in the workspace data. If the variable holding the token is marked as **secret**, it is encrypted on disk. For maximum security, store OAuth tokens in secret environment variables and reference them via `{{variableName}}` in the auth configuration.

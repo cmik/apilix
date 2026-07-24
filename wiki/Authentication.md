@@ -17,6 +17,7 @@ Apilix supports multiple authentication schemes that can be configured at the re
   - [OAuth 2.0](#oauth-20)
     - [Grant Types](#grant-types)
     - [Authorization Code with PKCE](#authorization-code-with-pkce)
+    - [Authorization Code (no PKCE)](#authorization-code-no-pkce)
     - [Client Credentials](#client-credentials)
     - [Refresh Token](#refresh-token)
     - [Preset Providers](#preset-providers)
@@ -152,7 +153,8 @@ Apilix implements a full OAuth 2.0 client with three grant types, automatic toke
 
 | Grant Type | When to use |
 |---|---|
-| **Authorization Code (PKCE)** | User-facing applications where the user grants access via a browser login. PKCE is always enabled. |
+| **Authorization Code (PKCE)** | User-facing applications where the user grants access via a browser login. PKCE is always enabled and recommended. |
+| **Authorization Code (no PKCE)** | Same browser-based flow, but without PKCE. Use only with legacy providers that do not support PKCE. Requires a **Client Secret** (confidential client). |
 | **Client Credentials** | Machine-to-machine (M2M) flows where the application authenticates itself, without user involvement. |
 | **Refresh Token** | Exchange an existing refresh token for a new access token (manual re-auth). |
 
@@ -185,6 +187,35 @@ This is the most secure and common flow for applications where the end-user auth
 8. After authorisation, Apilix exchanges the code and displays the token status.
 
 > **In Electron:** Apilix launches Chrome directly. In web mode, start Chrome manually with `--remote-debugging-port=9222` and connect first.
+
+---
+
+### Authorization Code (no PKCE)
+
+This flow is identical to the PKCE variant but omits the code challenge/verifier exchange. Use it **only** with legacy OAuth 2.0 providers that explicitly do not support PKCE.
+
+> **Security note:** Because there is no PKCE, the authorization server cannot verify the originator of the token exchange. A **Client Secret** is therefore mandatory — the server-side secret compensates for the missing PKCE protection. Never use this flow with a public (secret-less) client.
+
+**How it works:**
+
+1. Apilix opens a browser window pointing to the **Authorization URL** with `response_type=code` and `state` parameters — no `code_challenge` is sent.
+2. The user logs in and grants access. The provider redirects to the **Redirect URL** with a `code` query parameter.
+3. Apilix detects the redirect, extracts the `code`, and exchanges it for tokens via the **Token URL**, sending the **Client Secret** for authentication.
+4. The access token (and refresh token if provided) are stored in the **Token Status** panel.
+5. On subsequent requests, the access token is injected automatically as `Authorization: Bearer <token>`.
+
+**Step-by-step setup:**
+
+1. In the Auth tab, select **OAuth 2.0**.
+2. Set **Grant Type** to **Authorization Code (no PKCE)**.
+3. Enter **Client ID** and **Client Secret** (required).
+4. Enter the **Authorization URL** and **Token URL** from your provider.
+5. Set the **Redirect URL** (default: `http://localhost:3000/oauth/callback`).
+6. Add any required **Scopes**.
+7. Click **Get Authorization Code** — a browser window opens for the user to authorise.
+8. After authorisation, Apilix exchanges the code using the Client Secret and stores the token.
+
+> **When to prefer PKCE:** If your provider supports PKCE (most modern providers do), use **Authorization Code (PKCE)** instead — it is more secure and does not require exposing a Client Secret.
 
 ---
 
@@ -279,14 +310,18 @@ Full reference of all OAuth 2.0 configuration fields:
 
 | Field | Required | Applies to | Description |
 |---|---|---|---|
-| **Grant Type** | ✅ | All | `Authorization Code`, `Client Credentials`, or `Refresh Token` |
+Grant type abbreviations: **AC** = Authorization Code (PKCE), **AC-plain** = Authorization Code (no PKCE), **CC** = Client Credentials, **RT** = Refresh Token.
+
+| Field | Required | Applies to | Description |
+|---|---|---|---|
+| **Grant Type** | ✅ | All | `Authorization Code (PKCE)`, `Authorization Code (no PKCE)`, `Client Credentials`, or `Refresh Token` |
 | **Preset Provider** | — | All | Pre-fills URLs and scopes for Google, GitHub, Azure AD |
 | **Client ID** | ✅ | All | Application client ID from the provider |
-| **Client Secret** | ✅* | CC, RT | Client secret. Optional for public Authorization Code clients. |
-| **Authorization URL** | ✅ | AC | Provider's authorise endpoint (e.g. `/oauth/authorize`) |
+| **Client Secret** | ✅* | CC, RT, AC-plain | Required for Client Credentials, Refresh Token, and Authorization Code (no PKCE). Optional for PKCE Authorization Code (confidential clients may still provide it). |
+| **Authorization URL** | ✅ | AC, AC-plain | Provider's authorise endpoint (e.g. `/oauth/authorize`) |
 | **Token URL** | ✅ | All | Provider's token endpoint (e.g. `/oauth/token`) |
 | **Scopes** | — | All | Space-separated list of requested scopes (e.g. `openid profile`) |
-| **Redirect URL** | ✅ | AC | Callback URL registered with the provider. Default: `http://localhost:3000/oauth/callback` |
+| **Redirect URL** | ✅ | AC, AC-plain | Callback URL registered with the provider. Default: `http://localhost:3000/oauth/callback` |
 | **Refresh Token** | ✅ | RT | Existing refresh token to exchange |
 | **Custom Headers** | — | All | Extra headers to send to the token endpoint (e.g. `x-tenant-id`) |
 
