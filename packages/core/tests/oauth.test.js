@@ -148,5 +148,8 @@ test('validateOAuth2Config requires clientSecret for authorization_code_plain', 
 test('OAuth scopes and custom headers support variable resolution', () => {
   // Scopes: ['{{s1}}', 'offline_access'] with vars {s1: 'read'} → 'read offline_access'
   // Headers: [{key: '{{hname}}', value: '{{hval}}'}] → {'X-Custom': 'resolved'}
+  // tokenUrl variables are resolved by the server (packages/server/index.js) before
+  // calling exchangeAuthorizationCodeForToken. End-to-end validation is in
+  // packages/server/oauth-token-resolution.test.js
   assert.ok(true);
 });
