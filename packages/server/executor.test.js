@@ -752,6 +752,33 @@ test('applyAuth apikey query mode resolves variables in key and value', async ()
   assert.equal(nextUrl, 'https://example.com/data?token=value-1');
 });
 
+test('applyAuth apikey header mode resolves variables in "in" location field', async () => {
+  const headers = {};
+  await applyAuth({
+    type: 'apikey',
+    apikey: [
+      { key: 'key', value: 'X-API-Key' },
+      { key: 'value', value: 'token123' },
+      { key: 'in', value: '{{loc}}' },
+    ],
+  }, headers, { loc: 'header' });
+  assert.equal(headers['X-API-Key'], 'token123');
+});
+
+test('applyAuth apikey query mode resolves variables in "in" location field', async () => {
+  const headers = {};
+  const nextUrl = await applyAuth({
+    type: 'apikey',
+    apikey: [
+      { key: 'key', value: 'api_key' },
+      { key: 'value', value: 'secret' },
+      { key: 'in', value: '{{loc}}' },
+    ],
+  }, headers, { loc: 'query' }, 'https://example.com/data');
+  assert.equal(nextUrl, 'https://example.com/data?api_key=secret');
+  assert.equal(headers['api_key'], undefined);
+});
+
 test('applyAuth noauth does not modify headers', async () => {
   const headers = {};
   await applyAuth({ type: 'noauth' }, headers, {});

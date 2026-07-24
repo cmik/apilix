@@ -111,7 +111,7 @@ async function refreshOAuth2Token(oauth2Config, vars = {}) {
           grant_type: 'client_credentials',
           client_id: clientId,
           client_secret: clientSecret,
-          scope: scopes ? scopes.join(' ') : '',
+          scope: scopes ? scopes.map(s => resolveVariables(s, vars)).join(' ') : '',
         });
         break;
       }
@@ -277,8 +277,9 @@ function buildCustomHeaders(customHeaders, vars = {}) {
   if (customHeaders && Array.isArray(customHeaders)) {
     customHeaders.forEach(h => {
       if (h.key && h.value) {
+        const name = resolveVariables(h.key, vars);
         const value = resolveVariables(h.value, vars);
-        headers[h.key] = value;
+        headers[name] = value;
       }
     });
   }

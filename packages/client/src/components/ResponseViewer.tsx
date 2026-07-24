@@ -692,7 +692,7 @@ function applyJsonPath(root: unknown, expr: string): { value: unknown; error?: s
   if (!path.startsWith('$')) return { value: undefined, error: 'Expression must start with $' };
   
   try {
-    const result = JSONPath({ path, json: root }) as unknown[];
+    const result = JSONPath({ path, json: root as any }) as unknown[];
     if (result.length === 0) return { value: null };
     return { value: result.length === 1 ? result[0] : result };
   } catch (e) {

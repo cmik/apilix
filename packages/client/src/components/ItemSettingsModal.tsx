@@ -6,6 +6,8 @@ import ScriptEditor from './ScriptEditor';
 import OAuthConfigPanel from './OAuthConfigPanel';
 import { API_BASE } from '../api';
 import { openAuthorizationWindow } from '../utils/oauth';
+import { resolveVariables } from '../utils/variableResolver';
+import { useApp } from '../store';
 import VarInput from './VarInput';
 import type { VariableSuggestion } from '../utils/variableAutocomplete';
 import { IconFolder, IconCollection, IconClose, IconDelete, IconPlus } from './Icons';
@@ -46,6 +48,7 @@ function patchEvents(
 }
 
 export default function ItemSettingsModal({ kind, name, auth, event, description: initialDescription, variables: initialVariables, requestNames, requestItems, onSave, onClose, variableSuggestions }: Props) {
+  const { state: appState, getEnvironmentVars } = useApp();
   const initialAuthType: AuthType = SUPPORTED_AUTH.includes(auth?.type ?? 'noauth')
     ? (auth?.type ?? (kind === 'folder' ? 'inherit' : 'noauth'))
     : (kind === 'folder' ? 'inherit' : 'noauth');
@@ -144,11 +147,24 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
     }
     setIsGettingAuthCode(true);
     try {
+      // Resolve variables against active environment + globals (env takes precedence).
+      const authVars = { ...appState.globalVariables, ...getEnvironmentVars() };
+      const resolvedAuthUrl = resolveVariables(config.authorizationUrl, authVars);
+      const resolvedClientId = resolveVariables(config.clientId, authVars);
+      const resolvedRedirectUrl = resolveVariables(config.redirectUrl || 'http://localhost:3000/oauth/callback', authVars);
+      const resolvedScopes = (config.scopes ?? []).map(s => resolveVariables(s, authVars));
+      const resolvedAuthParams = (config.authorizationParams ?? []).map(p => ({
+        key: resolveVariables(p.key, authVars),
+        value: resolveVariables(p.value, authVars),
+        disabled: p.disabled,
+      }));
+
       const result = await openAuthorizationWindow(
-        config.authorizationUrl,
-        config.clientId,
-        config.redirectUrl || 'http://localhost:3000/oauth/callback',
-        config.scopes || []
+        resolvedAuthUrl,
+        resolvedClientId,
+        resolvedRedirectUrl,
+        resolvedScopes,
+        resolvedAuthParams
       );
       if (!result) {
         window.alert('Authorization was cancelled or the popup was blocked.');
