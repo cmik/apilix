@@ -431,6 +431,30 @@ function validateTokenUrl(url) {
   }
 }
 
+/**
+ * Resolve variables in a token URL and validate the resolved result.
+ * Ensures all {{variable}} placeholders are substituted before SSRF guard is applied.
+ * @param {string} tokenUrl - Token URL with possible {{variable}} placeholders
+ * @param {Object} vars - Variable map for resolution
+ * @returns {string} - The resolved and validated token URL
+ * @throws {Error} - If resolution fails or resolved URL is invalid/disallowed
+ */
+function resolveAndValidateTokenUrl(tokenUrl, vars = {}) {
+  if (!tokenUrl || typeof tokenUrl !== 'string') {
+    throw new Error('tokenUrl must be a non-empty string');
+  }
+  
+  // Resolve any {{variable}} placeholders in the token URL
+  const resolvedUrl = resolveVariables(tokenUrl, vars);
+  
+  // Validate the resolved URL with SSRF guard
+  if (!validateTokenUrl(resolvedUrl)) {
+    throw new Error('Invalid or disallowed tokenUrl');
+  }
+  
+  return resolvedUrl;
+}
+
 function normalizeClientCertificates(input) {
   if (!Array.isArray(input)) return [];
   return input
@@ -709,12 +733,23 @@ app.post('/api/oauth/refresh', async (req, res) => {
       return res.status(400).json({ error: 'Missing oauth2Config in body' });
     }
 
-    if (!validateTokenUrl(oauth2Config.tokenUrl)) {
-      return res.status(400).json({ error: 'Invalid or disallowed tokenUrl' });
-    }
-
     const vars = environment || {};
-    const refreshResult = await refreshOAuth2Token(oauth2Config, vars);
+    
+    // Resolve and validate token URL with variable substitution
+    let resolvedTokenUrl;
+    try {
+      resolvedTokenUrl = resolveAndValidateTokenUrl(oauth2Config.tokenUrl, vars);
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+    
+    // Use a clone of oauth2Config with the resolved tokenUrl
+    const resolvedConfig = {
+      ...oauth2Config,
+      tokenUrl: resolvedTokenUrl,
+    };
+    
+    const refreshResult = await refreshOAuth2Token(resolvedConfig, vars);
 
     return res.json({
       success: true,
@@ -765,13 +800,24 @@ app.post('/api/oauth/exchange-code', async (req, res) => {
       return res.status(400).json({ error: 'Missing oauth2Config or authorizationCode in body' });
     }
 
-    if (!validateTokenUrl(oauth2Config.tokenUrl)) {
-      return res.status(400).json({ error: 'Invalid or disallowed tokenUrl' });
+    const vars = environment || {};
+    
+    // Resolve and validate token URL with variable substitution
+    let resolvedTokenUrl;
+    try {
+      resolvedTokenUrl = resolveAndValidateTokenUrl(oauth2Config.tokenUrl, vars);
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
     }
+    
+    // Use a clone of oauth2Config with the resolved tokenUrl
+    const resolvedConfig = {
+      ...oauth2Config,
+      tokenUrl: resolvedTokenUrl,
+    };
 
     const resolvedCodeVerifier = codeVerifier || oauth2Config.codeVerifier;
-    const vars = environment || {};
-    const tokenResult = await exchangeAuthorizationCodeForToken(oauth2Config, authorizationCode, resolvedCodeVerifier, vars);
+    const tokenResult = await exchangeAuthorizationCodeForToken(resolvedConfig, authorizationCode, resolvedCodeVerifier, vars);
 
     return res.json({
       success: true,

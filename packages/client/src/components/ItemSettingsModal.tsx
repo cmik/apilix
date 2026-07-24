@@ -185,7 +185,7 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
           oauth2Config: { ...config },
           authorizationCode: result.code,
           codeVerifier: result.codeVerifier,
-          environment: {},
+          environment: { ...appState.globalVariables, ...getEnvironmentVars() },
         }),
       });
       if (!response.ok) {
@@ -219,7 +219,7 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
       const response = await fetch(`${API_BASE}/oauth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ oauth2Config: config, environment: {} }),
+        body: JSON.stringify({ oauth2Config: config, environment: { ...appState.globalVariables, ...getEnvironmentVars() } }),
       });
       if (!response.ok) {
         const error = await response.json();
