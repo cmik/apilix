@@ -121,6 +121,28 @@ test('validateOAuth2Config requires authorizationUrl for authorization_code', ()
   assert.ok(result.errors.some(e => /authorizationUrl/i.test(e)));
 });
 
+test('validateOAuth2Config requires authorizationUrl for authorization_code_plain', () => {
+  const result = validateOAuth2Config({
+    grantType: 'authorization_code_plain',
+    clientId: 'id',
+    tokenUrl: 'https://example.com/token',
+    clientSecret: 'sec',
+  });
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some(e => /authorizationUrl/i.test(e)));
+});
+
+test('validateOAuth2Config requires clientSecret for authorization_code_plain', () => {
+  const result = validateOAuth2Config({
+    grantType: 'authorization_code_plain',
+    clientId: 'id',
+    tokenUrl: 'https://example.com/token',
+    authorizationUrl: 'https://example.com/authorize',
+  });
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some(e => /clientSecret/i.test(e)));
+});
+
 // ─── Variable Resolution in Custom Headers and Scopes ─────────────────────────
 
 test('OAuth scopes and custom headers support variable resolution', () => {

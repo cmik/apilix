@@ -129,6 +129,68 @@ export function parseAuthorizationCallback(
 }
 
 /**
+ * Open authorization URL in a new window for Authorization Code flow WITHOUT PKCE
+ * Returns a promise that resolves with the authorization code
+ */
+export async function openAuthorizationWindowPlain(
+  authorizationUrl: string,
+  clientId: string,
+  redirectUrl: string,
+  scopes: string[] = [],
+  authorizationParams: Array<{ key: string; value: string; disabled?: boolean }> = []
+): Promise<{ code: string; state: string; codeVerifier: string } | null> {
+  const state = generateState();
+  // No PKCE for this flow: empty code challenge
+  const url = buildAuthorizationUrl(authorizationUrl, clientId, redirectUrl, scopes, state, '', authorizationParams);
+
+  // Open in a new window
+  const width = 500;
+  const height = 600;
+  const left = (window.innerWidth - width) / 2;
+  const top = (window.innerHeight - height) / 2;
+
+  const window1 = window.open(
+    url,
+    'OAuth Authorization',
+    `width=${width},height=${height},left=${left},top=${top}`
+  );
+
+  if (!window1) {
+    return null;
+  }
+
+  // Poll for the callback
+  return new Promise(resolve => {
+    const checkInterval = setInterval(() => {
+      try {
+        const href = window1.location.href;
+        if (href && href.includes('oauth/callback')) {
+          const { code, state: returnedState } = parseAuthorizationCallback(href);
+          clearInterval(checkInterval);
+          window1.close();
+          if (code && returnedState === state) {
+            resolve({ code, state, codeVerifier: '' });
+          } else {
+            resolve(null);
+          }
+        }
+      } catch (e) {
+        // Different origin, keep waiting
+      }
+
+      // Timeout after 5 minutes
+      if (Date.now() - start > 5 * 60 * 1000) {
+        clearInterval(checkInterval);
+        window1.close();
+        resolve(null);
+      }
+    }, 500);
+
+    const start = Date.now();
+  });
+}
+
+/**
  * Open authorization URL in a new window for user to authorize
  * Returns a promise that resolves with the authorization code
  */

@@ -138,6 +138,11 @@ async function refreshOAuth2Token(oauth2Config, vars = {}) {
         throw new Error('Authorization Code exchange should be handled client-side; ensure token was obtained before making this request');
       }
 
+      case 'authorization_code_plain': {
+        // Plain Authorization Code flow tokens should also be obtained client-side.
+        throw new Error('Authorization Code exchange should be handled client-side; ensure token was obtained before making this request');
+      }
+
       default:
         throw new Error(`Unsupported grant type: ${grantType}`);
     }
@@ -186,6 +191,10 @@ async function exchangeAuthorizationCodeForToken(oauth2Config, authorizationCode
 
   if (!clientId || !tokenUrl || !authorizationCode) {
     throw new Error('Missing required fields for authorization code exchange');
+  }
+
+  if (oauth2Config.grantType === 'authorization_code_plain' && !clientSecret) {
+    throw new Error('clientSecret is required for authorization_code_plain grant (non-PKCE code flow requires confidential client)');
   }
 
   const tokenBody = new URLSearchParams({
@@ -251,8 +260,12 @@ function validateOAuth2Config(oauth2Config) {
   if (!clientId) errors.push('clientId is required');
   if (!tokenUrl) errors.push('tokenUrl is required');
 
-  if (grantType === 'authorization_code' && !authorizationUrl) {
-    errors.push('authorizationUrl is required for authorization_code grant');
+  if ((grantType === 'authorization_code' || grantType === 'authorization_code_plain') && !authorizationUrl) {
+    errors.push('authorizationUrl is required for authorization_code flow');
+  }
+
+  if (grantType === 'authorization_code_plain' && !clientSecret) {
+    errors.push('clientSecret is required for authorization_code_plain grant (non-PKCE code flow requires confidential client)');
   }
 
   if ((grantType === 'client_credentials' || grantType === 'refresh_token') && !clientSecret) {

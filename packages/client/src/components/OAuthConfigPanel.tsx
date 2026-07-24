@@ -183,7 +183,7 @@ export default function OAuthConfigPanel({
       </div>
 
       {/* Authorization URL (for Authorization Code) */}
-      {config.grantType === 'authorization_code' && (
+      {(config.grantType === 'authorization_code' || config.grantType === 'authorization_code_plain') && (
         <div className="flex flex-col gap-1.5">
           <label className="text-xs text-slate-400">
             Authorization URL <span className="text-red-500">*</span>
@@ -236,7 +236,7 @@ export default function OAuthConfigPanel({
       </div>
 
       {/* Authorization Parameters (for Authorization Code flow) */}
-      {config.grantType === 'authorization_code' && (
+      {(config.grantType === 'authorization_code' || config.grantType === 'authorization_code_plain') && (
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
             <label className="text-xs text-slate-400">Additional Query Parameters</label>
@@ -287,7 +287,7 @@ export default function OAuthConfigPanel({
       )}
 
       {/* Get Authorization Code Button (for Authorization Code flow) */}
-      {config.grantType === 'authorization_code' && (
+      {(config.grantType === 'authorization_code' || config.grantType === 'authorization_code_plain') && (
         <button
           onClick={onGetAuthorizationCode}
           disabled={isGettingAuthCode || !config.clientId || !config.authorizationUrl || !config.tokenUrl}

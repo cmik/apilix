@@ -1,6 +1,6 @@
 // ─── OAuth 2.0 Types ──────────────────────────────────────────────────────────
 
-export type OAuth2GrantType = 'authorization_code' | 'client_credentials' | 'refresh_token';
+export type OAuth2GrantType = 'authorization_code' | 'authorization_code_plain' | 'client_credentials' | 'refresh_token';
 export type OAuth2PresetProvider = 'google' | 'github' | 'azure_ad' | null;
 
 export interface OAuth2CustomHeader {
