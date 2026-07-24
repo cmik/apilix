@@ -1782,11 +1782,23 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     }
 
     try {
+      // Resolve variables using the full precedence chain (env > collVars > globals)
+      const resolvedAuthUrl = resolveVariables(config.authorizationUrl, allVars);
+      const resolvedClientId = resolveVariables(config.clientId, allVars);
+      const resolvedRedirectUrl = resolveVariables(config.redirectUrl || 'http://localhost:3000/oauth/callback', allVars);
+      const resolvedScopes = (config.scopes ?? []).map(s => resolveVariables(s, allVars));
+      const resolvedAuthParams = (config.authorizationParams ?? []).map(p => ({
+        key: resolveVariables(p.key, allVars),
+        value: resolveVariables(p.value, allVars),
+        disabled: p.disabled,
+      }));
+
       const result = await openAuthorizationWindow(
-        config.authorizationUrl,
-        config.clientId,
-        config.redirectUrl || 'http://localhost:3000/oauth/callback',
-        config.scopes || []
+        resolvedAuthUrl,
+        resolvedClientId,
+        resolvedRedirectUrl,
+        resolvedScopes,
+        resolvedAuthParams
       );
 
       if (!result) {

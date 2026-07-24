@@ -24,6 +24,7 @@ export interface OAuth2Config {
   codeVerifier?: string; // PKCE code verifier (client-side only, not persisted)
   presetProvider?: OAuth2PresetProvider;
   customHeaders?: OAuth2CustomHeader[]; // for token endpoint
+  authorizationParams?: Array<{ key: string; value: string; disabled?: boolean }>; // extra query params appended to authorization URL
   sslVerification?: boolean; // whether to verify SSL certificates on token endpoint requests
 }
 

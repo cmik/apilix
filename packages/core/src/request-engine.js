@@ -1085,7 +1085,8 @@ async function applyAuth(auth, headers, vars, currentUrl, authWarnings = []) {
     case 'apikey': {
       const keyName = (auth.apikey || []).find(b => b.key === 'key')?.value || 'X-API-Key';
       const keyValue = (auth.apikey || []).find(b => b.key === 'value')?.value || '';
-      const location = (auth.apikey || []).find(b => b.key === 'in')?.value || 'header';
+      const locationRaw = (auth.apikey || []).find(b => b.key === 'in')?.value || 'header';
+      const location = (resolveVariables(locationRaw, vars) || 'header').trim();
       const resolvedKey = resolveVariables(keyName, vars);
       const resolvedValue = resolveVariables(keyValue, vars);
 

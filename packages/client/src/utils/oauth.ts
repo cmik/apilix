@@ -55,7 +55,9 @@ export function generateState(): string {
 }
 
 /**
- * Build the authorization URL for Authorization Code flow with PKCE
+ * Build the authorization URL for Authorization Code flow with PKCE.
+ * Safely merges with any query parameters already present in authorizationUrl
+ * by using the URL constructor when the input is a valid absolute URL.
  */
 export function buildAuthorizationUrl(
   authorizationUrl: string,
@@ -63,25 +65,53 @@ export function buildAuthorizationUrl(
   redirectUrl: string,
   scopes: string[] = [],
   state: string = '',
-  codeChallenge: string = ''
+  codeChallenge: string = '',
+  authorizationParams: Array<{ key: string; value: string; disabled?: boolean }> = []
 ): string {
+  const resolvedState = state || generateState();
+
+  // Prefer URL constructor so existing query params in authorizationUrl are
+  // preserved and we never produce a double-? in the final URL.
+  let url: URL | null = null;
+  try {
+    url = new URL(authorizationUrl);
+  } catch {
+    // Falls through to the string-concatenation path below (e.g. relative URLs)
+  }
+
+  if (url) {
+    url.searchParams.set('client_id', clientId);
+    url.searchParams.set('redirect_uri', redirectUrl);
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('state', resolvedState);
+    if (scopes.length > 0) url.searchParams.set('scope', scopes.join(' '));
+    if (codeChallenge) {
+      url.searchParams.set('code_challenge', codeChallenge);
+      url.searchParams.set('code_challenge_method', 'S256');
+    }
+    for (const p of authorizationParams) {
+      if (!p.disabled && p.key) url.searchParams.append(p.key, p.value);
+    }
+    return url.toString();
+  }
+
+  // Fallback: string concatenation for relative or otherwise unparseable URLs
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUrl,
     response_type: 'code',
-    state: state || generateState(),
+    state: resolvedState,
   });
-
-  if (scopes.length > 0) {
-    params.append('scope', scopes.join(' '));
-  }
-
+  if (scopes.length > 0) params.append('scope', scopes.join(' '));
   if (codeChallenge) {
     params.append('code_challenge', codeChallenge);
     params.append('code_challenge_method', 'S256');
   }
-
-  return `${authorizationUrl}?${params.toString()}`;
+  for (const p of authorizationParams) {
+    if (!p.disabled && p.key) params.append(p.key, p.value);
+  }
+  const sep = authorizationUrl.includes('?') ? '&' : '?';
+  return `${authorizationUrl}${sep}${params.toString()}`;
 }
 
 /**
@@ -106,13 +136,14 @@ export async function openAuthorizationWindow(
   authorizationUrl: string,
   clientId: string,
   redirectUrl: string,
-  scopes: string[] = []
+  scopes: string[] = [],
+  authorizationParams: Array<{ key: string; value: string; disabled?: boolean }> = []
 ): Promise<{ code: string; state: string; codeVerifier: string } | null> {
   const verifier = generatePKCEVerifier();
   const challenge = await generatePKCEChallenge(verifier);
   const state = generateState();
 
-  const url = buildAuthorizationUrl(authorizationUrl, clientId, redirectUrl, scopes, state, challenge);
+  const url = buildAuthorizationUrl(authorizationUrl, clientId, redirectUrl, scopes, state, challenge, authorizationParams);
 
   // Open in a new window
   const width = 500;

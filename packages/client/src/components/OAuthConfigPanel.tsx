@@ -78,6 +78,27 @@ export default function OAuthConfigPanel({
     onChange({ ...config, redirectUrl });
   };
 
+  const addAuthorizationParam = () => {
+    const current = config.authorizationParams ?? [];
+    onChange({ ...config, authorizationParams: [...current, { key: '', value: '', disabled: false }] });
+  };
+
+  const updateAuthorizationParam = (index: number, field: 'key' | 'value' | 'disabled', value: string | boolean) => {
+    const current = config.authorizationParams ?? [];
+    const updated = [...current];
+    if (field === 'disabled') {
+      updated[index] = { ...updated[index], disabled: value as boolean };
+    } else {
+      updated[index] = { ...updated[index], [field]: value };
+    }
+    onChange({ ...config, authorizationParams: updated });
+  };
+
+  const removeAuthorizationParam = (index: number) => {
+    const current = config.authorizationParams ?? [];
+    onChange({ ...config, authorizationParams: current.filter((_, i) => i !== index) });
+  };
+
   const presetConfig =
     config.presetProvider && OAUTH2_PRESET_PROVIDERS[config.presetProvider]
       ? OAUTH2_PRESET_PROVIDERS[config.presetProvider]
@@ -213,6 +234,57 @@ export default function OAuthConfigPanel({
           className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
         />
       </div>
+
+      {/* Authorization Parameters (for Authorization Code flow) */}
+      {config.grantType === 'authorization_code' && (
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <label className="text-xs text-slate-400">Additional Query Parameters</label>
+            <button
+              type="button"
+              onClick={addAuthorizationParam}
+              className="text-xs text-orange-400 hover:text-orange-300 font-medium"
+            >
+              + Add
+            </button>
+          </div>
+          {(config.authorizationParams ?? []).length > 0 && (
+            <div className="bg-slate-800 border border-slate-700 rounded px-3 py-2 flex flex-col gap-2">
+              {config.authorizationParams.map((param, index) => (
+                <div key={index} className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={!param.disabled}
+                    onChange={e => updateAuthorizationParam(index, 'disabled', !e.target.checked)}
+                    className="w-4 h-4"
+                  />
+                  <VarInput
+                    value={param.key}
+                    onChange={value => updateAuthorizationParam(index, 'key', value)}
+                    placeholder="key"
+                    variableSuggestions={variableSuggestions}
+                    className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs font-mono text-slate-100 focus:outline-none focus:border-orange-500"
+                  />
+                  <VarInput
+                    value={param.value}
+                    onChange={value => updateAuthorizationParam(index, 'value', value)}
+                    placeholder="value"
+                    variableSuggestions={variableSuggestions}
+                    className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs font-mono text-slate-100 focus:outline-none focus:border-orange-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeAuthorizationParam(index)}
+                    className="text-red-400 hover:text-red-300 text-xs font-medium"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Get Authorization Code Button (for Authorization Code flow) */}
       {config.grantType === 'authorization_code' && (
