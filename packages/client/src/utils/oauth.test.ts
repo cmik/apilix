@@ -98,6 +98,25 @@ describe('OAuth utilities', () => {
       expect(url).not.toContain('undefined');
     });
 
+    it('omits PKCE parameters when codeChallenge is empty (for non-PKCE flow)', () => {
+      const url = buildAuthorizationUrl(
+        'https://example.com/authorize',
+        'client123',
+        'http://localhost:3000/callback',
+        ['openid', 'profile'],
+        'state123',
+        '', // empty challenge for plain Authorization Code
+        []
+      );
+
+      expect(url).toContain('client_id=client123');
+      expect(url).toContain('response_type=code');
+      expect(url).toContain('state=state123');
+      expect(url).toContain('scope=openid+profile');
+      expect(url).not.toContain('code_challenge');
+      expect(url).not.toContain('code_challenge_method');
+    });
+
     it('preserves existing query parameters in authorizationUrl without double ?', () => {
       const url = buildAuthorizationUrl(
         'https://example.com/authorize?tenant=acme',

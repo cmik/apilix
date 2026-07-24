@@ -9,7 +9,7 @@ import { getUrlDisplay, buildCollectionDefinitionVarMap, buildVarMap, resolveVar
 import { updateItemById, renameItemById, resolveInheritedAuth, resolveInheritedAuthWithSource, findItemInTree, flattenRequestNames, flattenRequestItems, collectAncestorScripts, getRequestBreadcrumb, getRequestBreadcrumbPrefix, applyInheritedAuth } from '../utils/treeHelpers';
 import { parseCurlCommand } from '../utils/curlUtils';
 import { parseHurlFile } from '../utils/hurlUtils';
-import { openAuthorizationWindow } from '../utils/oauth';
+import { openAuthorizationWindow, openAuthorizationWindowPlain } from '../utils/oauth';
 import GraphQLPanel from './GraphQLPanel';
 import SoapPanel from './SoapPanel';
 import MongoRequestPanel from './MongoRequestPanel';
@@ -1793,13 +1793,21 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
         disabled: p.disabled,
       }));
 
-      const result = await openAuthorizationWindow(
-        resolvedAuthUrl,
-        resolvedClientId,
-        resolvedRedirectUrl,
-        resolvedScopes,
-        resolvedAuthParams
-      );
+      const result = await (config.grantType === 'authorization_code_plain'
+        ? openAuthorizationWindowPlain(
+            resolvedAuthUrl,
+            resolvedClientId,
+            resolvedRedirectUrl,
+            resolvedScopes,
+            resolvedAuthParams
+          )
+        : openAuthorizationWindow(
+            resolvedAuthUrl,
+            resolvedClientId,
+            resolvedRedirectUrl,
+            resolvedScopes,
+            resolvedAuthParams
+          ));
 
       if (!result) {
         window.alert('Authorization was cancelled or the popup was blocked.');

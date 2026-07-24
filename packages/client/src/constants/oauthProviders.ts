@@ -37,6 +37,7 @@ export const PRESET_PROVIDER_LIST = [
 
 export const GRANT_TYPE_LIST = [
   { label: 'Authorization Code (PKCE)', value: 'authorization_code' },
+  { label: 'Authorization Code (no PKCE)', value: 'authorization_code_plain' },
   { label: 'Client Credentials', value: 'client_credentials' },
   { label: 'Refresh Token', value: 'refresh_token' },
 ] as const;

@@ -5,7 +5,7 @@ import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
 import ScriptEditor from './ScriptEditor';
 import OAuthConfigPanel from './OAuthConfigPanel';
 import { API_BASE } from '../api';
-import { openAuthorizationWindow } from '../utils/oauth';
+import { openAuthorizationWindow, openAuthorizationWindowPlain } from '../utils/oauth';
 import { resolveVariables } from '../utils/variableResolver';
 import { useApp } from '../store';
 import VarInput from './VarInput';
@@ -159,13 +159,21 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
         disabled: p.disabled,
       }));
 
-      const result = await openAuthorizationWindow(
-        resolvedAuthUrl,
-        resolvedClientId,
-        resolvedRedirectUrl,
-        resolvedScopes,
-        resolvedAuthParams
-      );
+      const result = await (config.grantType === 'authorization_code_plain'
+        ? openAuthorizationWindowPlain(
+            resolvedAuthUrl,
+            resolvedClientId,
+            resolvedRedirectUrl,
+            resolvedScopes,
+            resolvedAuthParams
+          )
+        : openAuthorizationWindow(
+            resolvedAuthUrl,
+            resolvedClientId,
+            resolvedRedirectUrl,
+            resolvedScopes,
+            resolvedAuthParams
+          ));
       if (!result) {
         window.alert('Authorization was cancelled or the popup was blocked.');
         return;
