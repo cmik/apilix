@@ -250,7 +250,7 @@ export default function OAuthConfigPanel({
           </div>
           {(config.authorizationParams ?? []).length > 0 && (
             <div className="bg-slate-800 border border-slate-700 rounded px-3 py-2 flex flex-col gap-2">
-              {config.authorizationParams.map((param, index) => (
+              {(config.authorizationParams || []).map((param, index) => (
                 <div key={index} className="flex items-center gap-2">
                   <input
                     type="checkbox"
