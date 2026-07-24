@@ -225,15 +225,34 @@ export default function OAuthConfigPanel({
       </div>
 
       {/* Redirect URL */}
-      <div className="flex flex-col gap-1.5">
-        <label className="text-xs text-slate-400">Redirect URL</label>
-        <input
-          type="text"
-          value={config.redirectUrl ?? 'http://localhost:3000/oauth/callback'}
-          onChange={e => handleRedirectUrlChange(e.target.value)}
-          className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
-        />
-      </div>
+      {(() => {
+        const electronPort = (window as any).electronAPI?.serverPort;
+        const isElectronMode = !!(window as any).electronAPI;
+        const redirectValue = isElectronMode
+          ? `http://localhost:${electronPort ?? 3001}/oauth/callback`
+          : (config.redirectUrl ?? 'http://localhost:3000/oauth/callback');
+        return (
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs text-slate-400">Redirect URL</label>
+            <input
+              type="text"
+              value={redirectValue}
+              readOnly={isElectronMode}
+              onChange={isElectronMode ? undefined : e => handleRedirectUrlChange(e.target.value)}
+              className={`w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm font-mono focus:outline-none ${
+                isElectronMode
+                  ? 'text-slate-400 cursor-default select-all'
+                  : 'text-slate-100 focus:border-orange-500'
+              }`}
+            />
+            {isElectronMode && (
+              <p className="text-xs text-slate-500">
+                Fixed by the desktop app — register this URL with your OAuth provider.
+              </p>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Authorization Parameters (for Authorization Code flow) */}
       {(config.grantType === 'authorization_code' || config.grantType === 'authorization_code_plain') && (

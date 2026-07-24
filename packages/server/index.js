@@ -666,6 +666,40 @@ app.post('/api/execute', async (req, res) => {
   }
 });
 
+// ─── OAuth 2.0 Authorization Code callback (external browser redirect) ─────────
+
+// In-memory store: state → SSE response held open waiting for the callback.
+// Keyed by the `state` CSRF token so each authorization attempt has its own slot.
+const _oauthSseClients = new Map();
+
+function _escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// The URL users register with their OAuth provider as the redirect URI.
+// The system browser hits this after the user authorizes; we immediately push
+// the code to the waiting SSE client in the renderer.
+app.get('/oauth/callback', (req, res) => {
+  const { code, state, error } = req.query;
+  if (!state || typeof state !== 'string' || state.length > 512) {
+    return res.status(400).send('<h2>Invalid OAuth callback (missing or invalid state)</h2>');
+  }
+
+  const sseClient = _oauthSseClients.get(state);
+  if (sseClient) {
+    sseClient.write(`event: code\ndata: ${JSON.stringify({ code: code || null, error: error || null })}\n\n`);
+    sseClient.end();
+    _oauthSseClients.delete(state);
+  }
+
+  const html = error
+    ? `<html><body style="font-family:sans-serif;padding:2em"><h2>Authorization failed</h2><p>${_escapeHtml(String(error))}</p><p>You can close this tab and return to Apilix.</p></body></html>`
+    : `<html><body style="font-family:sans-serif;padding:2em"><h2>Authorization successful</h2><p>You can close this tab and return to Apilix.</p></body></html>`;
+  res.set('Content-Type', 'text/html').send(html);
+});
+
 // ─── OAuth 2.0 endpoints ───────────────────────────────────────────────────────
 
 app.post('/api/oauth/refresh', async (req, res) => {
@@ -692,6 +726,36 @@ app.post('/api/oauth/refresh', async (req, res) => {
     console.error('OAuth refresh error:', err);
     return res.status(400).json({ error: err.message });
   }
+});
+
+// SSE stream the renderer opens before launching the system browser.
+// Stays open until /oauth/callback pushes a 'code' event or the 5-min timeout.
+app.get('/api/oauth/auth-callback-stream', (req, res) => {
+  const { state } = req.query;
+  if (!state || typeof state !== 'string' || state.length > 512) {
+    return res.status(400).json({ error: 'Missing or invalid state parameter' });
+  }
+
+  res.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.flushHeaders();
+
+  _oauthSseClients.set(state, res);
+
+  const timeout = setTimeout(() => {
+    _oauthSseClients.delete(state);
+    res.write('event: timeout\ndata: {}\n\n');
+    res.end();
+  }, 5 * 60 * 1000);
+
+  req.on('close', () => {
+    _oauthSseClients.delete(state);
+    clearTimeout(timeout);
+  });
 });
 
 app.post('/api/oauth/exchange-code', async (req, res) => {

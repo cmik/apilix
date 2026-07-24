@@ -114,6 +114,50 @@ export function buildAuthorizationUrl(
   return `${authorizationUrl}${sep}${params.toString()}`;
 }
 
+// ─── Electron helpers ───────────────────────────────────────────────────────
+
+function isElectron(): boolean {
+  return !!(window as any).electronAPI;
+}
+
+function getElectronServerBase(): string {
+  const port = (window as any).electronAPI?.serverPort ?? 3001;
+  return `http://localhost:${port}`;
+}
+
+/**
+ * Open a persistent SSE connection to the server and resolve when the
+ * /oauth/callback route pushes the authorization code back to us.
+ * The connection is opened BEFORE the system browser is launched so the
+ * server is already listening when the callback arrives.
+ */
+function waitForCodeViaSSE(
+  state: string,
+  apiBase: string
+): Promise<{ code: string | null; error: string | null } | null> {
+  return new Promise((resolve) => {
+    const src = new EventSource(
+      `${apiBase}/oauth/auth-callback-stream?state=${encodeURIComponent(state)}`
+    );
+
+    src.addEventListener('code', (e: MessageEvent) => {
+      src.close();
+      try { resolve(JSON.parse(e.data)); }
+      catch { resolve(null); }
+    });
+
+    src.addEventListener('timeout', () => {
+      src.close();
+      resolve(null);
+    });
+
+    src.onerror = () => {
+      src.close();
+      resolve(null);
+    };
+  });
+}
+
 /**
  * Parse authorization code from callback URL
  */
@@ -140,6 +184,19 @@ export async function openAuthorizationWindowPlain(
   authorizationParams: Array<{ key: string; value: string; disabled?: boolean }> = []
 ): Promise<{ code: string; state: string; codeVerifier: string } | null> {
   const state = generateState();
+
+  if (isElectron()) {
+    const base = getElectronServerBase();
+    const effectiveRedirectUrl = `${base}/oauth/callback`;
+    const electronUrl = buildAuthorizationUrl(authorizationUrl, clientId, effectiveRedirectUrl, scopes, state, '', authorizationParams);
+    // Open SSE stream BEFORE launching browser so server is ready when callback arrives
+    const ssePromise = waitForCodeViaSSE(state, `${base}/api`);
+    window.open(electronUrl);  // Electron routes this to shell.openExternal; return value intentionally ignored
+    const result = await ssePromise;
+    if (!result || !result.code || result.error) return null;
+    return { code: result.code, state, codeVerifier: '' };
+  }
+
   // No PKCE for this flow: empty code challenge
   const url = buildAuthorizationUrl(authorizationUrl, clientId, redirectUrl, scopes, state, '', authorizationParams);
 
@@ -205,6 +262,18 @@ export async function openAuthorizationWindow(
   const challenge = await generatePKCEChallenge(verifier);
   const state = generateState();
 
+  if (isElectron()) {
+    const base = getElectronServerBase();
+    const effectiveRedirectUrl = `${base}/oauth/callback`;
+    const electronUrl = buildAuthorizationUrl(authorizationUrl, clientId, effectiveRedirectUrl, scopes, state, challenge, authorizationParams);
+    // Open SSE stream BEFORE launching browser so server is ready when callback arrives
+    const ssePromise = waitForCodeViaSSE(state, `${base}/api`);
+    window.open(electronUrl);  // Electron routes this to shell.openExternal; return value intentionally ignored
+    const result = await ssePromise;
+    if (!result || !result.code || result.error) return null;
+    return { code: result.code, state, codeVerifier: verifier };
+  }
+
   const url = buildAuthorizationUrl(authorizationUrl, clientId, redirectUrl, scopes, state, challenge, authorizationParams);
 
   // Open in a new window
@@ -223,7 +292,7 @@ export async function openAuthorizationWindow(
     return null;
   }
 
-  // Poll for the callback (this is a simple approach; production would use postMessage)
+  // Poll for the callback
   return new Promise(resolve => {
     const checkInterval = setInterval(() => {
       try {

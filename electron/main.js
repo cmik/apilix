@@ -35,14 +35,28 @@ function writeLog(msg) {
   console.log(msg);
 }
 
-function findFreePort() {
+// Try `preferred` first; if it is already in use, fall back to an OS-assigned
+// ephemeral port (listen on 0) so startup never fails.
+function findFreePort(preferred = 65301) {
   return new Promise((resolve, reject) => {
     const srv = net.createServer();
-    srv.listen(0, '127.0.0.1', () => {
+    srv.listen(preferred, '127.0.0.1', () => {
       const { port } = srv.address();
       srv.close(() => resolve(port));
     });
-    srv.on('error', reject);
+    srv.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        // Preferred port is taken — ask the OS for any free port.
+        const fallback = net.createServer();
+        fallback.listen(0, '127.0.0.1', () => {
+          const { port } = fallback.address();
+          fallback.close(() => resolve(port));
+        });
+        fallback.on('error', reject);
+      } else {
+        reject(err);
+      }
+    });
   });
 }
 
@@ -452,8 +466,9 @@ function buildAppMenu() {
 
 app.whenReady().then(async () => {
   // In dev, keep port 3001 so Vite's proxy config stays valid.
-  // In production, find a free port dynamically.
-  const port = isDev ? 3001 : await findFreePort();
+  // In production, prefer port 65301 (stable across restarts for OAuth redirect
+  // URL registration) and fall back to a random port only if 65301 is taken.
+  const port = isDev ? 3001 : await findFreePort(65301);
   serverPort = port;
   writeLog('Using port ' + port);
   startServer(port);
