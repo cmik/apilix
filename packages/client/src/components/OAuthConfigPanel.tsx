@@ -229,7 +229,10 @@ export default function OAuthConfigPanel({
         <label className="text-xs text-slate-400">Redirect URL</label>
         <input
           type="text"
-          value={config.redirectUrl ?? 'http://localhost:3000/oauth/callback'}
+          value={config.redirectUrl ?? (() => {
+            const port = (window as any).electronAPI?.serverPort;
+            return port ? `http://localhost:${port}/oauth/callback` : 'http://localhost:3000/oauth/callback';
+          })()}
           onChange={e => handleRedirectUrlChange(e.target.value)}
           className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
         />

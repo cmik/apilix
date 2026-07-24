@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { buildAuthorizationUrl } from './oauth';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { buildAuthorizationUrl, openAuthorizationWindow, openAuthorizationWindowPlain } from './oauth';
 
 describe('OAuth utilities', () => {
   describe('buildAuthorizationUrl', () => {
@@ -165,6 +165,210 @@ describe('OAuth utilities', () => {
       );
 
       expect(url).toContain('custom_param=value+with+spaces');
+    });
+  });
+});
+
+// ─── Electron OAuth flow ──────────────────────────────────────────────────────
+
+/**
+ * Mock EventSource that allows tests to synchronously emit SSE events.
+ * A reference to the most recently created instance is stored in `latestSrc`
+ * so individual tests can trigger events after the function under test opens
+ * the stream.
+ */
+class MockEventSource {
+  url: string;
+  handlers: Record<string, ((e?: any) => void)[]> = {};
+  onerror: ((e?: any) => void) | null = null;
+  closed = false;
+
+  constructor(url: string) {
+    this.url = url;
+    MockEventSource._latest = this;
+  }
+
+  static _latest: MockEventSource | null = null;
+
+  addEventListener(type: string, fn: (e?: any) => void) {
+    (this.handlers[type] ??= []).push(fn);
+  }
+
+  close() {
+    this.closed = true;
+  }
+
+  /** Simulate the server pushing an SSE event. */
+  emit(type: string, data?: object) {
+    if (type === 'error') {
+      this.onerror?.call(this);
+    } else {
+      const e = { data: JSON.stringify(data ?? {}) };
+      this.handlers[type]?.forEach(fn => fn(e));
+    }
+  }
+}
+
+describe('Electron OAuth flow', () => {
+  beforeEach(() => {
+    MockEventSource._latest = null;
+    // The test runs in Node (no jsdom), so we must provide `window` ourselves.
+    vi.stubGlobal('window', {
+      electronAPI: { serverPort: 9999 },
+      open: vi.fn().mockReturnValue(null),
+    });
+    vi.stubGlobal('EventSource', MockEventSource);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    MockEventSource._latest = null;
+  });
+
+  // ── openAuthorizationWindowPlain ────────────────────────────────────────────
+  // EventSource is created synchronously (no await before it), so latestSrc
+  // is available immediately after calling openAuthorizationWindowPlain().
+
+  describe('openAuthorizationWindowPlain — Electron path', () => {
+    it('resolves with code when SSE delivers a code event', async () => {
+      const resultPromise = openAuthorizationWindowPlain(
+        'https://auth.example.com/authorize',
+        'client-id',
+        'http://localhost:3000/callback',
+        ['openid'],
+      );
+
+      const src = MockEventSource._latest!;
+      expect(src).not.toBeNull();
+      src.emit('code', { code: 'auth_code_plain', error: null });
+
+      const result = await resultPromise;
+      expect(result).not.toBeNull();
+      expect(result!.code).toBe('auth_code_plain');
+      expect(result!.state).toBeTruthy();
+      expect(result!.codeVerifier).toBe(''); // no PKCE in plain flow
+    });
+
+    it('returns null when SSE times out', async () => {
+      const resultPromise = openAuthorizationWindowPlain(
+        'https://auth.example.com/authorize',
+        'client-id',
+        'http://localhost:3000/callback',
+        [],
+      );
+      MockEventSource._latest!.emit('timeout');
+      expect(await resultPromise).toBeNull();
+    });
+
+    it('returns null when the SSE connection errors', async () => {
+      const resultPromise = openAuthorizationWindowPlain(
+        'https://auth.example.com/authorize',
+        'client-id',
+        'http://localhost:3000/callback',
+        [],
+      );
+      MockEventSource._latest!.emit('error');
+      expect(await resultPromise).toBeNull();
+    });
+
+    it('returns null when the code event carries an OAuth error', async () => {
+      const resultPromise = openAuthorizationWindowPlain(
+        'https://auth.example.com/authorize',
+        'client-id',
+        'http://localhost:3000/callback',
+        [],
+      );
+      MockEventSource._latest!.emit('code', { code: null, error: 'access_denied' });
+      expect(await resultPromise).toBeNull();
+    });
+
+    it('uses the Electron server port in the authorization URL redirect_uri', async () => {
+      const resultPromise = openAuthorizationWindowPlain(
+        'https://auth.example.com/authorize',
+        'client-id',
+        'http://localhost:3000/callback', // should be overridden
+        [],
+      );
+
+      const calledUrl = (window.open as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+      expect(calledUrl).toContain('redirect_uri=http%3A%2F%2Flocalhost%3A9999%2Foauth%2Fcallback');
+
+      MockEventSource._latest!.emit('timeout');
+      await resultPromise;
+    });
+
+    it('subscribes to the SSE stream on the Electron server port', async () => {
+      const resultPromise = openAuthorizationWindowPlain(
+        'https://auth.example.com/authorize',
+        'client-id',
+        'http://localhost:3000/callback',
+        [],
+      );
+
+      expect(MockEventSource._latest!.url).toContain(
+        'http://localhost:9999/api/oauth/auth-callback-stream'
+      );
+
+      MockEventSource._latest!.emit('timeout');
+      await resultPromise;
+    });
+  });
+
+  // ── openAuthorizationWindow (PKCE) ──────────────────────────────────────────
+  // generatePKCEChallenge is async, so EventSource is created after an await.
+  // Tests must yield with setTimeout(0) before accessing MockEventSource._latest.
+
+  describe('openAuthorizationWindow (PKCE) — Electron path', () => {
+    it('resolves with code and non-empty codeVerifier when SSE delivers a code event', async () => {
+      const resultPromise = openAuthorizationWindow(
+        'https://auth.example.com/authorize',
+        'client-id',
+        'http://localhost:3000/callback',
+        ['openid'],
+      );
+
+      // Wait for generatePKCEChallenge (crypto.subtle.digest) to resolve
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      const src = MockEventSource._latest!;
+      expect(src).not.toBeNull();
+      src.emit('code', { code: 'pkce_auth_code', error: null });
+
+      const result = await resultPromise;
+      expect(result).not.toBeNull();
+      expect(result!.code).toBe('pkce_auth_code');
+      expect(result!.codeVerifier).not.toBe(''); // PKCE verifier must be set
+      expect(result!.state).toBeTruthy();
+    });
+
+    it('returns null when SSE times out', async () => {
+      const resultPromise = openAuthorizationWindow(
+        'https://auth.example.com/authorize',
+        'client-id',
+        'http://localhost:3000/callback',
+        [],
+      );
+
+      await new Promise(resolve => setTimeout(resolve, 0));
+      MockEventSource._latest!.emit('timeout');
+      expect(await resultPromise).toBeNull();
+    });
+
+    it('uses the Electron server port in the authorization URL redirect_uri', async () => {
+      const resultPromise = openAuthorizationWindow(
+        'https://auth.example.com/authorize',
+        'client-id',
+        'http://localhost:3000/callback',
+        [],
+      );
+
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      const calledUrl = (window.open as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+      expect(calledUrl).toContain('redirect_uri=http%3A%2F%2Flocalhost%3A9999%2Foauth%2Fcallback');
+
+      MockEventSource._latest!.emit('timeout');
+      await resultPromise;
     });
   });
 });
