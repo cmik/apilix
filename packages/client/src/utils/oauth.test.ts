@@ -327,8 +327,9 @@ describe('Electron OAuth flow', () => {
         ['openid'],
       );
 
-      // Wait for generatePKCEChallenge (crypto.subtle.digest) to resolve
-      await new Promise(resolve => setTimeout(resolve, 0));
+      // Wait until EventSource is created — means openAuthorizationWindow has
+      // resumed past `await generatePKCEChallenge` and called window.open.
+      await vi.waitFor(() => { if (!MockEventSource._latest) throw new Error('pending'); });
 
       const src = MockEventSource._latest!;
       expect(src).not.toBeNull();
@@ -349,7 +350,7 @@ describe('Electron OAuth flow', () => {
         [],
       );
 
-      await new Promise(resolve => setTimeout(resolve, 0));
+      await vi.waitFor(() => { if (!MockEventSource._latest) throw new Error('pending'); });
       MockEventSource._latest!.emit('timeout');
       expect(await resultPromise).toBeNull();
     });
@@ -362,7 +363,7 @@ describe('Electron OAuth flow', () => {
         [],
       );
 
-      await new Promise(resolve => setTimeout(resolve, 0));
+      await vi.waitFor(() => { if (!MockEventSource._latest) throw new Error('pending'); });
 
       const calledUrl = (window.open as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
       expect(calledUrl).toContain('redirect_uri=http%3A%2F%2Flocalhost%3A9999%2Foauth%2Fcallback');
