@@ -75,7 +75,7 @@ export default function OAuthConfigPanel({
   };
 
   const handleRedirectUrlChange = (redirectUrl: string) => {
-    onChange({ ...config, redirectUrl });
+    onChange({ ...config, redirectUrl: redirectUrl || undefined });
   };
 
   const addAuthorizationParam = () => {
@@ -226,30 +226,37 @@ export default function OAuthConfigPanel({
 
       {/* Redirect URL */}
       {(() => {
-        const electronPort = (window as any).electronAPI?.serverPort;
-        const isElectronMode = !!(window as any).electronAPI;
-        const redirectValue = isElectronMode
-          ? `http://localhost:${electronPort ?? 3001}/oauth/callback`
-          : (config.redirectUrl ?? 'http://localhost:3000/oauth/callback');
+        const electronPort = (window as any).electronAPI?.serverPort ?? 3001;
+        const isElectron = !!(window as any).electronAPI;
+        const defaultRedirectUrl = isElectron
+          ? `http://localhost:${electronPort}/oauth/callback`
+          : `${window.location.origin}/oauth/callback`;
         return (
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs text-slate-400">Redirect URL</label>
+            <div className="flex items-center justify-between">
+              <label className="text-xs text-slate-400">Redirect URL</label>
+              <button
+                type="button"
+                onClick={() => navigator.clipboard.writeText(config.redirectUrl || defaultRedirectUrl)}
+                title="Copy redirect URL"
+                className="text-slate-400 hover:text-slate-200 transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+              </button>
+            </div>
             <input
               type="text"
-              value={redirectValue}
-              readOnly={isElectronMode}
-              onChange={isElectronMode ? undefined : e => handleRedirectUrlChange(e.target.value)}
-              className={`w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm font-mono focus:outline-none ${
-                isElectronMode
-                  ? 'text-slate-400 cursor-default select-all'
-                  : 'text-slate-100 focus:border-orange-500'
-              }`}
+              value={config.redirectUrl ?? ''}
+              onChange={e => handleRedirectUrlChange(e.target.value)}
+              placeholder={defaultRedirectUrl}
+              className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 placeholder:text-slate-500"
             />
-            {isElectronMode && (
-              <p className="text-xs text-slate-500">
-                Fixed by the desktop app — register this URL with your OAuth provider.
-              </p>
-            )}
+            <p className="text-xs text-slate-500">
+              Leave blank to use: <span className="font-mono">{defaultRedirectUrl}</span>
+              {isElectron && ' — must be registered with your OAuth provider.'}
+            </p>
           </div>
         );
       })()}

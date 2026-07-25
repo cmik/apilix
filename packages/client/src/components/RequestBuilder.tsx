@@ -1785,7 +1785,12 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
       // Resolve variables using the full precedence chain (env > collVars > globals)
       const resolvedAuthUrl = resolveVariables(config.authorizationUrl, allVars);
       const resolvedClientId = resolveVariables(config.clientId, allVars);
-      const resolvedRedirectUrl = resolveVariables(config.redirectUrl || 'http://localhost:3000/oauth/callback', allVars);
+      const _electronPort = (window as any).electronAPI?.serverPort ?? 3001;
+      const _isElectron = !!(window as any).electronAPI;
+      const _defaultRedirectUrl = _isElectron
+        ? `http://localhost:${_electronPort}/oauth/callback`
+        : `${window.location.origin}/oauth/callback`;
+      const resolvedRedirectUrl = resolveVariables(config.redirectUrl || _defaultRedirectUrl, allVars);
       const resolvedScopes = (config.scopes ?? []).map(s => resolveVariables(s, allVars));
       const resolvedAuthParams = (config.authorizationParams ?? []).map(p => ({
         key: resolveVariables(p.key, allVars),
@@ -1822,6 +1827,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
           body: JSON.stringify({
             oauth2Config: {
               ...config,
+              redirectUrl: resolvedRedirectUrl,
               codeVerifier: result.codeVerifier,
             },
             authorizationCode: result.code,
