@@ -132,15 +132,22 @@ async function refreshOAuth2Token(oauth2Config, vars = {}) {
         break;
       }
 
-      case 'authorization_code': {
-        // Authorization Code flow tokens should normally be obtained client-side after user authorizes.
-        // This is a fallback handler if the server needs to re-exchange a code.
-        throw new Error('Authorization Code exchange should be handled client-side; ensure token was obtained before making this request');
-      }
-
+      case 'authorization_code':
       case 'authorization_code_plain': {
-        // Plain Authorization Code flow tokens should also be obtained client-side.
-        throw new Error('Authorization Code exchange should be handled client-side; ensure token was obtained before making this request');
+        // After the initial code exchange, refreshing uses the refresh_token grant.
+        if (!refreshToken) {
+          throw new Error('Authorization Code exchange should be handled client-side; ensure token was obtained before making this request');
+        }
+        tokenBody = new URLSearchParams({
+          grant_type: 'refresh_token',
+          client_id: clientId,
+          refresh_token: refreshToken,
+          scope: scopes ? scopes.map(s => resolveVariables(s, vars)).join(' ') : '',
+        });
+        if (clientSecret) {
+          tokenBody.append('client_secret', clientSecret);
+        }
+        break;
       }
 
       default:
