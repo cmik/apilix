@@ -282,11 +282,11 @@ describe('Electron OAuth flow', () => {
       expect(await resultPromise).toBeNull();
     });
 
-    it('uses the Electron server port in the authorization URL redirect_uri', async () => {
+    it('uses the caller-supplied redirect URL in the authorization URL redirect_uri', async () => {
       const resultPromise = openAuthorizationWindowPlain(
         'https://auth.example.com/authorize',
         'client-id',
-        'http://localhost:3000/callback', // should be overridden
+        'http://localhost:9999/oauth/callback',
         [],
       );
 
@@ -355,11 +355,11 @@ describe('Electron OAuth flow', () => {
       expect(await resultPromise).toBeNull();
     });
 
-    it('uses the Electron server port in the authorization URL redirect_uri', async () => {
+    it('uses the caller-supplied redirect URL in the authorization URL redirect_uri', async () => {
       const resultPromise = openAuthorizationWindow(
         'https://auth.example.com/authorize',
         'client-id',
-        'http://localhost:3000/callback',
+        'http://localhost:9999/oauth/callback',
         [],
       );
 

@@ -151,7 +151,12 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
       const authVars = { ...appState.globalVariables, ...getEnvironmentVars() };
       const resolvedAuthUrl = resolveVariables(config.authorizationUrl, authVars);
       const resolvedClientId = resolveVariables(config.clientId, authVars);
-      const resolvedRedirectUrl = resolveVariables(config.redirectUrl || 'http://localhost:3000/oauth/callback', authVars);
+      const _electronPort = (window as any).electronAPI?.serverPort ?? 3001;
+      const _isElectron = !!(window as any).electronAPI;
+      const _defaultRedirectUrl = _isElectron
+        ? `http://localhost:${_electronPort}/oauth/callback`
+        : `${window.location.origin}/oauth/callback`;
+      const resolvedRedirectUrl = resolveVariables(config.redirectUrl || _defaultRedirectUrl, authVars);
       const resolvedScopes = (config.scopes ?? []).map(s => resolveVariables(s, authVars));
       const resolvedAuthParams = (config.authorizationParams ?? []).map(p => ({
         key: resolveVariables(p.key, authVars),
@@ -182,7 +187,7 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          oauth2Config: { ...config },
+          oauth2Config: { ...config, redirectUrl: resolvedRedirectUrl },
           authorizationCode: result.code,
           codeVerifier: result.codeVerifier,
           environment: { ...appState.globalVariables, ...getEnvironmentVars() },

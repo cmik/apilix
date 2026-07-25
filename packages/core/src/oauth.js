@@ -201,7 +201,7 @@ async function exchangeAuthorizationCodeForToken(oauth2Config, authorizationCode
     grant_type: 'authorization_code',
     client_id: clientId,
     code: authorizationCode,
-    redirect_uri: redirectUrl || 'http://localhost:3000/oauth/callback',
+    redirect_uri: redirectUrl || 'http://localhost:3001/oauth/callback',
   });
 
   // Add client_secret if confidential client

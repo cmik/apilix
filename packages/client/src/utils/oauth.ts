@@ -187,8 +187,7 @@ export async function openAuthorizationWindowPlain(
 
   if (isElectron()) {
     const base = getElectronServerBase();
-    const effectiveRedirectUrl = `${base}/oauth/callback`;
-    const electronUrl = buildAuthorizationUrl(authorizationUrl, clientId, effectiveRedirectUrl, scopes, state, '', authorizationParams);
+    const electronUrl = buildAuthorizationUrl(authorizationUrl, clientId, redirectUrl, scopes, state, '', authorizationParams);
     // Open SSE stream BEFORE launching browser so server is ready when callback arrives
     const ssePromise = waitForCodeViaSSE(state, `${base}/api`);
     window.open(electronUrl);  // Electron routes this to shell.openExternal; return value intentionally ignored
@@ -264,8 +263,7 @@ export async function openAuthorizationWindow(
 
   if (isElectron()) {
     const base = getElectronServerBase();
-    const effectiveRedirectUrl = `${base}/oauth/callback`;
-    const electronUrl = buildAuthorizationUrl(authorizationUrl, clientId, effectiveRedirectUrl, scopes, state, challenge, authorizationParams);
+    const electronUrl = buildAuthorizationUrl(authorizationUrl, clientId, redirectUrl, scopes, state, challenge, authorizationParams);
     // Open SSE stream BEFORE launching browser so server is ready when callback arrives
     const ssePromise = waitForCodeViaSSE(state, `${base}/api`);
     window.open(electronUrl);  // Electron routes this to shell.openExternal; return value intentionally ignored
