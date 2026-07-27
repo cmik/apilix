@@ -20,6 +20,7 @@ import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
 import ScriptTab from './ScriptTab';
 import ScriptEditor from './ScriptEditor';
 import OAuthConfigPanel from './OAuthConfigPanel';
+import { useToast } from './Toast';
 import { IconRequests } from './Icons';
 import type { SaveExistingRequestTabsResult, UnsavedRequestTabSummary } from '../utils/requestTabSyncGuard';
 import { buildAllVariableSuggestions, DYNAMIC_VARIABLE_SUGGESTIONS, type VariableSuggestion } from '../utils/variableAutocomplete';
@@ -919,6 +920,7 @@ interface RequestBuilderProps {
 
 export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: RequestBuilderProps) {
   const { state, dispatch, getEnvironmentVars, getCollectionVars } = useApp();
+  const toast = useToast();
 
   const activeTab = state.tabs.find(t => t.id === state.activeTabId) ?? null;
   const activeTabId = state.activeTabId;
@@ -1777,7 +1779,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     const config = edit.authOAuth2Config;
     
     if (!config.authorizationUrl || !config.clientId || !config.tokenUrl) {
-      window.alert('Missing required fields: Authorization URL, Client ID, or Token URL');
+      toast.error('Missing required fields: Authorization URL, Client ID, or Token URL');
       return;
     }
 
@@ -1815,7 +1817,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
           ));
 
       if (!result) {
-        window.alert('Authorization was cancelled or the popup was blocked.');
+        toast.error('Authorization was cancelled or the popup was blocked.');
         return;
       }
 
@@ -1854,12 +1856,12 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
           },
         } : e);
 
-        window.alert('Authorization successful! Token has been obtained.');
+        toast.success('Authorization successful! Token has been obtained.');
       } catch (err) {
-        window.alert(`Failed to exchange authorization code: ${(err as Error).message}`);
+        toast.error(`Failed to exchange authorization code: ${(err as Error).message}`);
       }
     } catch (err) {
-      window.alert(`Failed to get authorization code: ${(err as Error).message}`);
+      toast.error(`Failed to get authorization code: ${(err as Error).message}`);
     }
   }
 
@@ -1868,7 +1870,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     const config = edit.authOAuth2Config;
 
     if (!config.tokenUrl || !config.clientId) {
-      window.alert('Missing required fields: Token URL or Client ID');
+      toast.error('Missing required fields: Token URL or Client ID');
       return;
     }
 
@@ -1900,9 +1902,9 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
         },
       } : e);
 
-      window.alert('Token refreshed successfully!');
+      toast.success('Token refreshed successfully!');
     } catch (err) {
-      window.alert(`Failed to refresh token: ${(err as Error).message}`);
+      toast.error(`Failed to refresh token: ${(err as Error).message}`);
     }
   }
 

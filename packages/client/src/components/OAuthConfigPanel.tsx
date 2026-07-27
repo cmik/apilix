@@ -246,11 +246,11 @@ export default function OAuthConfigPanel({
                 </svg>
               </button>
             </div>
-            <input
-              type="text"
+            <VarInput
               value={config.redirectUrl ?? ''}
-              onChange={e => handleRedirectUrlChange(e.target.value)}
+              onChange={handleRedirectUrlChange}
               placeholder={defaultRedirectUrl}
+              variableSuggestions={variableSuggestions}
               className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 placeholder:text-slate-500"
             />
             <p className="text-xs text-slate-500">
