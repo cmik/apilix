@@ -4,6 +4,7 @@ import type { CollectionAuth, CollectionEvent, CollectionVariable, OAuth2Config 
 import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
 import ScriptEditor from './ScriptEditor';
 import OAuthConfigPanel from './OAuthConfigPanel';
+import { useToast } from './Toast';
 import { API_BASE } from '../api';
 import { openAuthorizationWindow, openAuthorizationWindowPlain } from '../utils/oauth';
 import { resolveVariables } from '../utils/variableResolver';
@@ -49,6 +50,7 @@ function patchEvents(
 
 export default function ItemSettingsModal({ kind, name, auth, event, description: initialDescription, variables: initialVariables, requestNames, requestItems, onSave, onClose, variableSuggestions }: Props) {
   const { state: appState, getEnvironmentVars } = useApp();
+  const toast = useToast();
   const initialAuthType: AuthType = SUPPORTED_AUTH.includes(auth?.type ?? 'noauth')
     ? (auth?.type ?? (kind === 'folder' ? 'inherit' : 'noauth'))
     : (kind === 'folder' ? 'inherit' : 'noauth');
@@ -142,7 +144,7 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
   async function handleGetAuthorizationCode() {
     const config = authOAuth2Config;
     if (!config.authorizationUrl || !config.clientId || !config.tokenUrl) {
-      window.alert('Missing required fields: Authorization URL, Client ID, or Token URL');
+      toast.error('Missing required fields: Authorization URL, Client ID, or Token URL');
       return;
     }
     setIsGettingAuthCode(true);
@@ -180,7 +182,7 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
             resolvedAuthParams
           ));
       if (!result) {
-        window.alert('Authorization was cancelled or the popup was blocked.');
+        toast.error('Authorization was cancelled or the popup was blocked.');
         return;
       }
       const response = await fetch(`${API_BASE}/oauth/exchange-code`, {
@@ -205,9 +207,9 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
         expiresAt,
         codeVerifier: undefined,
       }));
-      window.alert('Authorization successful! Token has been obtained.');
+      toast.success('Authorization successful! Token has been obtained.');
     } catch (err) {
-      window.alert(`Failed to get authorization code: ${(err as Error).message}`);
+      toast.error(`Failed to get authorization code: ${(err as Error).message}`);
     } finally {
       setIsGettingAuthCode(false);
     }
@@ -216,7 +218,7 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
   async function handleRefreshOAuthToken() {
     const config = authOAuth2Config;
     if (!config.tokenUrl || !config.clientId) {
-      window.alert('Missing required fields: Token URL or Client ID');
+      toast.error('Missing required fields: Token URL or Client ID');
       return;
     }
     setIsRefreshingToken(true);
@@ -237,9 +239,9 @@ export default function ItemSettingsModal({ kind, name, auth, event, description
         ...(refreshToken && { refreshToken }),
         expiresAt,
       }));
-      window.alert('Token refreshed successfully!');
+      toast.success('Token refreshed successfully!');
     } catch (err) {
-      window.alert(`Failed to refresh token: ${(err as Error).message}`);
+      toast.error(`Failed to refresh token: ${(err as Error).message}`);
     } finally {
       setIsRefreshingToken(false);
     }
