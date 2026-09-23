@@ -4,6 +4,7 @@
  */
 
 const { MongoClient } = require('mongodb');
+const { parseExtendedJson } = require('./mongo-json');
 
 class MongoEngine {
   constructor() {
@@ -114,7 +115,7 @@ class MongoEngine {
       let filter = {};
       if (query && query.trim()) {
         try {
-          filter = JSON.parse(query);
+          filter = parseExtendedJson(query);
         } catch (e) {
           return {
             success: false,
@@ -168,7 +169,7 @@ class MongoEngine {
       let pipeline = [];
       if (pipelineJson && pipelineJson.trim()) {
         try {
-          const parsed = JSON.parse(pipelineJson);
+          const parsed = parseExtendedJson(pipelineJson);
           pipeline = Array.isArray(parsed) ? parsed : [parsed];
         } catch (e) {
           return {

@@ -23,6 +23,7 @@ Apilix supports sending requests directly to MongoDB databases in addition to HT
   - [Database and Collection Discovery](#database-and-collection-discovery)
   - [Creating a MongoDB Request](#creating-a-mongodb-request)
   - [Operations](#operations)
+    - [Extended JSON: ObjectId and Date values](#extended-json-objectid-and-date-values)
     - [find](#find)
     - [aggregate](#aggregate)
     - [insert](#insert)
@@ -283,6 +284,33 @@ The response panel shows the returned documents as formatted JSON. The **Console
 
 All operation-specific fields are provided as **JSON strings** that are parsed at send time. `{{variable}}` tokens inside these strings are resolved before parsing.
 
+### Extended JSON: ObjectId and Date values
+
+Plain JSON has no way to express a BSON `ObjectId` or `Date`. Apilix recognizes two Extended-JSON-style conventions inside `filter`, `projection`, `sort`, `pipeline`, `documents`, and `update` fields to bridge that gap — these apply to every operation below except `script`, which uses native JavaScript `ObjectId`/`Date` instead (see the [script](#script) section).
+
+| Convention | Converts to |
+|---|---|
+| `{ "$oid": "<24-hex-char string>" }` | BSON `ObjectId` |
+| `{ "$date": "<ISO-8601 string>" }` or `{ "$date": <epoch-millis number> }` | BSON `Date` |
+
+Each must be the **only** key in its object — `{ "$date": "...", "extra": 1 }` is left as a plain object, not converted. An unparseable `$date` value (e.g. `{ "$date": "not-a-date" }`) throws a request-time error rather than silently producing an invalid date.
+
+For convenience, mongo-shell-style constructor syntax is also accepted and automatically rewritten before parsing, so filters copy-pasted from `mongosh` work as-is:
+
+```text
+ObjectId("507f1f77bcf86cd799439011")   →   { "$oid": "507f1f77bcf86cd799439011" }
+new ObjectId("507f1f77bcf86cd799439011")
+
+ISODate("2024-01-01T00:00:00Z")        →   { "$date": "2024-01-01T00:00:00Z" }
+new ISODate("2024-01-01T00:00:00Z")
+```
+
+Example combining both, used as an `update` filter:
+
+```json
+{ "_id": ObjectId("507f1f77bcf86cd799439011"), "createdAt": { "$gte": { "$date": "2024-01-01T00:00:00Z" } } }
+```
+
 ### find
 
 Retrieve documents matching a filter.
@@ -360,7 +388,7 @@ Update one or many matching documents.
   "collection": "orders",
   "operation": "update",
   "filter": "{ \"orderId\": \"{{orderId}}\" }",
-  "update": "{ \"$set\": { \"status\": \"shipped\" } }",
+  "update": "{ \"$set\": { \"status\": \"shipped\", \"updatedAt\": { \"$date\": \"2024-01-01T00:00:00Z\" } } }",
   "updateMode": "one"
 }
 ```
@@ -385,6 +413,8 @@ Delete one or many matching documents.
   "deleteMode": "many"
 }
 ```
+
+> This example compares `expiresAt` against a raw numeric epoch value substituted from `{{now}}`, which only matches if `expiresAt` itself is stored as a number. To compare against a real BSON Date, use `{ "$date": ... }` instead — see [Extended JSON](#extended-json-objectid-and-date-values).
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -543,7 +573,7 @@ Resolve the query first:
 | `ObjectId` | BSON `ObjectId` constructor |
 | `BSON.ObjectId` | Alias for `ObjectId` |
 | `result` | Output variable — set this to the value you want returned |
-| `Date` | JavaScript `Date` constructor — use `new Date('2024-01-01')` for BSON date comparisons |
+| `Date` | Native JavaScript `Date` constructor, available only inside `script` operations — use `new Date('2024-01-01')` directly. JSON-based operations (`find`, `update`, etc.) use the `{ "$date": ... }` Extended JSON convention instead — see [Extended JSON](#extended-json-objectid-and-date-values). |
 | `Math` | Standard `Math` object (`Math.floor`, `Math.random`, etc.) |
 | `JSON` | Standard `JSON` object for serialization (`JSON.stringify`, `JSON.parse`) |
 | `Array`, `Object`, `Number`, `String`, `Boolean`, `RegExp`, `Error` | Standard ECMAScript constructors |
@@ -614,6 +644,12 @@ All `{{variable}}` tokens inside the `mongodb` configuration object are resolved
 
 ```json
 "filter": "{ \"userId\": \"{{currentUserId}}\", \"age\": { \"$gt\": {{minAge}} } }"
+```
+
+Substitution happens before parsing, so it composes with the Extended JSON conventions too — `{{startDate}}` below would resolve to an ISO-8601 string from an environment or collection variable, and the resulting `$date` object is converted to a real BSON `Date` after substitution:
+
+```json
+"filter": "{ \"createdAt\": { \"$gte\": { \"$date\": \"{{startDate}}\" } } }"
 ```
 
 This lets you parameterise any field — database name, collection name, filter values, pipeline stages, or script code — using the standard environment/globals/data-row system.
