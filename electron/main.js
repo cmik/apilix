@@ -189,7 +189,7 @@ ipcMain.handle('save-response-file', async (_event, { defaultPath, content }) =>
     defaultPath,
   });
   if (result.canceled || !result.filePath) return { canceled: true };
-  await fs.promises.writeFile(result.filePath, content, 'utf8');
+  await fs.promises.writeFile(result.filePath, content);
   return { canceled: false, filePath: result.filePath };
 });
 

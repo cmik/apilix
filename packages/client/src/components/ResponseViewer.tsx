@@ -787,8 +787,12 @@ export default function ResponseViewer() {
   const handleSaveToFile = async () => {
     if (!response || saveState === 'saving') return;
     setSaveState('saving');
-    const filename = buildSuggestedFilename(response.headers);
-    const result = await saveResponseToFile(filename, response.body);
+    const filename = buildSuggestedFilename(response.headers, !!response.bodyBase64);
+    const binaryBody = response.bodyBase64
+      ? Uint8Array.from(atob(response.bodyBase64), char => char.charCodeAt(0))
+      : response.body;
+    const contentType = response.headers?.['content-type'] ?? response.headers?.['Content-Type'];
+    const result = await saveResponseToFile(filename, binaryBody, contentType);
     if (!result.ok) {
       setSaveState('error');
     } else if (result.canceled) {
