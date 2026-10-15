@@ -46,19 +46,19 @@ test('parseJsonObject: trailing comma is accepted', () => {
 });
 
 test('parseJsonObject: ObjectId() function-call syntax is converted to BSON ObjectId', () => {
-  const parsed = parseJsonObject('{ _id: ObjectId("507f1f77bcf86cd799439011") }', {});
+  const parsed = parseJsonObject('{ _id: ObjectId("507f1f77bcf86cd799439011") }', {}, { extended: true });
   assert.ok(parsed._id instanceof ObjectId);
   assert.equal(parsed._id.toHexString(), '507f1f77bcf86cd799439011');
 });
 
 test('parseJsonObject: new ObjectId() syntax is converted to BSON ObjectId', () => {
-  const parsed = parseJsonObject('{ _id: new ObjectId("507f1f77bcf86cd799439012") }', {});
+  const parsed = parseJsonObject('{ _id: new ObjectId("507f1f77bcf86cd799439012") }', {}, { extended: true });
   assert.ok(parsed._id instanceof ObjectId);
   assert.equal(parsed._id.toHexString(), '507f1f77bcf86cd799439012');
 });
 
 test('parseJsonObject: Extended JSON $oid is converted to BSON ObjectId', () => {
-  const parsed = parseJsonObject('{ _id: { $oid: "507f1f77bcf86cd799439013" } }', {});
+  const parsed = parseJsonObject('{ _id: { $oid: "507f1f77bcf86cd799439013" } }', {}, { extended: true });
   assert.ok(parsed._id instanceof ObjectId);
   assert.equal(parsed._id.toHexString(), '507f1f77bcf86cd799439013');
 });
@@ -92,45 +92,45 @@ test('parseJsonObject: strict mode throws when parsed value is not an object', (
 // ─── parseJsonObject: $date ────────────────────────────────────────────────────
 
 test('parseJsonObject: Extended JSON $date (ISO string) is converted to a real Date', () => {
-  const parsed = parseJsonObject('{ createdAt: { $date: "2024-01-01T00:00:00.000Z" } }', {});
+  const parsed = parseJsonObject('{ createdAt: { $date: "2024-01-01T00:00:00.000Z" } }', {}, { extended: true });
   assert.ok(parsed.createdAt instanceof Date);
   assert.equal(parsed.createdAt.toISOString(), '2024-01-01T00:00:00.000Z');
 });
 
 test('parseJsonObject: Extended JSON $date (epoch millis) is converted to a real Date', () => {
-  const parsed = parseJsonObject('{ createdAt: { $date: 1704067200000 } }', {});
+  const parsed = parseJsonObject('{ createdAt: { $date: 1704067200000 } }', {}, { extended: true });
   assert.ok(parsed.createdAt instanceof Date);
   assert.equal(parsed.createdAt.getTime(), 1704067200000);
 });
 
 test('parseJsonObject: $date object with extra keys is left unconverted', () => {
-  const parsed = parseJsonObject('{ createdAt: { $date: "2024-01-01T00:00:00.000Z", extra: 1 } }', {});
-  assert.equal(parsed.createdAt instanceof Date, false);
-  assert.deepEqual(parsed.createdAt, { $date: '2024-01-01T00:00:00.000Z', extra: 1 });
+  const parsed = parseJsonObject('{ createdAt: { $date: "2024-01-01T00:00:00.000Z", extra: 1 } }', {}, { extended: true });
+  assert.equal(parsed.createdAt.$date, '2024-01-01T00:00:00.000Z');
+  assert.equal(parsed.createdAt.extra, 1);
 });
 
 test('parseJsonObject: strict mode throws a clear error for an unparseable $date string', () => {
   assert.throws(
-    () => parseJsonObject('{ createdAt: { $date: "not-a-date" } }', {}, { strict: true, label: 'Mongo find filter JSON/JSON5' }),
+    () => parseJsonObject('{ createdAt: { $date: "not-a-date" } }', {}, { strict: true, label: 'Mongo find filter JSON/JSON5', extended: true }),
     /Invalid Mongo find filter JSON\/JSON5: .*Invalid \$date value/,
   );
 });
 
 test('parseJsonObject: strict mode throws a clear error for a non-string/non-number $date value', () => {
   assert.throws(
-    () => parseJsonObject('{ createdAt: { $date: { nested: true } } }', {}, { strict: true, label: 'Mongo find filter JSON/JSON5' }),
+    () => parseJsonObject('{ createdAt: { $date: { nested: true } } }', {}, { strict: true, label: 'Mongo find filter JSON/JSON5', extended: true }),
     /Invalid Mongo find filter JSON\/JSON5: .*Invalid \$date value/,
   );
 });
 
 test('parseJsonObject: ISODate() function-call syntax is converted to a real Date', () => {
-  const parsed = parseJsonObject('{ createdAt: ISODate("2024-01-01T00:00:00.000Z") }', {});
+  const parsed = parseJsonObject('{ createdAt: ISODate("2024-01-01T00:00:00.000Z") }', {}, { extended: true });
   assert.ok(parsed.createdAt instanceof Date);
   assert.equal(parsed.createdAt.toISOString(), '2024-01-01T00:00:00.000Z');
 });
 
 test('parseJsonObject: new ISODate() syntax is converted to a real Date', () => {
-  const parsed = parseJsonObject('{ createdAt: new ISODate("2024-02-01T00:00:00.000Z") }', {});
+  const parsed = parseJsonObject('{ createdAt: new ISODate("2024-02-01T00:00:00.000Z") }', {}, { extended: true });
   assert.ok(parsed.createdAt instanceof Date);
   assert.equal(parsed.createdAt.toISOString(), '2024-02-01T00:00:00.000Z');
 });
@@ -139,6 +139,7 @@ test('parseJsonObject: ObjectId() and ISODate() together in the same filter both
   const parsed = parseJsonObject(
     '{ _id: ObjectId("507f1f77bcf86cd799439011"), createdAt: { $gte: ISODate("2024-01-01T00:00:00.000Z") } }',
     {},
+    { extended: true },
   );
   assert.ok(parsed._id instanceof ObjectId);
   assert.equal(parsed._id.toHexString(), '507f1f77bcf86cd799439011');
@@ -150,6 +151,7 @@ test('parseJsonObject: $oid and $date nested inside $and both convert', () => {
   const parsed = parseJsonObject(
     '{ $and: [ { _id: { $oid: "507f1f77bcf86cd799439011" } }, { createdAt: { $date: "2024-01-01T00:00:00.000Z" } } ] }',
     {},
+    { extended: true },
   );
   assert.ok(parsed.$and[0]._id instanceof ObjectId);
   assert.ok(parsed.$and[1].createdAt instanceof Date);
@@ -188,7 +190,29 @@ test('parseJsonArray: $date inside an aggregation $match stage converts correctl
   const parsed = parseJsonArray(
     '[{ $match: { createdAt: { $gte: { $date: "2024-01-01T00:00:00.000Z" } } } }]',
     [],
+    { extended: true },
   );
   assert.ok(parsed[0].$match.createdAt.$gte instanceof Date);
   assert.equal(parsed[0].$match.createdAt.$gte.toISOString(), '2024-01-01T00:00:00.000Z');
+});
+
+// ─── Plain JSON preservation (non-Mongo) ──────────────────────────────────────
+
+test('parseJsonArray: $date is preserved as a plain object when extended is not set', () => {
+  const parsed = parseJsonArray('[{"$date":"2024-01-01"}]', []);
+  assert.ok(Array.isArray(parsed));
+  assert.ok(typeof parsed[0].$date === 'string');
+  assert.equal(parsed[0].$date, '2024-01-01');
+});
+
+test('parseJsonObject: DynamoDB AttributeValue format is preserved when extended is not set', () => {
+  const parsed = parseJsonObject('{"Item":{"$date":{"S":"x"}}}', {});
+  assert.ok(parsed.Item);
+  assert.ok(parsed.Item.$date);
+  assert.equal(parsed.Item.$date.S, 'x');
+});
+
+test('parseJsonArray: $oid is preserved as a plain object when extended is not set', () => {
+  const parsed = parseJsonArray('[{"id":{"$oid":"507f1f77bcf86cd799439011"}}]', []);
+  assert.ok(typeof parsed[0].id.$oid === 'string');
 });

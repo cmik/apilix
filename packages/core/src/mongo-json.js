@@ -179,11 +179,21 @@ function parseExtendedJson(text) {
   return convertExtendedMongoTypes(parseMongoLikeJson(text));
 }
 
+// Parse JSON/JSON5 with optional Extended JSON ($oid, $date) conversion.
+// Only Mongo operations should set extended:true to preserve JSON shape for SQL/Redis/DynamoDB payloads.
+function parseJsonValue(text, options = {}) {
+  const { extended = false } = options;
+  if (extended) {
+    return parseExtendedJson(text);
+  }
+  return JSON5.parse(String(text));
+}
+
 function parseJsonObject(text, fallback = {}, options = {}) {
-  const { strict = false, label = 'JSON object' } = options;
+  const { strict = false, label = 'JSON object', extended = false } = options;
   if (!text || !String(text).trim()) return fallback;
   try {
-    const parsed = parseExtendedJson(text);
+    const parsed = parseJsonValue(text, { extended });
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return parsed;
     }
@@ -201,10 +211,10 @@ function parseJsonObject(text, fallback = {}, options = {}) {
 }
 
 function parseJsonArray(text, fallback = [], options = {}) {
-  const { strict = false, label = 'JSON array' } = options;
+  const { strict = false, label = 'JSON array', extended = false } = options;
   if (!text || !String(text).trim()) return fallback;
   try {
-    const parsed = parseExtendedJson(text);
+    const parsed = parseJsonValue(text, { extended });
     if (Array.isArray(parsed)) {
       return parsed;
     }
