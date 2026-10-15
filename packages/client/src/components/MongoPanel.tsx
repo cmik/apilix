@@ -364,7 +364,7 @@ export default function MongoPanel({ value, onChange, variableSuggestions, datab
           <JsonTextarea
             label="Filter"
             value={cfg.filter ?? '{}'}
-            placeholder='{ "status": "active" }'
+            placeholder='{ "status": "active", "createdAt": { "$gte": { "$date": "2024-01-01T00:00:00Z" } } }'
             rows={3}
             hint="supports {{variables}}"
             noValidate
@@ -476,7 +476,7 @@ export default function MongoPanel({ value, onChange, variableSuggestions, datab
           <JsonTextarea
             label="Update"
             value={cfg.update ?? '{}'}
-            placeholder='{ "$set": { "status": "active" } }'
+            placeholder='{ "$set": { "status": "active", "updatedAt": { "$date": "2024-01-01T00:00:00Z" } } }'
             rows={3}
             hint="must use update operators ($set, $inc, …)"
             onChange={v => update({ update: v })}

@@ -5,199 +5,26 @@ const http = require('http');
 const https = require('https');
 const FormData = require('form-data');
 const vm = require('vm');
-const JSON5 = require('json5');
 const { MongoClient, ObjectId } = require('mongodb');
 const { runScript } = require('./script-runtime');
 const { refreshOAuth2Token } = require('./oauth');
 const { makeHttpsAgent } = require('./tls-utils');
+const { parseJsonObject, parseJsonArray } = require('./mongo-json');
 
 const MAX_RESULT_BYTES = 10 * 1024 * 1024;
 const MAX_RUNTIME_MS = 1800 * 1000;
 const DEFAULT_MONGO_LIMIT = 50;
 
-function looksLikeHexObjectId(value) {
-  return typeof value === 'string' && /^[a-fA-F0-9]{24}$/.test(value);
-}
-
-function convertExtendedMongoTypes(value) {
-  if (Array.isArray(value)) {
-    return value.map(convertExtendedMongoTypes);
-  }
-  if (!value || typeof value !== 'object') {
-    return value;
-  }
-
-  if (Object.keys(value).length === 1 && Object.prototype.hasOwnProperty.call(value, '$oid')) {
-    const oid = value.$oid;
-    if (looksLikeHexObjectId(oid)) {
-      return new ObjectId(oid);
-    }
-    return value;
-  }
-
-  const out = {};
-  for (const [k, v] of Object.entries(value)) {
-    out[k] = convertExtendedMongoTypes(v);
-  }
-  return out;
-}
-
-function rewriteObjectIdCalls(text) {
-  const src = String(text);
-  const len = src.length;
-  let i = 0;
-  let inString = false;
-  let quote = '';
-  let escaped = false;
-  let out = '';
-
-  while (i < len) {
-    const ch = src[i];
-    if (inString) {
-      out += ch;
-      if (escaped) {
-        escaped = false;
-      } else if (ch === '\\') {
-        escaped = true;
-      } else if (ch === quote) {
-        inString = false;
-        quote = '';
-      }
-      i += 1;
-      continue;
-    }
-
-    if (ch === '"' || ch === "'") {
-      inString = true;
-      quote = ch;
-      out += ch;
-      i += 1;
-      continue;
-    }
-
-    const isNew = src.startsWith('new', i) && (i === 0 || !/[A-Za-z0-9_$]/.test(src[i - 1])) && (i + 3 >= len || /\s/.test(src[i + 3]));
-    let fnStart = isNew ? i + 3 : i;
-    if (isNew) {
-      while (fnStart < len && /\s/.test(src[fnStart])) fnStart += 1;
-    }
-    if (!src.startsWith('ObjectId', fnStart) || (fnStart > 0 && /[A-Za-z0-9_$]/.test(src[fnStart - 1]))) {
-      out += ch;
-      i += 1;
-      continue;
-    }
-
-    let j = fnStart + 'ObjectId'.length;
-    while (j < len && /\s/.test(src[j])) j += 1;
-    if (j >= len || src[j] !== '(') {
-      out += ch;
-      i += 1;
-      continue;
-    }
-    j += 1;
-    while (j < len && /\s/.test(src[j])) j += 1;
-    if (j >= len || (src[j] !== '"' && src[j] !== "'")) {
-      out += ch;
-      i += 1;
-      continue;
-    }
-
-    const strQuote = src[j];
-    j += 1;
-    const valueStart = j;
-    let strEscaped = false;
-    while (j < len) {
-      const c = src[j];
-      if (strEscaped) {
-        strEscaped = false;
-        j += 1;
-        continue;
-      }
-      if (c === '\\') {
-        strEscaped = true;
-        j += 1;
-        continue;
-      }
-      if (c === strQuote) break;
-      j += 1;
-    }
-    if (j >= len) {
-      out += ch;
-      i += 1;
-      continue;
-    }
-    const rawValue = src.slice(valueStart, j);
-    j += 1;
-    while (j < len && /\s/.test(src[j])) j += 1;
-    if (j >= len || src[j] !== ')') {
-      out += ch;
-      i += 1;
-      continue;
-    }
-
-    if (!looksLikeHexObjectId(rawValue)) {
-      out += ch;
-      i += 1;
-      continue;
-    }
-
-    const replacement = `{ "$oid": "${rawValue}" }`;
-    out += replacement;
-    i = j + 1;
-  }
-
-  return out;
-}
-
-function parseMongoLikeJson(text) {
-  try {
-    return JSON5.parse(String(text));
-  } catch (err) {
-    const rewritten = rewriteObjectIdCalls(text);
-    if (rewritten === String(text)) throw err;
-    return JSON5.parse(rewritten);
-  }
-}
-
-function parseJsonObject(text, fallback = {}, options = {}) {
-  const { strict = false, label = 'JSON object' } = options;
-  if (!text || !String(text).trim()) return fallback;
-  try {
-    const parsed = convertExtendedMongoTypes(parseMongoLikeJson(text));
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed;
-    }
-    if (strict) {
-      throw new Error(`${label} must be an object`);
-    }
-    return fallback;
-  } catch (err) {
-    if (strict) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Invalid ${label}: ${message}`);
-    }
-    return fallback;
-  }
-}
-
-function parseJsonArray(text, fallback = [], options = {}) {
-  const { strict = false, label = 'JSON array' } = options;
-  if (!text || !String(text).trim()) return fallback;
-  try {
-    const parsed = convertExtendedMongoTypes(parseMongoLikeJson(text));
-    if (Array.isArray(parsed)) {
-      return parsed;
-    }
-    if (strict) {
-      throw new Error(`${label} must be an array`);
-    }
-    return fallback;
-  } catch (err) {
-    if (strict) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Invalid ${label}: ${message}`);
-    }
-    return fallback;
-  }
+function isTextResponse(contentType) {
+  const mediaType = String(contentType || '').split(';', 1)[0].trim().toLowerCase();
+  return mediaType.startsWith('text/') || /^application\/(?:[^/]+\+)?(?:json|xml)$/.test(mediaType) || [
+    'application/javascript',
+    'application/x-javascript',
+    'application/graphql',
+    'application/x-www-form-urlencoded',
+    'application/yaml',
+    'application/x-yaml',
+  ].includes(mediaType);
 }
 
 function parseMongoOperationInput(mongoCfg, vars, maxTimeMS, preResolvedScript) {
@@ -227,14 +54,17 @@ function parseMongoOperationInput(mongoCfg, vars, maxTimeMS, preResolvedScript) 
         filter: parseJsonObject(resolveVariables(mongoCfg.filter || '{}', vars), {}, {
           strict: true,
           label: 'Mongo find filter JSON/JSON5',
+          extended: true,
         }),
         projection: parseJsonObject(resolveVariables(mongoCfg.projection || '{}', vars), undefined, {
           strict: true,
           label: 'Mongo find projection JSON/JSON5',
+          extended: true,
         }),
         sort: parseJsonObject(resolveVariables(mongoCfg.sort || '{}', vars), undefined, {
           strict: true,
           label: 'Mongo find sort JSON/JSON5',
+          extended: true,
         }),
         skip: Math.max(0, parseInt(mongoCfg.skip, 10) || 0),
       },
@@ -250,6 +80,7 @@ function parseMongoOperationInput(mongoCfg, vars, maxTimeMS, preResolvedScript) 
         pipeline: parseJsonArray(resolveVariables(mongoCfg.pipeline || '[]', vars), [], {
           strict: true,
           label: 'Mongo aggregate pipeline JSON/JSON5',
+          extended: true,
         }),
       },
     };
@@ -259,6 +90,7 @@ function parseMongoOperationInput(mongoCfg, vars, maxTimeMS, preResolvedScript) 
     const docs = parseJsonArray(resolveVariables(mongoCfg.documents || '[]', vars), [], {
       strict: true,
       label: 'Mongo insert documents JSON/JSON5',
+      extended: true,
     });
     if (docs.length === 0) throw new Error('Mongo insert requires at least one document');
     return { operation, collectionName, limit, insert: { docs } };
@@ -268,10 +100,12 @@ function parseMongoOperationInput(mongoCfg, vars, maxTimeMS, preResolvedScript) 
     const filter = parseJsonObject(resolveVariables(mongoCfg.filter || '{}', vars), {}, {
       strict: true,
       label: 'Mongo update filter JSON/JSON5',
+      extended: true,
     });
     const update = parseJsonObject(resolveVariables(mongoCfg.update || '{}', vars), {}, {
       strict: true,
       label: 'Mongo update document JSON/JSON5',
+      extended: true,
     });
     if (!update || Object.keys(update).length === 0) throw new Error('Mongo update requires an update document');
     return { operation, collectionName, limit, update: { filter, update } };
@@ -286,6 +120,7 @@ function parseMongoOperationInput(mongoCfg, vars, maxTimeMS, preResolvedScript) 
         filter: parseJsonObject(resolveVariables(mongoCfg.filter || '{}', vars), {}, {
           strict: true,
           label: 'Mongo delete filter JSON/JSON5',
+          extended: true,
         }),
       },
     };
@@ -300,6 +135,7 @@ function parseMongoOperationInput(mongoCfg, vars, maxTimeMS, preResolvedScript) 
         filter: parseJsonObject(resolveVariables(mongoCfg.filter || '{}', vars), {}, {
           strict: true,
           label: 'Mongo count filter JSON/JSON5',
+          extended: true,
         }),
       },
     };
@@ -317,6 +153,7 @@ function parseMongoOperationInput(mongoCfg, vars, maxTimeMS, preResolvedScript) 
         filter: parseJsonObject(resolveVariables(mongoCfg.filter || '{}', vars), {}, {
           strict: true,
           label: 'Mongo distinct filter JSON/JSON5',
+          extended: true,
         }),
       },
     };
@@ -1803,6 +1640,7 @@ async function executeRequest(item, context) {
       const hopStart = Date.now();
       axiosResponse = await httpClient.request({
         method: curMethod, url: curUrl, headers: curHeaders, data: curData,
+        responseType: 'arraybuffer',
         maxRedirects: 0,
         timeout: effectiveConfig.requestTimeout ?? 30000,
         ...agentOpts,
@@ -1848,9 +1686,24 @@ async function executeRequest(item, context) {
       total: responseTime,
     };
 
-    const bodyString = typeof axiosResponse.data === 'string'
+    const responseBytes = Buffer.isBuffer(axiosResponse.data)
       ? axiosResponse.data
-      : JSON.stringify(axiosResponse.data, null, 2);
+      : Buffer.from(axiosResponse.data ?? '');
+    let bodyString = responseBytes.toString('utf8');
+    const responseContentType = axiosResponse.headers?.['content-type'];
+    const isText = isTextResponse(responseContentType);
+    const contentDisposition = axiosResponse.headers?.['content-disposition'] || '';
+    const isDownload = /attachment|filename\*?\s*=/i.test(contentDisposition);
+    const bodyBase64 = isText && !isDownload
+      ? undefined
+      : responseBytes.toString('base64');
+    let jsonData = bodyString;
+    if (isText) {
+      try {
+        jsonData = JSON.parse(bodyString);
+        bodyString = typeof jsonData === 'string' ? jsonData : JSON.stringify(jsonData, null, 2);
+      } catch (_) {}
+    }
 
     // Run test script
     const testScript = (item.event || []).find(e => e.listen === 'test');
@@ -1871,7 +1724,7 @@ async function executeRequest(item, context) {
           responseTime,
           headers: axiosResponse.headers,
           body: bodyString,
-          jsonData: axiosResponse.data,
+          jsonData,
         };
         const scriptDeps = {
           collectionItems,
@@ -1960,7 +1813,8 @@ async function executeRequest(item, context) {
       requestBody: requestBodyStr,
       headers: responseHeaders,
       body: bodyString,
-      size: bodyString.length,
+      bodyBase64,
+      size: responseBytes.length,
       testResults,
       scriptLogs,
       preChildRequests,

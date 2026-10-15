@@ -480,13 +480,16 @@ apx.environment.set('newObjectId', newId);`,
       {
         id: 'mongo-set-filter',
         name: 'Set MongoDB Filter from Env',
-        description: 'Build a MongoDB query filter from environment variables',
-        code: `// Build a MongoDB filter from environment variables
+        description: 'Build a MongoDB query filter with real BSON Date range comparisons from environment variables',
+        code: `// Build a MongoDB filter from environment variables.
+// Use the $date form when the target field is stored as a real BSON Date
+// (this is the common case); use a plain ISO string only if the field
+// itself is stored as a string in your documents.
 const filter = {
   status: apx.environment.get('filterStatus') ?? 'active',
   createdAt: {
-    $gte: apx.environment.get('mongoStartTime') ?? '2024-01-01T00:00:00.000Z',
-    $lt: apx.environment.get('mongoEndTime') ?? new Date().toISOString(),
+    $gte: { $date: apx.environment.get('mongoStartTime') ?? '2024-01-01T00:00:00.000Z' },
+    $lt: { $date: apx.environment.get('mongoEndTime') ?? new Date().toISOString() },
   },
 };
 
@@ -496,12 +499,15 @@ apx.environment.set('mongoFilter', JSON.stringify(filter));`,
       {
         id: 'mongo-set-update',
         name: 'Set MongoDB Update from Env',
-        description: 'Build a MongoDB update document from environment variables',
-        code: `// Build a MongoDB update document
+        description: 'Build a MongoDB update document that sets a real BSON Date field from environment variables',
+        code: `// Build a MongoDB update document.
+// Wrap the timestamp in $date so it becomes a real BSON Date rather than
+// a string — use a plain ISO string only if the field itself is
+// string-typed in your documents.
 const updateDoc = {
   $set: {
     status: apx.environment.get('updateStatus') ?? 'updated',
-    updatedAt: new Date().toISOString(),
+    updatedAt: { $date: new Date().toISOString() },
     updatedBy: apx.environment.get('userId') ?? 'system',
   },
 };
