@@ -173,8 +173,8 @@ async function deriveHmacKey(passphrase: string, salt: Uint8Array): Promise<Cryp
 }
 
 /**
- * Compute an HMAC-SHA-256 over JSON.stringify({sharePolicy, remoteWorkspaceId})
- * using a key derived from the export passphrase + salt.
+ * Compute an HMAC-SHA-256 over share metadata using a key derived from the
+ * export passphrase + salt. Omitting sync options preserves legacy hashes.
  * Returns the MAC as a base64 string.
  */
 export async function computeIntegrityHash(
@@ -182,9 +182,12 @@ export async function computeIntegrityHash(
   remoteWorkspaceId: string,
   passphrase: string,
   salt: Uint8Array,
+  syncOptions?: { syncEnvironments?: boolean; syncGlobalVariables?: boolean },
 ): Promise<string> {
   const hmacKey = await deriveHmacKey(passphrase, salt);
-  const payload = new TextEncoder().encode(JSON.stringify({ sharePolicy, remoteWorkspaceId }));
+  const payload = new TextEncoder().encode(JSON.stringify(syncOptions
+    ? { sharePolicy, remoteWorkspaceId, ...syncOptions }
+    : { sharePolicy, remoteWorkspaceId }));
   const mac = await crypto.subtle.sign('HMAC', hmacKey, payload);
   let binary = '';
   const bytes = new Uint8Array(mac);
@@ -203,11 +206,14 @@ export async function verifyIntegrityHash(
   passphrase: string,
   saltBase64: string,
   expectedHash: string,
+  syncOptions?: { syncEnvironments?: boolean; syncGlobalVariables?: boolean },
 ): Promise<boolean> {
   try {
     const salt = Uint8Array.from(atob(saltBase64), c => c.charCodeAt(0));
     const hmacKey = await deriveHmacKey(passphrase, salt);
-    const payload = new TextEncoder().encode(JSON.stringify({ sharePolicy, remoteWorkspaceId }));
+    const payload = new TextEncoder().encode(JSON.stringify(syncOptions
+      ? { sharePolicy, remoteWorkspaceId, ...syncOptions }
+      : { sharePolicy, remoteWorkspaceId }));
     const expectedBytes = Uint8Array.from(atob(expectedHash), c => c.charCodeAt(0));
     return await crypto.subtle.verify('HMAC', hmacKey, expectedBytes, payload);
   } catch {
@@ -236,6 +242,8 @@ export async function buildSyncExportPackage(
   options?: {
     sharePolicy?: SyncSharePolicy;
     remotePassphrase?: string;
+    syncEnvironments?: boolean;
+    syncGlobalVariables?: boolean;
   },
 ): Promise<SyncExportPackage> {
   const secretKeys = SECRET_FIELDS[provider] ?? [];
@@ -266,6 +274,10 @@ export async function buildSyncExportPackage(
           workingConfig.remoteWorkspaceId ?? '',
           passphrase,
           salt,
+          {
+            syncEnvironments: options.syncEnvironments,
+            syncGlobalVariables: options.syncGlobalVariables,
+          },
         );
       }
       return {
@@ -278,6 +290,8 @@ export async function buildSyncExportPackage(
         encryptedFields,
         salt: saltBase64,
         ...(options?.remotePassphrase ? { remoteEncryption: { enabled: true } } : {}),
+        ...(options?.syncEnvironments !== undefined ? { syncEnvironments: options.syncEnvironments } : {}),
+        ...(options?.syncGlobalVariables !== undefined ? { syncGlobalVariables: options.syncGlobalVariables } : {}),
         ...(options?.sharePolicy ? { sharePolicy: options.sharePolicy } : {}),
         ...(integrityHash ? { integrityHash } : {}),
       };
@@ -299,6 +313,8 @@ export async function buildSyncExportPackage(
     encrypted: false,
     encryptedFields: [],
     ...(options?.remotePassphrase ? { remoteEncryption: { enabled: true } } : {}),
+    ...(options?.syncEnvironments !== undefined ? { syncEnvironments: options.syncEnvironments } : {}),
+    ...(options?.syncGlobalVariables !== undefined ? { syncGlobalVariables: options.syncGlobalVariables } : {}),
     ...(options?.sharePolicy ? { sharePolicy: options.sharePolicy } : {}),
   };
 }
@@ -387,6 +403,8 @@ export function parseSyncExportPackage(raw: unknown): SyncExportPackage {
     remoteEncryption: (obj.remoteEncryption && typeof obj.remoteEncryption === 'object' && typeof (obj.remoteEncryption as Record<string, unknown>).enabled === 'boolean')
       ? { enabled: (obj.remoteEncryption as Record<string, unknown>).enabled as boolean }
       : undefined,
+    syncEnvironments: typeof obj.syncEnvironments === 'boolean' ? obj.syncEnvironments : undefined,
+    syncGlobalVariables: typeof obj.syncGlobalVariables === 'boolean' ? obj.syncGlobalVariables : undefined,
     sharePolicy: (obj.sharePolicy && typeof obj.sharePolicy === 'object' && typeof (obj.sharePolicy as Record<string, unknown>).forceReadOnly === 'boolean' && typeof (obj.sharePolicy as Record<string, unknown>).sharingEnabled === 'boolean')
       ? { forceReadOnly: (obj.sharePolicy as Record<string, unknown>).forceReadOnly as boolean, sharingEnabled: (obj.sharePolicy as Record<string, unknown>).sharingEnabled as boolean }
       : undefined,
