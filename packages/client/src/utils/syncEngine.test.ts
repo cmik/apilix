@@ -19,6 +19,9 @@ vi.mock('./snapshotEngine', () => ({ loadSnapshot: vi.fn(), listHistory: vi.fn()
 import { s3Adapter } from './sync/s3Adapter';
 import { applyMerged, applyScopedLocalOverrides, push } from './syncEngine';
 
+const pullWithMetaMock = vi.mocked(s3Adapter.pullWithMeta!);
+const applyMergedMock = vi.mocked(s3Adapter.applyMerged!);
+
 function makeData(overrides: Partial<WorkspaceData> = {}): WorkspaceData {
   return {
     collections: [],
@@ -77,7 +80,7 @@ describe('sync option scoping', () => {
       activeEnvironmentId: 'env-remote',
       globalVariables: { TOKEN: 'remote-token' },
     });
-    vi.mocked(s3Adapter.pullWithMeta).mockResolvedValue({
+    pullWithMetaMock.mockResolvedValue({
       data: remote,
       remoteState: { timestamp: null, version: null },
     });
@@ -102,15 +105,15 @@ describe('sync option scoping', () => {
       activeEnvironmentId: 'env-remote',
       globalVariables: { TOKEN: 'remote-token' },
     });
-    vi.mocked(s3Adapter.pullWithMeta).mockResolvedValue({
+    pullWithMetaMock.mockResolvedValue({
       data: remote,
       remoteState: { timestamp: null, version: null },
     });
-    vi.mocked(s3Adapter.applyMerged).mockResolvedValue(undefined);
+    applyMergedMock.mockResolvedValue(undefined);
 
     await applyMerged(makeConfig({ syncEnvironments: true }), local, 'remote-version');
 
-    const written = vi.mocked(s3Adapter.applyMerged).mock.calls[0][1] as WorkspaceData;
+    const written = applyMergedMock.mock.calls[0][1] as WorkspaceData;
     expect(written.environments).toEqual(local.environments);
     expect(written.activeEnvironmentId).toBe(local.activeEnvironmentId);
     expect(written.globalVariables).toEqual(remote.globalVariables);
