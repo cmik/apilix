@@ -51,20 +51,23 @@
     "access": "public"
   },
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=22.12.0"
   },
   "scripts": {
     "test": "node --test"
   },
   "dependencies": {
+    "@electron/rebuild": "4.2.1",
     "@xmldom/xmldom": "^0.9.9",
+    "@yao-pkg/pkg": "6.23.0",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
     "axios": "^1.15.2",
-    "csv-parse": "^5.5.3",
+    "csv-parse": "^7.0.3",
     "form-data": "^4.0.0",
     "json5": "^2.2.3",
     "mongodb": "^6.21.0",
+    "simple-git": "4.0.2",
     "xpath": "^0.0.34"
   },
   "optionalDependencies": {

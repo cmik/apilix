@@ -36,9 +36,14 @@ describe('inferExtension', () => {
     expect(inferExtension('text/plain')).toBe('.txt');
   });
 
+  it('returns binary extensions for ZIP and octet-stream responses', () => {
+    expect(inferExtension('application/zip')).toBe('.zip');
+    expect(inferExtension('application/octet-stream')).toBe('.bin');
+  });
+
   it('returns .txt for unknown content types', () => {
-    expect(inferExtension('application/octet-stream')).toBe('.txt');
-    expect(inferExtension('image/png')).toBe('.txt');
+    expect(inferExtension('application/vnd.unknown')).toBe('.bin');
+    expect(inferExtension('image/png')).toBe('.png');
     expect(inferExtension('')).toBe('.txt');
   });
 });
@@ -54,8 +59,14 @@ describe('buildSuggestedFilename', () => {
     expect(buildSuggestedFilename({ 'Content-Type': 'text/xml' })).toBe('response.xml');
   });
 
+  it('uses a sanitized filename from Content-Disposition', () => {
+    expect(buildSuggestedFilename({ 'content-disposition': 'attachment; filename="archive.zip"' })).toBe('archive.zip');
+    expect(buildSuggestedFilename({ 'Content-Disposition': "attachment; filename*=UTF-8''monthly%20report.zip" })).toBe('monthly report.zip');
+  });
+
   it('returns response.txt when headers are undefined', () => {
     expect(buildSuggestedFilename(undefined)).toBe('response.txt');
+    expect(buildSuggestedFilename(undefined, true)).toBe('response.bin');
   });
 
   it('returns response.txt when content-type is missing', () => {
@@ -76,6 +87,16 @@ describe('saveResponseToFile (Electron)', () => {
     const result = await saveResponseToFile('response.json', '{"ok":true}');
     expect(saveResponseFile).toHaveBeenCalledWith('response.json', '{"ok":true}');
     expect(result).toEqual({ ok: true, canceled: false, filePath: '/tmp/response.json' });
+  });
+
+  it('passes binary bytes unchanged to Electron', async () => {
+    const bytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0xff]);
+    const saveResponseFile = vi.fn().mockResolvedValue({ canceled: false, filePath: '/tmp/archive.zip' });
+    vi.stubGlobal('electronAPI', { saveResponseFile });
+
+    await saveResponseToFile('archive.zip', bytes, 'application/zip');
+
+    expect(saveResponseFile).toHaveBeenCalledWith('archive.zip', bytes);
   });
 
   it('returns canceled:true when user cancels the dialog', async () => {
@@ -104,17 +125,20 @@ describe('saveResponseToFile (browser anchor fallback)', () => {
   let savedDoc: unknown;
   let savedURL: unknown;
   let savedBlob: unknown;
+  let savedPicker: unknown;
 
   beforeEach(() => {
     savedDoc = g.document;
     savedURL = g.URL;
     savedBlob = g.Blob;
+    savedPicker = g.showSaveFilePicker;
   });
 
   afterEach(() => {
     g.document = savedDoc;
     g.URL = savedURL;
     g.Blob = savedBlob;
+    g.showSaveFilePicker = savedPicker;
   });
 
   it('creates a download anchor with the correct filename', async () => {
@@ -133,6 +157,22 @@ describe('saveResponseToFile (browser anchor fallback)', () => {
     expect(anchor.download).toBe('response.xml');
     expect(clickSpy).toHaveBeenCalled();
     expect(revokeSpy).toHaveBeenCalledWith('blob:test');
+    expect(result).toEqual({ ok: true, canceled: false });
+  });
+
+  it('writes binary bytes through the File System Access API', async () => {
+    const bytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0xff]);
+    const write = vi.fn();
+    const close = vi.fn();
+    g.showSaveFilePicker = vi.fn().mockResolvedValue({
+      createWritable: vi.fn().mockResolvedValue({ write, close }),
+    });
+
+    const result = await saveResponseToFile('archive.zip', bytes, 'application/zip');
+
+    const written = write.mock.calls[0][0] as ArrayBuffer;
+    expect(Array.from(new Uint8Array(written))).toEqual(Array.from(bytes));
+    expect(close).toHaveBeenCalled();
     expect(result).toEqual({ ok: true, canceled: false });
   });
 

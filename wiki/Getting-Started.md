@@ -27,13 +27,13 @@ This page walks you through installing Apilix, launching it for the first time, 
 | Mode | Requirement |
 |---|---|
 | Desktop App | No prerequisites — download and run the installer |
-| Web / Source | Node.js **v20.19.0+** and npm **v9+** |
-| Electron Dev | Node.js **v20.19.0+** and npm **v9+** |
+| Web / Source | Node.js **v22.12.0+** and npm **v9+** |
+| Electron Dev | Node.js **v22.12.0+** and npm **v9+** |
 
 To verify your Node.js version:
 
 ```bash
-node --version   # should print v20.19.0 or higher
+node --version   # should print v22.12.0 or higher
 npm --version    # should print 9.x.x or higher
 ```
 

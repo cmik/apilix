@@ -68,7 +68,7 @@ curl -fL -o Apilix.dmg "$DMG_URL"
 
 ### From Source (Web Mode)
 
-**Prerequisites:** Node.js v20.19.0+ and npm v9+
+**Prerequisites:** Node.js v22.12.0+ and npm v9+
 
 ```bash
 # 1. Clone the repository

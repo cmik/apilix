@@ -337,6 +337,8 @@ export interface RequestResponse {
   resolvedUrl?: string;
   headers: Record<string, string>;
   body: string;
+  /** Base64-encoded original bytes for non-text HTTP responses. */
+  bodyBase64?: string;
   size: number;
   testResults: TestResult[];
   scriptLogs?: ScriptLog[];
