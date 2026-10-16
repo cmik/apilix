@@ -30,7 +30,7 @@ The root `workspaces` field covers `packages/*`, so a single `npm install` from 
 
 | Tool | Minimum version |
 |------|-----------------|
-| Node.js | 20.19.0 |
+| Node.js | 22.12.0 |
 | npm | 9 |
 
 ---

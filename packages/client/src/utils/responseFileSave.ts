@@ -33,7 +33,7 @@ export function buildSuggestedFilename(headers: Record<string, string> | undefin
   const getHeader = (name: string) =>
     Object.entries(headers ?? {}).find(([key]) => key.toLowerCase() === name)?.[1] ?? '';
   const disposition = getHeader('content-disposition');
-  const encodedFilename = disposition.match(/filename\*\s*=\s*(?:utf-8'')?([^;]+)/i)?.[1]?.trim().replace(/^"|"$/g, '');
+  const encodedFilename = disposition.match(/filename\*\s*=\s*(?:[\w.-]*'[^']*')?([^;]+)/i)?.[1]?.trim().replace(/^"|"$/g, '');
   const regularFilename = disposition.match(/filename\s*=\s*(?:"([^"]+)"|'([^']+)'|([^;]+))/i);
   const suppliedFilename = encodedFilename
     ? (() => { try { return decodeURIComponent(encodedFilename); } catch { return encodedFilename; } })()

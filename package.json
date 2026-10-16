@@ -7,7 +7,7 @@
     "apilix": "bin/apilix.js"
   },
   "engines": {
-    "node": ">=20.19.0",
+    "node": ">=22.12.0",
     "npm": ">=9"
   },
   "workspaces": [
@@ -17,10 +17,10 @@
     "start": "concurrently -k -p \"[{name}]\" -n \"SERVER,CLIENT\" -c \"bgYellow.bold,bgCyan.bold\" \"npm run server\" \"npm run client\"",
     "cli": "node bin/apilix.js",
     "cli:help": "node bin/apilix.js --help",
-    "cli:build:binaries": "pkg . --no-bytecode --public --public-packages \"*\" --compress GZip --targets node20-macos-x64,node20-linux-x64,node20-win-x64 --out-path dist/cli",
-    "cli:build:linux": "pkg . --no-bytecode --public --public-packages \"*\" --compress GZip --targets node20-linux-x64 --out-path dist/cli",
-    "cli:build:mac": "pkg . --no-bytecode --public --public-packages \"*\" --compress GZip --targets node20-macos-x64 --out-path dist/cli",
-    "cli:build:win": "pkg . --no-bytecode --public --public-packages \"*\" --compress GZip --targets node20-win-x64 --out-path dist/cli",
+    "cli:build:binaries": "pkg . --no-bytecode --public --public-packages \"*\" --compress GZip --targets node22-macos-x64,node22-linux-x64,node22-win-x64 --out-path dist/cli",
+    "cli:build:linux": "pkg . --no-bytecode --public --public-packages \"*\" --compress GZip --targets node22-linux-x64 --out-path dist/cli",
+    "cli:build:mac": "pkg . --no-bytecode --public --public-packages \"*\" --compress GZip --targets node22-macos-x64 --out-path dist/cli",
+    "cli:build:win": "pkg . --no-bytecode --public --public-packages \"*\" --compress GZip --targets node22-win-x64 --out-path dist/cli",
     "server": "node packages/server/index.js",
     "test": "npm test -w @apilix/server && npm test -w @apilix/client",
     "test:server": "npm test -w @apilix/server",
@@ -70,9 +70,9 @@
       "node_modules/csv-parse/dist/cjs/sync.cjs"
     ],
     "targets": [
-      "node20-macos-x64",
-      "node20-linux-x64",
-      "node20-win-x64"
+      "node22-macos-x64",
+      "node22-linux-x64",
+      "node22-win-x64"
     ],
     "outputPath": "dist/cli"
   },
