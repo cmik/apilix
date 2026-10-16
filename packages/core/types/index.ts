@@ -954,12 +954,15 @@ export interface SyncExportPackage {
   salt?: string;
   /** Present when the source workspace had remote-data encryption enabled. */
   remoteEncryption?: { enabled: boolean };
+  /** Whether environments are synced; omitted by legacy share packages. */
+  syncEnvironments?: boolean;
+  /** Whether global variables are synced; omitted by legacy share packages. */
+  syncGlobalVariables?: boolean;
   /** Sharing restrictions set by the exporter. */
   sharePolicy?: SyncSharePolicy;
   /**
-   * HMAC-SHA-256 of JSON.stringify({sharePolicy, remoteWorkspaceId}) keyed on a
-   * PBKDF2-derived key from the export passphrase. Present only when the package
-   * is passphrase-encrypted and sharePolicy is provided.
+   * HMAC-SHA-256 of the sharing policy, remote workspace ID, and optional sync
+   * settings, keyed on a PBKDF2-derived key from the export passphrase.
    */
   integrityHash?: string;
 }

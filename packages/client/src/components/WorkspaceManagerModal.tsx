@@ -28,6 +28,7 @@ import {
   applyMerged as syncApplyMerged,
   pullForMerge,
   rebaseAfterStale,
+  applyScopedLocalOverrides,
   ConflictError,
   StaleVersionError,
   testConnection as syncTestConnection,
@@ -747,6 +748,9 @@ function ImportPanel({ droppedFile, onDropConsumed }: ImportPanelProps) {
 
     if (pkg.integrityHash && pkg.sharePolicy && pkg.salt) {
       const passphrase = importPassphrase || config._remotePassphrase || '';
+      const syncOptions = pkg.syncEnvironments === undefined && pkg.syncGlobalVariables === undefined
+        ? undefined
+        : { syncEnvironments: pkg.syncEnvironments, syncGlobalVariables: pkg.syncGlobalVariables };
       try {
         const valid = await verifySyncIntegrityHash(
           pkg.sharePolicy,
@@ -754,6 +758,7 @@ function ImportPanel({ droppedFile, onDropConsumed }: ImportPanelProps) {
           passphrase,
           pkg.salt,
           pkg.integrityHash,
+          syncOptions,
         );
         if (!valid) {
           setError('Integrity check failed — the sharing policy may have been tampered with.');
@@ -785,6 +790,8 @@ function ImportPanel({ droppedFile, onDropConsumed }: ImportPanelProps) {
     await StorageDriver.writeWorkspace(newWorkspace.id, emptyData);
     await StorageDriver.writeSyncConfig(newWorkspace.id, pkg.provider, config, undefined, forceReadOnly, {
       encryptRemote: pkg.remoteEncryption?.enabled,
+      syncEnvironments: pkg.syncEnvironments !== false,
+      syncGlobalVariables: pkg.syncGlobalVariables !== false,
       remotePassphrase,
       isShared,
       sharePolicy,
@@ -942,6 +949,8 @@ interface ExportPanelProps {
   // Sharing policy options
   encryptRemote: boolean;
   inheritedPassphrase: string;
+  syncEnvironments: boolean;
+  syncGlobalVariables: boolean;
   isShared: boolean;
   /** Sharing policy from the original import. forceReadOnly is locked when present and true. */
   inheritedSharePolicy?: SyncSharePolicy;
@@ -954,7 +963,8 @@ function ExportPanel({
   exportEncrypt, setExportEncrypt,
   exportPassphrase, setExportPassphrase,
   exportStatus, setExportStatus,
-  encryptRemote, inheritedPassphrase, isShared, inheritedSharePolicy, importedEncrypted,
+  encryptRemote, inheritedPassphrase, syncEnvironments, syncGlobalVariables,
+  isShared, inheritedSharePolicy, importedEncrypted,
 }: ExportPanelProps) {
   const [forceReadOnly, setForceReadOnly] = useState(false);
   const [sharingEnabled, setSharingEnabled] = useState(true);
@@ -985,6 +995,8 @@ function ExportPanel({
     const pkg = await buildSyncExportPackage(workspaceName, provider, configWithId, passphrase, {
       sharePolicy,
       remotePassphrase,
+      syncEnvironments,
+      syncGlobalVariables,
     });
     const safeName = workspaceName.replace(/[^a-z0-9]/gi, '-').toLowerCase();
     downloadJsonFile(`apilix-sync-${safeName}.json`, pkg);
@@ -1294,6 +1306,21 @@ function SyncTab() {
     dispatch({ type: 'BUMP_SYNC_CONFIG_VERSION' });
   }
 
+  function getSyncConfig(): SyncConfig {
+    return {
+      workspaceId,
+      provider,
+      config: fields,
+      metadata: syncMetadata,
+      syncEnvironments,
+      syncGlobalVariables,
+      encryptRemote,
+      remotePassphrase: remotePassphrase || undefined,
+      isShared: isShared || undefined,
+      sharePolicy,
+    };
+  }
+
   function getCurrentWorkspaceData(): WorkspaceData {
     return {
       collections: state.collections,
@@ -1372,7 +1399,7 @@ function SyncTab() {
 
       await saveConfig();
       const data = { ...getCurrentWorkspaceData(), collections: syncedCollections };
-      const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata, encryptRemote, remotePassphrase: remotePassphrase || undefined, isShared: isShared || undefined, sharePolicy };
+      const cfg = getSyncConfig();
 
       if (data.collections.length === 0) {
         const confirmed = await new Promise<boolean>(resolve =>
@@ -1419,9 +1446,11 @@ function SyncTab() {
     setStatus('busy'); setMsg('Pulling…'); setConflict(null); setConflictPackage(null);
     try {
       await saveConfig();
-      const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata, encryptRemote, remotePassphrase: remotePassphrase || undefined, isShared: isShared || undefined, sharePolicy };
+      const cfg = getSyncConfig();
       const result = await syncPullWithMeta(cfg, resolution);
-      const data = result.data;
+      const data = result.data
+        ? applyScopedLocalOverrides(result.data, getCurrentWorkspaceData(), cfg)
+        : null;
       if (data) {
         dispatch({ type: 'HYDRATE_WORKSPACE', payload: { ...data, workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId } });
         await StorageDriver.writeWorkspace(workspaceId, data);
@@ -1446,7 +1475,7 @@ function SyncTab() {
         setStatus('busy'); setMsg('Loading merge data…');
         try {
           const localData = getCurrentWorkspaceData();
-          const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata, encryptRemote, remotePassphrase: remotePassphrase || undefined, isShared: isShared || undefined, sharePolicy };
+          const cfg = getSyncConfig();
           const pkg = await pullForMerge(cfg, localData);
           await logActivity('merge-opened', 'warning', 'Opened merge review', `${pkg.mergeResult.conflicts.length} conflict(s)`);
           if (pkg.mergeResult.conflicts.length === 0) {
@@ -1496,7 +1525,7 @@ function SyncTab() {
     setConflictPackage(null);
     setStatus('busy'); setMsg('Applying merge…');
     try {
-      const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata, encryptRemote, remotePassphrase: remotePassphrase || undefined, isShared: isShared || undefined, sharePolicy };
+      const cfg = getSyncConfig();
       const localData = getCurrentWorkspaceData();
       if (localData) await SnapshotEngine.createSnapshot(workspaceId, localData, 'pre-merge backup');
       if (!readOnly) {
@@ -1524,7 +1553,7 @@ function SyncTab() {
       if (err instanceof StaleVersionError) {
         setStatus('busy'); setMsg('Remote changed during apply. Rebuilding merge…');
         try {
-          const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata, encryptRemote, remotePassphrase: remotePassphrase || undefined, isShared: isShared || undefined, sharePolicy };
+          const cfg = getSyncConfig();
           const nextPackage = await rebaseAfterStale(cfg, mergedData, currentConflictPackage.remoteData);
           setConflictPackage(nextPackage);
           await logActivity('merge-stale-rebase', 'warning', 'Remote changed during merge apply', `${nextPackage.mergeResult.conflicts.length} conflict(s) after rebase`);
@@ -1545,7 +1574,7 @@ function SyncTab() {
   async function handleCloneOnce() {
     setStatus('busy'); setMsg('Importing…'); setConflict(null); setConflictPackage(null);
     try {
-      const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata, encryptRemote, remotePassphrase: remotePassphrase || undefined, isShared: isShared || undefined, sharePolicy };
+      const cfg = getSyncConfig();
       const result = await syncPullWithMeta(cfg);
       const data = result.data;
       if (data) {
@@ -1572,7 +1601,7 @@ function SyncTab() {
   async function handleTestConnection() {
     setStatus('busy'); setMsg('Testing connection…');
     try {
-      const cfg: SyncConfig = { workspaceId, provider, config: fields, metadata: syncMetadata, encryptRemote, remotePassphrase: remotePassphrase || undefined, isShared: isShared || undefined, sharePolicy };
+      const cfg = getSyncConfig();
       const result = await syncTestConnection(cfg);
       if (result.ok) {
         setStatus('ok'); setMsg(result.message);
@@ -1597,8 +1626,7 @@ function SyncTab() {
           </div>
           <button
             type="button"
-            onClick={() => !isShared && setSyncEnvironments(v => !v)}
-            disabled={isShared}
+            onClick={() => setSyncEnvironments(v => !v)}
             className={`relative shrink-0 ml-4 w-9 h-5 rounded-full transition-colors ${syncEnvironments ? 'bg-orange-500' : 'bg-slate-700'}`}
             role="switch"
             aria-checked={syncEnvironments}
@@ -1614,8 +1642,7 @@ function SyncTab() {
           </div>
           <button
             type="button"
-            onClick={() => !isShared && setSyncGlobalVariables(v => !v)}
-            disabled={isShared}
+            onClick={() => setSyncGlobalVariables(v => !v)}
             className={`relative shrink-0 ml-4 w-9 h-5 rounded-full transition-colors ${syncGlobalVariables ? 'bg-orange-500' : 'bg-slate-700'}`}
             role="switch"
             aria-checked={syncGlobalVariables}
@@ -1864,6 +1891,8 @@ function SyncTab() {
               setExportStatus={setExportStatus}
               encryptRemote={encryptRemote}
               inheritedPassphrase={remotePassphrase}
+              syncEnvironments={syncEnvironments}
+              syncGlobalVariables={syncGlobalVariables}
               isShared={isShared}
               inheritedSharePolicy={sharePolicy}
               importedEncrypted={importedEncrypted}

@@ -492,6 +492,33 @@ describe('buildSyncExportPackage — sharing options', () => {
     expect(valid).toBe(true);
   });
 
+  it('integrityHash covers shared sync options', async () => {
+    const syncOptions = { syncEnvironments: false, syncGlobalVariables: true };
+    const pkg = await buildSyncExportPackage('WS', 's3', config, passphrase, {
+      sharePolicy,
+      remotePassphrase: 'remote-secret',
+      ...syncOptions,
+    });
+    const valid = await verifyIntegrityHash(
+      pkg.sharePolicy!,
+      pkg.remoteWorkspaceId,
+      passphrase,
+      pkg.salt!,
+      pkg.integrityHash!,
+      syncOptions,
+    );
+    const tampered = await verifyIntegrityHash(
+      pkg.sharePolicy!,
+      pkg.remoteWorkspaceId,
+      passphrase,
+      pkg.salt!,
+      pkg.integrityHash!,
+      { ...syncOptions, syncEnvironments: true },
+    );
+    expect(valid).toBe(true);
+    expect(tampered).toBe(false);
+  });
+
   it('embeds remotePassphrase into encrypted config when provided', async () => {
     const pkg = await buildSyncExportPackage('WS', 's3', config, passphrase, { remotePassphrase: 'enc-pass' });
     expect(pkg.encrypted).toBe(true);
@@ -506,6 +533,16 @@ describe('buildSyncExportPackage — sharing options', () => {
   it('does not include integrityHash when no passphrase is provided', async () => {
     const pkg = await buildSyncExportPackage('WS', 's3', config, undefined, { sharePolicy });
     expect(pkg.integrityHash).toBeUndefined();
+  });
+
+  it('embeds sync options in the export package', async () => {
+    const pkg = await buildSyncExportPackage('WS', 's3', config, undefined, {
+      sharePolicy,
+      syncEnvironments: false,
+      syncGlobalVariables: false,
+    });
+    expect(pkg.syncEnvironments).toBe(false);
+    expect(pkg.syncGlobalVariables).toBe(false);
   });
 
   it('never includes _remotePassphrase in plaintext when export is unencrypted', async () => {
@@ -547,6 +584,18 @@ describe('parseSyncExportPackage — new optional fields', () => {
   it('parses sharePolicy when present', () => {
     const pkg = parseSyncExportPackage({ ...base, sharePolicy: { forceReadOnly: true, sharingEnabled: false } });
     expect(pkg.sharePolicy).toEqual({ forceReadOnly: true, sharingEnabled: false });
+  });
+
+  it('parses sync options when present', () => {
+    const pkg = parseSyncExportPackage({ ...base, syncEnvironments: false, syncGlobalVariables: true });
+    expect(pkg.syncEnvironments).toBe(false);
+    expect(pkg.syncGlobalVariables).toBe(true);
+  });
+
+  it('leaves sync options undefined for legacy packages', () => {
+    const pkg = parseSyncExportPackage(base);
+    expect(pkg.syncEnvironments).toBeUndefined();
+    expect(pkg.syncGlobalVariables).toBeUndefined();
   });
 
   it('leaves sharePolicy undefined when absent', () => {
