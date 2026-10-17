@@ -64,13 +64,40 @@ export function applyInheritedAuth(items: CollectionItem[], inherited: Collectio
   });
 }
 
-function deepCloneWithNewIds(item: CollectionItem): CollectionItem {
+function deepCloneWithNewIds(item: CollectionItem, idMap?: Map<string, string>): CollectionItem {
   const newId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  if (item.id) idMap?.set(item.id, newId);
   return {
-    ...item,
+    ...structuredClone(item),
     id: newId,
-    item: item.item ? item.item.map(child => deepCloneWithNewIds(child)) : undefined,
+    item: item.item ? item.item.map(child => deepCloneWithNewIds(child, idMap)) : undefined,
   };
+}
+
+function remapNextRequestIdsInScripts(items: CollectionItem[], idMap: Map<string, string>): void {
+  const remapScript = (script: string) => script.replace(
+    /(setNextRequestById\(\s*)(['"])(.*?)\2(\s*\))/g,
+    (match, prefix: string, quote: string, targetId: string, suffix: string) => {
+      const newId = idMap.get(targetId);
+      return newId === undefined ? match : `${prefix}${quote}${newId}${quote}${suffix}`;
+    },
+  );
+
+  for (const item of items) {
+    for (const event of item.event ?? []) {
+      event.script.exec = typeof event.script.exec === 'string'
+        ? remapScript(event.script.exec)
+        : event.script.exec.map(remapScript);
+    }
+    if (item.item) remapNextRequestIdsInScripts(item.item, idMap);
+  }
+}
+
+export function cloneItemsWithNewIds(items: CollectionItem[]): CollectionItem[] {
+  const idMap = new Map<string, string>();
+  const clonedItems = items.map(item => deepCloneWithNewIds(item, idMap));
+  remapNextRequestIdsInScripts(clonedItems, idMap);
+  return clonedItems;
 }
 
 export function duplicateItem(items: CollectionItem[], itemId: string): CollectionItem[] {

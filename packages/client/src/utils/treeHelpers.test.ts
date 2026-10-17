@@ -6,6 +6,7 @@ import {
   updateItemById,
   removeItemById,
   addItemToFolder,
+  cloneItemsWithNewIds,
   duplicateItem,
   extractItemById,
   insertItemInTree,
@@ -195,6 +196,68 @@ describe('duplicateItem', () => {
     }
     const copyIds = collectIds([copyFolder]);
     expect(copyIds.some(id => origChildIds.has(id))).toBe(false);
+  });
+});
+
+describe('cloneItemsWithNewIds', () => {
+  it('preserves the tree while assigning new ids to every item', () => {
+    const tree = makeTree();
+    const clonedTree = cloneItemsWithNewIds(tree);
+    const collectIds = (items: CollectionItem[]): string[] =>
+      items.flatMap(item => [item.id!, ...(item.item ? collectIds(item.item) : [])]);
+
+    expect(clonedTree).toHaveLength(tree.length);
+    expect(clonedTree[0].name).toBe(tree[0].name);
+    expect(clonedTree[0].request).toEqual(tree[0].request);
+    expect(clonedTree[0].request).not.toBe(tree[0].request);
+    expect(collectIds(clonedTree)).toHaveLength(collectIds(tree).length);
+    expect(collectIds(clonedTree).some(id => collectIds(tree).includes(id))).toBe(false);
+  });
+
+  it('remaps literal next-request IDs across copied items without changing external or dynamic targets', () => {
+    const target = req('target-id', 'Target');
+    const caller = req('caller-id', 'Caller');
+    caller.event = [
+      {
+        listen: 'test',
+        script: {
+          type: 'text/javascript',
+          exec: [
+            "apx.execution.setNextRequestById('target-id');",
+            'pm.execution.setNextRequestById("target-id");',
+            "apx.execution.setNextRequestById('external-id');",
+            'apx.execution.setNextRequestById(targetId);',
+            "apx.execution.setNextRequest('target-id');",
+          ],
+        },
+      },
+      {
+        listen: 'prerequest',
+        script: {
+          type: 'text/javascript',
+          exec: 'apx.execution.setNextRequestById("target-id");',
+        },
+      },
+    ];
+    const tree = [folder('caller-folder', 'Caller folder', [caller]), folder('target-folder', 'Target folder', [target])];
+
+    const clonedTree = cloneItemsWithNewIds(tree);
+    const clonedCaller = findItemInTree(clonedTree, 'caller-id') ?? clonedTree[0].item?.[0];
+    const clonedTarget = clonedTree[1].item?.[0];
+
+    expect(clonedCaller?.id).not.toBe('caller-id');
+    expect(clonedTarget?.id).not.toBe('target-id');
+    expect(clonedCaller?.event?.[0].script.exec).toEqual([
+      `apx.execution.setNextRequestById('${clonedTarget?.id}');`,
+      `pm.execution.setNextRequestById("${clonedTarget?.id}");`,
+      "apx.execution.setNextRequestById('external-id');",
+      'apx.execution.setNextRequestById(targetId);',
+      "apx.execution.setNextRequest('target-id');",
+    ]);
+    expect(clonedCaller?.event?.[1].script.exec).toBe(
+      `apx.execution.setNextRequestById("${clonedTarget?.id}");`,
+    );
+    expect(caller.event?.[0].script.exec).toContain("apx.execution.setNextRequestById('target-id');");
   });
 });
 
