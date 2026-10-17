@@ -47,8 +47,20 @@ describe('CollectionTree collection duplication', () => {
               id: 'request-original',
               name: 'Get order',
               request: { method: 'GET', url: 'https://example.com/orders' },
+              event: [{
+                listen: 'test',
+                script: {
+                  type: 'text/javascript',
+                  exec: ["apx.execution.setNextRequestById('request-target');"],
+                },
+              }],
             },
           ],
+        },
+        {
+          id: 'request-target',
+          name: 'Next order',
+          request: { method: 'GET', url: 'https://example.com/orders/next' },
         },
       ],
     };
@@ -80,10 +92,13 @@ describe('CollectionTree collection duplication', () => {
     expect(duplicate.info._postman_id).toBe('collection-copy');
     expect(duplicate.item[0].name).toBe('Reads');
     expect(duplicate.item[0].item?.[0].request).toEqual(originalCollection.item[0].item?.[0].request);
+    expect(duplicate.item[0].item?.[0].event?.[0].script.exec).toEqual([
+      `apx.execution.setNextRequestById('${duplicate.item[1].id}');`,
+    ]);
 
     const collectIds = (items: CollectionItem[]): string[] =>
       items.flatMap(item => [item.id!, ...(item.item ? collectIds(item.item) : [])]);
-    expect(collectIds(duplicate.item)).toHaveLength(2);
+    expect(collectIds(duplicate.item)).toHaveLength(3);
     expect(collectIds(duplicate.item).some(id => collectIds(originalCollection.item).includes(id))).toBe(false);
 
     const updateVariablesAction = dispatch.mock.calls.find(([action]) => action.type === 'UPDATE_COLLECTION_VARS')?.[0];
