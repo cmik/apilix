@@ -5,7 +5,7 @@ import { useApp, generateId } from '../store';
 import { buildVarMap, buildCollectionDefinitionVarMap, resolveVariables } from '../utils/variableResolver';
 import { buildVariableSuggestions } from '../utils/variableAutocomplete';
 import {
-  renameItemById, updateItemById, removeItemById, addItemToFolder, duplicateItem,
+  renameItemById, updateItemById, removeItemById, addItemToFolder, cloneItemsWithNewIds, duplicateItem,
   moveItemInTree, extractItemById, insertItemInTree, isDescendantOf, getAllRequestIds,
   flattenRequestNames, flattenRequestItems, sortChildrenByName,
   removeItemsByIds, getCollectionLevelCandidates, getItemLevelCandidates,
@@ -1146,6 +1146,32 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
     setPendingDelete(null);
   }
 
+  function handleDuplicateCollection() {
+    const newCollectionId = generateId();
+    dispatch({
+      type: 'ADD_COLLECTION',
+      payload: {
+        ...collection,
+        _id: newCollectionId,
+        info: {
+          ...collection.info,
+          _postman_id: newCollectionId,
+          name: `Copy of ${collection.info.name}`,
+        },
+        item: cloneItemsWithNewIds(collection.item),
+      },
+    });
+
+    const runtimeVariables = getCollectionVars(collection._id);
+    if (Object.keys(runtimeVariables).length > 0) {
+      dispatch({
+        type: 'UPDATE_COLLECTION_VARS',
+        payload: { collectionId: newCollectionId, vars: { ...runtimeVariables } },
+      });
+    }
+    setMenu(null);
+  }
+
   function handleBulkDelete() {
     setMenu(null);
     setBulkDeleteOpen(true);
@@ -1206,6 +1232,7 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
       icon: IconRename,
       onClick: () => { setRenameVal(collection.info.name); setRenaming(true); },
     },
+    { label: 'Duplicate', icon: IconDuplicate, onClick: handleDuplicateCollection },
     {
       label: 'Delete',
       icon: IconDelete,

@@ -67,10 +67,14 @@ export function applyInheritedAuth(items: CollectionItem[], inherited: Collectio
 function deepCloneWithNewIds(item: CollectionItem): CollectionItem {
   const newId = Math.random().toString(36).slice(2) + Date.now().toString(36);
   return {
-    ...item,
+    ...structuredClone(item),
     id: newId,
     item: item.item ? item.item.map(child => deepCloneWithNewIds(child)) : undefined,
   };
+}
+
+export function cloneItemsWithNewIds(items: CollectionItem[]): CollectionItem[] {
+  return items.map(deepCloneWithNewIds);
 }
 
 export function duplicateItem(items: CollectionItem[], itemId: string): CollectionItem[] {

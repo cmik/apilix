@@ -6,6 +6,7 @@ import {
   updateItemById,
   removeItemById,
   addItemToFolder,
+  cloneItemsWithNewIds,
   duplicateItem,
   extractItemById,
   insertItemInTree,
@@ -195,6 +196,22 @@ describe('duplicateItem', () => {
     }
     const copyIds = collectIds([copyFolder]);
     expect(copyIds.some(id => origChildIds.has(id))).toBe(false);
+  });
+});
+
+describe('cloneItemsWithNewIds', () => {
+  it('preserves the tree while assigning new ids to every item', () => {
+    const tree = makeTree();
+    const clonedTree = cloneItemsWithNewIds(tree);
+    const collectIds = (items: CollectionItem[]): string[] =>
+      items.flatMap(item => [item.id!, ...(item.item ? collectIds(item.item) : [])]);
+
+    expect(clonedTree).toHaveLength(tree.length);
+    expect(clonedTree[0].name).toBe(tree[0].name);
+    expect(clonedTree[0].request).toEqual(tree[0].request);
+    expect(clonedTree[0].request).not.toBe(tree[0].request);
+    expect(collectIds(clonedTree)).toHaveLength(collectIds(tree).length);
+    expect(collectIds(clonedTree).some(id => collectIds(tree).includes(id))).toBe(false);
   });
 });
 
