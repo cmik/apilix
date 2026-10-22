@@ -1461,6 +1461,17 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Reveal the active tab's request in the tree whenever the active tab changes
+  useEffect(() => {
+    const tab = state.tabs.find(t => t.id === state.activeTabId);
+    if (!tab?.collectionId || !tab.item?.id) return;
+    document.dispatchEvent(
+      new CustomEvent(REVEAL_IN_TREE_EVENT, { detail: { collectionId: tab.collectionId, itemId: tab.item.id } })
+    );
+  // Only re-run on tab switch, not on every tab content update
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.activeTabId]);
+
   function isFileDrag(e: React.DragEvent): boolean {
     return Array.from(e.dataTransfer.types).includes('Files');
   }
