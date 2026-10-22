@@ -924,9 +924,13 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
 
   const activeTab = state.tabs.find(t => t.id === state.activeTabId) ?? null;
   const activeTabId = state.activeTabId;
+  const activeTabItemKey = activeTab
+    ? `${activeTab.collectionId}:${activeTab.item.id ?? activeTab.item.name}`
+    : '';
 
   // Per-tab edit state lives in a ref (no store round-trips on every keystroke)
   const cacheRef = useRef<Map<string, TabCache>>(new Map());
+  const previewSourceRef = useRef<{ tabId: string; itemKey: string } | null>(null);
   const urlInputRef = useRef<HTMLInputElement>(null);
   const _sendRef = useRef<() => void>(() => {});
   const _saveRef = useRef<() => void>(() => {});
@@ -975,7 +979,11 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
       return;
     }
     const cached = cacheRef.current.get(activeTab.id);
-    if (cached) {
+    const previewTargetChanged = activeTab.isPreview && (
+      previewSourceRef.current?.tabId !== activeTab.id ||
+      previewSourceRef.current.itemKey !== activeTabItemKey
+    );
+    if (cached && !previewTargetChanged) {
       setEditRaw(cached.edit);
       setDirty(cached.dirty);
       setActiveRequestTab(cached.activeRequestTab);
@@ -986,7 +994,10 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
       setDirty(false);
       setActiveRequestTab('Params');
     }
-  }, [activeTabId]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (activeTab.isPreview) {
+      previewSourceRef.current = { tabId: activeTab.id, itemKey: activeTabItemKey };
+    }
+  }, [activeTabId, activeTabItemKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Notify parent of dirty set changes
   useEffect(() => {
