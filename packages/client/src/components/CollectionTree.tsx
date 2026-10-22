@@ -1426,6 +1426,23 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
   const { state, dispatch } = useApp();
   const importFile = useImportFile();
   const trimmed = filter.trim();
+  const previewHoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function clearPreviewHoverTimer() {
+    if (previewHoverTimerRef.current !== null) {
+      clearTimeout(previewHoverTimerRef.current);
+      previewHoverTimerRef.current = null;
+    }
+  }
+
+  useEffect(() => () => {
+    if (previewHoverTimerRef.current !== null) clearTimeout(previewHoverTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    clearPreviewHoverTimer();
+    dispatch({ type: 'CLOSE_PREVIEW_TAB' });
+  }, [trimmed, dispatch]);
 
   // ── File drag-and-drop import state ─────────────────────────────────────────
   const [fileDropActive, setFileDropActive] = useState(false);
@@ -1463,8 +1480,8 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
 
   // Reveal the active tab's request in the tree whenever the active tab changes
   useEffect(() => {
-    const tab = state.tabs.find(t => t.id === state.activeTabId);
-    if (!tab?.collectionId || !tab.item?.id) return;
+    const tab = state.tabs?.find(t => t.id === state.activeTabId);
+    if (!tab?.collectionId || !tab.item?.id || tab.isPreview) return;
     document.dispatchEvent(
       new CustomEvent(REVEAL_IN_TREE_EVENT, { detail: { collectionId: tab.collectionId, itemId: tab.item.id } })
     );
@@ -1663,7 +1680,10 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
 
     if (matched.length === 0) {
       return (
-        <div className="flex-1 flex flex-col items-center justify-center text-center p-4">
+        <div
+          className="flex-1 flex flex-col items-center justify-center text-center p-4"
+          onMouseEnter={() => dispatch({ type: 'CLOSE_PREVIEW_TAB' })}
+        >
           <IconSearch className="w-10 h-10 mb-2 text-slate-500" />
           <p className="text-slate-400 text-sm">No requests match</p>
           <p className="text-slate-600 text-xs mt-1">"{trimmed}"</p>
@@ -1672,7 +1692,13 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
     }
 
     return (
-      <div className="flex-1 overflow-y-auto scrollbar-thin py-1">
+      <div
+        className="flex-1 overflow-y-auto scrollbar-thin py-1"
+        onMouseLeave={() => {
+          clearPreviewHoverTimer();
+          dispatch({ type: 'CLOSE_PREVIEW_TAB' });
+        }}
+      >
         {matched.map((r, i) => {
           const method = r.item.request?.method?.toUpperCase() || 'GET';
           const isActive =
@@ -1684,7 +1710,22 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
           return (
             <button
               key={i}
+              onMouseEnter={() => {
+                clearPreviewHoverTimer();
+                if (state.tabs.some(t => t.isPreview)) {
+                  dispatch({ type: 'PREVIEW_TAB', payload: { collectionId: r.collectionId, item: r.item } });
+                  dispatch({ type: 'SET_VIEW', payload: 'request' });
+                } else {
+                  previewHoverTimerRef.current = setTimeout(() => {
+                    previewHoverTimerRef.current = null;
+                    dispatch({ type: 'PREVIEW_TAB', payload: { collectionId: r.collectionId, item: r.item } });
+                    dispatch({ type: 'SET_VIEW', payload: 'request' });
+                  }, 2000);
+                }
+              }}
+              onMouseLeave={clearPreviewHoverTimer}
               onClick={() => {
+                clearPreviewHoverTimer();
                 dispatch({ type: 'OPEN_TAB', payload: { collectionId: r.collectionId, item: r.item } });
                 dispatch({ type: 'SET_VIEW', payload: 'request' });
               }}

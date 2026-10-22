@@ -242,6 +242,7 @@ function Tab({
   isDragging,
   isRenaming,
   onActivate,
+  onPromote,
   onClose,
   onRename,
   onStartRename,
@@ -258,6 +259,7 @@ function Tab({
   isDragging: boolean;
   isRenaming: boolean;
   onActivate: () => void;
+  onPromote: () => void;
   onClose: (e: React.MouseEvent) => void;
   onRename: (newName: string) => void;
   onStartRename: () => void;
@@ -292,7 +294,7 @@ function Tab({
       onDragOver={onDragOver}
       onDrop={onDrop}
       onDragEnd={onDragEnd}
-      onClick={isRenaming ? undefined : (isActive ? onOpenMenu : onActivate)}
+      onClick={isRenaming ? undefined : (isActive ? (tab.isPreview ? onPromote : onOpenMenu) : onActivate)}
       onContextMenu={e => { e.preventDefault(); onOpenMenu(e, true); }}
       onMouseDown={e => { if (e.button === 1) { e.preventDefault(); onClose(e as unknown as React.MouseEvent); } }}
       className={`group relative flex items-center gap-1.5 px-3 py-0 h-full cursor-grab select-none shrink-0 border-r border-slate-800 transition-colors ${
@@ -321,7 +323,7 @@ function Tab({
         />
       ) : (
         <>
-          <span className="truncate text-xs min-w-0 flex-1">{name}</span>
+          <span className={`truncate text-xs min-w-0 flex-1${tab.isPreview ? ' italic' : ''}`}>{name}</span>
 
           {/* Pencil rename button (hover-only) */}
           <button
@@ -688,18 +690,20 @@ export default function TabBar({ dirtyIds }: TabBarProps) {
             <Tab
               tab={tab}
               isActive={tab.id === activeTabId}
-              isDirty={dirtyIds.has(tab.id)}
+              isDirty={!tab.isPreview && dirtyIds.has(tab.id)}
               isDragging={tab.id === draggingId}
               isRenaming={renamingTabId === tab.id}
               onActivate={() => {
+                if (tab.isPreview) dispatch({ type: 'PROMOTE_TAB', payload: tab.id });
                 if (tab.id !== activeTabId) {
                   dispatch({ type: 'SET_ACTIVE_TAB', payload: tab.id });
                   dispatch({ type: 'SET_VIEW', payload: 'request' });
                 }
               }}
+              onPromote={() => dispatch({ type: 'PROMOTE_TAB', payload: tab.id })}
               onClose={e => {
                 e.stopPropagation();
-                if (dirtyIds.has(tab.id)) {
+                if (!tab.isPreview && dirtyIds.has(tab.id)) {
                   setPendingCloseTabId(tab.id);
                   return;
                 }

@@ -54,6 +54,84 @@ function stateWithHistory(): AppState {
   return { ...initialState, requestHistory: [makeEntry('h1'), makeEntry('h2')] };
 }
 
+describe('preview tabs', () => {
+  it('reuses the preview tab and replaces its request', () => {
+    const first = makeItem('first');
+    const second = makeItem('second');
+    const opened = appReducer(initialState, {
+      type: 'PREVIEW_TAB', payload: { collectionId: 'col1', item: first },
+    });
+    const previewId = opened.activeTabId;
+    const updated = appReducer(opened, {
+      type: 'PREVIEW_TAB', payload: { collectionId: 'col2', item: second },
+    });
+
+    expect(updated.tabs).toHaveLength(1);
+    expect(updated.tabs[0].id).toBe(previewId);
+    expect(updated.tabs[0].isPreview).toBe(true);
+    expect(updated.tabs[0].collectionId).toBe('col2');
+    expect(updated.tabs[0].item).toBe(second);
+    expect(updated.activeRequest?.item).toBe(second);
+  });
+
+  it('activates an existing normal tab instead of previewing it', () => {
+    const item = makeItem('existing');
+    const normal = appReducer(initialState, {
+      type: 'OPEN_TAB', payload: { collectionId: 'col1', item },
+    });
+    const withPreview = appReducer(normal, {
+      type: 'PREVIEW_TAB', payload: { collectionId: 'col1', item: makeItem('other') },
+    });
+    const next = appReducer(withPreview, {
+      type: 'PREVIEW_TAB', payload: { collectionId: 'col1', item },
+    });
+
+    expect(next.tabs).toHaveLength(1);
+    expect(next.tabs[0].isPreview).toBeUndefined();
+    expect(next.activeTabId).toBe(normal.activeTabId);
+  });
+
+  it('closes the preview and opens a normal tab when a result is clicked', () => {
+    const item = makeItem('clicked');
+    const preview = appReducer(initialState, {
+      type: 'PREVIEW_TAB', payload: { collectionId: 'col1', item },
+    });
+    const next = appReducer(preview, {
+      type: 'OPEN_TAB', payload: { collectionId: 'col1', item },
+    });
+
+    expect(next.tabs).toHaveLength(1);
+    expect(next.tabs[0].isPreview).toBeUndefined();
+    expect(next.activeTabId).not.toBe(preview.activeTabId);
+  });
+
+  it('closes the preview and restores the previously active tab', () => {
+    const normal = appReducer(initialState, {
+      type: 'OPEN_TAB', payload: { collectionId: 'col1', item: makeItem('normal') },
+    });
+    const preview = appReducer(normal, {
+      type: 'PREVIEW_TAB', payload: { collectionId: 'col1', item: makeItem('preview') },
+    });
+    const next = appReducer(preview, { type: 'CLOSE_PREVIEW_TAB' });
+
+    expect(next.tabs).toHaveLength(1);
+    expect(next.activeTabId).toBe(normal.activeTabId);
+    expect(next.activeRequest?.item.id).toBe('normal');
+  });
+
+  it('promotes a preview when its request is edited', () => {
+    const preview = appReducer(initialState, {
+      type: 'PREVIEW_TAB', payload: { collectionId: 'col1', item: makeItem('preview') },
+    });
+    const next = appReducer(preview, {
+      type: 'UPDATE_TAB_ITEM',
+      payload: { tabId: preview.activeTabId!, item: makeItem('edited') },
+    });
+
+    expect(next.tabs[0].isPreview).toBe(false);
+  });
+});
+
 // ─── ADD_REQUEST_HISTORY ──────────────────────────────────────────────────────
 
 describe('ADD_REQUEST_HISTORY', () => {
