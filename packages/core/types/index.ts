@@ -1104,6 +1104,7 @@ export interface RequestTab {
   item: CollectionItem;
   response: RequestResponse | null;
   isLoading: boolean;
+  isPreview?: boolean;
   /** True when the tab was opened via OPEN_HISTORY_SNAPSHOT; cleared after a save. */
   fromHistory?: boolean;
 }
@@ -1163,6 +1164,9 @@ export type AppAction =
   | { type: 'SET_TAB_LOADING'; payload: { tabId: string; loading: boolean } }
   | { type: 'UPDATE_TAB_ITEM'; payload: { tabId: string; item: CollectionItem } }
   | { type: 'UPDATE_TAB'; payload: { tabId: string; collectionId: string; item: CollectionItem } }
+  | { type: 'PREVIEW_TAB'; payload: { collectionId: string; item: CollectionItem } }
+  | { type: 'PROMOTE_TAB'; payload: string }
+  | { type: 'CLOSE_PREVIEW_TAB' }
   | { type: 'OPEN_BLANK_TAB' }
   | { type: 'DUPLICATE_TAB'; payload: string }
   | { type: 'REORDER_TABS'; payload: string[] }

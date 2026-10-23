@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom/vitest';
-import type { AppCollection, CollectionItem } from '../types';
+import type { AppCollection, CollectionItem, RequestTab } from '../types';
 
 const { mockedUseApp, mockedGenerateId } = vi.hoisted(() => ({
   mockedUseApp: vi.fn(),
@@ -23,6 +23,88 @@ import CollectionTree from './CollectionTree';
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
+});
+
+function setupSearchTree() {
+  const collection: AppCollection = {
+    _id: 'col1',
+    info: {
+      name: 'Orders',
+      schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+    },
+    item: [
+      { id: 'request-one', name: 'Get order', request: { method: 'GET', url: 'https://example.com/orders' } },
+      { id: 'request-two', name: 'List orders', request: { method: 'GET', url: 'https://example.com/orders/all' } },
+    ],
+  };
+  const state = {
+    collections: [collection],
+    tabs: [] as RequestTab[],
+    activeTabId: null,
+    activeRequest: null,
+    collectionVariables: {},
+    globalVariables: {},
+  };
+  const dispatch = vi.fn();
+  mockedUseApp.mockReturnValue({
+    state,
+    dispatch,
+    getEnvironmentVars: () => ({}),
+    getCollectionVars: () => ({}),
+  });
+  render(<CollectionTree filter="order" />);
+  return { dispatch, state };
+}
+
+describe('CollectionTree search preview tabs', () => {
+  beforeEach(() => {
+    mockedUseApp.mockReset();
+    vi.useFakeTimers();
+  });
+
+  it('opens the first preview after two seconds and cancels if the pointer leaves first', () => {
+    const { dispatch } = setupSearchTree();
+    dispatch.mockClear();
+    const result = screen.getByRole('button', { name: /Get order/ });
+
+    fireEvent.mouseEnter(result);
+    act(() => vi.advanceTimersByTime(1999));
+    expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'PREVIEW_TAB' }));
+    fireEvent.mouseLeave(result);
+    act(() => vi.advanceTimersByTime(1));
+    expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'PREVIEW_TAB' }));
+
+    fireEvent.mouseEnter(result);
+    act(() => vi.advanceTimersByTime(2000));
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'PREVIEW_TAB',
+      payload: expect.objectContaining({ item: expect.objectContaining({ id: 'request-one' }) }),
+    }));
+  });
+
+  it('switches an open preview immediately and closes it when leaving the results area', () => {
+    const { dispatch, state } = setupSearchTree();
+    dispatch.mockClear();
+    state.tabs.push({
+      id: 'preview-tab',
+      collectionId: 'col1',
+      item: state.collections[0].item[0],
+      response: null,
+      isLoading: false,
+      isPreview: true,
+    });
+    const result = screen.getByRole('button', { name: /List orders/ });
+
+    fireEvent.mouseEnter(result);
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'PREVIEW_TAB',
+      payload: expect.objectContaining({ item: expect.objectContaining({ id: 'request-two' }) }),
+    }));
+
+    fireEvent.mouseLeave(result.parentElement as HTMLElement);
+    expect(dispatch).toHaveBeenCalledWith({ type: 'CLOSE_PREVIEW_TAB' });
+  });
 });
 
 describe('CollectionTree collection duplication', () => {

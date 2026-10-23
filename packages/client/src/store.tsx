@@ -146,6 +146,26 @@ export const initialState: AppState = {
   },
 };
 
+function removeRequestTab(state: AppState, tabId: string): AppState {
+  const idx = state.tabs.findIndex(t => t.id === tabId);
+  if (idx === -1) return state;
+  const newTabs = state.tabs.filter(t => t.id !== tabId);
+  let newActiveTabId = state.activeTabId;
+  if (state.activeTabId === tabId) {
+    const newIdx = Math.min(idx, newTabs.length - 1);
+    newActiveTabId = newTabs[newIdx]?.id ?? null;
+  }
+  const newActiveTab = newTabs.find(t => t.id === newActiveTabId) ?? null;
+  return {
+    ...state,
+    tabs: newTabs,
+    activeTabId: newActiveTabId,
+    activeRequest: newActiveTab ? { collectionId: newActiveTab.collectionId, item: newActiveTab.item } : null,
+    response: newActiveTab?.response ?? null,
+    isLoading: newActiveTab?.isLoading ?? false,
+  };
+}
+
 export function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case 'ADD_COLLECTION':
@@ -348,12 +368,14 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'OPEN_TAB': {
       const { collectionId, item } = action.payload;
-      const existing = state.tabs.find(
+      const preview = state.tabs.find(t => t.isPreview);
+      const baseState = preview ? removeRequestTab(state, preview.id) : state;
+      const existing = baseState.tabs.find(
         t => t.collectionId === collectionId && t.item.id === item.id
       );
       if (existing) {
         return {
-          ...state,
+          ...baseState,
           activeTabId: existing.id,
           activeRequest: { collectionId, item: existing.item },
           response: existing.response,
@@ -368,13 +390,58 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         isLoading: false,
       };
       return {
-        ...state,
-        tabs: [...state.tabs, newTab],
+        ...baseState,
+        tabs: [...baseState.tabs, newTab],
         activeTabId: newTab.id,
         activeRequest: { collectionId, item },
         response: null,
         isLoading: false,
       };
+    }
+
+    case 'PREVIEW_TAB': {
+      const { collectionId, item } = action.payload;
+      const existing = state.tabs.find(
+        t => !t.isPreview && t.collectionId === collectionId && t.item.id === item.id
+      );
+      if (existing) {
+        const preview = state.tabs.find(t => t.isPreview);
+        const baseState = preview ? removeRequestTab(state, preview.id) : state;
+        return {
+          ...baseState,
+          activeTabId: existing.id,
+          activeRequest: { collectionId, item: existing.item },
+          response: existing.response,
+          isLoading: existing.isLoading,
+        };
+      }
+
+      const preview = state.tabs.find(t => t.isPreview);
+      const sameRequest = preview?.collectionId === collectionId && preview.item.id === item.id;
+      const previewTab: RequestTab = preview
+        ? { ...preview, collectionId, item, response: sameRequest ? preview.response : null, isLoading: sameRequest ? preview.isLoading : false }
+        : { id: generateId(), collectionId, item, response: null, isLoading: false, isPreview: true };
+      return {
+        ...state,
+        tabs: preview
+          ? state.tabs.map(t => t.id === preview.id ? previewTab : t)
+          : [...state.tabs, previewTab],
+        activeTabId: previewTab.id,
+        activeRequest: { collectionId, item },
+        response: previewTab.response,
+        isLoading: previewTab.isLoading,
+      };
+    }
+
+    case 'PROMOTE_TAB':
+      return {
+        ...state,
+        tabs: state.tabs.map(t => t.id === action.payload ? { ...t, isPreview: false } : t),
+      };
+
+    case 'CLOSE_PREVIEW_TAB': {
+      const preview = state.tabs.find(t => t.isPreview);
+      return preview ? removeRequestTab(state, preview.id) : state;
     }
 
     case 'OPEN_HISTORY_SNAPSHOT': {
@@ -420,23 +487,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     }
 
     case 'CLOSE_TAB': {
-      const tabId = action.payload;
-      const idx = state.tabs.findIndex(t => t.id === tabId);
-      const newTabs = state.tabs.filter(t => t.id !== tabId);
-      let newActiveTabId = state.activeTabId;
-      if (state.activeTabId === tabId) {
-        const newIdx = Math.min(idx, newTabs.length - 1);
-        newActiveTabId = newTabs[newIdx]?.id ?? null;
-      }
-      const newActiveTab = newTabs.find(t => t.id === newActiveTabId) ?? null;
-      return {
-        ...state,
-        tabs: newTabs,
-        activeTabId: newActiveTabId,
-        activeRequest: newActiveTab ? { collectionId: newActiveTab.collectionId, item: newActiveTab.item } : null,
-        response: newActiveTab?.response ?? null,
-        isLoading: newActiveTab?.isLoading ?? false,
-      };
+      return removeRequestTab(state, action.payload);
     }
 
     case 'SET_ACTIVE_TAB': {
@@ -473,13 +524,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'UPDATE_TAB_ITEM': {
       const { tabId, item } = action.payload;
-      const updatedTabs = state.tabs.map(t => t.id === tabId ? { ...t, item } : t);
+      const updatedTabs = state.tabs.map(t => t.id === tabId ? { ...t, item, isPreview: false } : t);
       return { ...state, tabs: updatedTabs };
     }
 
     case 'UPDATE_TAB': {
       const { tabId, collectionId, item } = action.payload;
-      const updatedTabs = state.tabs.map(t => t.id === tabId ? { ...t, collectionId, item } : t);
+      const updatedTabs = state.tabs.map(t => t.id === tabId ? { ...t, collectionId, item, isPreview: false } : t);
       return { ...state, tabs: updatedTabs };
     }
 
@@ -1312,7 +1363,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     const session: StorageDriver.PersistedTabSession = {
       tabs: state.tabs
-        .filter(t => !!t.collectionId && !t.fromHistory && !!t.item.id)
+        .filter(t => !!t.collectionId && !t.fromHistory && !t.isPreview && !!t.item.id)
         .map(t => ({ id: t.id, collectionId: t.collectionId, itemId: t.item.id as string })),
       activeTabId: state.activeTabId,
     };
