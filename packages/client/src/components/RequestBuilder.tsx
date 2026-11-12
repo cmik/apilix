@@ -27,6 +27,7 @@ import { buildAllVariableSuggestions, DYNAMIC_VARIABLE_SUGGESTIONS, type Variabl
 import VarInput from './VarInput';
 import { buildBodyPreview, highlightUnresolved } from '../utils/bodyPreview';
 import { INJECT_TEST_SNIPPET } from '../utils/appEvents';
+import { mergeTestSnippet } from '../utils/testSnippetUtils';
 import type { InjectTestSnippetDetail } from '../utils/appEvents';
 
 const CodeGenModal = lazy(() => import('./CodeGenModal'));
@@ -1126,10 +1127,10 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
       // Target is the currently active tab (most common case)
       if (!targetTabId || targetTabId === activeTab?.id) {
         if (!activeTab) return;
-        setEdit(prev => ({
-          ...prev,
-          testScript: prev.testScript.trim() ? prev.testScript + '\n\n' + snippet : snippet,
-        }));
+        setEdit(prev => {
+          const testScript = mergeTestSnippet(prev.testScript, snippet, detail?.skipIfPresent);
+          return testScript === prev.testScript ? prev : { ...prev, testScript };
+        });
         setActiveRequestTabCached('Tests');
         return;
       }
@@ -1138,13 +1139,15 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
       const cached = cacheRef.current.get(targetTabId);
       if (!cached) return;
       const currentScript = cached.edit.testScript ?? '';
+      const merged = mergeTestSnippet(currentScript, snippet, detail?.skipIfPresent);
+      if (merged === currentScript) return;
       cacheRef.current.set(targetTabId, {
         ...cached,
         dirty: true,
         activeRequestTab: 'Tests',
         edit: {
           ...cached.edit,
-          testScript: currentScript.trim() ? currentScript + '\n\n' + snippet : snippet,
+          testScript: merged,
         },
       });
     };

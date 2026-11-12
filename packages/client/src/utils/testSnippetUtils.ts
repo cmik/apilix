@@ -143,3 +143,12 @@ export function buildTestValueSnippets(
 
   return snippets;
 }
+
+/**
+ * Append `snippet` to a test script (blank line separated). When `skipIfPresent` is given and the
+ * script already contains any of those substrings, the script is returned unchanged.
+ */
+export function mergeTestSnippet(script: string, snippet: string, skipIfPresent?: string[]): string {
+  if (skipIfPresent?.some(n => n && script.includes(n))) return script;
+  return script.trim() ? `${script}\n\n${snippet}` : snippet;
+}

@@ -192,6 +192,43 @@ describe('ResponseViewer search with folded trees', () => {
   });
 });
 
+describe('ResponseViewer Suggest tests', () => {
+  beforeEach(() => {
+    mockedUseApp.mockReset();
+    if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = vi.fn();
+  });
+  afterEach(() => cleanup());
+
+  it('opens the suggestion dialog for an HTTP response', async () => {
+    const user = userEvent.setup();
+    mockedUseApp.mockReturnValue(makeState('{"message":"ok"}'));
+    render(<ResponseViewer />);
+    await user.click(screen.getByRole('button', { name: 'Suggest tests' }));
+    expect(screen.getByRole('dialog', { name: 'Suggest tests' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /Status code is 200/ })).toBeChecked();
+  });
+
+  it('is hidden for non-HTTP responses, saved examples and errors', () => {
+    mockedUseApp.mockReturnValue(makeSqlState());
+    const { unmount } = render(<ResponseViewer />);
+    expect(screen.queryByRole('button', { name: 'Suggest tests' })).not.toBeInTheDocument();
+    unmount();
+
+    const example = makeState('{"a":1}');
+    example.state.response.isExample = true;
+    mockedUseApp.mockReturnValue(example);
+    const second = render(<ResponseViewer />);
+    expect(screen.queryByRole('button', { name: 'Suggest tests' })).not.toBeInTheDocument();
+    second.unmount();
+
+    const failed = makeState('');
+    failed.state.response.error = 'ECONNREFUSED';
+    mockedUseApp.mockReturnValue(failed);
+    render(<ResponseViewer />);
+    expect(screen.queryByRole('button', { name: 'Suggest tests' })).not.toBeInTheDocument();
+  });
+});
+
 describe('JSONPath evaluator with filter predicates', () => {
   it('supports simple array filtering on field equality', () => {
     const data = {

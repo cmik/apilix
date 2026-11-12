@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildJsonPathDisplayExpression, buildTestValueSnippets, buildSaveToVarSnippet } from './testSnippetUtils';
+import { buildJsonPathDisplayExpression, buildTestValueSnippets, buildSaveToVarSnippet, mergeTestSnippet } from './testSnippetUtils';
 
 describe('buildJsonPathDisplayExpression', () => {
   it('formats identifier, numeric, and quoted segments consistently', () => {
@@ -102,5 +102,17 @@ describe('buildSaveToVarSnippet', () => {
     expect(buildSaveToVarSnippet('body', 'environment', [])).toBe(
       "apx.environment.set('body', apx.response.json());"
     );
+  });
+});
+describe('mergeTestSnippet', () => {
+  it('appends with a blank line, or becomes the script when empty', () => {
+    expect(mergeTestSnippet('', 'a();')).toBe('a();');
+    expect(mergeTestSnippet('   \n', 'a();')).toBe('a();');
+    expect(mergeTestSnippet('x();', 'a();')).toBe('x();\n\na();');
+  });
+  it('leaves the script unchanged when any needle is already present', () => {
+    expect(mergeTestSnippet('x();\na();', 'a();', ['a();'])).toBe('x();\na();');
+    expect(mergeTestSnippet('x();', 'a();', ['zzz', ''])).toBe('x();\n\na();');
+    expect(mergeTestSnippet('x();', 'a();', [])).toBe('x();\n\na();');
   });
 });
