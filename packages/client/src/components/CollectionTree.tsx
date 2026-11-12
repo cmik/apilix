@@ -34,10 +34,12 @@ import {
   IconClose,
   IconDownload,
   IconEmptyMailbox,
+  IconSparkle,
 } from './Icons';
 
 const ItemSettingsModal = lazy(() => import('./ItemSettingsModal'));
 const ExportDocsModal = lazy(() => import('./ExportDocsModal'));
+const AiCommandBar = lazy(() => import('./AiCommandBar'));
 
 // ─── Send-to-Mock helpers ────────────────────────────────────────────────────
 
@@ -579,6 +581,7 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
   const [renameVal, setRenameVal] = useState(item.name);
   const [showSettings, setShowSettings] = useState(false);
   const [showDocs, setShowDocs] = useState(false);
+  const [showAiGenerate, setShowAiGenerate] = useState(false);
   const [newItemId, setNewItemId] = useState<string | null>(null);
   const [mockItems, setMockItems] = useState<CollectionItem[] | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string; isFolder: boolean } | null>(null);
@@ -681,6 +684,16 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
     dispatch({ type: 'UPDATE_COLLECTION', payload: { ...collection, item: addItemToFolder(collection.item, item.id, newReq) } });
   }
 
+  /** The AI proposal was reviewed and accepted: add it as a NEW request in this folder (nothing is overwritten). */
+  function handleAiApply(newItem: CollectionItem) {
+    if (!item.id) return;
+    const latest = state.collections.find(c => c._id === collection._id) ?? collection;
+    setOpen(true);
+    dispatch({ type: 'UPDATE_COLLECTION', payload: { ...latest, item: addItemToFolder(latest.item, item.id, newItem) } });
+    dispatch({ type: 'OPEN_TAB', payload: { collectionId: collection._id, item: newItem } });
+    dispatch({ type: 'SET_VIEW', payload: 'request' });
+  }
+
   function handleDuplicate() {
     if (!item.id) return;
     dispatch({
@@ -752,6 +765,7 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
       { label: 'Add request', icon: IconAddRequest, onClick: handleAddRequest },
       { label: 'Add folder', icon: IconAddFolder, onClick: handleAddFolder },
       ...(item.id ? [{ label: 'Export documentation…', icon: IconDownload, onClick: () => setShowDocs(true) }] : []),
+      ...(item.id && state.ai.settings.enabled ? [{ label: 'Generate request here…', icon: IconSparkle, onClick: () => { setMenu(null); setShowAiGenerate(true); } }] : []),
       ...((item.item?.length ?? 0) >= 2 && !!item.id ? [{
         label: 'Order items A→Z',
         icon: IconSort,
@@ -864,6 +878,18 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
               collection={collection}
               folder={{ id: item.id, name: item.name }}
               onClose={() => setShowDocs(false)}
+            />
+          </Suspense>
+        )}
+
+        {showAiGenerate && item.id && (
+          <Suspense fallback={null}>
+            <AiCommandBar
+              collectionId={collectionId}
+              folderId={item.id}
+              targetLabel={`the folder \u201c${item.name}\u201d`}
+              onApply={handleAiApply}
+              onClose={() => setShowAiGenerate(false)}
             />
           </Suspense>
         )}

@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { neutralizeAiText } from '@apilix/core/docs';
 import type { RequestResponse } from '../types';
+import { IconSparkle } from './Icons';
+import { mergeSuggestions } from '../utils/ai/mergeSuggestions';
+import type { AiSuggestAssertionsResult } from '../utils/ai/aiTypes';
 import { INJECT_TEST_SNIPPET } from '../utils/appEvents';
 import type { InjectTestSnippetDetail } from '../utils/appEvents';
 import {
@@ -10,6 +14,20 @@ import {
   type SuggestionKind,
 } from '../utils/assertionInference';
 
+/** Optional AI layer. Absent = the panel is local-only and never touches the network. */
+export interface AiAssistProps {
+  /** Feature on, consent given. When false the panel only shows `hint`. */
+  enabled: boolean;
+  /** Why the AI layer is unavailable (shown instead of the button). */
+  hint?: string;
+  /** Where the data would go ("Anthropic", a local URL...). */
+  destination: string;
+  /** `sendResponseBodies` is off: only the structure of the body is sent. */
+  shapeOnly: boolean;
+  /** Runs the model call (explicit user action only). */
+  run: (signal: AbortSignal) => Promise<AiSuggestAssertionsResult>;
+}
+
 export interface AssertionSuggestPanelProps {
   response: RequestResponse;
   /** Request tab the tests go to (routing survives a tab switch while the dialog is open). */
@@ -17,6 +35,7 @@ export interface AssertionSuggestPanelProps {
   /** Saved test script, used to mark suggestions that are already there. Insertion re-checks the live editor. */
   existingScript: string;
   onClose: () => void;
+  aiAssist?: AiAssistProps;
 }
 
 const KIND_LABEL: Record<SuggestionKind, string> = {
@@ -41,14 +60,25 @@ const CONFIDENCE_TONE: Record<AssertionSuggestion['confidence'], string> = {
   low: 'text-amber-400',
 };
 
-export default function AssertionSuggestPanel({ response, tabId, existingScript, onClose }: AssertionSuggestPanelProps) {
-  const { suggestions, notes } = useMemo(() => inferAssertionsWithNotes({
+export default function AssertionSuggestPanel({ response, tabId, existingScript, onClose, aiAssist }: AssertionSuggestPanelProps) {
+  const { suggestions: localSuggestions, notes } = useMemo(() => inferAssertionsWithNotes({
     status: response.status,
     headers: response.headers ?? {},
     body: response.body ?? '',
     bodyBase64: response.bodyBase64,
     responseTime: response.responseTime,
   }), [response]);
+
+  const [aiResult, setAiResult] = useState<AiSuggestAssertionsResult | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => abortRef.current?.abort(), []);
+  // The local suggestions are always there; the model's are merged in once (and only if) the user asks.
+  const suggestions = useMemo(
+    () => (aiResult ? mergeSuggestions(localSuggestions, aiResult.suggestions) : localSuggestions),
+    [localSuggestions, aiResult],
+  );
 
   const present = useMemo(
     () => new Set(suggestions.filter(s => isSuggestionPresent(existingScript, s)).map(s => s.id)),
@@ -58,6 +88,31 @@ export default function AssertionSuggestPanel({ response, tabId, existingScript,
     () => new Set(suggestions.filter(s => s.recommended && !present.has(s.id)).map(s => s.id)),
   );
   const closeRef = useRef<HTMLButtonElement>(null);
+
+  async function improveWithAi() {
+    if (!aiAssist || !aiAssist.enabled || aiBusy) return;
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+    setAiBusy(true);
+    setAiError(null);
+    try {
+      const result = await aiAssist.run(ac.signal);
+      if (ac.signal.aborted) return;
+      setAiResult(result);
+      const fresh = mergeSuggestions(localSuggestions, result.suggestions);
+      setChecked(prev => {
+        const next = new Set(prev);
+        for (const s of fresh) if (s.source === 'ai' && s.recommended && !isSuggestionPresent(existingScript, s)) next.add(s.id);
+        return next;
+      });
+    } catch (err) {
+      if (ac.signal.aborted) return;
+      setAiError(neutralizeAiText(err instanceof Error ? err.message : 'The AI request failed'));
+    } finally {
+      if (abortRef.current === ac) setAiBusy(false);
+    }
+  }
   useEffect(() => { closeRef.current?.focus(); }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -95,13 +150,51 @@ export default function AssertionSuggestPanel({ response, tabId, existingScript,
           <div>
             <h2 className="text-sm font-semibold text-slate-100">Suggest tests</h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Inferred from this response, locally. Nothing is added until you click Add; tests already in the script are never duplicated.
+              {aiResult
+                ? 'Local inference plus AI suggestions that passed on this response. '
+                : 'Inferred from this response, locally. '}
+              Nothing is added until you click Add; tests already in the script are never duplicated.
             </p>
           </div>
           <button ref={closeRef} type="button" onClick={onClose} aria-label="Close" className="text-slate-500 hover:text-slate-200 text-xl leading-none px-1">×</button>
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+          {aiAssist && !aiAssist.enabled && aiAssist.hint && (
+            <p className="text-xs text-slate-500">{aiAssist.hint}</p>
+          )}
+          {aiAssist && aiAssist.enabled && (
+            <div className="rounded border border-slate-700 bg-slate-800/40 px-2.5 py-2 space-y-1.5">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={improveWithAi}
+                  disabled={aiBusy}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded border border-orange-500/60 text-orange-300 hover:bg-orange-500/10 font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <IconSparkle className="w-3.5 h-3.5" />
+                  {aiBusy ? 'Asking the model…' : aiResult ? 'Ask again' : 'Improve with AI'}
+                </button>
+                {aiBusy && (
+                  <button type="button" className="text-xs text-slate-400 hover:text-slate-200" onClick={() => { abortRef.current?.abort(); setAiBusy(false); }}>Cancel</button>
+                )}
+              </div>
+              <p className="text-[11px] text-slate-500">
+                {aiAssist.shapeOnly
+                  ? `Sends this request and the structure of the response (types, no values) to ${aiAssist.destination}.`
+                  : `Sends this request and a truncated copy of the response to ${aiAssist.destination}.`}
+                {' '}Credentials and secret values are redacted first. Every suggestion is test-run on this response; the ones that fail are dropped.
+              </p>
+              {aiError && <p role="alert" className="text-xs text-red-400">{aiError}</p>}
+              {aiResult && (
+                <p role="status" className="text-[11px] text-slate-400">
+                  {aiResult.suggestions.length} AI suggestion{aiResult.suggestions.length === 1 ? '' : 's'} kept
+                  {aiResult.discardedCount > 0 && `, ${aiResult.discardedCount} dropped because they failed on this response`}
+                  {aiResult.truncated && '. The response was truncated before sending'}.
+                </p>
+              )}
+            </div>
+          )}
           {notes.map(n => (
             <p key={n} role="note" className="text-xs text-amber-400 border border-amber-500/30 bg-amber-500/5 rounded px-2 py-1.5">{n}</p>
           ))}
@@ -126,8 +219,9 @@ export default function AssertionSuggestPanel({ response, tabId, existingScript,
                             onChange={() => toggle(s.id)}
                           />
                           <span className="flex-1 min-w-0">
-                            <span className="break-words">{s.title}</span>
+                            <span className="break-words">{s.source === 'ai' ? neutralizeAiText(s.title) : s.title}</span>
                             <span className="ml-2 text-[10px] text-slate-500">{KIND_LABEL[s.kind]}</span>
+                            {s.source === 'ai' && <span className="ml-2 text-[10px] text-orange-400 border border-orange-500/40 rounded px-1" title="Suggested by the AI model and verified on this response">AI</span>}
                             <span className={`ml-2 text-[10px] ${CONFIDENCE_TONE[s.confidence]}`}>{s.confidence}</span>
                             {s.volatile && <span className="ml-2 text-[10px] text-amber-400" title="This value can change between runs; only its shape is checked">may change</span>}
                             {isPresent && <span className="ml-2 text-[10px] text-slate-400">already in tests</span>}
