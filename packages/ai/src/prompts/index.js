@@ -4,9 +4,26 @@
 const UNTRUSTED_OPEN = '<untrusted_data>';
 const UNTRUSTED_CLOSE = '</untrusted_data>';
 
+// Any spelling of the delimiter: case-insensitive, optional whitespace, open or close.
+const DELIMITER_RE = /<\s*\/?\s*untrusted_data\s*>/gi;
+
+/**
+ * Remove delimiter look-alikes until none remain. A single pass is not enough: removing an inner
+ * tag can splice the surrounding text into a new one ("</untrusted_</untrusted_data>data>").
+ */
+function stripDelimiters(text) {
+  let s = String(text);
+  for (let i = 0; i < 100; i++) {
+    const next = s.replace(DELIMITER_RE, '');
+    if (next === s) return s;
+    s = next;
+  }
+  // Pathological nesting: drop every chevron rather than risk a surviving tag.
+  return s.replace(/[<>]/g, '');
+}
+
 function wrapUntrusted(text) {
-  const safe = String(text).split(UNTRUSTED_CLOSE).join('');
-  return `${UNTRUSTED_OPEN}\n${safe}\n${UNTRUSTED_CLOSE}`;
+  return `${UNTRUSTED_OPEN}\n${stripDelimiters(text)}\n${UNTRUSTED_CLOSE}`;
 }
 
 const UNTRUSTED_RULE =
@@ -39,4 +56,4 @@ function getPrompt(name, { language, data } = {}) {
   return { version: p.version, system: `${p.system()} ${UNTRUSTED_RULE}${langLine}`, user: p.user(data) };
 }
 
-module.exports = { PROMPTS, getPrompt, wrapUntrusted, UNTRUSTED_OPEN, UNTRUSTED_CLOSE, UNTRUSTED_RULE };
+module.exports = { PROMPTS, getPrompt, wrapUntrusted, stripDelimiters, UNTRUSTED_OPEN, UNTRUSTED_CLOSE, UNTRUSTED_RULE };
