@@ -8,6 +8,11 @@ const rootDir = path.resolve(__dirname, '..');
 const serverDir = path.join(rootDir, 'packages', 'server');
 const coreSrcDir = path.join(rootDir, 'packages', 'core');
 const coreDestDir = path.join(serverDir, 'node_modules', '@apilix', 'core');
+// @apilix/ai is deliberately NOT a dependency of @apilix/server (it is not published
+// to npm; `npm install --install-links --no-workspaces` would 404 on it). It is copied
+// here after the install, like @apilix/core, and resolved through NODE_PATH at runtime.
+const aiSrcDir = path.join(rootDir, 'packages', 'ai');
+const aiDestDir = path.join(serverDir, 'node_modules', '@apilix', 'ai');
 
 function run(command, options = {}) {
 	cp.execSync(command, {
@@ -138,6 +143,25 @@ function main() {
 
 	console.log('[dist:prepare:server] Installing @apilix/core production dependencies...');
 	run('npm install --omit=dev', { cwd: coreDestDir });
+
+	console.log('[dist:prepare:server] Copying @apilix/ai into packages/server/node_modules...');
+	fs.mkdirSync(aiDestDir, { recursive: true });
+	fs.cpSync(aiSrcDir, aiDestDir, {
+		recursive: true,
+		force: true,
+		filter: (source) => path.basename(source) !== 'node_modules',
+	});
+
+	// Its own axios/ajv must live under @apilix/ai/node_modules: Node would not resolve
+	// them from @apilix/core/node_modules. @apilix/core is an optional peer dependency,
+	// so this does not pull a published copy; it resolves to the sibling copy above.
+	console.log('[dist:prepare:server] Installing @apilix/ai production dependencies...');
+	run('npm install --omit=dev', { cwd: aiDestDir });
+
+	const aiEntry = path.join(aiDestDir, 'src', 'index.js');
+	if (!fs.existsSync(aiEntry)) {
+		throw new Error(`[dist:prepare:server] @apilix/ai missing from packages/server/node_modules (expected ${aiEntry}).`);
+	}
 
 	console.log(`[dist:prepare:server] Rebuilding better-sqlite3 for Electron ${electronVersion} on ${targetPlatform}/${targetArch}...`);
 	run(
