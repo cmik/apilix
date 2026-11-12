@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { CollectionItem, BaseCollection, RequestResponse, RunnerIteration, RunnerIterationResult, ScriptLog, CookieJar, RequestSettings } from './types';
+import type { CollectionItem, BaseCollection, RequestResponse, RunnerIteration, RunnerIterationResult, ScriptLog, CookieJar, RequestSettings, AiSettings } from './types';
 import type { DatabaseConnection } from './types';
 
 // When loaded via file:// (packaged Electron app), relative /api won't work.
@@ -458,5 +458,87 @@ export async function listMongoCollections(uri: string | undefined, database: st
     return res.data.collections;
   } catch (err) {
     throw extractApiError(err);
+  }
+}
+
+// ─── AI (loopback-only server routes; the key only ever travels client → local server) ───
+
+/** Error from /api/ai/*. `code` is one of the server's AiError codes (AUTH, RATE_LIMIT, DISABLED, TOO_LARGE…). */
+export class AiApiError extends Error {
+  code: string;
+  status?: number;
+  constructor(message: string, code: string, status?: number) {
+    super(message);
+    this.name = 'AiApiError';
+    this.code = code;
+    this.status = status;
+  }
+}
+
+export function toAiApiError(err: unknown): AiApiError {
+  if (err instanceof AiApiError) return err;
+  if (typeof err === 'object' && err !== null && 'isAxiosError' in err) {
+    const e = err as { response?: { status?: number; data?: { error?: string; code?: string } }; message?: string };
+    if (e.response) {
+      return new AiApiError(e.response.data?.error ?? e.message ?? 'AI request failed', e.response.data?.code ?? 'NETWORK', e.response.status);
+    }
+    return new AiApiError('Could not reach the local Apilix server', 'NETWORK');
+  }
+  return new AiApiError(err instanceof Error ? err.message : 'AI request failed', 'INTERNAL');
+}
+
+export interface AiPreviewPayload {
+  item?: CollectionItem;
+  response?: Pick<RequestResponse, 'status' | 'statusText' | 'headers' | 'body'>;
+  variables?: Array<{ name: string; scope?: string; secret?: boolean }>;
+  /** Plaintext values of secret variables; the server scrubs them from every section. */
+  secretValues?: string[];
+  settings?: Partial<Pick<AiSettings, 'maxContextTokens' | 'redactSecrets' | 'sendResponseBodies'>>;
+}
+
+export interface AiPreviewResult {
+  sections: Array<{ label: string; text: string; truncated: boolean }>;
+  /** Rough estimate (chars / 4). */
+  estimatedTokens: number;
+  redactions: number;
+}
+
+/** Push settings (and optionally the key) to the server. `apiKey`: undefined = keep, null = clear. */
+export async function aiPutConfig(settings: AiSettings, apiKey?: string | null): Promise<{ ok: boolean; hasKey: boolean }> {
+  try {
+    const { consentGiven: _consentGiven, ...serverSettings } = settings;
+    const res = await api.put<{ ok: boolean; hasKey: boolean }>('/ai/config', {
+      settings: serverSettings,
+      ...(apiKey !== undefined ? { apiKey } : {}),
+    });
+    return res.data;
+  } catch (err) {
+    throw toAiApiError(err);
+  }
+}
+
+export async function aiClearConfig(): Promise<void> {
+  try {
+    await api.delete('/ai/config');
+  } catch (err) {
+    throw toAiApiError(err);
+  }
+}
+
+export async function aiTest(): Promise<{ ok: boolean; model: string; latencyMs: number }> {
+  try {
+    const res = await api.post<{ ok: boolean; model: string; latencyMs: number }>('/ai/test', {}, { timeout: 70000 });
+    return res.data;
+  } catch (err) {
+    throw toAiApiError(err);
+  }
+}
+
+export async function aiPreview(payload: AiPreviewPayload): Promise<AiPreviewResult> {
+  try {
+    const res = await api.post<AiPreviewResult>('/ai/preview', payload);
+    return res.data;
+  } catch (err) {
+    throw toAiApiError(err);
   }
 }

@@ -9,7 +9,7 @@
  * is used, and the module remains crash-free.
  */
 
-import type { WorkspaceData, Workspace, SyncMetadata, SyncActivityEntry, AppSettings, HistoryRequest, SavedRunnerRun, SyncSharePolicy } from '../types';
+import type { WorkspaceData, Workspace, SyncMetadata, SyncActivityEntry, AppSettings, HistoryRequest, SavedRunnerRun, SyncSharePolicy, AiSettings, AiKeyStatus } from '../types';
 
 // ─── Electron API shim ────────────────────────────────────────────────────────
 
@@ -46,6 +46,7 @@ const LS_WORKSPACE = (id: string) => `apilix_workspace_${id}`;
 const LS_SETTINGS = 'apilix_settings';
 const LS_SYNC_CONFIG = 'apilix_sync_config';
 const LS_SYNC_ACTIVITY = 'apilix_sync_activity';
+const LS_AI_CONFIG = 'apilix_ai_config';
 
 function lsRead<T>(key: string): T | null {
   try {
@@ -630,4 +631,137 @@ export async function deleteTabSession(workspaceId: string): Promise<void> {
   if (api) {
     await api.deleteFile(`${(await api.getDataDir())}/workspaces/${workspaceId}/tab-session.json`).catch(() => {});
   }
+}
+
+// ─── AI configuration (global; API key handled strictly) ─────────────────────
+//
+// Deliberately NOT built on encryptValue/decryptValue: those fall back to the
+// plaintext / the ciphertext. For an API key we want the opposite:
+//   - Electron: the key is written to disk ONLY when the OS keychain encrypted it.
+//     If safeStorage is unavailable the key stays in memory (status 'unavailable').
+//   - A key that cannot be decrypted is reported as 'needs-reentry', never returned.
+//   - The key is never mirrored to localStorage in Electron.
+//   - Web: stored in localStorage only when the user chose to remember it.
+
+interface StoredAiConfig {
+  settings?: AiSettings;
+  /** Electron only: base64 safeStorage ciphertext. */
+  encryptedApiKey?: string;
+  /** Web only: plaintext key, present only when the user chose "remember". */
+  apiKey?: string;
+}
+
+export interface LoadedAiConfig {
+  settings: AiSettings | null;
+  apiKey: string | null;
+  keyStatus: AiKeyStatus;
+}
+
+const AI_CONFIG_FILE = 'ai-config.json';
+
+/** In-memory key for "don't remember" / no-keychain cases. Never put this in React state. */
+let sessionAiKey: string | null = null;
+export function getSessionAiKey(): string | null { return sessionAiKey; }
+export function setSessionAiKey(key: string | null): void { sessionAiKey = key && key.length > 0 ? key : null; }
+
+async function readAiFile(api: ElectronAPI): Promise<StoredAiConfig | null> {
+  try {
+    const dir = await api.getDataDir();
+    return (await api.readJsonFile(`${dir}/${AI_CONFIG_FILE}`)) as StoredAiConfig | null;
+  } catch {
+    return null;
+  }
+}
+
+export async function readAiConfig(): Promise<LoadedAiConfig> {
+  const api = eAPI();
+  if (api) {
+    const file = await readAiFile(api);
+    const mirrored = lsRead<StoredAiConfig>(LS_AI_CONFIG);
+    const settings = file?.settings ?? mirrored?.settings ?? null;
+    if (file?.encryptedApiKey) {
+      let key: string | null = null;
+      try { key = await api.decryptString(file.encryptedApiKey); } catch { key = null; }
+      if (key) return { settings, apiKey: key, keyStatus: 'ok' };
+      // Wrong machine / OS user / rotated keychain: ask for the key again, never surface the ciphertext.
+      return { settings, apiKey: null, keyStatus: 'needs-reentry' };
+    }
+    if (sessionAiKey) return { settings, apiKey: sessionAiKey, keyStatus: 'session-only' };
+    return { settings, apiKey: null, keyStatus: 'none' };
+  }
+  const stored = lsRead<StoredAiConfig>(LS_AI_CONFIG);
+  const settings = stored?.settings ?? null;
+  if (stored?.apiKey) return { settings, apiKey: stored.apiKey, keyStatus: 'ok' };
+  if (sessionAiKey) return { settings, apiKey: sessionAiKey, keyStatus: 'session-only' };
+  return { settings, apiKey: null, keyStatus: 'none' };
+}
+
+/**
+ * Persist AI settings and (optionally) the API key.
+ * `apiKey`: undefined = leave the stored key untouched, null = remove it, string = set it.
+ * Returns the resulting key status.
+ */
+export async function writeAiConfig(
+  settings: AiSettings,
+  apiKey: string | null | undefined,
+  opts: { remember: boolean },
+): Promise<AiKeyStatus> {
+  const api = eAPI();
+  if (typeof apiKey === 'string' && apiKey.length > 0) setSessionAiKey(apiKey);
+  if (apiKey === null) setSessionAiKey(null);
+
+  if (api) {
+    const previous = await readAiFile(api);
+    let encryptedApiKey = apiKey === undefined ? previous?.encryptedApiKey : undefined;
+    let status: AiKeyStatus = encryptedApiKey ? 'ok' : sessionAiKey ? 'session-only' : 'none';
+    if (typeof apiKey === 'string' && apiKey.length > 0) {
+      if (!opts.remember) {
+        status = 'session-only';
+      } else {
+        let enc: string | null = null;
+        try { enc = await api.encryptString(apiKey); } catch { enc = null; }
+        if (enc) { encryptedApiKey = enc; status = 'ok'; } else { status = 'unavailable'; }
+      }
+    }
+    try {
+      const dir = await api.getDataDir();
+      const file: StoredAiConfig = { settings, ...(encryptedApiKey ? { encryptedApiKey } : {}) };
+      await api.writeJsonFile(`${dir}/${AI_CONFIG_FILE}`, file);
+    } catch {
+      console.warn('[storageDriver] writeAiConfig: could not write ai-config.json');
+    }
+    // Settings only: the key must never be mirrored to localStorage in Electron.
+    lsWrite(LS_AI_CONFIG, { settings });
+    return status;
+  }
+
+  const previous = lsRead<StoredAiConfig>(LS_AI_CONFIG);
+  let stored: string | undefined = apiKey === undefined ? previous?.apiKey : undefined;
+  let status: AiKeyStatus = 'none';
+  if (typeof apiKey === 'string' && apiKey.length > 0) {
+    if (opts.remember) { stored = apiKey; status = 'ok'; } else { stored = undefined; status = 'session-only'; }
+  } else if (stored) {
+    status = 'ok';
+  } else if (sessionAiKey) {
+    status = 'session-only';
+  }
+  lsWrite(LS_AI_CONFIG, { settings, ...(stored ? { apiKey: stored } : {}) });
+  return status;
+}
+
+/** Remove the stored key everywhere (disk, localStorage, memory). Settings are kept. */
+export async function clearAiKey(): Promise<void> {
+  sessionAiKey = null;
+  const api = eAPI();
+  if (api) {
+    const file = await readAiFile(api);
+    if (file) {
+      try {
+        const dir = await api.getDataDir();
+        await api.writeJsonFile(`${dir}/${AI_CONFIG_FILE}`, { settings: file.settings });
+      } catch { /* ignore */ }
+    }
+  }
+  const stored = lsRead<StoredAiConfig>(LS_AI_CONFIG);
+  if (stored) lsWrite(LS_AI_CONFIG, { settings: stored.settings });
 }
