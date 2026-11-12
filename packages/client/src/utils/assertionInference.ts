@@ -116,6 +116,23 @@ function varNameFor(path: Path): string {
 
 /** Suggest assertions for a response. Never throws. */
 export function inferAssertions(input: InferenceInput): AssertionSuggestion[] {
+  return inferAssertionsWithNotes(input).suggestions;
+}
+
+export interface InferenceResult {
+  suggestions: AssertionSuggestion[];
+  /** Things the user should know about what was NOT inferred (never silent). */
+  notes: string[];
+}
+
+/** Same as {@link inferAssertions}, plus notes explaining anything that was skipped. */
+export function inferAssertionsWithNotes(input: InferenceInput): InferenceResult {
+  const notes: string[] = [];
+  const out = inferFromResponse(input, notes);
+  return { suggestions: out, notes };
+}
+
+function inferFromResponse(input: InferenceInput, notes: string[]): AssertionSuggestion[] {
   const out: AssertionSuggestion[] = [];
   let seq = 0;
   const add = (s: Omit<AssertionSuggestion, 'id'>) => out.push({ id: `s${++seq}`, ...s });
@@ -144,7 +161,16 @@ export function inferAssertions(input: InferenceInput): AssertionSuggestion[] {
   }
 
   // ── body ──────────────────────────────────────────────────────────────────
-  if (input.bodyBase64 || typeof input.body !== 'string' || !input.body.trim() || input.body.length > MAX_BODY_CHARS) return out;
+  if (input.bodyBase64) {
+    notes.push('The response body is binary: no body assertions were suggested.');
+    return out;
+  }
+  if (typeof input.body !== 'string' || !input.body.trim()) return out;
+  if (input.body.length > MAX_BODY_CHARS) {
+    const mb = (input.body.length / 1_000_000).toFixed(1);
+    notes.push(`The response body is too large to analyse (${mb} MB, limit ${MAX_BODY_CHARS / 1_000_000} MB): only status, headers and timing were suggested. Add body assertions by hand.`);
+    return out;
+  }
 
   let json: unknown;
   try { json = JSON.parse(input.body); } catch {

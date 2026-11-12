@@ -3,7 +3,7 @@ import type { RequestResponse } from '../types';
 import { INJECT_TEST_SNIPPET } from '../utils/appEvents';
 import type { InjectTestSnippetDetail } from '../utils/appEvents';
 import {
-  inferAssertions,
+  inferAssertionsWithNotes,
   isSuggestionPresent,
   presenceNeedles,
   type AssertionSuggestion,
@@ -42,7 +42,7 @@ const CONFIDENCE_TONE: Record<AssertionSuggestion['confidence'], string> = {
 };
 
 export default function AssertionSuggestPanel({ response, tabId, existingScript, onClose }: AssertionSuggestPanelProps) {
-  const suggestions = useMemo(() => inferAssertions({
+  const { suggestions, notes } = useMemo(() => inferAssertionsWithNotes({
     status: response.status,
     headers: response.headers ?? {},
     body: response.body ?? '',
@@ -102,6 +102,9 @@ export default function AssertionSuggestPanel({ response, tabId, existingScript,
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+          {notes.map(n => (
+            <p key={n} role="note" className="text-xs text-amber-400 border border-amber-500/30 bg-amber-500/5 rounded px-2 py-1.5">{n}</p>
+          ))}
           {suggestions.length === 0 && <p className="text-xs text-slate-500">No suggestions for this response.</p>}
           {SECTIONS.map(section => {
             const items = suggestions.filter(s => section.kinds.includes(s.kind));

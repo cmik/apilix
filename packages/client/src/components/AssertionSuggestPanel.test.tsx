@@ -83,4 +83,9 @@ describe('AssertionSuggestPanel', () => {
     render(<AssertionSuggestPanel response={bare} tabId={null} existingScript="" onClose={() => {}} />);
     expect(screen.getByText('No suggestions for this response.')).toBeInTheDocument();
   });
+  it('shows a visible note when the body is too large to analyse', () => {
+    const big = { ...response, body: JSON.stringify({ items: Array.from({ length: 200000 }, (_, i) => ({ i })) }) } as unknown as RequestResponse;
+    render(<AssertionSuggestPanel response={big} tabId="t1" existingScript="" onClose={() => {}} />);
+    expect(screen.getByRole('note')).toHaveTextContent(/too large to analyse/);
+  });
 });

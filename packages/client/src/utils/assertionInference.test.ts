@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createRequire } from 'node:module';
-import { inferAssertions, isSuggestionPresent, type InferenceInput } from './assertionInference';
+import { inferAssertions, inferAssertionsWithNotes, isSuggestionPresent, type InferenceInput } from './assertionInference';
 
 const require = createRequire(import.meta.url);
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -149,5 +149,25 @@ describe('isSuggestionPresent', () => {
     const cap = { title: 'Save id as id', kind: 'capture' as const, script: 'apx.environment.set("id", apx.response.json()?.id);' };
     expect(isSuggestionPresent(cap.script, cap)).toBe(true);
     expect(isSuggestionPresent('apx.environment.set("id", 1);', cap)).toBe(false);
+  });
+});
+
+describe('notes for what was skipped', () => {
+  it('a body over 1 MB yields a note instead of silently dropping body assertions', () => {
+    const big = JSON.stringify({ items: Array.from({ length: 200000 }, (_, i) => ({ i })) });
+    expect(big.length).toBeGreaterThan(1_000_000);
+    const r = inferAssertionsWithNotes(input({ body: big }));
+    expect(r.suggestions.map(s => s.kind).sort()).toEqual(['header', 'status', 'timing']);
+    expect(r.notes).toHaveLength(1);
+    expect(r.notes[0]).toMatch(/too large to analyse/);
+    expect(r.notes[0]).toMatch(/MB/);
+  });
+  it('a binary body yields a note; a normal body yields none', () => {
+    expect(inferAssertionsWithNotes(input({ bodyBase64: 'AAAA', body: '' })).notes[0]).toMatch(/binary/);
+    expect(inferAssertionsWithNotes(input()).notes).toEqual([]);
+    expect(inferAssertionsWithNotes(input({ body: '' })).notes).toEqual([]);
+  });
+  it('inferAssertions keeps returning the plain list', () => {
+    expect(inferAssertions(input())).toEqual(inferAssertionsWithNotes(input()).suggestions);
   });
 });
