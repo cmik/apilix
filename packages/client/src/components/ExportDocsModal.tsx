@@ -45,7 +45,7 @@ export default function ExportDocsModal({ collection, folder, onClose }: ExportD
   const ai = state.ai.settings;
   const aiBusy = state.ai.inFlight.docDescribe === true;
   const [aiRows, setAiRows] = useState<AiDescriptionRow[]>([]);
-  const [aiMark, setAiMark] = useState(true);
+  const [aiMark, setAiMark] = useState(ai.markAiContent !== false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiNotes, setAiNotes] = useState<string[]>([]);
   const [tab, setTab] = useState<'preview' | 'ai'>('preview');

@@ -56,6 +56,8 @@ The key is sent only from the app to the local Apilix server, then to your provi
 |---|---|---|
 | Fill missing documentation descriptions | Export documentation dialog, `apilix docs --ai-describe` | *Complete missing documentation descriptions* |
 
+AI-written descriptions in exported docs carry a mark (HTML badge, Markdown note, `x-generated-by: ai` in OpenAPI). **Settings → AI → Exports → Mark AI-written content in exports** sets the default (on); the export dialog can override it per export, and the CLI has `--no-ai-mark`.
+
 ## Limits
 
 - One AI request runs at a time.

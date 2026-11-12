@@ -1096,6 +1096,8 @@ export interface AiSettings {
   /** Destination (`provider|baseUrl`) the consent was given for; a different destination revokes it. */
   consentDestination?: string;
   outputLanguage?: string;
+  /** Mark AI-written content in exported docs (badge / note / `x-generated-by`). Default true when unset. */
+  markAiContent?: boolean;
   features: Record<AiFeatureKey, boolean>;
 }
 
