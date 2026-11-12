@@ -147,3 +147,55 @@ test('prompt carries the untrusted rule and the apx API reference', () => {
   assert.match(p.system, /apx\.response\.json\(\)/);
   assert.match(p.user, /<untrusted_data>/);
 });
+
+const timingAnswer = () => ({ suggestions: [sug('Responds within 5 s', "apx.test('Fast enough', () => { apx.expect(apx.response.responseTime).to.be.below(5000); });", 'timing', { volatile: true })] });
+const sentData = (provider) => provider.calls[0].messages[0].content;
+
+test('the observed latency is sent to the model as a rounded number of ms, inside the untrusted block', async () => {
+  const provider = fake(timingAnswer);
+  await suggestAssertions({ provider, request, response: { ...response, responseTime: 123.6 } });
+  const user = sentData(provider);
+  assert.match(user, /"responseTimeMs": 124/);
+  assert.ok(user.indexOf('"responseTimeMs"') > user.indexOf('<'), 'inside the data block, after the opening delimiter');
+  assert.match(provider.calls[0].system, /responseTimeMs/);
+});
+
+test('a non-numeric, negative, non-finite or huge latency is dropped from the prompt and from the dry-run', async () => {
+  for (const bad of ['42', null, -5, NaN, Infinity, 600001, 1e12, {}, [42], true]) {
+    const provider = fake(() => ({ suggestions: [sug('Latency is the stand-in', "apx.test('t', () => { apx.expect(apx.response.responseTime).to.equal(100); });", 'timing')] }));
+    const r = await suggestAssertions({ provider, request, response: { ...response, responseTime: bad } });
+    assert.doesNotMatch(sentData(provider), /responseTimeMs/, `prompt for ${String(bad)}`);
+    assert.equal(r.suggestions.length, 1, `dry-run falls back to the default latency for ${String(bad)}`);
+  }
+});
+
+test('without responseTime the prompt is unchanged', async () => {
+  const withTime = fake(timingAnswer);
+  const without = fake(timingAnswer);
+  const { responseTime, ...noTime } = response;
+  await suggestAssertions({ provider: withTime, request, response });
+  await suggestAssertions({ provider: without, request, response: noTime });
+  assert.doesNotMatch(sentData(without), /responseTimeMs/);
+  assert.equal(sentData(withTime).replace(/\s*"responseTimeMs": 42,?/, ''), sentData(without));
+});
+
+test('the dry-run validates a timing suggestion against the same latency the model saw', async () => {
+  const provider = fake(() => ({
+    suggestions: [
+      sug('Is 250 ms', "apx.test('t', () => { apx.expect(apx.response.responseTime).to.equal(250); });", 'timing'),
+      sug('Is 100 ms', "apx.test('t', () => { apx.expect(apx.response.responseTime).to.equal(100); });", 'timing'),
+    ],
+  }));
+  const r = await suggestAssertions({ provider, request, response: { ...response, responseTime: 249.7 } });
+  assert.match(sentData(provider), /"responseTimeMs": 250/);
+  if (r.executed) {
+    assert.deepEqual(r.suggestions.map(s => s.title), ['Is 250 ms']);
+    assert.equal(r.discarded.length, 1);
+  }
+});
+
+test('the response passed by the caller is not mutated', async () => {
+  const input = { ...response, responseTime: -1 };
+  await suggestAssertions({ provider: fake(timingAnswer), request, response: input });
+  assert.equal(input.responseTime, -1);
+});

@@ -52,6 +52,7 @@ const PROMPTS = {
       'Prefer meaningful checks: allowed values of enum-like fields (status, type, role...), invariants between fields (a total equal to the sum of its items), formats and structure. Never assert the concrete value of ids, timestamps, tokens, hashes or other volatile fields: assert their type or format instead.',
       'A "capture" suggestion is a single apx.environment.set("name", expression) line saving a value later requests need (an id, a token). Do not repeat tests that already exist. Do not call apx.sendRequest, do not use eval, Function, this, process or require, and do not access constructor or prototype.',
       'Values shown as <redacted> are secrets: never assert them.',
+      'When response.responseTimeMs is given, it is the latency (ms) observed for this one call: a "timing" assertion must use a generous threshold well above it (not an exact value) and be marked volatile; without it, do not guess a latency.',
     ].join(' '),
     user: (data) => `Suggest assertions for this response.\n${wrapUntrusted(data)}`,
   },

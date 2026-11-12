@@ -39,6 +39,14 @@ function clip(v, max) {
   return s.length > max ? `${s.slice(0, max)}…` : s;
 }
 
+const MAX_RESPONSE_TIME_MS = 600000;
+
+/** Observed latency in ms: a finite number in [0, 600000], rounded. Anything else is ignored (undefined). */
+function normalizeLatency(v) {
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > MAX_RESPONSE_TIME_MS) return undefined;
+  return Math.round(v);
+}
+
 function tryParse(text) {
   try { return { ok: true, value: JSON.parse(text) }; } catch { return { ok: false }; }
 }
@@ -74,6 +82,9 @@ function buildData({ request, name, response, existingTests, secretValues, redac
     request: trimRequest(redReq, name),
     response: { status: redRes.status, statusText: clip(redRes.statusText, 80), headers: trimHeaders(redRes.headers) },
   };
+  // A bare number: it carries no secret, so it does not go through redaction.
+  const latency = normalizeLatency(response && response.responseTime);
+  if (latency !== undefined) data.response.responseTimeMs = latency;
   let truncated = false;
   const body = typeof redRes.body === 'string' ? redRes.body : '';
   const parsed = tryParse(body);
@@ -165,10 +176,14 @@ function suggestionId(script, taken) {
  *   secretValues?: string[], language?: string, signal?: AbortSignal }} input
  */
 async function suggestAssertions(input) {
-  const { provider, request, name, response, existingTests, secretValues, language, signal } = input;
+  const { provider, request, name, existingTests, secretValues, language, signal } = input;
   const maxContextTokens = input.maxContextTokens > 0 ? input.maxContextTokens : 8000;
   const redactSecrets = input.redactSecrets !== false;
   const sendResponseBodies = input.sendResponseBodies !== false;
+  // One sanitised copy feeds both the prompt and the dry-run, so the model and the validation see the same latency.
+  const { responseTime: rawLatency, ...responseRest } = input.response && typeof input.response === 'object' ? input.response : {};
+  const latency = normalizeLatency(rawLatency);
+  const response = latency === undefined ? responseRest : { ...responseRest, responseTime: latency };
 
   const { prompt, truncated } = fitPrompt(
     { request, name, response, existingTests, secretValues, redactSecrets, sendResponseBodies },
@@ -209,4 +224,4 @@ async function suggestAssertions(input) {
   };
 }
 
-module.exports = { suggestAssertions, sanitizeSuggestions, buildData, fitPrompt, KINDS };
+module.exports = { suggestAssertions, normalizeLatency, sanitizeSuggestions, buildData, fitPrompt, KINDS };

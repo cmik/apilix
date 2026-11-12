@@ -292,3 +292,22 @@ test('APILIX_AI_DRY_RUN=off: both routes answer without executing anything and s
     await fake.close();
   }
 });
+
+test('/suggest-assertions forwards a valid latency to the model and ignores an invalid one', async () => {
+  const fake = await startFakeProvider(chatReply({ suggestions: [] }));
+  try {
+    await withAiServer(async ({ call }) => {
+      await call('PUT', '/config', { settings: settings({ baseUrl: fake.url, features: { assertSuggest: true } }), apiKey: KEY });
+      const ok = await call('POST', '/suggest-assertions', suggestBody({ secretValues: [] }));
+      assert.equal(ok.status, 200);
+      assert.match(JSON.stringify(fake.calls[0].body), /responseTimeMs\\": 12/);
+      const base = suggestBody({ secretValues: [] });
+      for (const bad of ['12', -1, 1e12, null]) {
+        const r = await call('POST', '/suggest-assertions', { ...base, response: { ...base.response, responseTime: bad } });
+        assert.equal(r.status, 200);
+        // The system prompt names the field; the data block only carries it as a `"responseTimeMs": n` pair.
+        assert.doesNotMatch(JSON.stringify(fake.calls[fake.calls.length - 1].body), /responseTimeMs\\": \d/, `latency ${bad} must be ignored`);
+      }
+    });
+  } finally { await fake.close(); }
+});
