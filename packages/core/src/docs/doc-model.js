@@ -110,7 +110,7 @@ function buildBody(body, resolve, options) {
     const isFile = f.type === 'file';
     if (isFile) entry.type = 'file';
     const rawVal = f.value == null ? '' : String(f.value);
-    entry.value = redact.isSensitiveName(entry.key) && !inc ? redact.redactValue(rawVal, false) : resolve(rawVal);
+    entry.value = redact.isSensitiveKey(entry.key) && !inc ? redact.redactValue(rawVal, false) : resolve(rawVal);
     if (f.description) entry.description = descText(f.description);
     return entry;
   });
@@ -183,7 +183,7 @@ function buildRequest(item, ctx) {
   const query = rawQuery.filter(isEnabled).map(q => {
     const key = String(q.key ?? '');
     const val = q.value == null ? '' : String(q.value);
-    const e = { key, value: redact.isSensitiveName(key) && !inc ? redact.redactValue(val, false) : resolve(val) };
+    const e = { key, value: redact.isSensitiveKey(key) && !inc ? redact.redactValue(val, false) : resolve(val) };
     if (q.description) e.description = descText(q.description);
     return e;
   });
@@ -195,7 +195,7 @@ function buildRequest(item, ctx) {
     if (seen.has(key)) return;
     seen.add(key);
     const val = value == null ? '' : String(value);
-    const e = { key, value: redact.isSensitiveName(key) && !inc ? redact.redactValue(val, false) : resolve(val) };
+    const e = { key, value: redact.isSensitiveKey(key) && !inc ? redact.redactValue(val, false) : resolve(val) };
     if (desc) e.description = descText(desc);
     pathVariables.push(e);
   };
@@ -256,6 +256,14 @@ function findFolder(items, spec, trail) {
   return null;
 }
 
+/**
+ * Build the neutral, redacted documentation model consumed by every renderer.
+ * Non-HTTP requests are skipped and reported in `model.warnings`.
+ * @param {object} collection Collection with `info` and `item[]`.
+ * @param {object} [options] DocsExportOptions; uses `folder`, `variableMode`, `variables`, `secretVariableKeys`, `includeCredentials`, `includeExamples` and `title`.
+ * @returns {object} DocModel: `{ title, description, auth, variables, tree, requests, warnings }`.
+ * @throws {Error} When the collection lacks `info`/`item[]` or `options.folder` matches no folder.
+ */
 function buildDocModel(collection, options = {}) {
   if (!collection || !collection.info || !Array.isArray(collection.item)) {
     throw new Error('Collection must contain info and item[]');
@@ -320,7 +328,7 @@ function buildDocModel(collection, options = {}) {
   const variables = (Array.isArray(collection.variable) ? collection.variable : []).filter(v => v && v.key && isEnabled(v)).map(v => {
     const val = v.value == null ? '' : String(v.value);
     const secretKey = Array.isArray(opts.secretVariableKeys) && opts.secretVariableKeys.includes(String(v.key));
-    const e = { key: String(v.key), value: (redact.isSensitiveName(v.key) || secretKey) && !opts.includeCredentials ? redact.redactValue(val, false) : val };
+    const e = { key: String(v.key), value: (redact.isSensitiveKey(v.key) || secretKey) && !opts.includeCredentials ? redact.redactValue(val, false) : val };
     if (v.description) e.description = descText(v.description);
     return e;
   });

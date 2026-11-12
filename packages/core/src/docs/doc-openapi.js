@@ -16,7 +16,7 @@ function safeName(name) {
 
 /** {{var}} -> {var}; returns the template and the variable names found. */
 function templateVars(str, found) {
-  return String(str).replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (m, name) => {
+  return String(str).replace(/\{\{\s*([^{}\s](?:[^{}]*?[^{}\s])?)\s*\}\}/g, (m, name) => {
     const n = safeName(name);
     if (found) found.add(n);
     return `{${n}}`;
@@ -28,7 +28,7 @@ function toPathTemplate(path) {
   const converted = path.split('/').map(seg => {
     const m = seg.match(/^:([A-Za-z_][\w-]*)$/);
     if (m) { names.push({ name: m[1], fromVar: false }); return `{${m[1]}}`; }
-    return seg.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (mm, v) => {
+    return seg.replace(/\{\{\s*([^{}\s](?:[^{}]*?[^{}\s])?)\s*\}\}/g, (mm, v) => {
       const n = safeName(v);
       names.push({ name: n, fromVar: true });
       return `{${n}}`;
@@ -196,6 +196,10 @@ function buildOpenApi(model, options = {}, extraWarnings = []) {
       case 'apikey': def = { type: 'apiKey', in: auth.in || 'header', name: auth.name || 'X-API-Key' }; prefix = 'apiKeyAuth'; break;
       case 'oauth2': {
         const o = auth.oauth2 || {};
+        if (o.grantType === 'refresh_token') {
+          warnings.push('OAuth2 grant type "refresh_token" cannot be expressed as an OpenAPI flow; omitted.');
+          return null;
+        }
         const scopes = {};
         for (const s of o.scopes || []) scopes[s] = '';
         const tokenUrl = o.tokenUrl ? templateVars(o.tokenUrl) : '';
@@ -305,7 +309,13 @@ function buildOpenApi(model, options = {}, extraWarnings = []) {
         if (rootHasAuth && req.auth.source !== 'collection') op.security = [];
       } else if (req.auth.source !== 'collection') {
         const ref = schemeFor(req.auth);
-        if (ref) op.security = [{ [ref.name]: ref.scopes }];
+        if (ref) {
+          op.security = [{ [ref.name]: ref.scopes }];
+        } else if (rootHasAuth) {
+          // The request's own auth is not representable: do not silently inherit the root scheme.
+          op.security = [];
+          warnings.push(`Request "${req.name}" uses auth (${req.auth.type}) that cannot be expressed in OpenAPI; security set to [] so it does not inherit the collection auth.`);
+        }
       }
     }
     if (server && servers.length > 1) op.servers = [server];

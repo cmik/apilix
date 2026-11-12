@@ -23,7 +23,7 @@ function escHtml(text) {
 
 /** Single-line, HTML-escaped text for headings, code spans and list entries. */
 function inline(text) {
-  return escHtml(text).replace(/\s*[\r\n]+\s*/g, ' ').replace(/`/g, '\\`');
+  return escHtml(text).replace(/\s*[\r\n]+\s*/g, ' ').replace(/\\/g, '\\\\').replace(/`/g, '\\`');
 }
 
 /** Text inside a code span: no HTML escaping (code spans are literal), single line, no backtick breakout. */

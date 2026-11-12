@@ -168,3 +168,169 @@ test('markdown: raw HTML in names/descriptions is escaped and headings stay sing
   assert.ok(!/^# injected/m.test(md), 'newline in name cannot start a new heading');
   assert.ok(/^## Evil # injected &lt;b&gt;x&lt;\/b&gt;$/m.test(md));
 });
+
+test('percent-encoded sensitive query key is redacted in url and examples', () => {
+  const col = { info: { name: 'T' }, item: [{ name: 'q', request: { method: 'GET', url: 'http://h/x?api%2Dkey=PCT-SECRET&ok=1' } }] };
+  for (const format of ['html', 'markdown', 'openapi']) {
+    const out = generateDocs(col, { format }).content;
+    assert.ok(!out.includes('PCT-SECRET'), `${format} leaked encoded-key secret`);
+  }
+});
+
+// Run fn, fail with a diagnostic message naming the input when it is too slow.
+function within(label, budgetMs, fn) {
+  const t0 = process.hrtime.bigint();
+  const result = fn();
+  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  assert.ok(ms < budgetMs, `${label}: took ${ms.toFixed(0)} ms (budget ${budgetMs} ms)`);
+  return result;
+}
+
+const descDoc = description => generateDocs({ info: { name: 'T', description }, item: [] }, { format: 'html' }).content;
+
+test('redaction and rendering stay fast on adversarial input (per-input budgets)', () => {
+  const big = 500000;
+  const inputs = [
+    ['redactUrlsInText a*50k', () => r.redactUrlsInText('a'.repeat(50000), false)],
+    ['redactUrlsInText "a-" 500KB', () => r.redactUrlsInText('a-'.repeat(big / 2), false)],
+    ['redactUrlsInText "a://" 500KB', () => r.redactUrlsInText('a://'.repeat(big / 4), false)],
+    ['redactUrlsInText "Bearer " 500KB', () => r.redactUrlsInText('Bearer '.repeat(big / 7), false)],
+    ['redactUrlsInText "Bearer"+spaces', () => r.redactUrlsInText(`Bearer${' '.repeat(big)}`, false)],
+    ['xml "<->"+spaces', () => r.redactBodyText(`<->${' '.repeat(20000)}`, false)],
+    ['xml "<-><![CDATA[" x3000', () => r.redactBodyText('<-><![CDATA['.repeat(3000), false)],
+    ['xml "<password><![CDATA[" x25000', () => r.redactBodyText('<password><![CDATA['.repeat(25000), false)],
+    ['xml "<password>" x50000', () => r.redactBodyText('<password>'.repeat(50000), false)],
+    ['xml "<password><!--" x50000', () => r.redactBodyText('<password><!--x-->'.repeat(30000), false)],
+    ['xml "<a " x100000', () => r.redactBodyText('<a "'.repeat(100000), false)],
+    ['xml "<a x=\'" x100000', () => r.redactBodyText('<a x=\''.repeat(80000), false)],
+    ['xml "<?" x200000', () => r.redactBodyText('<?'.repeat(200000), false)],
+    ['xml attrs 400KB', () => r.redactBodyText(`<a ${'x="1" '.repeat(50000)}>`, false)],
+    ['json-like array spaces', () => r.redactBodyText(`{"tokens":[${' '.repeat(100000)}1]`, false)],
+    ['openapi "{{"+spaces', () => generateDocs({ info: { name: 'T' }, item: [{ name: 'r', request: { method: 'GET', url: `http://h/{{${' '.repeat(40000)}x` } }] }, { format: 'openapi' })],
+    ['openapi "{{ x" x', () => generateDocs({ info: { name: 'T' }, item: [{ name: 'r', request: { method: 'GET', url: `http://h/${'{{ x '.repeat(40000)}` } }] }, { format: 'openapi' })],
+    ['html "<A0..." +list', () => descDoc(`<A${'0'.repeat(50000)}\n* ${' '.repeat(50000)}x\n#${' '.repeat(50000)}x`)],
+    ['html "<a " x20000', () => descDoc('<a '.repeat(20000))],
+    ['html "<a " x130000', () => descDoc('<a '.repeat(130000))],
+    ['html \'<a href="\' x40000', () => descDoc('<a href="'.repeat(40000))],
+    ['html "<b "+400KB', () => descDoc(`<b ${'x'.repeat(400000)}`)],
+    ['html "[" x80000', () => descDoc('['.repeat(80000))],
+    ['html "![" x40000', () => descDoc('!['.repeat(40000))],
+    ['html "![a](" x16000', () => descDoc('![a]('.repeat(16000))],
+    ['html "[a](" x20000', () => descDoc('[a]('.repeat(20000))],
+    ['html "[a](u" x20000', () => descDoc('[a](u'.repeat(20000))],
+  ];
+  for (const [label, fn] of inputs) within(label, 1500, fn);
+});
+
+test('redactUrlsInText: a leading junk char before a scheme does not hide userinfo when another URL is present', () => {
+  for (const junk of ['-', '9', '+', '.', 'x']) {
+    const out = r.redactUrlsInText(`https://ok.example/x ${junk}https://u:SEKRET@h/x`, false);
+    assert.ok(!out.includes('SEKRET'), `${junk}https leaked: ${out}`);
+  }
+  const q = r.redactUrlsInText('https://ok.example/a +https://h/p?token=SEKRET', false);
+  assert.ok(!q.includes('SEKRET'), q);
+  assert.ok(r.redactUrlsInText('https://ok.example/a?x=1 and https://other.example/b', false).includes('https://other.example/b'));
+  assert.equal(r.redactUrlsInText('(https://h/x?token=S)', false), '(https://h/x?token=<redacted>)');
+  assert.equal(r.redactUrlsInText('https://h/a(b)?token=S)', false).endsWith(')'), true);
+});
+
+test('protocol-relative URLs with userinfo are redacted', () => {
+  assert.ok(!r.redactUrlUserinfo('//u:SEKRET@h/x', false).includes('SEKRET'));
+  assert.ok(!r.redactUrlsInText('//u:SEKRET@h/x', false).includes('SEKRET'));
+  assert.ok(!r.redactUrlsInText('see https://ok/a and //u:SEKRET@h/x', false).includes('SEKRET'));
+  assert.equal(r.redactUrlsInText('https://cdn.example/a//b', false), 'https://cdn.example/a//b');
+  const col = { info: { name: 'T' }, item: [{ name: 'r', request: { method: 'GET', url: '//u:SEKRET@h/x', header: [{ key: 'Location', value: '//u:SEKRET@h/y' }] } }] };
+  assertAbsent(col, ['SEKRET']);
+});
+
+test('literal Bearer/Basic credentials in free text are redacted, variables are kept', () => {
+  assert.ok(!r.redactUrlsInText('Bearer SEKRET https://h', false).includes('SEKRET'));
+  assert.ok(!r.redactUrlsInText('basic SEKRET', false).includes('SEKRET'));
+  assert.equal(r.redactUrlsInText('Bearer {{tok}}', false), 'Bearer {{tok}}');
+  const col = { info: { name: 'T' }, item: [{ name: 'r', request: { method: 'GET', url: 'http://h/x', header: [{ key: 'X-Note', value: 'sent Bearer SEKRET1 then Basic SEKRET2' }], response: [{ name: 'ok', code: 200, header: [{ key: 'X-Echo', value: 'Bearer SEKRET3' }], body: '' }] } }] };
+  assertAbsent(col, ['SEKRET1', 'SEKRET2', 'SEKRET3']);
+});
+
+test('XML redaction: CDATA, mixed content, comments, namespaces and attributes', () => {
+  const cases = [
+    '<password><![CDATA[SEKRET]]></password>',
+    '<password>a<![CDATA[SEKRET]]></password>',
+    '<password>SEKRET<![CDATA[b]]>c</password>',
+    '<password><!-- c -->SEKRET</password>',
+    '<password>SEKRET<!-- c --></password>',
+    '<password>SE<!-- c -->KRET</password>',
+    '<ns:Token xmlns:ns="u">SEKRET</ns:Token>',
+    '<a secret="SEKRET"/>',
+    '<a x="1" apiKey=\'SEKRET\'>t</a>',
+    '<root><user>u</user><password>\n  SEKRET\n</password></root>',
+  ];
+  for (const c of cases) {
+    const out = r.redactBodyText(c, false);
+    assert.ok(!out.includes('SEKRET'), `leaked in ${JSON.stringify(c)} -> ${out}`);
+    assert.ok(out.includes('<redacted>'), `no placeholder in ${JSON.stringify(c)} -> ${out}`);
+  }
+  assert.equal(r.redactBodyText('<a><b>keep</b><password>{{pw}}</password></a>', false), '<a><b>keep</b><password>{{pw}}</password></a>');
+  assert.equal(r.redactBodyText('<user>bob</user>', false), '<user>bob</user>');
+  assert.ok(r.redactBodyText('<root><user>bob</user></root>', false).includes('bob'));
+  const col = req('http://h/x', { body: { mode: 'raw', raw: '<r><password>a<![CDATA[SEKRET]]></password></r>', options: { raw: { language: 'xml' } } } });
+  assertAbsent(col, ['SEKRET']);
+});
+
+test('{{ var }} templating in OpenAPI keeps its meaning after the regex hardening', () => {
+  const tpl = (url) => JSON.parse(generateDocs({ info: { name: 'T' }, item: [{ name: 'r', request: { method: 'GET', url } }] }, { format: 'openapi', openapiFormat: 'json' }).content);
+  const spec = tpl('http://h/{{ a b }}/{{a}}/{{ x }}');
+  const key = Object.keys(spec.paths)[0];
+  assert.equal(key, '/{a_b}/{a}/{x}');
+});
+
+test('malformed percent-encoded sensitive keys are redacted everywhere', () => {
+  for (const k of ['api%2Dkey%E0', '%74oken%ZZ', 'pass%word%', 'a%E0pi%2Dkey', 'api+key%ZZ']) {
+    const col = { info: { name: 'T' }, item: [
+      { name: 'q', request: { method: 'POST', url: `http://h/x?${k}=SEKRET&ok=1`, header: [{ key: k, value: 'SEKRET' }], body: { mode: 'urlencoded', urlencoded: [{ key: k, value: 'SEKRET' }] } } },
+      { name: 'b', request: { method: 'POST', url: 'http://h/y', body: { mode: 'raw', raw: `${k}=SEKRET&a=1`, options: { raw: { language: 'text' } } } } },
+      { name: 'f', request: { method: 'POST', url: 'http://h/z', body: { mode: 'formdata', formdata: [{ key: k, value: 'SEKRET' }] } } },
+    ] };
+    assertAbsent(col, ['SEKRET']);
+  }
+  assert.equal(r.isSensitiveKey('%74oken%ZZ'), true);
+  assert.equal(r.isSensitiveKey('api%2Dkey%E0'), true);
+  assert.equal(r.isSensitiveKey('%2574oken'), false, 'double encoding is decoded once only');
+  assert.equal(r.isSensitiveKey('name'), false);
+});
+
+test('an unrepresentable per-request auth does not inherit the root auth in OpenAPI', () => {
+  const col = {
+    info: { name: 'T' },
+    auth: { type: 'bearer', bearer: [{ key: 'token', value: '{{t}}' }] },
+    item: [
+      { name: 'rt', request: { method: 'GET', url: 'http://h/a', auth: { type: 'oauth2', oauth2: { grantType: 'refresh_token', clientId: 'c', clientSecret: 'CSSECRET', refreshToken: 'RTSECRET', tokenUrl: 'https://a/t' } } } },
+      { name: 'inherit', request: { method: 'GET', url: 'http://h/b' } },
+    ],
+  };
+  for (const openapiFormat of ['json', 'yaml']) {
+    const res = generateDocs(col, { format: 'openapi', openapiFormat });
+    assert.ok(!res.content.includes('RTSECRET'), 'refresh token leaked');
+    assert.ok(!res.content.includes('CSSECRET'), 'client secret leaked');
+    assert.ok(res.warnings.some(w => /rt/.test(w) && /security/.test(w)), `missing warning: ${res.warnings}`);
+  }
+  const spec = JSON.parse(generateDocs(col, { format: 'openapi', openapiFormat: 'json' }).content);
+  assert.deepEqual(spec.paths['/a'].get.security, []);
+  assert.equal(spec.paths['/b'].get.security, undefined);
+  assert.ok(Array.isArray(spec.security) && spec.security.length === 1);
+});
+
+test('markdown links/images still render and a long data: image in HTML is kept', () => {
+  const html = descDoc(`[link](https://e.com/x) ![pic](https://e.com/p.png)\n\n<img src="data:image/png;base64,${'A'.repeat(10000)}" alt="x">`);
+  assert.ok(html.includes('<a href="https://e.com/x"'));
+  assert.ok(html.includes('<img src="https://e.com/p.png"'));
+  assert.ok(html.includes('<img src="data:image/png;base64,AAAA'), 'long data: image must be rendered');
+  const long = descDoc(`<a href="https://e.com/${'p'.repeat(20000)}">go</a>`);
+  assert.ok(long.includes(`href="https://e.com/${'p'.repeat(20000)}"`), 'long href must be rendered');
+  assert.ok(!descDoc(`<a href="javascript:alert(1)" ${'x '.repeat(20000)}>z</a>`).includes('javascript:'));
+});
+
+test('markdown: backslash before backtick cannot break out of escaping', () => {
+  const col = { info: { name: 'A\\`<b>' }, item: [] };
+  const md = generateDocs(col, { format: 'markdown' }).content;
+  assert.ok(md.includes('A\\\\\\`&lt;b&gt;'), md.split('\n')[0]);
+});

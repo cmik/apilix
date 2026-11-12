@@ -29,9 +29,19 @@ function isSensitiveName(name) {
   return words.some(w => SENSITIVE_WORDS.has(w.toLowerCase()));
 }
 
+/**
+ * Like isSensitiveName but also looks at the percent-decoded form, so keys such
+ * as `api%2Dkey` or the malformed `%74oken%ZZ` are still recognised.
+ */
+function isSensitiveKey(name) {
+  if (typeof name !== 'string' || !name) return false;
+  if (isSensitiveName(name)) return true;
+  return name.includes('%') || name.includes('+') ? isSensitiveName(safeDecode(name)) : false;
+}
+
 function isSensitiveHeader(name) {
   if (typeof name !== 'string') return false;
-  return SENSITIVE_HEADERS.has(name.trim().toLowerCase()) || isSensitiveName(name);
+  return SENSITIVE_HEADERS.has(name.trim().toLowerCase()) || isSensitiveKey(name);
 }
 
 /**
@@ -64,7 +74,8 @@ function redactHeaderValue(name, value, includeCredentials) {
   return redactValue(value, false);
 }
 
-const SCHEME_AUTH = /^([a-z][a-z0-9+.-]*:\/\/)/i;
+// A scheme (also tolerating leading junk such as '-https://') or a protocol-relative '//'.
+const SCHEME_AUTH = /^((?:[a-z0-9+.-]+:)?\/\/)/i;
 
 function isVarOnlyUserinfo(info) {
   return info.includes('{{') && info.replace(VAR_REF, '').replace(/:/g, '').trim() === '';
@@ -94,8 +105,17 @@ function redactUrlUserinfo(url, includeCredentials) {
   return `${scheme}${REDACTED}${url.slice(scheme.length + at)}`;
 }
 
+/**
+ * Percent-decode a key. Falls back to a tolerant per-sequence %XX decode when
+ * the string is not valid UTF-8/percent-encoding (e.g. `%E0`, `%ZZ`), so an
+ * attacker cannot hide a sensitive name behind one malformed sequence. A
+ * double-encoded sequence (%252D) is intentionally decoded only once.
+ */
 function safeDecode(s) {
-  try { return decodeURIComponent(s.replace(/\+/g, ' ')); } catch { return s; }
+  const t = String(s).replace(/\+/g, ' ');
+  try { return decodeURIComponent(t); } catch {
+    return t.replace(/%([0-9a-f]{2})/gi, (m, h) => String.fromCharCode(parseInt(h, 16)));
+  }
 }
 
 function redactPairs(str) {
@@ -104,7 +124,7 @@ function redactPairs(str) {
     if (i < 0) return pair;
     const key = pair.slice(0, i);
     const val = pair.slice(i + 1);
-    if (!isSensitiveName(safeDecode(key)) || val === '' || isVarRefOnly(val)) return pair;
+    if (!isSensitiveKey(key) || val === '' || isVarRefOnly(val)) return pair;
     return `${key}=${REDACTED}`;
   }).join('&');
 }
@@ -138,12 +158,46 @@ function redactUrl(url, includeCredentials) {
  * Scrub URLs inside an arbitrary string (e.g. a Location or Link header value):
  * every scheme URL is redacted individually; otherwise the whole value is.
  */
+// A scheme URL (tolerating leading junk like '-https://' or '9https://') or a
+// protocol-relative '//host' URL. The lookbehind stops matching mid-run, so the
+// scan is linear.
+const URL_IN_TEXT = /(?<![a-z0-9+.\-:/])(?:[a-z0-9+.-]+:)?\/\/[^\s<>"',;]+/gi;
+const BEARER_IN_TEXT = /\b(Bearer|Basic)([ \t]+)([^\s,;"']+)/gi;
+
+/** Redact literal `Bearer <value>` / `Basic <value>` credentials in free text. */
+function redactAuthSchemesInText(text) {
+  return text.replace(BEARER_IN_TEXT, (m, scheme, ws, value) => (isVarRefOnly(value) ? m : `${scheme}${ws}${REDACTED}`));
+}
+
+/** Redact one URL candidate while keeping unbalanced trailing closers like ')'. */
+function redactUrlCandidate(m) {
+  let end = m.length;
+  const pairs = { ')': '(', ']': '[', '}': '{' };
+  while (end > 0 && pairs[m[end - 1]]) {
+    const body = m.slice(0, end);
+    const closer = m[end - 1];
+    const opens = body.split(pairs[closer]).length - 1;
+    const closes = body.split(closer).length - 1;
+    if (closes <= opens) break;
+    end--;
+  }
+  return redactUrl(m.slice(0, end), false) + m.slice(end);
+}
+
+/**
+ * Scrub URLs inside an arbitrary string (e.g. a Location or Link header value):
+ * every scheme URL is redacted individually; otherwise the whole value is.
+ * Literal Bearer/Basic credentials in the text are redacted as well.
+ */
 function redactUrlsInText(text, includeCredentials) {
   if (includeCredentials || typeof text !== 'string' || text === '') return text;
-  if (/[a-z][a-z0-9+.-]*:\/\//i.test(text)) {
-    return text.replace(/[a-z][a-z0-9+.-]*:\/\/[^\s<>"',;]+/gi, m => redactUrl(m, false));
+  const scrubbed = redactAuthSchemesInText(text);
+  URL_IN_TEXT.lastIndex = 0;
+  if (URL_IN_TEXT.test(scrubbed)) {
+    URL_IN_TEXT.lastIndex = 0;
+    return scrubbed.replace(URL_IN_TEXT, redactUrlCandidate);
   }
-  return redactUrl(text, false);
+  return redactUrl(scrubbed, false);
 }
 
 function redactJsonValue(node, includeCredentials, forced = false) {
@@ -220,24 +274,141 @@ function redactUrlEncodedText(text) {
     const i = pair.indexOf('=');
     if (i < 0) return pair;
     const val = pair.slice(i + 1);
-    if (!isSensitiveName(safeDecode(pair.slice(0, i))) || val.trim() === '' || isVarRefOnly(val)) return pair;
+    if (!isSensitiveKey(pair.slice(0, i)) || val.trim() === '' || isVarRefOnly(val)) return pair;
     return `${pair.slice(0, i)}=${REDACTED}`;
   }).join('&');
 }
 
-function redactXmlText(text) {
-  const elem = /<((?:[\w.-]+:)?([\w.-]+))((?:\s[^<>]*)?)>(\s*(?:<!\[CDATA\[[\s\S]*?\]\]>|[^<]*?)\s*)<\/\1\s*>/g;
-  let out = text.replace(elem, (m, qname, local, attrs, inner) => {
-    if (!isSensitiveName(local) || inner.trim() === '' || isVarRefOnly(inner.trim())) return m;
-    return `<${qname}${attrs}>${REDACTED}</${qname}>`;
-  });
-  // Sensitive attributes, handled tag by tag so the tag prefix is preserved.
-  out = out.replace(/<[\w.:-]+(?:\s[^<>]*)?>/g, tag => tag.replace(/([\w.:-]+)(\s*=\s*)(["'])(.*?)\3/g, (m, name, eq, q, val) => {
+/** indexOf that remembers a failed search so repeated misses stay O(1). */
+function makeFinder(text) {
+  const failedFrom = new Map();
+  return (term, from) => {
+    const f = failedFrom.get(term);
+    if (f !== undefined && from >= f) return -1;
+    const i = text.indexOf(term, from);
+    if (i < 0) failedFrom.set(term, from);
+    return i;
+  };
+}
+
+const isWs = c => c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f';
+const isNameChar = c => /[\w.:-]/.test(c);
+
+/** Redact sensitive attribute values in one opening tag (linear manual scan). */
+function redactTagAttrs(tag) {
+  const n = tag.length;
+  let k = 1;
+  while (k < n && isNameChar(tag[k])) k++;
+  let out = '';
+  let last = 0;
+  while (k < n) {
+    if (!isNameChar(tag[k])) { k++; continue; }
+    const ns = k;
+    while (k < n && isNameChar(tag[k])) k++;
+    const name = tag.slice(ns, k);
+    let p = k;
+    while (p < n && isWs(tag[p])) p++;
+    if (tag[p] !== '=') continue;
+    p++;
+    while (p < n && isWs(tag[p])) p++;
+    let vs; let ve;
+    const q = tag[p];
+    if (q === '"' || q === "'") {
+      vs = p + 1;
+      ve = tag.indexOf(q, vs);
+      if (ve < 0) break;
+      k = ve + 1;
+    } else {
+      vs = p;
+      ve = p;
+      while (ve < n && !isWs(tag[ve]) && tag[ve] !== '>' && !(tag[ve] === '/' && tag[ve + 1] === '>')) ve++;
+      k = ve;
+    }
+    const val = tag.slice(vs, ve);
     const local = name.includes(':') ? name.split(':').pop() : name;
-    if (name.startsWith('xmlns') || !isSensitiveName(local) || val === '' || isVarRefOnly(val)) return m;
-    return `${name}${eq}${q}${REDACTED}${q}`;
-  }));
-  return out;
+    if (name.startsWith('xmlns') || !isSensitiveName(local) || val === '' || isVarRefOnly(val)) continue;
+    out += tag.slice(last, vs) + REDACTED;
+    last = ve;
+  }
+  return last === 0 ? tag : out + tag.slice(last);
+}
+
+/**
+ * Linear-time XML/SOAP redactor (no backtracking regexes). Element text of a
+ * sensitive leaf element (text, CDATA and comments only, in any mix) and
+ * sensitive attributes are replaced; everything else is preserved byte-for-byte.
+ */
+function redactXmlText(text) {
+  const find = makeFinder(text);
+  const n = text.length;
+  let out = '';
+  let last = 0;
+  let pos = 0;
+  while (pos < n) {
+    const i = text.indexOf('<', pos);
+    if (i < 0) break;
+    if (text.startsWith('<!--', i)) { const e = find('-->', i + 4); pos = e < 0 ? i + 1 : e + 3; continue; }
+    if (text.startsWith('<![CDATA[', i)) { const e = find(']]>', i + 9); pos = e < 0 ? i + 1 : e + 3; continue; }
+    if (text[i + 1] === '?') { const e = find('?>', i + 2); pos = e < 0 ? i + 1 : e + 2; continue; }
+    if (text[i + 1] === '!') { const e = find('>', i + 2); pos = e < 0 ? i + 1 : e + 1; continue; }
+    if (text[i + 1] === '/' || !isNameChar(text[i + 1] || ' ')) { pos = i + 1; continue; }
+    // Opening tag: name, then attributes up to the first '>' (no '<' allowed).
+    let k = i + 1;
+    while (k < n && isNameChar(text[k])) k++;
+    const qname = text.slice(i + 1, k);
+    if (k < n && text[k] !== '>' && text[k] !== '/' && !isWs(text[k])) { pos = i + 1; continue; }
+    let gt = -1;
+    for (let j = k; j < n; j++) {
+      const c = text[j];
+      if (c === '>') { gt = j; break; }
+      if (c === '<') break;
+    }
+    if (gt < 0) { pos = i + 1; continue; }
+    const tagText = text.slice(i, gt + 1);
+    const newTag = redactTagAttrs(tagText);
+    const selfClosing = text[gt - 1] === '/';
+    const local = qname.includes(':') ? qname.split(':').pop() : qname;
+    if (!selfClosing && local && isSensitiveName(local)) {
+      // Leaf scan: text / CDATA / comments until the matching close tag.
+      let eff = '';
+      let q = gt + 1;
+      let closeEnd = -1;
+      for (;;) {
+        const lt = text.indexOf('<', q);
+        if (lt < 0) break;
+        eff += text.slice(q, lt);
+        if (text.startsWith('<!--', lt)) {
+          const e = find('-->', lt + 4);
+          if (e < 0) break;
+          q = e + 3;
+        } else if (text.startsWith('<![CDATA[', lt)) {
+          const e = find(']]>', lt + 9);
+          if (e < 0) break;
+          eff += text.slice(lt + 9, e);
+          q = e + 3;
+        } else if (text.startsWith(`</${qname}`, lt)) {
+          let j = lt + 2 + qname.length;
+          while (j < n && isWs(text[j])) j++;
+          if (text[j] === '>') closeEnd = j + 1;
+          break;
+        } else {
+          break;
+        }
+      }
+      if (closeEnd >= 0) {
+        const t = eff.trim();
+        if (t !== '' && !isVarRefOnly(t)) {
+          out += `${text.slice(last, i)}${newTag}${REDACTED}</${qname}>`;
+          last = closeEnd;
+          pos = closeEnd;
+          continue;
+        }
+      }
+    }
+    if (newTag !== tagText) { out += text.slice(last, i) + newTag; last = gt + 1; }
+    pos = gt + 1;
+  }
+  return out + text.slice(last);
 }
 
 /**
@@ -277,6 +448,8 @@ function redactBodyText(text, includeCredentials) {
 module.exports = {
   REDACTED,
   isSensitiveName,
+  isSensitiveKey,
+  safeDecode,
   isSensitiveHeader,
   isVarRefOnly,
   redactValue,

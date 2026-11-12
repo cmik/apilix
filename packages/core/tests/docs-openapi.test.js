@@ -135,3 +135,11 @@ test('output is deterministic', () => {
   assert.equal(gen().content, gen().content);
   assert.equal(gen({ openapiFormat: 'yaml' }).content, gen({ openapiFormat: 'yaml' }).content);
 });
+
+test('oauth2 refresh_token grant is omitted with a warning (no empty authorizationCode flow)', () => {
+  const col = makeCollection();
+  col.auth = { type: 'oauth2', oauth2: { grantType: 'refresh_token', clientId: 'c', clientSecret: 'S', tokenUrl: 'https://auth.test/token', refreshToken: 'R' } };
+  const r = gen({}, col);
+  assert.equal(r.spec.components.securitySchemes.oauth2Auth, undefined);
+  assert.ok(r.warnings.some(w => /refresh_token/.test(w)));
+});

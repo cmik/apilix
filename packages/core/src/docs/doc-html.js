@@ -41,7 +41,46 @@ const INLINE_TAGS = new Set(['b', 'strong', 'i', 'em', 'u', 's', 'del', 'ins', '
 const BLOCK_TAGS = new Set(['p', 'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'caption', 'blockquote', 'pre', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'details', 'summary', 'div']);
 const VOID_TAGS = new Set(['br', 'hr', 'img']);
 const SAFE_IMG_SRC_RE = /^(https?:\/\/|data:image\/(png|jpe?g|gif|webp);base64,)/i;
-const TAG_RE = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)((?:"[^"]*"|'[^']*'|[^<>"'])*)>/g;
+const TAG_NAME_RE = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)/y;
+const MAX_TAG_LEN = 65536;
+
+/**
+ * Linear-time tag scanner (replaces a backtracking regex). Returns
+ * `{ index, 0: fullMatch, 1: '/'|'', 2: name, 3: rawAttrs }` or null.
+ * A '<' that does not start a well-formed tag (no closing '>' within
+ * MAX_TAG_LEN, or a stray '<' / unterminated quote) is treated as text.
+ */
+function nextTag(raw, from) {
+  let i = raw.indexOf('<', from);
+  while (i !== -1) {
+    TAG_NAME_RE.lastIndex = i;
+    const nm = TAG_NAME_RE.exec(raw);
+    if (nm) {
+      const limit = Math.min(raw.length, i + MAX_TAG_LEN);
+      let j = i + nm[0].length;
+      let ok = false;
+      while (j < limit) {
+        const c = raw[j];
+        if (c === '>') { ok = true; break; }
+        if (c === '<') break;
+        if (c === '"' || c === "'") {
+          const close = raw.indexOf(c, j + 1);
+          if (close === -1 || close >= limit) break;
+          j = close + 1;
+          continue;
+        }
+        j++;
+      }
+      if (ok) {
+        const m = [raw.slice(i, j + 1), nm[1], nm[2], raw.slice(i + nm[0].length, j)];
+        m.index = i;
+        return m;
+      }
+    }
+    i = raw.indexOf('<', i + 1);
+  }
+  return null;
+}
 
 function safeAttrs(tag, rawAttrs) {
   let out = '';
@@ -77,9 +116,10 @@ function sanitizeHtml(src, allowed, textFn) {
   let out = '';
   let last = 0;
   let m;
-  TAG_RE.lastIndex = 0;
   const raw = String(src == null ? '' : src);
-  while ((m = TAG_RE.exec(raw)) !== null) {
+  let pos = 0;
+  while ((m = nextTag(raw, pos)) !== null) {
+    pos = m.index + m[0].length;
     out += render(raw.slice(last, m.index));
     last = m.index + m[0].length;
     const closing = m[1] === '/';
@@ -125,7 +165,7 @@ function renderInline(text) {
   let s = sanitizeHtml(withCodes, INLINE_TAGS)
     .replace(/<\/?(?:b|strong|i|em|u|s|del|ins|code|kbd|mark|small|sub|sup|a|br|img)\b[^>]*>/gi, m => { tags.push(m); return `\u0002${tags.length - 1}\u0002`; });
   // Markdown images: ![alt](url) -> <img>, only for safe sources.
-  s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (m, alt, url) => {
+  s = s.replace(/!\[([^\[\]]{0,500})\]\(([^()\s]{1,2000})\)/g, (m, alt, url) => {
     const rawUrl = url.replace(/\u0000(\d+)\u0000/g, (mm, i) => `\`${codes[Number(i)]}\``);
     if (!SAFE_IMG_SRC_RE.test(rawUrl)) return m;
     tags.push(`<img src="${rawUrl}" alt="${alt}">`);
@@ -133,7 +173,7 @@ function renderInline(text) {
   });
   // Links are stashed behind placeholders so the emphasis rules below can never
   // rewrite an href value (e.g. https://a.com/*b*c).
-  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label, url) => {
+  s = s.replace(/\[([^\[\]]{1,500})\]\(([^()\s]{1,2000})\)/g, (m, label, url) => {
     const rawUrl = url.replace(/\u0000(\d+)\u0000/g, (mm, i) => `\`${codes[Number(i)]}\``);
     if (!/^(https?:\/\/|mailto:|#)/i.test(rawUrl)) return label;
     links.push({ label, url: rawUrl });
@@ -180,20 +220,20 @@ function renderMarkdownSafe(src) {
       out.push(sanitizeHtml(text(), ALL_TAGS));
       continue;
     }
-    const head = line.match(/^(#{1,6})\s+(.*)$/);
+    const head = line.match(/^(#{1,6})\s/);
     if (head) {
       flushPara(); flushList();
       const lvl = Math.min(6, head[1].length + 3);
-      out.push(`<h${lvl}>${renderInline(head[2])}</h${lvl}>`);
+      out.push(`<h${lvl}>${renderInline(line.slice(head[0].length).trimStart())}</h${lvl}>`);
       continue;
     }
-    const li = line.match(/^\s*([-*+]|\d+\.)\s+(.*)$/);
+    const li = line.match(/^\s*([-*+]|\d+\.)\s/);
     if (li) {
       flushPara();
       const tag = /\d/.test(li[1]) ? 'ol' : 'ul';
       if (list && list.tag !== tag) flushList();
       if (!list) list = { tag, items: [] };
-      list.items.push(li[2]);
+      list.items.push(line.slice(li[0].length).trimStart());
       continue;
     }
     if (line.trim() === '') { flushPara(); flushList(); continue; }

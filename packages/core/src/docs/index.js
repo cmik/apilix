@@ -17,6 +17,15 @@ const { toYaml } = require('./doc-yaml');
 
 const FORMATS = ['html', 'markdown', 'openapi'];
 
+/**
+ * Generate API documentation (HTML, Markdown or OpenAPI) from a Postman-style collection.
+ * Credentials are redacted unless `options.includeCredentials` is true.
+ * @param {object} collection Collection with `info` and `item[]`.
+ * @param {object} [options] DocsExportOptions (`format`, `openapiFormat`, `openapiVersion`, `folder`, `variableMode`, `theme`, ...). `format` defaults to 'html'.
+ * @param {object} [deps] `{ snippetLanguages }`: generators used for `options.snippetLanguages`.
+ * @returns {{ format: string, content: string, mimeType: string, extension: string, warnings: string[], spec?: object }} `spec` is set for OpenAPI only.
+ * @throws {Error} On an unsupported format or OpenAPI serialization, an invalid collection, or an unknown `folder`.
+ */
 function generateDocs(collection, options, deps) {
   const opts = Object.assign({ format: 'html' }, options || {});
   if (!FORMATS.includes(opts.format)) {
