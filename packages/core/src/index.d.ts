@@ -5,3 +5,4 @@ export { InputError, prepareCollectionRun, executePreparedCollectionRun } from '
 export { generatePKCEVerifier, generatePKCEChallenge, verifyPKCEChallenge, refreshOAuth2Token, exchangeAuthorizationCodeForToken, validateOAuth2Config } from './oauth';
 export { getSystemCAs, makeHttpsAgent } from './tls-utils';
 export { summarizeRun, buildJsonReport, buildJUnitReport } from './runner-reporters';
+export { generateDocs, buildDocModel } from './docs';

@@ -31,7 +31,7 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    include: ['@apilix/core/variable-resolver'],
+    include: ['@apilix/core/variable-resolver', '@apilix/core/docs'],
   },
   server: {
     port: 5173,

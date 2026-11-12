@@ -1,11 +1,13 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, lazy, Suspense } from 'react';
 import { useApp } from '../store';
 import type { AppCollection, AppEnvironment } from '../types';
 import { generateHarFromItems } from '../utils/harUtils';
 import { generateHurlFromItems } from '../utils/hurlUtils';
 import { useToast } from './Toast';
 
-type ExportFormat = 'postman' | 'har' | 'hurl';
+const ExportDocsModal = lazy(() => import('./ExportDocsModal'));
+
+type ExportFormat = 'postman' | 'har' | 'hurl' | 'docs';
 
 interface ExportModalProps {
   onClose: () => void;
@@ -24,6 +26,7 @@ export default function ExportModal({ onClose }: ExportModalProps) {
   );
   const [colFilter, setColFilter] = useState('');
   const [envFilter, setEnvFilter] = useState('');
+  const [docsCollection, setDocsCollection] = useState<AppCollection | null>(null);
 
   const filteredCollections = useMemo(() => {
     const q = colFilter.trim().toLowerCase();
@@ -118,6 +121,15 @@ export default function ExportModal({ onClose }: ExportModalProps) {
   }
 
   function handleExport() {
+    if (format === 'docs') {
+      const cols = state.collections.filter(c => selectedCollections.has(c._id));
+      if (cols.length !== 1) {
+        toast.error('Select exactly one collection to export documentation.');
+        return;
+      }
+      setDocsCollection(cols[0]);
+      return;
+    }
     const electronAPI = (window as any).electronAPI;
 
     if (electronAPI?.chooseExportFolder) {
@@ -231,7 +243,7 @@ export default function ExportModal({ onClose }: ExportModalProps) {
               Format
             </span>
             <div className="flex gap-1 rounded-md bg-slate-800 p-0.5">
-              {(['postman', 'har', 'hurl'] as const).map(f => (
+              {(['postman', 'har', 'hurl', 'docs'] as const).map(f => (
                 <button
                   key={f}
                   onClick={() => setFormat(f)}
@@ -241,7 +253,7 @@ export default function ExportModal({ onClose }: ExportModalProps) {
                       : 'text-slate-400 hover:text-slate-200'
                   }`}
                 >
-                  {f === 'postman' ? 'Postman JSON' : f.toUpperCase()}
+                  {f === 'postman' ? 'Postman JSON' : f === 'docs' ? 'Docs' : f.toUpperCase()}
                 </button>
               ))}
             </div>
@@ -374,11 +386,16 @@ export default function ExportModal({ onClose }: ExportModalProps) {
               disabled={totalSelected === 0}
               className="px-3 py-1.5 text-xs rounded bg-orange-600 hover:bg-orange-500 text-white font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              Export
+              {format === 'docs' ? 'Configure…' : 'Export'}
             </button>
           </div>
         </div>
       </div>
+      {docsCollection && (
+        <Suspense fallback={null}>
+          <ExportDocsModal collection={docsCollection} onClose={() => setDocsCollection(null)} />
+        </Suspense>
+      )}
     </div>
   );
 }

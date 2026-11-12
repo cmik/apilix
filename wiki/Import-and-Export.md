@@ -30,6 +30,7 @@ Apilix can exchange data with other tools through a variety of formats — both 
     - [Postman JSON](#postman-json)
     - [HAR](#har)
     - [HURL](#hurl)
+    - [API documentation](#api-documentation)
   - [Exporting — Web Mode](#exporting--web-mode)
   - [Exporting — Desktop (Electron)](#exporting--desktop-electron)
   - [Selecting Collections and Environments](#selecting-collections-and-environments)
@@ -360,15 +361,16 @@ Response data is not imported.
 
 ## Export Formats
 
-Three formats are available from the Export modal:
+Four formats are available from the Export modal:
 
 | Format | Button label | File extension | Includes environments |
 |---|---|---|---|
 | **Postman JSON** | Postman JSON | `*.postman_collection.json` | Yes (`*.postman_environment.json`) |
 | **HAR** | HAR | `*.har` | No |
 | **HURL** | HURL | `*.hurl` | No |
+| **Docs** | Docs | `*.docs.html`, `*.docs.md`, `*.openapi.yaml/json` | No |
 
-Select the format using the three-button toggle at the top of the Export modal.
+Select the format using the four-button toggle at the top of the Export modal.
 
 ### Postman JSON
 
@@ -383,6 +385,10 @@ Exports each selected collection as an **HTTP Archive (HAR)** file. HAR files ca
 ### HURL
 
 Exports each selected collection as a **HURL** plain-text file. HURL is a simple, VCS-friendly format runnable with the `hurl` CLI tool.
+
+### API documentation
+
+The **Docs** format generates human-readable documentation (static HTML or Markdown) or an OpenAPI 3.0.3/3.1 spec for a single collection. Selecting **Docs** and clicking **Configure…** opens the documentation dialog. Credentials are redacted by default. You can also right-click a collection or folder and choose **Export documentation…**, or run `apilix docs` from the CLI. See [API Documentation](API-Documentation) for all options.
 
 ---
 

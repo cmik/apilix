@@ -11,16 +11,25 @@ import { normalizeGlobalState, mergeGlobalMetaWithValues } from './utils/globalV
 const STORAGE_KEY = 'apilix_persist'; // legacy key — kept for migration only
 
 function treeNeedsIds(items: CollectionItem[]): boolean {
-  return items.some(item => item.id == null || (item.item != null && treeNeedsIds(item.item)));
+  return items.some(item =>
+    item.id == null
+    || (item.response != null && item.response.some(ex => ex.id == null))
+    || (item.item != null && treeNeedsIds(item.item)));
 }
 
 function ensureIds(items: CollectionItem[]): CollectionItem[] {
   if (!treeNeedsIds(items)) return items;
-  return items.map(item => ({
-    ...item,
-    id: item.id ?? generateId(),
-    item: item.item ? ensureIds(item.item) : undefined,
-  }));
+  return items.map(item => {
+    const id = item.id ?? generateId();
+    return {
+      ...item,
+      id,
+      item: item.item ? ensureIds(item.item) : undefined,
+      // Postman examples carry no id; the tree needs one to select, rename and delete them.
+      // Derived from the item id + position so it stays stable across re-renders.
+      ...(item.response ? { response: item.response.map((ex, i) => ({ ...ex, id: ex.id ?? `${id}:ex${i}` })) } : {}),
+    };
+  });
 }
 
 type PersistedTabRef = { id: string; collectionId: string; itemId: string };
@@ -367,18 +376,22 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, activeRequest: action.payload, response: null };
 
     case 'OPEN_TAB': {
-      const { collectionId, item } = action.payload;
+      const { collectionId, item, response: openWith } = action.payload;
       const preview = state.tabs.find(t => t.isPreview);
       const baseState = preview ? removeRequestTab(state, preview.id) : state;
       const existing = baseState.tabs.find(
         t => t.collectionId === collectionId && t.item.id === item.id
       );
       if (existing) {
+        const response = openWith !== undefined ? openWith : existing.response;
         return {
           ...baseState,
+          tabs: openWith !== undefined
+            ? baseState.tabs.map(t => (t.id === existing.id ? { ...t, response } : t))
+            : baseState.tabs,
           activeTabId: existing.id,
           activeRequest: { collectionId, item: existing.item },
-          response: existing.response,
+          response,
           isLoading: existing.isLoading,
         };
       }
@@ -386,7 +399,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         id: generateId(),
         collectionId,
         item,
-        response: null,
+        response: openWith ?? null,
         isLoading: false,
       };
       return {
@@ -394,7 +407,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         tabs: [...baseState.tabs, newTab],
         activeTabId: newTab.id,
         activeRequest: { collectionId, item },
-        response: null,
+        response: openWith ?? null,
         isLoading: false,
       };
     }

@@ -11,6 +11,7 @@ const { mockedUseApp } = vi.hoisted(() => ({
 
 vi.mock('../store', () => ({
   useApp: mockedUseApp,
+  generateId: () => 'test-id',
 }));
 
 import ResponseViewer, { applyJsonPathForTest } from './ResponseViewer';
@@ -19,6 +20,8 @@ function makeState(body: string) {
   return {
     state: {
       activeTabId: 'tab-1',
+      tabs: [],
+      collections: [],
       activeRequest: { collectionId: 'col-1' },
       isLoading: false,
       response: {
@@ -47,6 +50,8 @@ function makeSqlState() {
   return {
     state: {
       activeTabId: 'tab-1',
+      tabs: [],
+      collections: [],
       activeRequest: { collectionId: 'col-1' },
       isLoading: false,
       response: {
@@ -72,6 +77,8 @@ function makeHtmlState() {
   return {
     state: {
       activeTabId: 'tab-1',
+      tabs: [],
+      collections: [],
       activeRequest: { collectionId: 'col-1' },
       isLoading: false,
       response: {
@@ -349,5 +356,52 @@ describe('JSONPath evaluator with filter predicates', () => {
     const data = { a: 1, b: 2, c: 3 };
     const multiResult = applyJsonPathForTest(data, '$[a,b]');
     expect(Array.isArray(multiResult.value) || multiResult.value === null).toBe(true);
+  });
+});
+
+describe('ResponseViewer save as example', () => {
+  const item = { id: 'r1', name: 'Get', request: { method: 'GET', url: { raw: 'http://x' } } };
+  const collection = { _id: 'col-1', info: { name: 'C', schema: '' }, item: [item] };
+
+  function setup(responsePatch: Record<string, unknown> = {}) {
+    const base = makeState('{"a":1}');
+    const dispatch = vi.fn();
+    mockedUseApp.mockReturnValue({
+      state: {
+        ...base.state,
+        response: { ...base.state.response, ...responsePatch },
+        collections: [collection],
+        tabs: [{ id: 'tab-1', collectionId: 'col-1', item, response: null, isLoading: false }],
+      },
+      dispatch,
+    });
+    render(<ResponseViewer />);
+    return dispatch;
+  }
+
+  beforeEach(() => {
+    mockedUseApp.mockReset();
+    if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = vi.fn();
+  });
+  afterEach(() => cleanup());
+
+  it('saves the response as an example in the collection and the open tab', async () => {
+    const dispatch = setup();
+    await userEvent.click(screen.getByTitle('Save response as example'));
+    const calls = dispatch.mock.calls.map(c => c[0]);
+    const col = calls.find(a => a.type === 'UPDATE_COLLECTION');
+    expect(col.payload.item[0].response).toHaveLength(1);
+    expect(col.payload.item[0].response[0]).toMatchObject({ code: 200, name: '200 OK', body: '{"a":1}' });
+    expect(calls.find(a => a.type === 'UPDATE_TAB_ITEM').payload.tabId).toBe('tab-1');
+  });
+
+  it('disables the button for binary responses', () => {
+    setup({ bodyBase64: 'AAA=' });
+    expect(screen.getByTitle("Binary responses can't be saved as examples")).toBeDisabled();
+  });
+
+  it('disables the button when the response is itself an example', () => {
+    setup({ isExample: true });
+    expect(screen.getByTitle('This is already a saved example')).toBeDisabled();
   });
 });

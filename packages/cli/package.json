@@ -18,5 +18,8 @@
     "commander": "^12.1.0",
     "mysql2": "^3.22.3",
     "pg": "^8.20.0"
+  },
+  "scripts": {
+    "test": "node --test"
   }
 }

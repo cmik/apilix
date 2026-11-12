@@ -16,7 +16,9 @@ const {
   buildJsonReport,
   buildJUnitReport,
   resolveVariables,
+  generateDocs,
 } = require('@apilix/core');
+const { CLI_SNIPPET_LANGUAGES } = require('./docs-curl');
 
 const DEFAULT_REQUEST_TIMEOUT = 30000;
 const MAX_REQUEST_NAME_WIDTH = 72;
@@ -37,6 +39,7 @@ function usage() {
     'Usage:',
     '  apilix run <collection-file> [options]',
     '  apilix run --collection <collection-file> [options]',
+    '  apilix docs <collection-file> [docs options]',
     '',
     'Options:',
     '  -e, --environment <file>     Environment JSON file with values[]',
@@ -72,6 +75,19 @@ function usage() {
     '  --no-follow-redirects        Disable automatic redirect following',
     '  --no-color                   Disable ANSI colors in terminal output',
     '  -h, --help                   Show this help',
+    '',
+    'Docs options (apilix docs):',
+    '  --format <html|md|openapi>   Output format (default: html)',
+    '  --openapi-format <json|yaml> Serialization for --format openapi (default: json)',
+    '  --openapi-version <3.0.3|3.1.0>  OpenAPI version (default: 3.0.3)',
+    '  --folder <id|name|A/B>       Document only this folder',
+    '  -e, --environment <file>     Environment JSON file (used with --resolve-variables)',
+    '  --resolve-variables          Substitute non-secret environment values instead of keeping {{var}}',
+    '  --include-credentials        Keep literal credentials in the output (default: redacted)',
+    '  --snippets <list>            Comma-separated snippet languages (CLI supports: curl)',
+    '  --theme <dark|light|auto>    HTML theme (default: dark)',
+    '  --no-examples                Omit saved examples',
+    '  --out <file>                 Write to a file instead of stdout',
   ].join('\n');
 }
 
@@ -595,6 +611,38 @@ function createProgram(io) {
       parsed.clientCertHost      = opts.clientCertHost     || '*';
     });
 
+  program
+    .command('docs [collectionPath]')
+    .description('Generate API documentation (HTML, Markdown or OpenAPI) from a collection file')
+    .option('--format <html|md|openapi>', 'Output format', 'html')
+    .option('--openapi-format <json|yaml>', 'Serialization for openapi output', 'json')
+    .option('--openapi-version <3.0.3|3.1.0>', 'OpenAPI version', '3.0.3')
+    .option('--folder <folder>', 'Document only this folder (id, name or A/B path)')
+    .option('-e, --environment <file>', 'Environment JSON file (used with --resolve-variables)')
+    .option('--resolve-variables', 'Substitute non-secret environment values')
+    .option('--include-credentials', 'Keep literal credentials in the output')
+    .option('--snippets <list>', 'Comma-separated snippet languages (curl)')
+    .option('--theme <dark|light|auto>', 'HTML theme', 'dark')
+    .option('--no-examples', 'Omit saved examples')
+    .option('--out <file>', 'Write output to a file instead of stdout')
+    .action((collectionPath, opts) => {
+      parsed.command = 'docs';
+      parsed.collectionPath = collectionPath;
+      parsed.docs = {
+        format: opts.format,
+        openapiFormat: opts.openapiFormat,
+        openapiVersion: opts.openapiVersion,
+        folder: opts.folder,
+        environmentPath: opts.environment,
+        resolveVariables: opts.resolveVariables === true,
+        includeCredentials: opts.includeCredentials === true,
+        snippets: opts.snippets,
+        theme: opts.theme,
+        includeExamples: opts.examples !== false,
+        outPath: opts.out,
+      };
+    });
+
   return { program, parsed };
 }
 
@@ -744,6 +792,90 @@ function buildExitCode(summary, runErrors) {
   return 0;
 }
 
+const DOCS_FORMATS = { html: 'html', md: 'markdown', markdown: 'markdown', openapi: 'openapi' };
+
+/** True when two paths refer to the same file (same resolved path, or same inode via symlink/case-folding). */
+async function isSameFile(a, b) {
+  if (a === b) return true;
+  try {
+    const [sa, sb] = await Promise.all([fs.stat(a), fs.stat(b)]);
+    return sa.ino === sb.ino && sa.dev === sb.dev && sa.ino !== 0;
+  } catch {
+    return false;
+  }
+}
+
+async function runDocs(args, io) {
+  const d = args.docs;
+  if (!args.collectionPath) throw new Error('The collection path is required');
+
+  const format = DOCS_FORMATS[String(d.format).toLowerCase()];
+  if (!format) throw new Error(`Unsupported --format "${d.format}". Use html, md or openapi`);
+  const openapiFormat = String(d.openapiFormat).toLowerCase();
+  if (!['json', 'yaml'].includes(openapiFormat)) throw new Error(`Unsupported --openapi-format "${d.openapiFormat}". Use json or yaml`);
+  if (!['3.0.3', '3.1.0'].includes(d.openapiVersion)) throw new Error(`Unsupported --openapi-version "${d.openapiVersion}". Use 3.0.3 or 3.1.0`);
+  if (!['dark', 'light', 'auto'].includes(d.theme)) throw new Error(`Unsupported --theme "${d.theme}". Use dark, light or auto`);
+
+  const snippetLanguages = d.snippets
+    ? d.snippets.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+    : [];
+  const supported = CLI_SNIPPET_LANGUAGES.map(l => l.id);
+  for (const id of snippetLanguages) {
+    if (!supported.includes(id)) throw new Error(`Unsupported snippet language "${id}". The CLI supports: ${supported.join(', ')}`);
+  }
+  if (d.resolveVariables && !d.environmentPath) {
+    throw new Error('--resolve-variables requires --environment <file>');
+  }
+
+  if (d.outPath) {
+    const target = resolvePath(io, d.outPath);
+    if (await isSameFile(target, resolvePath(io, args.collectionPath))) {
+      throw new Error(`--out ${d.outPath} is the collection file; refusing to overwrite the input. Choose a different output path`);
+    }
+    if (d.environmentPath && await isSameFile(target, resolvePath(io, d.environmentPath))) {
+      throw new Error(`--out ${d.outPath} is the environment file; refusing to overwrite the input. Choose a different output path`);
+    }
+  }
+
+  const collection = normalizeCollection(await readJsonFile(io, args.collectionPath, 'collection'));
+
+  let variables;
+  let secretVariableKeys;
+  if (d.environmentPath) {
+    const envJson = await readJsonFile(io, d.environmentPath, 'environment');
+    const env = envJson && envJson.environment && envJson.environment.values ? envJson.environment : envJson;
+    const rows = env && Array.isArray(env.values) ? env.values : [];
+    secretVariableKeys = rows.filter(r => r && r.secret === true && typeof r.key === 'string').map(r => r.key);
+    const blocked = new Set(secretVariableKeys);
+    variables = Object.fromEntries(Object.entries(normalizeEnvironment(envJson).vars).filter(([k]) => !blocked.has(k)));
+  }
+
+  const result = generateDocs(collection, {
+    format,
+    openapiFormat,
+    openapiVersion: d.openapiVersion,
+    folder: d.folder,
+    variableMode: d.resolveVariables ? 'resolve' : 'keep',
+    variables,
+    secretVariableKeys,
+    includeCredentials: d.includeCredentials,
+    includeExamples: d.includeExamples,
+    snippetLanguages,
+    theme: d.theme,
+  }, { snippetLanguages: CLI_SNIPPET_LANGUAGES });
+
+  for (const warning of result.warnings) io.stderr.write(`Warning: ${warning}\n`);
+
+  if (d.outPath) {
+    const target = resolvePath(io, d.outPath);
+    await writeOutputFile(target, result.content);
+    io.stderr.write(`Documentation written to ${target}\n`);
+  } else {
+    io.stdout.write(result.content);
+  }
+  return 0;
+}
+
 async function runCli(argv, ioOverrides = {}) {
   const io = createIo(ioOverrides);
   let closeDbResources = async () => {};
@@ -753,6 +885,10 @@ async function runCli(argv, ioOverrides = {}) {
     if (args.help || !args.command) {
       if (!args.helpRendered) io.stdout.write(`${usage()}\n`);
       return 0;
+    }
+
+    if (args.command === 'docs') {
+      return await runDocs(args, io);
     }
 
     if (args.command !== 'run') {
