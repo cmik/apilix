@@ -173,3 +173,14 @@ test('openapi marks AI-written info and tag (folder) descriptions, and only thos
   assert.equal(off.info['x-generated-by'], undefined);
   assert.equal(off.tags.find(t => t.name === 'Orders')['x-generated-by'], undefined);
 });
+
+test('a whitespace-only human description counts as missing and can be filled by the AI', () => {
+  const col = { info: { name: 'S', description: '   \n ' }, item: [{ id: 'r', name: 'r', request: { method: 'GET', description: '  ', url: 'https://x.test/a' } }] };
+  const plain = buildDocModel(col, {});
+  assert.equal(plain.description, '');
+  assert.equal(plain.requests[0].description, '');
+  const m = buildDocModel(col, { descriptions: { __collection__: { description: 'Shop API.' }, r: { description: 'Gets a.' } } });
+  assert.equal(m.description, 'Shop API.');
+  assert.equal(m.requests[0].description, 'Gets a.');
+  assert.equal(m.requests[0].descriptionSource, 'ai');
+});

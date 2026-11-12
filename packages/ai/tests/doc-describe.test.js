@@ -186,3 +186,9 @@ test('sanitizeAnswer strips images, links and URLs from model text (exfiltration
   assert.equal(out.a.description, 'Hi t there');
   assert.equal(out.a.params['query:q'], 'See here');
 });
+
+test('whitespace-only descriptions are collected as undocumented', () => {
+  const col = { info: { name: 'S', description: ' ' }, item: [{ id: 'r', name: 'r', request: { method: 'GET', description: '   ', url: 'https://x.test/a' } }] };
+  const ids = collectEntries(buildDocModel(col, {})).map(e => e.id);
+  assert.deepEqual(ids.sort(), ['__collection__', 'r']);
+});

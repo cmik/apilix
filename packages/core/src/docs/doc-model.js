@@ -13,8 +13,9 @@ const NON_HTTP_METHODS = new Set(['MONGO', 'MYSQL', 'POSTGRESQL', 'SQLITE', 'CAS
 
 function descText(d) {
   if (!d) return '';
-  if (typeof d === 'string') return d;
-  if (typeof d === 'object' && typeof d.content === 'string') return d.content;
+  // A description made only of whitespace documents nothing: treat it as missing.
+  if (typeof d === 'string') return d.trim() ? d : '';
+  if (typeof d === 'object' && typeof d.content === 'string') return d.content.trim() ? d.content : '';
   return '';
 }
 
