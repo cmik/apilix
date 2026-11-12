@@ -32,12 +32,23 @@ const MAX_STRING = 2000;
 
 /**
  * Evaluated INSIDE the context (its source is extracted with Function.prototype.toString), so it cannot
- * close over anything of this file. Reads the global `__in` (a JSON string) and defines `apx`, `pm`,
- * `console`, `__exec` and `__finish`.
+ * close over anything of this file. Takes the input as ONE JSON string, defines the non-writable globals
+ * `apx`, `pm` and `console`, and RETURNS the collector `{ exec, finish }`. The collector is only ever held
+ * by the host (the return value of runInContext): it is not a global of the context, so a script has no
+ * name through which it could read or overwrite it, and cannot forge the verdict.
  */
-function bootstrap() {
+function bootstrap(inputJson) {
   'use strict';
-  const input = JSON.parse(__in);
+  const input = JSON.parse(inputJson);
+  const thenOf = Promise.prototype.then; // captured before any script runs: a patched `then` cannot hijack the collector
+  const callThen = Function.prototype.call;
+  // Defence in depth against off-heap memory (--max-old-space-size does not bound ArrayBuffers): none of the
+  // binary-memory globals exist for the script. The static screen refuses their names as well.
+  for (const name of ['ArrayBuffer', 'SharedArrayBuffer', 'Atomics', 'WebAssembly', 'DataView', 'Int8Array', 'Uint8Array',
+    'Uint8ClampedArray', 'Int16Array', 'Uint16Array', 'Int32Array', 'Uint32Array', 'Float16Array', 'Float32Array',
+    'Float64Array', 'BigInt64Array', 'BigUint64Array', 'WeakRef', 'FinalizationRegistry']) {
+    try { delete globalThis[name]; } catch (e) { /* already absent */ }
+  }
   const stringify = JSON.stringify;
   const parse = JSON.parse;
   const keysOf = Object.keys;
@@ -199,16 +210,19 @@ function bootstrap() {
     sendRequest() { throw new Error('apx.sendRequest is disabled in offline (dry-run) mode'); },
   };
   const noop = () => {};
-  globalThis.apx = apx;
-  globalThis.pm = apx;
-  globalThis.console = { log: noop, warn: noop, error: noop, info: noop };
-  globalThis.__exec = (promise) => {
-    promise.then(
-      () => { state.done = true; },
-      (e) => { tests.push({ name: '__ScriptError__', passed: false, error: String(e && e.message) }); state.done = true; },
-    );
+  const lock = (name, value) => Object.defineProperty(globalThis, name, { value, writable: false, configurable: false, enumerable: false });
+  lock('apx', apx);
+  lock('pm', apx);
+  lock('console', { log: noop, warn: noop, error: noop, info: noop });
+  return {
+    // `promise` is the (native) promise of the script's async wrapper, handed over by the host.
+    exec(promise) {
+      callThen.call(thenOf, promise,
+        () => { state.done = true; },
+        (e) => { tests.push({ name: '__ScriptError__', passed: false, error: String(e && e.message) }); state.done = true; });
+    },
+    finish() { return stringify({ done: state.done, tests, variables: vars }); },
   };
-  globalThis.__finish = () => stringify({ done: state.done, tests, variables: vars });
 }
 
 function clip(s, n = MAX_STRING) { return typeof s === 'string' && s.length > n ? s.slice(0, n) : s; }
@@ -232,27 +246,41 @@ function sanitizeResult(raw) {
 function run(msg) {
   const code = typeof msg.code === 'string' ? msg.code : '';
   const timeoutMs = Number.isFinite(msg.timeoutMs) && msg.timeoutMs > 0 ? Math.min(msg.timeoutMs, 5000) : 1500;
-  const sandbox = Object.create(null);
-  sandbox.__in = JSON.stringify({
-    response: msg.response && typeof msg.response === 'object' ? msg.response : {},
-    variables: msg.variables && typeof msg.variables === 'object' ? msg.variables : {},
-  });
-  const ctx = vm.createContext(sandbox, {
+  const ctx = vm.createContext(Object.create(null), {
     name: 'apilix-ai-dry-run',
     codeGeneration: { strings: false, wasm: false },
     microtaskMode: 'afterEvaluate',
   });
-  vm.runInContext(`(${bootstrap.toString()})()`, ctx, { timeout: timeoutMs, filename: 'apilix-bootstrap.js' });
-  // The wrapper matches the syntax check done by the parent.
+  const inputJson = JSON.stringify({
+    response: msg.response && typeof msg.response === 'object' ? msg.response : {},
+    variables: msg.variables && typeof msg.variables === 'object' ? msg.variables : {},
+  });
+  // The bootstrap is a function expression: running it only creates the function (a context-realm object).
+  // It is then called from the host with ONE string; it returns the collector, which stays in the host.
+  const boot = vm.runInContext(`(${bootstrap.toString()})`, ctx, { timeout: timeoutMs, filename: 'apilix-bootstrap.js' });
+  const collector = boot(inputJson);
+  // The wrapper matches the syntax check done by the parent. Its completion value is the script's promise.
   let script;
   try {
-    script = new vm.Script(`__exec((async function(){\n'use strict';\n${code}\n})());`, { filename: 'apilix-dry-run.js' });
+    script = new vm.Script(`(async function(){\n'use strict';\n${code}\n})();`, { filename: 'apilix-dry-run.js' });
   } catch (e) {
     return { ok: false, syntaxError: String(e && e.message).slice(0, 160) };
   }
-  script.runInContext(ctx, { timeout: timeoutMs });
-  const raw = JSON.parse(vm.runInContext('__finish()', ctx, { timeout: timeoutMs }));
-  return sanitizeResult(raw);
+  const promise = script.runInContext(ctx, { timeout: timeoutMs });
+  collector.exec(promise);
+  vm.runInContext('0', ctx, { timeout: timeoutMs }); // drains the microtasks queued by exec (afterEvaluate)
+  return sanitizeResult(JSON.parse(collector.finish()));
+}
+
+/**
+ * Fixed capability probe (NO model input). Run by dry-run-mode.js with exactly the flags of a real run: it
+ * only reports whether an fs read outside the grant and a child_process are refused by the runtime.
+ */
+function probe() {
+  const r = {};
+  try { require('fs').readFileSync(require('path').join(__dirname, 'dry-run.js')); r.fs = 'allowed'; } catch (e) { r.fs = e && e.code ? String(e.code) : 'error'; }
+  try { require('child_process').execFileSync(process.execPath, ['-e', '0'], { stdio: 'ignore', timeout: 2000 }); r.cp = 'allowed'; } catch (e) { r.cp = e && e.code ? String(e.code) : 'error'; }
+  return { ok: true, probe: r };
 }
 
 function main() {
@@ -261,7 +289,7 @@ function main() {
   process.once('message', (msg) => {
     let out;
     try {
-      out = run(msg || {});
+      out = msg && msg.probe === true ? probe() : run(msg || {});
     } catch (e) {
       const m = String(e && e.message).slice(0, 300);
       out = { ok: false, error: /timed out/i.test(m) ? 'timeout' : m };

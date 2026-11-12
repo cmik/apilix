@@ -145,7 +145,7 @@ test('a child that dies (OOM / crash) means a rejected script, not a server erro
   assert.equal(raw.ok, false);
   assert.equal(raw.error, 'child crashed');
   // Through the full path a filter-passing OOM (a bounded-looking loop) is also just a rejection.
-  const v = await dryRunScript(`const keep = []; for (let i = 0; i < 100000; i++) { keep.push(new Array(2**22).fill(i)); }`, { response: RESPONSE });
+  const v = await dryRunScript(`const keep = []; for (let i = 0; i < 100000; i++) { keep.push([1, 2, 3].concat(keep).concat(keep)); }`, { response: RESPONSE });
   assert.equal(v.ok, false);
   assert.match(v.reason, /could not be run|did not finish/);
 });

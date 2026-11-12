@@ -25,7 +25,16 @@ const DENIED_IDENTIFIERS = new Set([
   'prepareStackTrace', 'captureStackTrace', 'stackTraceLimit', 'stack', 'delete', 'fetch', 'XMLHttpRequest',
   'sendRequest', 'executeRequest', 'setNextRequest', 'setNextRequestById', 'skipRequest', 'setTimeout',
   'setInterval', 'queueMicrotask', 'setImmediate', 'crypto', 'Buffer', 'TextDecoder', 'TextEncoder',
+  // Binary memory lives outside the V8 heap (--max-old-space-size does not bound it): refused outright.
+  'ArrayBuffer', 'DataView', 'Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array', 'Int32Array',
+  'Uint32Array', 'Float16Array', 'Float32Array', 'Float64Array', 'BigInt64Array', 'BigUint64Array', 'WeakRef',
+  'FinalizationRegistry',
 ]);
+// Names starting with "__" are reserved for the runner (and cover `__proto__`, `__defineGetter__`...).
+const RESERVED_IDENTIFIER_RE = /^__/;
+// Allocation helpers: the size argument must be a small numeric literal.
+const MAX_LITERAL_SIZE = 10000;
+const MAX_REPEAT_COUNT = 1000;
 const DENIED_IN_STRINGS = ['constructor', '__proto__', 'prototype', '__define', '__lookup'];
 // Built-ins shared with the host: may be called through (`Object.keys(x)`) but not aliased or mutated.
 const BUILTINS = new Set(['Object', 'Array', 'JSON', 'Math', 'String', 'Number', 'Boolean', 'Date', 'RegExp', 'Error', 'Promise', 'parseInt', 'parseFloat', 'isNaN', 'isFinite', 'encodeURIComponent', 'decodeURIComponent', 'encodeURI', 'decodeURI', 'btoa', 'atob', 'escape', 'unescape']);
@@ -234,6 +243,55 @@ function checkFor(tokens, k) {
   return 'only "for (const x of list)", "for (const k in object)" and "for (let i = 0; i < list.length; i++)" loops are allowed in a validated script';
 }
 
+/** Tokens of the first call argument starting after the `(` at `open`, or null when it is not closed. */
+function firstArgument(tokens, open) {
+  let d = 0;
+  const arg = [];
+  for (let m = open; m < tokens.length; m++) {
+    const t = tokens[m];
+    if (t.t === 'p' && (t.v === '(' || t.v === '[' || t.v === '{')) { d++; if (d === 1) continue; }
+    if (t.t === 'p' && (t.v === ')' || t.v === ']' || t.v === '}')) { d--; if (d === 0) return arg; }
+    if (d === 1 && t.t === 'p' && t.v === ',') return arg;
+    arg.push(t);
+  }
+  return null;
+}
+
+/**
+ * `"x".repeat(n)`, `padStart(n)`, `padEnd(n)` and `Array(n)` / `new Array(n)` allocate proportionally to `n`:
+ * `n` must be a literal within a small bound. @returns {string | null} a reason, or null when fine.
+ */
+function checkAllocation(tokens, k) {
+  const t = tokens[k];
+  const next = tokens[k + 1];
+  const prev = tokens[k - 1];
+  const afterDot = prev && prev.t === 'p' && (prev.v === '.' || prev.v === '?.');
+  const isCall = next && next.t === 'p' && (next.v === '(' || (next.v === '?.' && tokens[k + 2] && tokens[k + 2].v === '('));
+  if (!isCall) return null;
+  const open = next.v === '(' ? k + 1 : k + 2;
+  const literal = (arg, max) => arg && arg.length === 1 && arg[0].t === 'num' && /^\d+$/.test(arg[0].v.replace(/_/g, '')) && Number(arg[0].v.replace(/_/g, '')) <= max;
+  if (afterDot && (t.v === 'repeat' || t.v === 'padStart' || t.v === 'padEnd')) {
+    const max = t.v === 'repeat' ? MAX_REPEAT_COUNT : MAX_LITERAL_SIZE;
+    return literal(firstArgument(tokens, open), max) ? null : `"${t.v}" needs a numeric literal argument of at most ${max}`;
+  }
+  if (!afterDot && t.v === 'Array') {
+    const arg = firstArgument(tokens, open);
+    if (arg && arg.length === 0) return null; // Array()
+    // Array(1, 2, 3) builds a list: only a lone argument is a length.
+    let d = 0;
+    let lone = true;
+    for (let m = open; m < tokens.length; m++) {
+      const x = tokens[m];
+      if (x.t === 'p' && (x.v === '(' || x.v === '[' || x.v === '{')) d++;
+      else if (x.t === 'p' && (x.v === ')' || x.v === ']' || x.v === '}')) { d--; if (d === 0) break; }
+      else if (d === 1 && x.t === 'p' && x.v === ',') { lone = false; break; }
+    }
+    if (!lone) return null;
+    return literal(arg, MAX_LITERAL_SIZE) ? null : `"Array(n)" needs a numeric literal length of at most ${MAX_LITERAL_SIZE}`;
+  }
+  return null;
+}
+
 /**
  * @returns {{ ok: true } | { ok: false, reason: string }}
  */
@@ -261,7 +319,9 @@ function screenScript(code) {
         return { ok: false, reason: 'getters and setters are not allowed in a validated script' };
       }
       if (t.v === 'new' && next && next.t === 'p' && next.v === '.') return { ok: false, reason: '"new.target" is not allowed in a validated script' };
-      if (DENIED_IDENTIFIERS.has(t.v)) return { ok: false, reason: `"${t.v}" is not allowed in a validated script` };
+      if (DENIED_IDENTIFIERS.has(t.v) || RESERVED_IDENTIFIER_RE.test(t.v)) return { ok: false, reason: `"${t.v}" is not allowed in a validated script` };
+      const bigAlloc = checkAllocation(tokens, k);
+      if (bigAlloc) return { ok: false, reason: bigAlloc };
       if (BUILTINS.has(t.v) && !(prev && prev.t === 'p' && prev.v === '.')) {
         const follow = next && next.t === 'p' ? next.v : null;
         const afterInstanceof = prev && prev.t === 'id' && prev.v === 'instanceof';
