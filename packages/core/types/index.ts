@@ -1071,6 +1071,39 @@ export interface WorkspaceSnapshot {
   data: WorkspaceData;
 }
 
+// ─── AI (global, not per workspace; the API key is never part of this state) ───
+
+export type AiProviderKind = 'anthropic' | 'openai-compat';
+export type AiFeatureKey =
+  | 'nlGenerate' | 'assertSuggest' | 'diagnose' | 'scriptAssist' | 'docDescribe' | 'dataGen' | 'smartImport';
+export type AiRequestKey = AiFeatureKey | 'test' | 'preview';
+/** `needs-reentry`: the stored key could not be decrypted on this machine; `unavailable`: no OS keychain. */
+export type AiKeyStatus = 'none' | 'ok' | 'needs-reentry' | 'session-only' | 'unavailable';
+
+export interface AiSettings {
+  enabled: boolean;
+  provider: AiProviderKind;
+  /** Optional. Defaults to the provider's public endpoint. Use e.g. http://localhost:11434/v1 for Ollama. */
+  baseUrl?: string;
+  model: string;
+  maxContextTokens: number;
+  /** Mask credential-looking values by name. Known secret values are ALWAYS masked regardless. */
+  redactSecrets: boolean;
+  /** false = send only the shape (types) of response bodies. */
+  sendResponseBodies: boolean;
+  /** True once the user has accepted the first-use disclosure. */
+  consentGiven: boolean;
+  outputLanguage?: string;
+  features: Record<AiFeatureKey, boolean>;
+}
+
+export interface AiState {
+  settings: AiSettings;
+  keyStatus: AiKeyStatus;
+  inFlight: Partial<Record<AiRequestKey, boolean>>;
+  lastError: { code: string; message: string } | null;
+}
+
 export interface AppState {
   // ── Workspace ──────────────────────────────────────────────────────────────
   workspaces: Workspace[];
@@ -1114,6 +1147,8 @@ export interface AppState {
   savedRuns: SavedRunnerRun[];
   runnerLoadedRun: SavedRunnerRun | null;
   terminalSession: TerminalSessionState;
+  // ── AI ───────────────────────────────────────────────────────────────────
+  ai: AiState;
 }
 
 export interface RequestTab {
@@ -1225,6 +1260,13 @@ export type AppAction =
   // ── Settings actions ──────────────────────────────────────────────────────────────────
   | { type: 'SET_SETTINGS'; payload: AppSettings }
   | { type: 'UPDATE_SETTINGS'; payload: Partial<AppSettings> }
+  // ── AI actions (never carry the API key) ──────────────────────────────────────────────
+  | { type: 'AI_SET_SETTINGS'; payload: Partial<Omit<AiSettings, 'features'>> & { features?: Partial<Record<AiFeatureKey, boolean>> } }
+  | { type: 'AI_SET_KEY_STATUS'; payload: AiKeyStatus }
+  | { type: 'AI_REQUEST_START'; payload: AiRequestKey }
+  | { type: 'AI_REQUEST_DONE'; payload: AiRequestKey }
+  | { type: 'AI_REQUEST_FAIL'; payload: { feature: AiRequestKey; code: string; message: string } }
+  | { type: 'AI_CLEAR_ERROR' }
   // ── Request history actions ───────────────────────────────────────────────────────────
   | { type: 'ADD_REQUEST_HISTORY'; payload: HistoryRequest }
   | { type: 'CLEAR_REQUEST_HISTORY' }

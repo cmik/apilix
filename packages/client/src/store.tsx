@@ -7,6 +7,7 @@ import { API_BASE } from './api';
 import type { PostmanVersion } from './utils/postmanValidator';
 import { buildSecretSet } from './utils/secretMask';
 import { normalizeGlobalState, mergeGlobalMetaWithValues } from './utils/globalVariables';
+import { DEFAULT_AI_SETTINGS, mergeAiSettings } from './utils/aiDefaults';
 
 const STORAGE_KEY = 'apilix_persist'; // legacy key — kept for migration only
 
@@ -153,6 +154,7 @@ export const initialState: AppState = {
     cdpChromePath: undefined,
     cdpPort: 9222,
   },
+  ai: { settings: DEFAULT_AI_SETTINGS, keyStatus: 'none', inFlight: {}, lastError: null },
 };
 
 function removeRequestTab(state: AppState, tabId: string): AppState {
@@ -1006,6 +1008,32 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'UPDATE_SETTINGS':
       return { ...state, settings: { ...state.settings, ...action.payload } };
+
+    // AI state is global (like `settings`): HYDRATE_WORKSPACE never touches it, and the API key is never stored here.
+    case 'AI_SET_SETTINGS':
+      return { ...state, ai: { ...state.ai, settings: mergeAiSettings(state.ai.settings, action.payload) } };
+
+    case 'AI_SET_KEY_STATUS':
+      return { ...state, ai: { ...state.ai, keyStatus: action.payload } };
+
+    case 'AI_REQUEST_START':
+      return { ...state, ai: { ...state.ai, inFlight: { ...state.ai.inFlight, [action.payload]: true }, lastError: null } };
+
+    case 'AI_REQUEST_DONE':
+      return { ...state, ai: { ...state.ai, inFlight: { ...state.ai.inFlight, [action.payload]: false } } };
+
+    case 'AI_REQUEST_FAIL':
+      return {
+        ...state,
+        ai: {
+          ...state.ai,
+          inFlight: { ...state.ai.inFlight, [action.payload.feature]: false },
+          lastError: { code: action.payload.code, message: action.payload.message },
+        },
+      };
+
+    case 'AI_CLEAR_ERROR':
+      return { ...state, ai: { ...state.ai, lastError: null } };
 
     case 'ADD_REQUEST_HISTORY':
       return {
