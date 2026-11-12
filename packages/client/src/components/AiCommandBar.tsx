@@ -5,6 +5,7 @@ import { aiGenerateRequest, toAiApiError } from '../api';
 import type { AiGenerateRequestResult } from '../utils/ai/aiTypes';
 import type { CollectionItem } from '../types';
 import { aiFeatureReady, collectNeighbors, collectVariableMeta, isHttpRestItem } from '../utils/ai/nlContext';
+import { knownHostsOf } from '../utils/ai/hostGuard';
 import { buildAllSecretValues } from '../utils/secretMask';
 import { AI_PROVIDER_DEFAULT_BASE } from '../utils/aiDefaults';
 import { IconSparkle } from './Icons';
@@ -95,12 +96,22 @@ export default function AiCommandBar({ collectionId, folderId, targetLabel, curr
   }
 
   if (phase === 'proposal' && result && submitted) {
+    const meta = collectVariableMeta({
+      environments: state.environments,
+      activeEnvironmentId: state.activeEnvironmentId,
+      globalVariables: state.globalVariables,
+      globalVariableMeta: state.globalVariableMeta,
+      collectionVariables: state.collectionVariables[collectionId],
+      collection,
+    });
     return (
       <AiProposalDialog
         mode={submitted.mode}
         result={result}
         base={submitted.mode === 'modify' ? current ?? undefined : undefined}
         targetLabel={targetLabel}
+        secretNames={meta.filter(v => v.secret).map(v => v.name)}
+        knownHosts={knownHostsOf([current, ...(collection ? collectNeighbors(collection.item, folderId, current?.id) : [])])}
         onApply={item => { onApply(item, submitted.mode); onClose(); }}
         onDiscard={onClose}
         onRegenerate={() => { setResult(null); void generate(submitted.instruction, submitted.mode); }}

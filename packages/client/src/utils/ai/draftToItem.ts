@@ -60,6 +60,16 @@ function pairs(list: unknown): Array<{ key: string; value: string }> {
 
 const encodeQueryPart = (s: string) => s.replace(/[&# ]/g, c => (c === '&' ? '%26' : c === '#' ? '%23' : '%20'));
 
+const DANGEROUS_SCHEMES = new Set(['javascript', 'data', 'file', 'vbscript', 'blob', 'about', 'jar', 'view-source']);
+
+/** `host:port` is not a scheme (`localhost:3000/x`); `javascript:1;alert(1)` and `data:1` are. Mirrors the server's sanitizeUrl. */
+function hasForeignScheme(url: string): boolean {
+  const m = /^([a-z][a-z0-9+.-]*):/i.exec(url);
+  if (!m || /^https?$/i.test(m[1])) return false;
+  if (DANGEROUS_SCHEMES.has(m[1].toLowerCase())) return true;
+  return !/^\d{1,5}(?:[/?#]|$)/.test(url.slice(m[0].length));
+}
+
 /**
  * Add a scheme to a bare host ("api.example.com/users" -> https://, "localhost:3000" -> http://).
  * Leaves `{{variable}}` prefixes, absolute URLs and path-only URLs alone.
@@ -68,7 +78,7 @@ export function normalizeUrl(input: string): string {
   const url = input.trim();
   if (!url) return '';
   if (url.startsWith('{{') || url.startsWith('/') || /^https?:\/\//i.test(url)) return url;
-  if (/^[a-z][a-z0-9+.-]*:(?!\d)/i.test(url)) return ''; // another scheme (javascript:, file:, ...)
+  if (hasForeignScheme(url)) return ''; // another scheme (javascript:, data:, file:, ...)
   if (/^(localhost|127\.|0\.0\.0\.0|\[::1\])/i.test(url)) return `http://${url}`;
   return `https://${url}`;
 }
@@ -174,15 +184,50 @@ function scriptEvent(listen: CollectionEvent['listen'], code: string): Collectio
   return { listen, script: { type: 'text/javascript', exec: code.split(/\r?\n/) } };
 }
 
+type FormField = NonNullable<CollectionBody['formdata']>[number];
+
+/**
+ * What a draft cannot express but the request being modified has: disabled headers, file fields of a
+ * form-data body and path-variable values. They are carried over unchanged (see `preservedNotes`).
+ */
+function keptFromBase(base: CollectionItem, header: CollectionHeader[], url: CollectionUrl) {
+  const req = base.request;
+  const taken = new Set(header.map(h => h.key.toLowerCase()));
+  const headers = (req?.header ?? []).filter(h => h && h.disabled && h.key && !taken.has(h.key.toLowerCase()));
+  const fileFields: FormField[] = (req?.body?.mode === 'formdata' ? req.body.formdata ?? [] : []).filter(f => f && f.type === 'file');
+  const baseUrl = req?.url;
+  const variables = (typeof baseUrl === 'object' && baseUrl?.variable ? baseUrl.variable : []).filter(v => v && v.key && new RegExp(`(?:^|/):${v.key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:[/?#]|$)`).test(url.raw));
+  return { headers, fileFields, variables };
+}
+
+/** Human notes for the diff: what was carried over from `base` untouched. Empty for a new request. */
+export function preservedNotes(base: CollectionItem | undefined, item: CollectionItem): string[] {
+  if (!base) return [];
+  const out: string[] = [];
+  const baseHeaders = (base.request?.header ?? []).filter(h => h.disabled && h.key);
+  const kept = baseHeaders.filter(h => (item.request?.header ?? []).some(x => x.disabled && x.key === h.key && x.value === h.value));
+  if (kept.length) out.push(`${kept.length} disabled header${kept.length === 1 ? '' : 's'}`);
+  const files = (base.request?.body?.mode === 'formdata' ? base.request.body.formdata ?? [] : []).filter(f => f.type === 'file');
+  const keptFiles = files.filter(f => (item.request?.body?.formdata ?? []).some(x => x.type === 'file' && x.key === f.key));
+  if (keptFiles.length) out.push(`${keptFiles.length} file field${keptFiles.length === 1 ? '' : 's'}`);
+  const u = item.request?.url;
+  const vars = typeof u === 'object' && u?.variable ? u.variable.length : 0;
+  if (vars) out.push(`${vars} path variable${vars === 1 ? '' : 's'}`);
+  return out;
+}
+
 export function draftToItem(draft: RequestDraft, options: DraftToItemOptions = {}): CollectionItem {
   const d: Partial<RequestDraft> = draft && typeof draft === 'object' ? draft : {};
   const base = options.base;
   const method = typeof d.method === 'string' && METHODS.includes(d.method.toUpperCase()) ? d.method.toUpperCase() : 'GET';
   const header: CollectionHeader[] = pairs(d.headers).map(h => ({ key: h.key, value: h.value }));
   const url = parseUrl(oneLine(d.url, MAX_URL), pairs(d.query));
+  const kept = base ? keptFromBase(base, header, url) : null;
+  if (kept) { header.push(...kept.headers); if (kept.variables.length) url.variable = kept.variables; }
 
   const request: CollectionRequest = { method, url, header };
-  const body = mapBody(d.body);
+  let body = mapBody(d.body);
+  if (kept && body?.mode === 'formdata' && kept.fileFields.length) body = { ...body, formdata: [...(body.formdata ?? []), ...kept.fileFields] };
   if (body) request.body = body;
   const auth = mapAuth(d.auth) ?? (base?.request?.auth && base.request.auth.type !== 'inherit' ? base.request.auth : undefined);
   if (auth) request.auth = auth;

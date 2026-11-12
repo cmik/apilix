@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { draftToItem, draftTestScript, normalizeUrl } from './draftToItem';
+import { draftToItem, draftTestScript, normalizeUrl, preservedNotes } from './draftToItem';
 import { validatePostmanCollection } from '../postmanValidator';
 import type { RequestDraft } from './aiTypes';
 import type { CollectionItem } from '../../types';
@@ -118,5 +118,39 @@ describe('draftToItem', () => {
     expect(item.request?.auth?.type).toBe('bearer');
     expect(item.name).toBe('New name');
     expectValid(item);
+  });
+});
+
+describe('draftToItem: modifying keeps what the draft cannot express', () => {
+  const base = {
+    id: 'r1', name: 'Upload',
+    request: {
+      method: 'POST',
+      url: { raw: 'https://api.shop.test/files/:id/:gone', path: ['files', ':id', ':gone'], variable: [{ key: 'id', value: '42' }, { key: 'gone', value: 'x' }] },
+      header: [{ key: 'X-Debug', value: '1', disabled: true }, { key: 'Accept', value: 'old', disabled: true }, { key: 'Accept', value: 'application/json' }],
+      body: { mode: 'formdata' as const, formdata: [{ key: 'file', value: '', type: 'file' }, { key: 'note', value: 'a', type: 'text' }] },
+    },
+  };
+  const draft = { name: 'Upload', method: 'POST' as const, url: 'https://api.shop.test/files/:id', headers: [{ key: 'Accept', value: 'text/plain' }], body: { mode: 'formdata' as const, formdata: [{ key: 'note', value: 'b' }] } };
+
+  it('carries over disabled headers (unless the draft sets the key), file fields and used path variables', () => {
+    const item = draftToItem(draft, { base });
+    expect(item.request?.header).toEqual([{ key: 'Accept', value: 'text/plain' }, { key: 'X-Debug', value: '1', disabled: true }]);
+    expect(item.request?.body?.formdata).toEqual([{ key: 'note', value: 'b', type: 'text' }, { key: 'file', value: '', type: 'file' }]);
+    expect(typeof item.request?.url === 'object' && item.request.url.variable).toEqual([{ key: 'id', value: '42' }]);
+  });
+  it('reports what was kept, and nothing for a new request', () => {
+    const item = draftToItem(draft, { base });
+    expect(preservedNotes(base, item)).toEqual(['1 disabled header', '1 file field', '1 path variable']);
+    expect(preservedNotes(undefined, item)).toEqual([]);
+    expect(preservedNotes(base, draftToItem(draft))).toEqual([]);
+  });
+});
+
+describe('normalizeUrl: host:port is not a scheme', () => {
+  it('keeps localhost:3000 and host:8080 URLs, clears dangerous schemes', () => {
+    expect(normalizeUrl('localhost:3000/users')).toBe('http://localhost:3000/users');
+    expect(normalizeUrl('api.example.com:8080/x')).toBe('https://api.example.com:8080/x');
+    for (const u of ['javascript:alert(1)', 'javascript:1;alert(1)', 'javascript:80/alert(1)', 'data:text/html,x', 'data:1', 'file:///etc/passwd', 'mailto:a@b.test']) expect(normalizeUrl(u)).toBe('');
   });
 });

@@ -30,6 +30,7 @@ import { buildBodyPreview, highlightUnresolved } from '../utils/bodyPreview';
 import { INJECT_TEST_SNIPPET } from '../utils/appEvents';
 import { mergeTestSnippet } from '../utils/testSnippetUtils';
 import type { InjectTestSnippetDetail } from '../utils/appEvents';
+import { handleAiShortcut } from '../utils/ai/aiShortcut';
 
 const CodeGenModal = lazy(() => import('./CodeGenModal'));
 const AiCommandBar = lazy(() => import('./AiCommandBar'));
@@ -976,8 +977,8 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
   // AI command bar (Ctrl/Cmd+I). `current` is the live editor state, frozen when the bar opens.
   const [aiBar, setAiBar] = useState<{ current: CollectionItem; initialMode: 'create' | 'modify' } | null>(null);
   // Editor state before the last applied AI change, so it can be undone (the change is never saved automatically).
-  const [aiUndo, setAiUndo] = useState<{ tabId: string; prev: ReturnType<typeof itemToEditState> } | null>(null);
-  const _aiOpenRef = useRef<() => void>(() => {});
+  const [aiUndo, setAiUndo] = useState<{ tabId: string; prev: ReturnType<typeof itemToEditState>; prevDirty: boolean } | null>(null);
+  const _aiOpenRef = useRef<() => boolean>(() => false);
 
   // Swap edit state when active tab changes
   useEffect(() => {
@@ -1017,11 +1018,8 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
 
   // Ctrl/Cmd+I opens the AI command bar (handler assigned below; it ignores the key when AI is off).
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'i') return;
-      if (!_aiOpenRef.current) return;
-      _aiOpenRef.current();
-    };
+    // The browser default of Ctrl/Cmd+I is only suppressed when the bar really opens.
+    const onKey = (e: KeyboardEvent) => { handleAiShortcut(e, () => _aiOpenRef.current()); };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, []);
@@ -1979,8 +1977,10 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     setAiBar({ current, initialMode: edit!.url.trim() ? 'modify' : 'create' });
   }
   _aiOpenRef.current = () => {
-    if (!aiEnabled || !aiRestOk) return; // leave the shortcut alone when AI is off or the request is not REST
+    // Leave the shortcut alone when AI is off, the request is not REST, or another panel is showing.
+    if (!aiEnabled || !aiRestOk || state.view !== 'request' || aiBar) return false;
     openAiBar();
+    return true;
   };
 
   function applyAiItem(item: CollectionItem, mode: 'create' | 'modify') {
@@ -1989,7 +1989,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
       const prev = edit;
       const next = itemToEditState(item);
       // Keep what the item cannot express: path variable values and an attached file.
-      setAiUndo({ tabId: activeTab.id, prev });
+      setAiUndo({ tabId: activeTab.id, prev, prevDirty: dirty });
       setEdit(() => ({
         ...next,
         bodyFile: prev.bodyFile,
@@ -2013,8 +2013,16 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
 
   function undoAiChange() {
     if (!aiUndo || aiUndo.tabId !== activeTab?.id) return;
-    const prev = aiUndo.prev;
-    setEdit(() => prev);
+    const { prev, prevDirty } = aiUndo;
+    if (prevDirty) {
+      setEdit(() => prev);
+    } else {
+      // The editor was clean before the AI change: undoing it leaves it clean, not "modified".
+      setEditRaw(prev);
+      const existing = cacheRef.current.get(activeTab.id);
+      cacheRef.current.set(activeTab.id, { edit: prev, dirty: false, activeRequestTab: existing?.activeRequestTab ?? 'Params' });
+      setDirty(false);
+    }
     setAiUndo(null);
   }
 

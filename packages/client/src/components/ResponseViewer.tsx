@@ -7,7 +7,8 @@ import type { TestResult, TlsCertInfo, NetworkTimings, RedirectHop } from '../ty
 import SaveToVarModal from './SaveToVarModal';
 import AssertionSuggestPanel from './AssertionSuggestPanel';
 import type { AiAssistProps } from './AssertionSuggestPanel';
-import { aiSuggestAssertions } from '../api';
+import { aiSuggestAssertions, toAiApiError } from '../api';
+import { truncateForAi } from '../utils/ai/truncate';
 import { aiFeatureReady } from '../utils/ai/nlContext';
 import { buildAllSecretValues } from '../utils/secretMask';
 import { AI_PROVIDER_DEFAULT_BASE } from '../utils/aiDefaults';
@@ -842,6 +843,8 @@ export default function ResponseViewer() {
       run: async (signal: AbortSignal) => {
         dispatch({ type: 'AI_REQUEST_START', payload: 'assertSuggest' });
         try {
+          // The AI routes accept 2 MB of JSON: bound the body here and say so in the result.
+          const { text: sentBody, truncated: bodyTruncated } = truncateForAi(response.bodyBase64 ? '' : response.body ?? '');
           const result = await aiSuggestAssertions({
             request: item.request,
             name: item.name,
@@ -850,18 +853,23 @@ export default function ResponseViewer() {
               statusText: response.statusText,
               headers: response.headers,
               // A binary payload has no text to analyse.
-              body: response.bodyBase64 ? '' : response.body ?? '',
+              body: sentBody,
               responseTime: response.responseTime,
             },
             existingTests: savedTestScript,
             secretValues: Array.from(buildAllSecretValues(state.environments, state.globalVariables, state.globalVariableMeta)),
           }, signal);
           dispatch({ type: 'AI_REQUEST_DONE', payload: 'assertSuggest' });
-          return result;
+          return bodyTruncated ? { ...result, truncated: true } : result;
         } catch (err) {
-          const e = err as { code?: string; message?: string };
-          dispatch({ type: 'AI_REQUEST_FAIL', payload: { feature: 'assertSuggest', code: e.code ?? 'INTERNAL', message: e.message ?? 'AI request failed' } });
-          throw err;
+          // A cancellation is not a failure: no error state.
+          if (signal.aborted) {
+            dispatch({ type: 'AI_REQUEST_DONE', payload: 'assertSuggest' });
+            throw err;
+          }
+          const e = toAiApiError(err);
+          dispatch({ type: 'AI_REQUEST_FAIL', payload: { feature: 'assertSuggest', code: e.code, message: e.message } });
+          throw e;
         }
       },
     };

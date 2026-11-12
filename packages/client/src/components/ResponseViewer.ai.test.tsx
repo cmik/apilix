@@ -9,7 +9,10 @@ import { DEFAULT_AI_SETTINGS } from '../utils/aiDefaults';
 const { mockedUseApp, aiSuggestAssertions } = vi.hoisted(() => ({ mockedUseApp: vi.fn(), aiSuggestAssertions: vi.fn() }));
 
 vi.mock('../store', () => ({ useApp: mockedUseApp, generateId: () => 'test-id' }));
-vi.mock('../api', () => ({ aiSuggestAssertions }));
+vi.mock('../api', () => ({
+  aiSuggestAssertions,
+  toAiApiError: (e: { code?: string; message?: string }) => Object.assign(new Error(e?.message ?? 'x'), { code: e?.code ?? 'INTERNAL' }),
+}));
 
 import ResponseViewer from './ResponseViewer';
 
@@ -19,7 +22,7 @@ const item = {
 };
 const collection = { _id: 'col-1', info: { name: 'C', schema: '' }, item: [item] };
 
-function setup(settings: Partial<typeof DEFAULT_AI_SETTINGS>) {
+function setup(settings: Partial<typeof DEFAULT_AI_SETTINGS>, body = '{"a":1}') {
   const dispatch = vi.fn();
   mockedUseApp.mockReturnValue({
     state: {
@@ -28,7 +31,7 @@ function setup(settings: Partial<typeof DEFAULT_AI_SETTINGS>) {
       collections: [collection], tabs: [{ id: 'tab-1', collectionId: 'col-1', item, response: null, isLoading: false }],
       environments: [{ _id: 'e1', name: 'dev', values: [{ key: 'k', value: 'ENV-SECRET', enabled: true, secret: true }] }],
       globalVariables: {}, globalVariableMeta: {},
-      response: { status: 200, statusText: 'OK', responseTime: 12, size: 7, headers: { 'content-type': 'application/json' }, body: '{"a":1}', error: null, testResults: [] },
+      response: { status: 200, statusText: 'OK', responseTime: 12, size: 7, headers: { 'content-type': 'application/json' }, body, error: null, testResults: [] },
     },
     dispatch,
   });
@@ -67,5 +70,39 @@ describe('ResponseViewer AI suggestions wiring', () => {
     expect(screen.queryByRole('button', { name: /Improve with AI/ })).toBeNull();
     expect(screen.getByText(/Turn on .*Suggest assertions from a response/)).toBeInTheDocument();
     expect(aiSuggestAssertions).not.toHaveBeenCalled();
+  });
+
+  const ready = { enabled: true, consentGiven: true, model: 'm', features: { ...DEFAULT_AI_SETTINGS.features, assertSuggest: true } };
+
+  it('truncates a huge response body to 900000 characters before sending, and says so', async () => {
+    aiSuggestAssertions.mockResolvedValue({ suggestions: [], discarded: [], discardedCount: 0, truncated: false, shapeOnly: false });
+    setup(ready, 'x'.repeat(1_200_000));
+    await userEvent.click(screen.getByLabelText('Suggest tests'));
+    await userEvent.click(screen.getByRole('button', { name: /Improve with AI/ }));
+    await waitFor(() => expect(aiSuggestAssertions).toHaveBeenCalledTimes(1));
+    expect(aiSuggestAssertions.mock.calls[0][0].response.body).toHaveLength(900_000);
+    expect(await screen.findByText(/The response was truncated before sending/)).toBeInTheDocument();
+  });
+
+  it('a cancelled request is not recorded as an AI failure', async () => {
+    aiSuggestAssertions.mockImplementation((_p: unknown, signal: AbortSignal) => new Promise((_res, rej) => {
+      signal.addEventListener('abort', () => rej(Object.assign(new Error('canceled'), { code: 'ERR_CANCELED' })));
+    }));
+    const dispatch = setup(ready);
+    await userEvent.click(screen.getByLabelText('Suggest tests'));
+    await userEvent.click(screen.getByRole('button', { name: /Improve with AI/ }));
+    await waitFor(() => expect(aiSuggestAssertions).toHaveBeenCalled());
+    await userEvent.click(screen.getAllByRole('button', { name: 'Cancel' })[0]);
+    await waitFor(() => expect(dispatch.mock.calls.map(c => c[0].type)).toContain('AI_REQUEST_DONE'));
+    expect(dispatch.mock.calls.map(c => c[0].type)).not.toContain('AI_REQUEST_FAIL');
+  });
+
+  it('a failure is recorded with the mapped error code', async () => {
+    aiSuggestAssertions.mockRejectedValue(Object.assign(new Error('The response is too large'), { code: 'TOO_LARGE' }));
+    const dispatch = setup(ready);
+    await userEvent.click(screen.getByLabelText('Suggest tests'));
+    await userEvent.click(screen.getByRole('button', { name: /Improve with AI/ }));
+    await waitFor(() => expect(dispatch.mock.calls.map(c => c[0].type)).toContain('AI_REQUEST_FAIL'));
+    expect(dispatch.mock.calls.find(c => c[0].type === 'AI_REQUEST_FAIL')![0].payload.code).toBe('TOO_LARGE');
   });
 });

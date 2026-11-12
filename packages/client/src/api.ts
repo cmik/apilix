@@ -482,6 +482,9 @@ export function toAiApiError(err: unknown): AiApiError {
   if (typeof err === 'object' && err !== null && 'isAxiosError' in err) {
     const e = err as { response?: { status?: number; data?: { error?: string; code?: string } }; message?: string };
     if (e.response) {
+      if (e.response.status === 413) {
+        return new AiApiError('The response is too large to send to the model. Shorten it (or turn off \u201cSend response bodies\u201d in Settings \u2192 AI) and try again.', 'TOO_LARGE', 413);
+      }
       return new AiApiError(e.response.data?.error ?? e.message ?? 'AI request failed', e.response.data?.code ?? 'NETWORK', e.response.status);
     }
     return new AiApiError('Could not reach the local Apilix server', 'NETWORK');

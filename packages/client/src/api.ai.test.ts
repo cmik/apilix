@@ -19,6 +19,15 @@ describe('toAiApiError', () => {
     expect(e.message).toBe('The AI provider rejected the credentials');
   });
 
+  it('413 -> a clear "too large" message, whatever the body says', () => {
+    const err = Object.assign(new Error('Request failed with status code 413'), { isAxiosError: true, response: { status: 413, data: '<html>PayloadTooLargeError</html>' } });
+    const e = mod.toAiApiError(err);
+    expect(e.code).toBe('TOO_LARGE');
+    expect(e.status).toBe(413);
+    expect(e.message).toMatch(/too large to send to the model/);
+    expect(e.message).not.toMatch(/PayloadTooLarge/);
+  });
+
   it('no response → NETWORK', () => {
     const e = mod.toAiApiError(Object.assign(new Error('Network Error'), { isAxiosError: true }));
     expect(e.code).toBe('NETWORK');

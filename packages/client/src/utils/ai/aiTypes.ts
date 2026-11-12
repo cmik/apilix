@@ -61,7 +61,12 @@ export interface RequestDraft {
 export interface AiGenerateRequestResult {
   draft: RequestDraft;
   /** `validated: false` = the scripts could not be validated in the sandbox (after one retry). */
-  validation: { validated: boolean; errors: Array<{ field: 'tests' | 'preRequest'; reason: string }> };
+  validation: {
+    validated: boolean;
+    errors: Array<{ field: 'tests' | 'preRequest'; reason: string }>;
+    /** Scripts the security screen refused: already removed from the draft, never offered. */
+    removed?: Array<{ field: 'tests' | 'preRequest'; reason: string }>;
+  };
   warnings: string[];
   retried: boolean;
 }
