@@ -28,6 +28,7 @@ const SYNC_TIMEOUT_MS = 1000;     // vm timeout inside the child, per phase
 const MAX_OUTPUT_BYTES = 256 * 1024;
 const HEAP_LIMIT_MB = 64;
 const MAX_CONCURRENT_CHILDREN = 2; // process-wide; a request itself validates scripts one after the other
+const MAX_WAITING = 8;             // runs allowed to queue behind the live children; beyond: immediate "busy"
 
 // Errors that say "the script itself is wrong" (as opposed to "the stand-in response is not what it expects").
 const STRUCTURAL_ERROR_RE = /is not defined|is not a function|is not a constructor|is not iterable|Unexpected (?:token|identifier|end|string|number)|Invalid or unexpected token|Invalid regular expression|Missing initializer|has already been declared|Assignment to constant|Illegal (?:return|break|continue)|await is only valid|offline \(dry-run\) mode|Cannot (?:set|assign|define)|is not allowed in a validated script|Unexpected strict mode|SyntaxError|Script execution timed out|ReferenceError/i;
@@ -82,11 +83,12 @@ function startupOptions() {
   return { execArgv, env, permission };
 }
 
-// Process-wide ceiling on live children, with a FIFO queue (a request never holds more than one).
+// Process-wide ceiling on live children, with a bounded FIFO queue (a request never holds more than one).
 let activeChildren = 0;
 const waiters = [];
 function acquireSlot(signal) {
   if (activeChildren < MAX_CONCURRENT_CHILDREN) { activeChildren++; return Promise.resolve(); }
+  if (waiters.length >= MAX_WAITING) return Promise.reject(Object.assign(new Error('busy'), { busy: true }));
   return new Promise((resolve, reject) => {
     const entry = { resolve: () => { cleanup(); activeChildren++; resolve(); } };
     const onAbort = () => { const i = waiters.indexOf(entry); if (i !== -1) waiters.splice(i, 1); cleanup(); reject(new Error('aborted')); };
@@ -108,7 +110,7 @@ function releaseSlot() {
 async function runInChild(payload, signal, hooks = {}) {
   if (process.pkg) return { ok: false, error: 'unavailable' }; // the worker file is not forkable from a pkg snapshot
   if (signal && signal.aborted) return { ok: false, error: 'aborted' };
-  try { await acquireSlot(signal); } catch { return { ok: false, error: 'aborted' }; }
+  try { await acquireSlot(signal); } catch (e) { return { ok: false, error: e && e.busy ? 'busy' : 'aborted' }; }
   let child = null;
   let timer = null;
   let onAbort = null;
@@ -175,8 +177,9 @@ async function dryRunScript(code, opts = {}) {
   const verdict = await runInChild({ code, response: buildSandboxResponse(response || {}), variables: { ...variables }, timeoutMs: SYNC_TIMEOUT_MS }, signal, { onSpawn });
   if (verdict.ok !== true) {
     if (verdict.syntaxError) return fail(`syntax error: ${verdict.syntaxError}`);
-    if (verdict.error === 'aborted') return fail('cancelled');
-    if (verdict.error === 'unavailable') return fail('scripts cannot be validated in this build');
+    if (verdict.error === 'aborted') return fail('cancelled', { infra: true });
+    if (verdict.error === 'busy') return fail('too many scripts are being validated right now: not validated', { infra: true });
+    if (verdict.error === 'unavailable') return fail('scripts cannot be validated in this build', { infra: true });
     if (verdict.error === 'timeout') return fail('the script did not finish in time');
     return fail('the script could not be run');
   }
@@ -208,5 +211,6 @@ async function dryRunScript(code, opts = {}) {
 }
 
 function liveChildren() { return activeChildren; }
+function waitingRuns() { return waiters.length; }
 
-module.exports = { dryRunScript, buildSandboxResponse, STRUCTURAL_ERROR_RE, runInChild, startupOptions, liveChildren, WALL_CLOCK_MS, MAX_CONCURRENT_CHILDREN };
+module.exports = { dryRunScript, buildSandboxResponse, STRUCTURAL_ERROR_RE, runInChild, startupOptions, liveChildren, waitingRuns, WALL_CLOCK_MS, MAX_CONCURRENT_CHILDREN, MAX_WAITING };

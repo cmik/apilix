@@ -28,15 +28,15 @@ async function startFakeProvider(handler) {
   };
 }
 
-async function withAiServer(fn) {
-  const router = createAiRouter({ logger: { error: () => {} } });
+async function withAiServer(fn, deps = {}) {
+  const router = createAiRouter({ logger: { error: () => {} }, ...deps });
   const app = express();
   app.use('/api/ai', router);
   const server = http.createServer(app);
   await new Promise(r => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${server.address().port}/api/ai`;
-  const call = async (method, p, body) => {
-    const r = await fetch(`${base}${p}`, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const call = async (method, p, body, headers = {}) => {
+    const r = await fetch(`${base}${p}`, { method, headers: { 'content-type': 'application/json', ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
     const text = await r.text();
     let json; try { json = JSON.parse(text); } catch { json = undefined; }
     return { status: r.status, json, text };
@@ -226,5 +226,37 @@ test('/generate-request validates its input', async () => {
       }
       assert.equal(fake.calls.length, 0);
     });
+  } finally { await fake.close(); }
+});
+
+// ── limits ───────────────────────────────────────────────────────────────────────
+
+test('the in-flight lock cannot be bypassed with caller-chosen x-apilix-client headers', async () => {
+  const fake = await startFakeProvider((res) => setTimeout(() => chatReply({ suggestions: [] })(res), 300));
+  try {
+    await withAiServer(async ({ call }) => {
+      await call('PUT', '/config', { settings: settings({ baseUrl: fake.url, features: { assertSuggest: true } }), apiKey: KEY });
+      const results = await Promise.all(['a', 'b', 'c', 'd'].map(async (c) => (await call('POST', '/suggest-assertions', suggestBody(), { 'x-apilix-client': c })).status));
+      assert.equal(results.filter(s => s === 200).length, 1, `only one call may run at a time: ${results}`);
+      assert.equal(results.filter(s => s === 429).length, 3);
+    });
+  } finally { await fake.close(); }
+});
+
+test('suggest-assertions and generate-request share a sliding-window rate limit (429 RATE_LIMIT); other routes are not counted', async () => {
+  const fake = await startFakeProvider(chatReply({ suggestions: [] }));
+  let clock = 1000;
+  try {
+    await withAiServer(async ({ call }) => {
+      await call('PUT', '/config', { settings: settings({ baseUrl: fake.url, features: { assertSuggest: true, nlGenerate: true } }), apiKey: KEY });
+      assert.equal((await call('POST', '/suggest-assertions', suggestBody())).status, 200);
+      assert.equal((await call('POST', '/suggest-assertions', suggestBody())).status, 200);
+      const limited = await call('POST', '/generate-request', { instruction: 'list users' });
+      assert.equal(limited.status, 429);
+      assert.equal(limited.json.code, 'RATE_LIMIT');
+      assert.equal((await call('POST', '/test')).status !== 429, true, '/test is not rate limited by this window');
+      clock += 60 * 1000; // the window slides
+      assert.equal((await call('POST', '/suggest-assertions', suggestBody())).status, 200);
+    }, { scriptRate: { max: 2, windowMs: 60 * 1000 }, now: () => clock });
   } finally { await fake.close(); }
 });

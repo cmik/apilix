@@ -95,3 +95,44 @@ test('finding 2: an off-heap allocation sent straight to the runner (no filter) 
     assert.ok(lag < 250, `parent lagged ${lag} ms`);
   }
 });
+
+test('finding 3: the wait queue is bounded, beyond it a run is "busy" at once (not validated, no error)', async () => {
+  const { dryRunScript, liveChildren, waitingRuns, MAX_CONCURRENT_CHILDREN, MAX_WAITING } = require('../src/dry-run');
+  const slow = { code: 'Promise.resolve().then(function loop(){ Promise.resolve().then(loop); });', response: buildSandboxResponse(RESPONSE), variables: {}, timeoutMs: 150 };
+  const running = [];
+  for (let i = 0; i < MAX_CONCURRENT_CHILDREN + MAX_WAITING; i++) running.push(runInChild(slow));
+  await new Promise(r => setImmediate(r));
+  assert.equal(liveChildren(), MAX_CONCURRENT_CHILDREN);
+  assert.equal(waitingRuns(), MAX_WAITING);
+
+  const t0 = Date.now();
+  const extra = await runInChild(slow);
+  assert.deepEqual(extra, { ok: false, error: 'busy' });
+  const v = await dryRunScript(`apx.test('x', () => {});`, { response: RESPONSE });
+  assert.equal(v.ok, false);
+  assert.equal(v.infra, true);
+  assert.match(v.reason, /not validated/);
+  assert.ok(Date.now() - t0 < 100, 'a busy rejection is immediate');
+  assert.equal(waitingRuns(), MAX_WAITING, 'a rejected run does not enter the queue');
+
+  await Promise.all(running);
+  assert.equal(liveChildren(), 0);
+  assert.equal(waitingRuns(), 0);
+});
+
+test('finding 3: a busy verdict does not trigger a model retry in generateRequest and leaves the draft unvalidated', async () => {
+  const { generateRequest } = require('../src/nl-generate');
+  const dr = require('../src/dry-run');
+  let calls = 0;
+  const provider = { complete: async () => { calls++; return { data: { name: 'n', method: 'GET', url: 'https://a.test', tests: "apx.test('x', () => {});" }, usage: { inputTokens: 1, outputTokens: 1 } }; } };
+  const slow = { code: 'Promise.resolve().then(function loop(){ Promise.resolve().then(loop); });', response: buildSandboxResponse(RESPONSE), variables: {}, timeoutMs: 150 };
+  const fill = [];
+  for (let i = 0; i < dr.MAX_CONCURRENT_CHILDREN + dr.MAX_WAITING; i++) fill.push(runInChild(slow));
+  await new Promise(r => setImmediate(r));
+  const r = await generateRequest({ provider, instruction: 'get a' });
+  assert.equal(calls, 1, 'no retry for a problem the model cannot fix');
+  assert.equal(r.retried, false);
+  assert.equal(r.validation.validated, false);
+  assert.match(r.validation.errors[0].reason, /not validated/);
+  await Promise.all(fill);
+});

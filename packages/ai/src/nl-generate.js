@@ -303,7 +303,7 @@ async function validateScripts(draft) {
     const code = draft[field];
     if (!code) continue;
     const v = await dryRunScript(code, { response, mode: 'lenient' });
-    if (!v.ok) errors.push({ field, reason: oneLine(neutralizeAiText(v.reason || 'failed'), 240), ...(v.screened === false ? { refused: true } : {}) });
+    if (!v.ok) errors.push({ field, reason: oneLine(neutralizeAiText(v.reason || 'failed'), 240), ...(v.screened === false ? { refused: true } : {}), ...(v.infra ? { infra: true } : {}) });
   }
   return errors;
 }
@@ -342,7 +342,8 @@ async function generateRequest(input) {
   let errors = await validateScripts(draft);
   let retried = false;
 
-  if (errors.length) {
+  // A problem that is not about the script (busy, cancelled, unavailable) is not something the model can fix.
+  if (errors.some(e => !e.infra)) {
     retried = true;
     const problems = errors.map(e => `${e.field}: ${e.reason}`).join('; ');
     try {

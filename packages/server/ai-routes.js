@@ -21,6 +21,9 @@ const PROVIDERS = ['anthropic', 'openai-compat'];
 const FEATURE_KEYS = ['nlGenerate', 'assertSuggest', 'diagnose', 'scriptAssist', 'docDescribe', 'dataGen', 'smartImport'];
 const DEFAULT_BASES = { anthropic: 'https://api.anthropic.com', 'openai-compat': 'https://api.openai.com/v1' };
 const MAX_LOG_ENTRIES = 200;
+// Routes that dry-run model-written scripts (child processes): global sliding-window cap on top of the
+// one-request-at-a-time lock. 12 per minute is far above human use (one click = one call).
+const DEFAULT_SCRIPT_RATE = { max: 12, windowMs: 60 * 1000 };
 // A response body above this is not analysed (it would also be dry-run in full).
 const MAX_SUGGEST_BODY_CHARS = 900000;
 
@@ -111,12 +114,15 @@ function createAiRouter(deps = {}) {
     dataDir,
     createProviderImpl = require('@apilix/ai').createProvider,
     logger = console,
+    scriptRate = DEFAULT_SCRIPT_RATE,
+    now = Date.now,
   } = deps;
 
   /** @type {{ settings: object, apiKey: string } | null} */
   let config = null;
   const memoryLog = [];
   const busy = new Set();
+  const scriptCalls = []; // timestamps of admitted calls on routes that dry-run scripts
 
   function logCall(entry) {
     const line = { ts: new Date().toISOString(), ...entry };
@@ -163,7 +169,7 @@ function createAiRouter(deps = {}) {
    * abort on client disconnect, uniform logging and error mapping.
    * `fn({ provider, settings, signal })` returns { body, usage?, model?, latencyMs? }.
    */
-  async function runAiCall(req, res, feature, fn, { featureFlag } = {}) {
+  async function runAiCall(req, res, feature, fn, { featureFlag, rateLimited = false } = {}) {
     if (!config || !config.settings.enabled) {
       return sendError(res, new AiError('DISABLED', 'AI features are disabled'));
     }
@@ -171,8 +177,19 @@ function createAiRouter(deps = {}) {
     if (featureFlag && settings.features[featureFlag] !== true) {
       return sendError(res, new AiError('DISABLED', 'This AI feature is disabled in the AI settings'));
     }
-    const lockKey = `${req.socket.remoteAddress}|${req.get('x-apilix-client') || ''}`;
+    // One in-flight AI call per router. The key must NOT contain anything the caller controls (an
+    // x-apilix-client header would let a client open as many parallel calls as it likes); loopbackOnly has
+    // already restricted callers to this machine, so there is a single key.
+    const lockKey = 'loopback';
     if (busy.has(lockKey)) return res.status(429).json({ error: 'Another AI request is already running', code: 'RATE_LIMIT' });
+    if (rateLimited) {
+      const t = now();
+      while (scriptCalls.length && t - scriptCalls[0] >= scriptRate.windowMs) scriptCalls.shift();
+      if (scriptCalls.length >= scriptRate.max) {
+        return res.status(429).json({ error: 'Too many AI requests in a short time, wait a moment', code: 'RATE_LIMIT' });
+      }
+      scriptCalls.push(t);
+    }
     busy.add(lockKey);
     const ac = new AbortController();
     res.on('close', () => { if (!res.writableEnded) ac.abort(); });
@@ -274,7 +291,7 @@ function createAiRouter(deps = {}) {
       body: { suggestions: r.suggestions, discarded: r.discarded, discardedCount: r.discardedCount, truncated: r.truncated, shapeOnly: r.shapeOnly },
       usage: r.usage, model: r.model, latencyMs: r.latencyMs,
     };
-  }, { featureFlag: 'assertSuggest' }));
+  }, { featureFlag: 'assertSuggest', rateLimited: true }));
 
   router.post('/generate-request', (req, res) => runAiCall(req, res, 'nlGenerate', async ({ provider, settings, signal }) => {
     const { instruction, current, neighbors, variables, language, secretValues } = req.body || {};
@@ -298,7 +315,7 @@ function createAiRouter(deps = {}) {
       signal,
     });
     return { body: { draft: r.draft, validation: r.validation, warnings: r.warnings, retried: r.retried }, usage: r.usage, latencyMs: Date.now() - started };
-  }, { featureFlag: 'nlGenerate' }));
+  }, { featureFlag: 'nlGenerate', rateLimited: true }));
 
   router.post('/preview', (req, res) => {
     const { item, response, variables, secretValues, settings } = req.body || {};
