@@ -7,6 +7,7 @@ const { WorkspaceError } = require('./workspace');
 const { okResult, failResult, safeMessage } = require('./common');
 const readTools = require('./tools');
 const execTools = require('./exec-tools');
+const writeTools = require('./write-tools');
 const { createSession } = require('./exec');
 
 const INSTRUCTIONS = [
@@ -46,7 +47,7 @@ function createMcpServer(cfg) {
     },
   };
 
-  const all = [...readTools.tools, ...execTools.tools, ...(cfg.extraTools || [])].map((t) => ({ ...t, validate: ajv.compile(t.inputSchema) }));
+  const all = [...readTools.tools, ...execTools.tools, ...writeTools.tools, ...(cfg.extraTools || [])].map((t) => ({ ...t, validate: ajv.compile(t.inputSchema) }));
   // Tools gated by a flag are listed only when enabled; calling them anyway returns an explanatory error.
   const enabled = (t) => !t.enabled || t.enabled(opts);
   const visible = () => all.filter(enabled);
