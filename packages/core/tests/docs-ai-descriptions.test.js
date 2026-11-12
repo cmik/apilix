@@ -124,3 +124,32 @@ test('in:name keys fill the right parameter when a name exists in several places
   assert.equal(r.pathVariables.find(p => p.key === 'id').description, 'Order id.');
   assert.equal(r.query.find(p => p.key === 'id').description, 'Filter by id.');
 });
+
+const { neutralizeAiText } = require('../src/docs');
+
+test('neutralizeAiText flattens images, links, URLs and HTML but keeps the readable text', () => {
+  assert.equal(neutralizeAiText('Lists orders. ![t](https://evil.test/p.png?d=secret) Done.'), 'Lists orders. t Done.');
+  assert.equal(neutralizeAiText('See [the docs](https://x.test/doc) now'), 'See the docs now');
+  assert.equal(neutralizeAiText('Visit https://evil.test/a?b=c or www.evil.test/x'), 'Visit or');
+  assert.equal(neutralizeAiText('Hi <img src=x onerror=alert(1)> <b>there</b> <https://evil.test>'), 'Hi there');
+  assert.equal(neutralizeAiText('![a][r]\n[r]: https://evil.test/p.png'), 'a');
+  assert.equal(neutralizeAiText('a < b and c > d'), 'a < b and c > d', 'plain comparisons are untouched');
+  assert.equal(neutralizeAiText('Returns 200 for /orders/{id}.'), 'Returns 200 for /orders/{id}.');
+});
+
+test('neutralizeAiText cannot be rebuilt by nesting', () => {
+  const out = neutralizeAiText('![x](https://e.test/![y](https://e.test/a))');
+  assert.ok(!/https?:|!\[|\]\(/.test(out), out);
+  assert.ok(!/<[a-z]/i.test(neutralizeAiText('<<b>img src=x onerror=1>')));
+});
+
+test('an AI image description never becomes an <img>, a link or a URL in any export', () => {
+  const col = { info: { name: 'S', description: 'd' }, item: [{ id: 'r', name: 'r', request: { method: 'GET', url: 'https://x.test/a' } }] };
+  const descriptions = { r: { description: 'Orders. ![t](https://evil.test/p.png?d=1) [click](https://evil.test/c) https://evil.test/raw' } };
+  for (const format of ['html', 'markdown', 'openapi']) {
+    const { content } = generateDocs(col, { format, descriptions });
+    assert.ok(!content.includes('evil.test'), `${format} leaked a URL`);
+    assert.ok(content.includes('Orders.'), `${format} lost the readable text`);
+  }
+  assert.ok(!generateDocs(col, { format: 'html', descriptions }).content.includes('<img src="https://evil'));
+});

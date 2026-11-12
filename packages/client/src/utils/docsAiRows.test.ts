@@ -69,3 +69,16 @@ describe('maskCollectionForAi', () => {
     expect(maskCollectionForAi(c, new Set())).toBe(c);
   });
 });
+
+describe('rowsToDescriptions flattens links and images pasted into the editor', () => {
+  it('removes images, links and raw URLs but keeps the text', () => {
+    const out = rowsToDescriptions([
+      { id: 'r1', kind: 'request', label: 'x', included: true, description: 'Lists. ![t](https://evil.test/p.png) [a](https://evil.test)', params: { 'query:q': 'See https://evil.test/z <b>now</b>' } },
+    ]);
+    expect(out.r1.description).toBe('Lists. t a');
+    expect(out.r1.params).toEqual({ 'query:q': 'See now' });
+  });
+  it('drops a row whose text was only a link', () => {
+    expect(rowsToDescriptions([{ id: 'r1', kind: 'request', label: 'x', included: true, description: 'https://evil.test', params: {} }])).toEqual({});
+  });
+});

@@ -14,6 +14,7 @@ const { renderHtml } = require('./doc-html');
 const { renderMarkdown } = require('./doc-markdown');
 const { buildOpenApi } = require('./doc-openapi');
 const { toYaml } = require('./doc-yaml');
+const { neutralizeAiText } = require('./doc-ai-text');
 
 const FORMATS = ['html', 'markdown', 'openapi'];
 
@@ -56,4 +57,4 @@ function generateDocs(collection, options, deps) {
   };
 }
 
-module.exports = { generateDocs, buildDocModel, toYaml };
+module.exports = { generateDocs, buildDocModel, toYaml, neutralizeAiText };

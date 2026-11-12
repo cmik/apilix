@@ -1,4 +1,4 @@
-import { buildDocModel } from '@apilix/core/docs';
+import { buildDocModel, neutralizeAiText } from '@apilix/core/docs';
 import type { AppCollection, DocAiDescription } from '../types';
 
 /** One reviewable AI suggestion: a request, a folder, or the collection itself. */
@@ -49,8 +49,9 @@ export function rowsToDescriptions(rows: AiDescriptionRow[]): Record<string, Doc
   const out: Record<string, DocAiDescription> = {};
   for (const row of rows) {
     if (!row.included) continue;
-    const description = row.description.trim();
-    const params = Object.fromEntries(Object.entries(row.params).map(([k, v]) => [k, v.trim()]).filter(([, v]) => v));
+    // Edited text is flattened too: a pasted link or image must not reach the exported document.
+    const description = neutralizeAiText(row.description);
+    const params = Object.fromEntries(Object.entries(row.params).map(([k, v]) => [k, neutralizeAiText(v)]).filter(([, v]) => v));
     if (!description && !Object.keys(params).length) continue;
     out[row.id] = { ...(description ? { description } : {}), ...(Object.keys(params).length ? { params } : {}) };
   }

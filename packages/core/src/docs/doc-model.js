@@ -6,6 +6,7 @@
  */
 
 const redact = require('./doc-redact');
+const { neutralizeAiText } = require('./doc-ai-text');
 
 const NON_HTTP_TYPES = new Set(['mongodb', 'sql', 'database']);
 const NON_HTTP_METHODS = new Set(['MONGO', 'MYSQL', 'POSTGRESQL', 'SQLITE', 'CASSANDRA', 'ORACLE', 'MSSQL', 'REDIS', 'DYNAMODB']);
@@ -349,8 +350,9 @@ function buildDocModel(collection, options = {}) {
 
 const AI_COLLECTION_KEY = '__collection__';
 
+// Model output is untrusted: flatten images, links, URLs and HTML to plain prose (see doc-ai-text.js).
 function cleanAiText(v) {
-  return typeof v === 'string' ? v.trim() : '';
+  return neutralizeAiText(v);
 }
 
 /**

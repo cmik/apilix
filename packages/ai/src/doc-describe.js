@@ -8,6 +8,7 @@
  * and every answer is checked against the ids / parameter names that were actually asked about.
  */
 
+const { neutralizeAiText } = require('@apilix/core/docs');
 const { AiError } = require('./errors');
 const { estimateTokens, truncateText } = require('./budget');
 const { scrubSecretValues, scrubTokenPatterns, REDACTED } = require('./redact');
@@ -132,7 +133,9 @@ function buildBatches(entries, { maxContextTokens = 8000, secretValues, redactSe
 
 function cleanText(v) {
   if (typeof v !== 'string') return '';
-  return v.replace(/\s+/g, ' ').trim().slice(0, MAX_DESCRIPTION_CHARS);
+  // The model's output is untrusted: strip images, links, URLs and HTML (the same function the
+  // document builder applies, so nothing relies on the caller having used this module).
+  return neutralizeAiText(v).slice(0, MAX_DESCRIPTION_CHARS);
 }
 
 /** Keep only what was asked: known ids, known parameter names, non-empty text. */
