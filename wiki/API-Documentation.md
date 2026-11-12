@@ -43,6 +43,7 @@ Click **Save…** to write the file. On desktop this opens the native Save dialo
 | Format | HTML | HTML, Markdown or OpenAPI |
 | OpenAPI serialization (OpenAPI only) | YAML (app) / JSON (CLI) | **YAML** or **JSON** |
 | OpenAPI version (OpenAPI only) | 3.0.3 | Tick "Use OpenAPI 3.1 (default 3.0.3)" for 3.1.0 |
+| Render images (HTML only) | On | Loads images from descriptions. Turn it off to render every image as a text link and block image loading (see [Content-Security-Policy and the image trade-off](#content-security-policy-and-the-image-trade-off)). Remote images are fetched when the file is opened |
 | Theme (HTML only) | Dark | Dark, Light or Auto (follows the OS). The page also has a Light / Dark toggle that works without JavaScript |
 | Variables | Keep `{{var}}` | **Keep** leaves `{{variable}}` verbatim. **Resolve** substitutes non-secret values from the active environment and from collection variables (environment values win) |
 | Include saved examples | On | Render saved example responses |
@@ -148,6 +149,7 @@ apilix docs ./collection.json -e ./prod.env.json --resolve-variables --out docs.
 | `--snippets <list>` | Comma-separated snippet languages (the CLI supports `curl`) |
 | `--theme <dark\|light\|auto>` | HTML theme (default `dark`) |
 | `--no-examples` | Omit saved examples |
+| `--no-images` | HTML only: do not render images; they become text links and the CSP is `img-src 'none'` (default: images are rendered) |
 | `--out <file>` | Write to a file instead of stdout (missing parent folders are created) |
 
 `--out` is refused if it points to the collection file or to the environment file, including through a symlink, so a mistyped path cannot overwrite your input.
@@ -170,14 +172,16 @@ Descriptions (collection, folder, request, parameter) may contain a small subset
 - Block: `p`, `ul`, `ol`, `li`, `table` (`thead`/`tbody`/`tfoot`/`caption`/`tr`/`th`/`td`), `blockquote`, `pre`, `h1`-`h6`, `hr`, `details`, `summary`, `div`
 - Attributes are dropped, except `href` on links (`http(s):`, `mailto:` or `#`; links are emitted with `rel="noopener noreferrer nofollow"`), `colspan`/`rowspan` on cells, and `src`, `alt`, `title`, `width`, `height` on images. An `<img>` without a safe `src` is shown as text.
 - A single HTML tag is read up to 64 KB (65 536 characters), so long `data:` image URIs and long links are rendered. A tag that is not closed within that limit is shown as text. Markdown links and images accept a label of up to 500 characters and a URL of up to 2000 characters without spaces or `(`; longer ones are shown as text.
-- Images (`<img>` or `![alt](url)`) load only from `http(s):` URLs or `data:image/png|jpeg|gif|webp;base64,` URIs.
+- Images (`<img>` or `![alt](url)`) load only from `http(s):` URLs or `data:image/png|jpeg|gif|webp;base64,` URIs, and only when image rendering is on (the default). With **Render images** off (`--no-images`, option `renderImages: false`) no `<img>` tag is emitted: an image with an `http(s):` source becomes a link (`<a href=...>alt text or URL</a>`, same checks and `rel` as other links), a `data:` image becomes its alt text (a `data:` URI is not a valid link target), and an image with an unsafe source is shown as text as before.
 - Anything else (`script`, `style`, `iframe`, `form`, ...) is shown as visible text.
 
 ### Content-Security-Policy and the image trade-off
 
-Every HTML file embeds this policy: `default-src 'none'; style-src 'unsafe-inline'; img-src data: https: http:; base-uri 'none'; form-action 'none'`. Scripts, fonts, frames, forms and network calls are blocked; only inline styles and images are allowed. The file itself contains no script.
+Every HTML file embeds this policy: `default-src 'none'; style-src 'unsafe-inline'; img-src data: https: http:; base-uri 'none'; form-action 'none'`. Scripts, fonts, frames, forms and network calls are blocked; only inline styles and images are allowed. The file itself contains no script. With **Render images** off the policy is `... img-src 'none' ...`, so nothing can be loaded even if markup slipped through.
 
-Images are the one thing that can reach the network when the file is opened. A collection from an untrusted source can therefore make the viewer's browser request an image URL, which tells the host that the document was opened (and from which IP address). Review image references in descriptions before publishing or opening documentation generated from a collection you do not trust. The preview in the app renders in a sandboxed frame with scripts disabled, but images can still load there.
+Images are the one thing that can reach the network when the file is opened. A collection from an untrusted source can therefore make the viewer's browser request an image URL, which tells the host that the document was opened (and from which IP address). Review image references in descriptions before publishing or opening documentation generated from a collection you do not trust. The preview in the app renders in a sandboxed frame with scripts disabled, but images can still load there when **Render images** is on (the preview follows the checkbox).
 
-The Markdown export escapes raw HTML in descriptions, but it does not strip Markdown image syntax (`![alt](url)`), so a Markdown viewer that renders images can load them. The OpenAPI export copies descriptions as they are, without sanitising them; the tool that renders the spec decides how to display them.
+The Markdown export escapes raw HTML in descriptions, but it does not strip Markdown image syntax (`![alt](url)`), so a Markdown viewer that renders images can load them. An `<img>` tag with an `http(s):` or `data:image/...` source is converted to Markdown image syntax (`![alt](url)`, width and other attributes dropped); other raw HTML stays escaped. The OpenAPI export copies descriptions as they are (JSON and YAML), without sanitising them, so both `![alt](url)` and `<img>` stay in the `description` fields. OpenAPI viewers (Swagger UI, Redoc and similar) render those descriptions as Markdown themselves, so they display the images: that is a property of the viewer, not of Apilix.
+
+The **Render images** option (`renderImages`) applies to the HTML export only. The Markdown and OpenAPI exports always keep images in the description text, whatever its value.
 
