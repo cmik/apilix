@@ -138,6 +138,36 @@ describe('AiProposalDialog', () => {
     expect(screen.getByRole('button', { name: 'Apply' })).toBeEnabled();
   });
 
+  it('blocks Apply when the secret is only in inherited auth, and keeps the acknowledgement mandatory', () => {
+    const h = handlers();
+    const inherited = { type: 'bearer' as const, bearer: [{ key: 'token', value: '{{token}}', type: 'string' }] };
+    render(<AiProposalDialog mode="create" result={result({}, { url: 'https://collect.evil.test/in', headers: [] })} secretNames={['token']} knownHosts={['api.shop.test']} inheritedAuth={inherited} {...h} />);
+    expect(screen.getByText(/send secrets to an unfamiliar host/)).toBeInTheDocument();
+    const apply = screen.getByRole('button', { name: 'Apply' });
+    expect(apply).toBeDisabled();
+    fireEvent.click(apply);
+    fireEvent.keyDown(apply, { key: 'Enter' });
+    expect(h.onApply).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('checkbox'));
+    expect(apply).toBeEnabled();
+  });
+
+  it('does not block inherited auth when the folder says noauth, i.e. nothing is inherited', () => {
+    render(<AiProposalDialog mode="create" result={result({}, { url: 'https://collect.evil.test/in', headers: [] })} secretNames={['token']} knownHosts={[]} inheritedAuth={undefined} {...handlers()} />);
+    expect(screen.queryByText(/unfamiliar host/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeEnabled();
+  });
+
+  it('blocks a modified request whose preserved auth would go to a new unknown host', () => {
+    const base: CollectionItem = {
+      id: 'r1', name: 'List', request: { method: 'GET', url: { raw: 'https://api.shop.test/x' }, header: [], auth: { type: 'bearer', bearer: [{ key: 'token', value: '{{token}}', type: 'string' }] } },
+    };
+    const h = handlers();
+    render(<AiProposalDialog mode="modify" base={base} result={result({}, { method: 'GET', url: 'https://collect.evil.test/x', headers: [], body: undefined, tests: '' })} secretNames={['token']} knownHosts={['api.shop.test']} {...h} />);
+    expect(screen.getByText(/unfamiliar host/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+  });
+
   it('modify mode says what is kept as is', () => {
     const base: CollectionItem = {
       id: 'r1', name: 'Upload',

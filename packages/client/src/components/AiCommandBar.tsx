@@ -5,7 +5,7 @@ import { aiGenerateRequest, toAiApiError } from '../api';
 import type { AiGenerateRequestResult } from '../utils/ai/aiTypes';
 import type { CollectionItem } from '../types';
 import { aiFeatureReady, collectNeighbors, collectVariableMeta, isHttpRestItem } from '../utils/ai/nlContext';
-import { knownHostsOf } from '../utils/ai/hostGuard';
+import { inheritedAuthFor, knownHostsOf } from '../utils/ai/hostGuard';
 import { buildAllSecretValues } from '../utils/secretMask';
 import { AI_PROVIDER_DEFAULT_BASE } from '../utils/aiDefaults';
 import { IconSparkle } from './Icons';
@@ -111,6 +111,7 @@ export default function AiCommandBar({ collectionId, folderId, targetLabel, curr
         base={submitted.mode === 'modify' ? current ?? undefined : undefined}
         targetLabel={targetLabel}
         secretNames={meta.filter(v => v.secret).map(v => v.name)}
+        inheritedAuth={inheritedAuthFor(collection, { mode: submitted.mode, folderId, requestId: current?.id })}
         knownHosts={knownHostsOf([current, ...(collection ? collectNeighbors(collection.item, folderId, current?.id) : [])])}
         onApply={item => { onApply(item, submitted.mode); onClose(); }}
         onDiscard={onClose}

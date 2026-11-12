@@ -1,4 +1,5 @@
-import type { CollectionItem } from '../../types';
+import type { CollectionAuth, CollectionItem } from '../../types';
+import { findItemInTree, resolveInheritedAuth } from '../treeHelpers';
 import type { RequestDraft } from './aiTypes';
 
 /**
@@ -8,7 +9,9 @@ import type { RequestDraft } from './aiTypes';
  * request to a host the user never uses while attaching `{{secret}}` variables to it. The proposal dialog
  * blocks Apply behind an explicit acknowledgement when BOTH hold:
  *  - the URL host is not `{{baseUrl}}` and not the host of a neighbouring request / the modified request;
- *  - the draft references a secret variable in the URL, headers, auth, query or body.
+ *  - the request references a secret variable in the URL, headers, auth, query or body, or its EFFECTIVE auth
+ *    (the draft's, the preserved auth of a modified request, or the one inherited from a folder / the
+ *    collection) carries a literal credential.
  */
 
 /** Manual fallback for hosts the URL parser cannot take (`{{variable}}` parts). Backslash counts as `/`, as in WHATWG URLs. */
@@ -79,15 +82,80 @@ export function secretVariablesUsed(draft: RequestDraft, secretNames: ReadonlySe
   return Array.from(used);
 }
 
-export interface ExfiltrationRisk { host: string; variables: string[] }
+/**
+ * Auth a request really sends: its own unless it is absent / `inherit`, then the inherited one.
+ * Same rule as `applyInheritedAuth` (treeHelpers): an explicit `noauth` blocks inheritance.
+ */
+export function effectiveAuth(own: CollectionAuth | undefined, inherited: CollectionAuth | undefined): CollectionAuth | undefined {
+  if (own && own.type !== 'inherit') return own;
+  return inherited && inherited.type !== 'inherit' ? inherited : undefined;
+}
+
+/**
+ * Auth a request would inherit at its destination: for a new request, the folder it goes into (its own
+ * auth, else the folders above it, else the collection's); for a modified one, what its position in the
+ * tree gives it. Built on `resolveInheritedAuth`, the resolution the runner uses.
+ */
+export function inheritedAuthFor(
+  collection: { item: CollectionItem[]; auth?: CollectionAuth } | undefined,
+  target: { mode: 'create' | 'modify'; folderId?: string | null; requestId?: string | null },
+): CollectionAuth | undefined {
+  if (!collection) return undefined;
+  const items = collection.item ?? [];
+  if (target.mode === 'modify' && target.requestId && findItemInTree(items, target.requestId)) {
+    return resolveInheritedAuth(items, target.requestId, collection.auth);
+  }
+  if (target.folderId) {
+    const folder = findItemInTree(items, target.folderId);
+    if (folder?.item) {
+      return folder.auth && folder.auth.type !== 'inherit'
+        ? folder.auth
+        : resolveInheritedAuth(items, target.folderId, collection.auth);
+    }
+  }
+  return collection.auth;
+}
+
+const NON_SECRET_AUTH_KEYS = new Set(['key', 'in', 'addTo', 'algorithm', 'type']);
+
+/** Texts of an auth that leave the machine, and whether one of them is a literal (non-`{{var}}`) credential. */
+export function authCredentials(auth: CollectionAuth | undefined): { texts: string[]; literal: boolean } {
+  const texts: string[] = [];
+  let literal = false;
+  if (!auth || auth.type === 'noauth' || auth.type === 'inherit') return { texts, literal };
+  const add = (v: unknown) => {
+    if (typeof v !== 'string' || !v.trim()) return;
+    texts.push(v);
+    if (!/^\s*\{\{[^{}\s]{1,100}\}\}\s*$/.test(v)) literal = true;
+  };
+  for (const [name, value] of Object.entries(auth as unknown as Record<string, unknown>)) {
+    if (name === 'type') continue;
+    if (Array.isArray(value)) {
+      for (const e of value) {
+        const entry = e as { key?: unknown; value?: unknown } | null;
+        if (entry && typeof entry === 'object' && !NON_SECRET_AUTH_KEYS.has(String(entry.key))) add(entry.value);
+      }
+    } else if (name === 'oauth2' && value && typeof value === 'object') {
+      const o = value as Record<string, unknown>;
+      add(o.clientSecret); add(o.accessToken); add(o.refreshToken);
+    }
+  }
+  return { texts, literal };
+}
+
+export interface ExfiltrationRisk { host: string; variables: string[]; /** The effective auth holds a literal credential. */ literalCredential?: boolean }
 
 export function exfiltrationRisk(
   draft: RequestDraft,
-  opts: { secretNames: ReadonlySet<string>; knownHosts: readonly string[] },
+  opts: { secretNames: ReadonlySet<string>; knownHosts: readonly string[]; /** Effective auth of the merged request (see `effectiveAuth`). */ auth?: CollectionAuth },
 ): ExfiltrationRisk | null {
   const host = hostOf(draft.url);
   if (!host) return null;
   if (host === '{{baseUrl}}' || opts.knownHosts.includes(host)) return null;
-  const variables = secretVariablesUsed(draft, opts.secretNames);
-  return variables.length ? { host, variables } : null;
+  const used = new Set(secretVariablesUsed(draft, opts.secretNames));
+  const { texts, literal } = authCredentials(opts.auth);
+  for (const t of texts) for (const v of referencedVariables(t)) if (opts.secretNames.has(v)) used.add(v);
+  const variables = Array.from(used);
+  if (!variables.length && !literal) return null;
+  return literal ? { host, variables, literalCredential: true } : { host, variables };
 }

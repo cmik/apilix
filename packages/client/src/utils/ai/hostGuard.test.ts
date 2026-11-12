@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { exfiltrationRisk, hostOf, knownHostsOf, secretVariablesUsed } from './hostGuard';
+import type { CollectionAuth, CollectionItem } from '../../types';
+import { draftToItem } from './draftToItem';
+import { effectiveAuth, exfiltrationRisk, hostOf, inheritedAuthFor, knownHostsOf, secretVariablesUsed } from './hostGuard';
 import type { RequestDraft } from './aiTypes';
 
 const draft = (over: Partial<RequestDraft> = {}): RequestDraft => ({ name: 'n', method: 'GET', url: '{{baseUrl}}/users', ...over });
@@ -93,5 +95,82 @@ describe('knownHostsOf', () => {
       null,
     ];
     expect(knownHostsOf(items as never)).toEqual(['a.test', '{{baseUrl}}']);
+  });
+});
+
+describe('effective auth (preserved / inherited) in the exfiltration guard', () => {
+  const bearer = (token: string): CollectionAuth => ({ type: 'bearer', bearer: [{ key: 'token', value: token, type: 'string' }] });
+  const req = (id: string, auth?: CollectionAuth): CollectionItem => ({ id, name: id, request: { method: 'GET', url: { raw: 'https://api.shop.test/x' }, header: [], ...(auth ? { auth } : {}) } });
+  const folder = (id: string, children: CollectionItem[], auth?: CollectionAuth): CollectionItem => ({ id, name: id, item: children, ...(auth ? { auth } : {}) });
+  const evil = draft({ url: 'https://collect.evil.test/in' });
+  const known = ['api.shop.test'];
+  const risk = (d: RequestDraft, auth: CollectionAuth | undefined) => exfiltrationRisk(d, { secretNames: secrets, knownHosts: known, auth });
+
+  it('flags a new request under a folder whose parent holds a bearer {{token}}', () => {
+    const col = { item: [folder('p', [folder('f', [req('r')])], bearer('{{token}}'))] };
+    const inh = inheritedAuthFor(col, { mode: 'create', folderId: 'f' });
+    expect(risk(evil, effectiveAuth(draftToItem(evil).request?.auth, inh))).toEqual({ host: 'collect.evil.test', variables: ['token'] });
+  });
+
+  it('does not flag when the folder blocks inheritance with an explicit noauth', () => {
+    const col = { item: [folder('p', [folder('f', [req('r')], { type: 'noauth' })], bearer('{{token}}'))] };
+    const inh = inheritedAuthFor(col, { mode: 'create', folderId: 'f' });
+    expect(inh?.type).toBe('noauth');
+    expect(risk(evil, effectiveAuth(undefined, inh))).toBeNull();
+  });
+
+  it('resolves several levels, skipping folders set to inherit, up to the collection auth', () => {
+    const col = { auth: bearer('{{token}}'), item: [folder('a', [folder('b', [req('r')], { type: 'inherit' })], { type: 'inherit' })] };
+    expect(risk(evil, effectiveAuth(undefined, inheritedAuthFor(col, { mode: 'create', folderId: 'b' })))?.variables).toEqual(['token']);
+    expect(risk(evil, effectiveAuth(undefined, inheritedAuthFor(col, { mode: 'modify', requestId: 'r' })))?.variables).toEqual(['token']);
+    expect(risk(evil, effectiveAuth(undefined, inheritedAuthFor(col, { mode: 'create', folderId: null })))?.variables).toEqual(['token']);
+  });
+
+  it('the nearest folder auth wins over a farther one', () => {
+    const col = { auth: bearer('{{token}}'), item: [folder('a', [folder('b', [req('r')])], bearer('literal-not-var-ref-less'))] };
+    const inh = inheritedAuthFor(col, { mode: 'modify', requestId: 'r' });
+    expect(inh).toEqual(bearer('literal-not-var-ref-less'));
+  });
+
+  it('flags a modified request whose own auth is preserved when the URL moves to an unknown host', () => {
+    const base = req('r', bearer('{{token}}'));
+    const merged = draftToItem(evil, { base });
+    expect(risk(evil, effectiveAuth(merged.request?.auth, undefined))?.variables).toEqual(['token']);
+  });
+
+  it('a draft noauth overrides the preserved and the inherited auth', () => {
+    const base = req('r', bearer('{{token}}'));
+    const d = draft({ url: evil.url, auth: { type: 'noauth' } });
+    const merged = draftToItem(d, { base });
+    expect(risk(d, effectiveAuth(merged.request?.auth, bearer('{{token}}')))).toBeNull();
+  });
+
+  it('does not flag a familiar host, {{baseUrl}}, or when there is no auth anywhere', () => {
+    expect(risk(draft({ url: 'https://api.shop.test/x' }), bearer('{{token}}'))).toBeNull();
+    expect(risk(draft(), bearer('{{token}}'))).toBeNull();
+    expect(risk(evil, effectiveAuth(undefined, undefined))).toBeNull();
+    const col = { item: [folder('f', [req('r')])] };
+    expect(inheritedAuthFor(col, { mode: 'create', folderId: 'f' })).toBeUndefined();
+    expect(inheritedAuthFor(undefined, { mode: 'create' })).toBeUndefined();
+  });
+
+  it('does not flag a non-secret variable in inherited auth', () => {
+    expect(risk(evil, bearer('{{publicKey}}'))).toBeNull();
+  });
+
+  it('flags a literal credential in the effective auth, even without a variable', () => {
+    expect(risk(evil, bearer('sk-live-123'))).toEqual({ host: 'collect.evil.test', variables: [], literalCredential: true });
+    expect(risk(evil, { type: 'basic', basic: [{ key: 'username', value: 'u' }, { key: 'password', value: '{{token}}' }] })).toEqual({ host: 'collect.evil.test', variables: ['token'], literalCredential: true });
+    expect(risk(evil, { type: 'apikey', apikey: [{ key: 'key', value: 'X-API-Key' }, { key: 'value', value: 'abc' }, { key: 'in', value: 'header' }] })?.literalCredential).toBe(true);
+    // an empty credential and an apikey header name alone are not credentials
+    expect(risk(evil, bearer(''))).toBeNull();
+    expect(risk(evil, { type: 'apikey', apikey: [{ key: 'key', value: 'X-API-Key' }, { key: 'value', value: '' }] })).toBeNull();
+  });
+
+  it('covers oauth2 tokens and secrets', () => {
+    const oauth2 = { type: 'oauth2', oauth2: { grantType: 'client_credentials', clientId: 'id', clientSecret: '{{token}}', tokenUrl: 'https://auth.test/t' } } as CollectionAuth;
+    expect(risk(evil, oauth2)?.variables).toEqual(['token']);
+    const literal = { type: 'oauth2', oauth2: { grantType: 'client_credentials', clientId: 'id', clientSecret: '', accessToken: 'abc', tokenUrl: 'https://auth.test/t' } } as CollectionAuth;
+    expect(risk(evil, literal)?.literalCredential).toBe(true);
   });
 });

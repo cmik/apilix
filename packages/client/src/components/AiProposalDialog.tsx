@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { neutralizeAiText } from '@apilix/core/docs';
-import type { CollectionItem } from '../types';
+import type { CollectionAuth, CollectionItem } from '../types';
 import type { AiGenerateRequestResult } from '../utils/ai/aiTypes';
 import { draftToItem, preservedNotes } from '../utils/ai/draftToItem';
-import { exfiltrationRisk } from '../utils/ai/hostGuard';
+import { effectiveAuth, exfiltrationRisk } from '../utils/ai/hostGuard';
 import { diffLines, diffViews, itemToView, type DiffLine, type ItemView } from '../utils/ai/itemDiff';
 import { IconSparkle } from './Icons';
 
@@ -20,6 +20,8 @@ export interface AiProposalDialogProps {
   secretNames?: readonly string[];
   /** Hosts the user already works with: `{{baseUrl}}` is always known. */
   knownHosts?: readonly string[];
+  /** Auth the request inherits at its destination (folders above, then the collection): see `inheritedAuthFor`. */
+  inheritedAuth?: CollectionAuth;
   onApply: (item: CollectionItem) => void;
   onDiscard: () => void;
   onRegenerate: () => void;
@@ -61,7 +63,7 @@ function Field({ label, value }: { label: string; value: string }) {
  * Shows what the model proposes and lets the user apply, ignore or regenerate it. Nothing the model
  * wrote is applied or executed before "Apply" is clicked.
  */
-export default function AiProposalDialog({ mode, result, base, targetLabel, busy, secretNames, knownHosts, onApply, onDiscard, onRegenerate }: AiProposalDialogProps) {
+export default function AiProposalDialog({ mode, result, base, targetLabel, busy, secretNames, knownHosts, inheritedAuth, onApply, onDiscard, onRegenerate }: AiProposalDialogProps) {
   const [ackRisk, setAckRisk] = useState(false);
   const applyRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { applyRef.current?.focus(); }, []);
@@ -91,8 +93,13 @@ export default function AiProposalDialog({ mode, result, base, targetLabel, busy
   const removed = result.validation.removed ?? [];
   const kept = useMemo(() => (mode === 'modify' ? preservedNotes(base, item) : []), [mode, base, item]);
   const risk = useMemo(
-    () => exfiltrationRisk(result.draft, { secretNames: new Set(secretNames ?? []), knownHosts: [...(knownHosts ?? [])] }),
-    [result.draft, secretNames, knownHosts],
+    // The merged request's effective auth counts too: a modified request keeps its auth and a new one inherits its parent's.
+    () => exfiltrationRisk(result.draft, {
+      secretNames: new Set(secretNames ?? []),
+      knownHosts: [...(knownHosts ?? [])],
+      auth: effectiveAuth(item.request?.auth, inheritedAuth),
+    }),
+    [result.draft, item, secretNames, knownHosts, inheritedAuth],
   );
   const blocked = !!risk && !ackRisk;
 
@@ -124,9 +131,9 @@ export default function AiProposalDialog({ mode, result, base, targetLabel, busy
               <p className="font-medium">This request would send secrets to an unfamiliar host.</p>
               <p>
                 It targets <span className="font-mono break-all">{neutralizeAiText(risk.host)}</span>, which is neither <span className="font-mono">{'{{baseUrl}}'}</span> nor
-                the host of a neighbouring request, and it uses {risk.variables.map((v, i) => (
+                the host of a neighbouring request, and it uses {risk.variables.length > 0 && <>{risk.variables.map((v, i) => (
                   <span key={v}>{i > 0 ? ', ' : ''}<span className="font-mono">{`{{${neutralizeAiText(v)}}}`}</span></span>
-                ))}, marked secret.
+                ))}, marked secret</>}{risk.variables.length > 0 && risk.literalCredential && ' and '}{risk.literalCredential && 'a credential written in its (own or inherited) authentication'}.
               </p>
               <label className="flex items-start gap-2 cursor-pointer">
                 <input type="checkbox" checked={ackRisk} onChange={e => setAckRisk(e.target.checked)} className="mt-0.5 accent-orange-500" />
