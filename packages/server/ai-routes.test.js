@@ -315,3 +315,26 @@ test('a successful call logs tokens and latency only (no prompt or reply content
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test('isAiPath is case-insensitive and exact on the segment', () => {
+  const { isAiPath } = require('./ai-routes');
+  for (const p of ['/api/ai', '/api/ai/preview', '/API/AI/preview', '/Api/Ai/test']) assert.equal(isAiPath(p), true, p);
+  for (const p of ['/api/aix', '/api/airline/x', '/api/execute', '/x/api/ai']) assert.equal(isAiPath(p), false, p);
+});
+
+test('mixed-case path still hits the 2 MB cap when the global parser skips isAiPath routes', async () => {
+  const { isAiPath } = require('./ai-routes');
+  const big = express.json({ limit: '50mb' });
+  const app = express();
+  app.use((req, res, next) => (isAiPath(req.path) ? next() : big(req, res, next)));
+  app.use('/api/ai', createAiRouter({ logger: { error() {} } }));
+  const server = http.createServer(app);
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  try {
+    const body = JSON.stringify({ pad: 'x'.repeat(3 * 1024 * 1024) });
+    for (const p of ['/api/ai/preview', '/API/AI/preview']) {
+      const r = await fetch(`http://127.0.0.1:${server.address().port}${p}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+      assert.equal(r.status, 413, p);
+    }
+  } finally { await new Promise(r => { server.closeAllConnections?.(); server.close(r); }); }
+});

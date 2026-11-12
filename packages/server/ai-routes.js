@@ -229,4 +229,12 @@ function createAiRouter(deps = {}) {
   return router;
 }
 
-module.exports = { createAiRouter, loopbackOnly, validateSettings };
+/**
+ * True for /api/ai and /api/ai/*, case-insensitively: Express routes are
+ * case-insensitive, so a case-sensitive check would let /API/AI/* skip the 2 MB parser.
+ */
+function isAiPath(p) {
+  return /^\/api\/ai(\/|$)/i.test(String(p || ''));
+}
+
+module.exports = { createAiRouter, loopbackOnly, validateSettings, isAiPath };

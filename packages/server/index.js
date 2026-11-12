@@ -17,7 +17,7 @@ const {
   makeHttpsAgent, buildProxyOption,
 } = require('@apilix/core');
 const dbManager = require('./database-manager');
-const { createAiRouter } = require('./ai-routes');
+const { createAiRouter, isAiPath } = require('./ai-routes');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -71,7 +71,7 @@ app.use(cors({
 // /api/ai/* has its own 2 MB parser (see ai-routes.js); a parser mounted here would
 // have already consumed the body, so the app-wide 50 MB one skips that prefix.
 const _bigJsonParser = express.json({ limit: '50mb' });
-app.use((req, res, next) => (req.path.startsWith('/api/ai/') ? next() : _bigJsonParser(req, res, next)));
+app.use((req, res, next) => (isAiPath(req.path) ? next() : _bigJsonParser(req, res, next)));
 app.use(express.urlencoded({ extended: true }));
 
 /**
