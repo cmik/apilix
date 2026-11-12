@@ -27,6 +27,7 @@
     "test:client": "npm test -w @apilix/client",
     "test:core": "npm test -w @apilix/core",
     "test:ai": "npm test -w @apilix/ai",
+    "test:mcp": "npm test -w @apilix/mcp",
     "test:cli": "npm test -w @apilix/cli",
     "client": "npm run dev -w @apilix/client",
     "setup": "npm install",

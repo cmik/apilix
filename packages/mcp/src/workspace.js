@@ -24,6 +24,7 @@ const MAX_REL_LENGTH = 512;
 const MAX_SEGMENTS = 8;
 const MAX_SCAN_DEPTH = 4;
 const MAX_SCAN_FILES = 1000;
+const MAX_SCAN_BYTES = 128 * 1024 * 1024;
 const SKIP_DIRS = new Set(['node_modules', '.git', '.hg', '.svn']);
 const SKIP_FILES = /^(package(-lock)?|tsconfig(\..*)?|npm-shrinkwrap|composer|\.eslintrc.*)\.json$/i;
 const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i;
@@ -205,6 +206,7 @@ async function createWorkspaces({ roots, maxFileBytes, explicit = true }) {
     const found = [];
     let visited = 0;
     let skipped = 0;
+    let scannedBytes = 0;
     async function walk(dir, relDir, depth) {
       if (depth > MAX_SCAN_DEPTH || visited >= MAX_SCAN_FILES) return;
       let entries;
@@ -224,6 +226,8 @@ async function createWorkspaces({ roots, maxFileBytes, explicit = true }) {
           let st;
           try { st = await fs.stat(abs); } catch { continue; }
           if (st.size > maxFileBytes) { skipped += 1; continue; }
+          scannedBytes += st.size;
+          if (scannedBytes > MAX_SCAN_BYTES) return;
           let cached = scanCache.get(abs);
           if (!cached || cached.mtimeMs !== st.mtimeMs || cached.size !== st.size) {
             try {
