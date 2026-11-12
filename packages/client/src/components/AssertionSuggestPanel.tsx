@@ -151,7 +151,7 @@ export default function AssertionSuggestPanel({ response, tabId, existingScript,
             <h2 className="text-sm font-semibold text-slate-100">Suggest tests</h2>
             <p className="text-xs text-slate-500 mt-0.5">
               {aiResult
-                ? 'Local inference plus AI suggestions that passed on this response. '
+                ? (aiResult.executed === false ? 'Local inference plus AI suggestions that were not run on this response. ' : 'Local inference plus AI suggestions that passed on this response. ')
                 : 'Inferred from this response, locally. '}
               Nothing is added until you click Add; tests already in the script are never duplicated.
             </p>
@@ -183,9 +183,14 @@ export default function AssertionSuggestPanel({ response, tabId, existingScript,
                 {aiAssist.shapeOnly
                   ? `Sends this request and the structure of the response (types, no values) to ${aiAssist.destination}.`
                   : `Sends this request and a truncated copy of the response to ${aiAssist.destination}.`}
-                {' '}Credentials and secret values are redacted first. Every suggestion is test-run on this response; the ones that fail are dropped.
+                {' '}Credentials and secret values are redacted first. Suggestions are test-run on this response and the ones that fail are dropped; when this build cannot run them in isolation they are only syntax-checked and marked "not executed".
               </p>
               {aiError && <p role="alert" className="text-xs text-red-400">{aiError}</p>}
+              {aiResult && aiResult.executed === false && (
+                <p role="alert" className="text-xs text-amber-300 border border-amber-500/30 bg-amber-500/5 rounded px-2 py-1.5">
+                  Not executed: this build cannot run model-written scripts in an isolated process, so these suggestions only passed the security screen and a syntax check. They may fail on this response. Review each one; none is pre-selected.
+                </p>
+              )}
               {aiResult && (
                 <p role="status" className="text-[11px] text-slate-400">
                   {aiResult.suggestions.length} AI suggestion{aiResult.suggestions.length === 1 ? '' : 's'} kept
@@ -221,7 +226,8 @@ export default function AssertionSuggestPanel({ response, tabId, existingScript,
                           <span className="flex-1 min-w-0">
                             <span className="break-words">{s.source === 'ai' ? neutralizeAiText(s.title) : s.title}</span>
                             <span className="ml-2 text-[10px] text-slate-500">{KIND_LABEL[s.kind]}</span>
-                            {s.source === 'ai' && <span className="ml-2 text-[10px] text-orange-400 border border-orange-500/40 rounded px-1" title="Suggested by the AI model and verified on this response">AI</span>}
+                            {s.source === 'ai' && <span className="ml-2 text-[10px] text-orange-400 border border-orange-500/40 rounded px-1" title={s.executed === false ? 'Suggested by the AI model; not run on this response' : 'Suggested by the AI model and verified on this response'}>AI</span>}
+                            {s.source === 'ai' && s.executed === false && <span className="ml-2 text-[10px] text-amber-300 border border-amber-500/40 rounded px-1" title="Checked for safety and syntax only: this script was never run">not executed</span>}
                             <span className={`ml-2 text-[10px] ${CONFIDENCE_TONE[s.confidence]}`}>{s.confidence}</span>
                             {s.volatile && <span className="ml-2 text-[10px] text-amber-400" title="This value can change between runs; only its shape is checked">may change</span>}
                             {isPresent && <span className="ml-2 text-[10px] text-slate-400">already in tests</span>}

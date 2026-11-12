@@ -27,7 +27,9 @@ export function mergeSuggestions(local: AssertionSuggestion[], ai: AiAssertionSu
       script: s.script,
       confidence: s.confidence,
       ...(s.volatile ? { volatile: true } : {}),
-      recommended: s.confidence === 'high' && !s.volatile && s.kind !== 'capture' && s.kind !== 'timing',
+      // A script that was never run on the response is never pre-selected.
+      recommended: s.executed !== false && s.confidence === 'high' && !s.volatile && s.kind !== 'capture' && s.kind !== 'timing',
+      ...(s.executed === false ? { executed: false } : {}),
       source: 'ai',
     });
   }

@@ -173,3 +173,28 @@ describe('AiProposalDialog: refused scripts and unfamiliar hosts (review round 2
     expect(screen.getByRole('button', { name: 'Apply' })).not.toBeDisabled();
   });
 });
+
+describe('AiProposalDialog: parse-only (scripts not executed)', () => {
+  it('says "Not executed", keeps Apply possible and labels it as unverified', () => {
+    const h = handlers();
+    render(<AiProposalDialog mode="create" result={result({ validation: { validated: false, executed: false, errors: [] } })} {...h} />);
+    expect(screen.getByRole('alert')).toHaveTextContent(/Not executed.*security screen and a syntax check.*Nothing was run/);
+    expect(screen.queryByText(/test-run in the sandbox/)).toBeNull();
+    const apply = screen.getByRole('button', { name: 'Apply anyway' });
+    expect(apply).not.toBeDisabled();
+    fireEvent.click(apply);
+    expect(h.onApply).toHaveBeenCalledTimes(1);
+  });
+
+  it('a syntax error in parse-only is shown as "Not validated" with its reason', () => {
+    render(<AiProposalDialog mode="create" result={result({ validation: { validated: false, executed: false, errors: [{ field: 'tests', reason: 'syntax error: Unexpected end of input' }] } })} {...handlers()} />);
+    expect(screen.getByRole('alert')).toHaveTextContent('Not validated');
+    expect(screen.getByRole('alert')).toHaveTextContent('Unexpected end of input');
+  });
+
+  it('an executed, validated proposal keeps the green "test-run" note', () => {
+    render(<AiProposalDialog mode="create" result={result({ validation: { validated: true, executed: true, errors: [] } })} {...handlers()} />);
+    expect(screen.getByRole('status')).toHaveTextContent(/test-run in the sandbox/);
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeInTheDocument();
+  });
+});

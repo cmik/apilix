@@ -87,6 +87,7 @@ export default function AiProposalDialog({ mode, result, base, targetLabel, busy
   const preDiff = useMemo(() => diffLines(before.preRequest, after.preRequest), [before, after]);
   const unchanged = mode === 'modify' && changes.length === 0;
   const validated = result.validation.validated;
+  const notExecuted = result.validation.executed === false;
   const removed = result.validation.removed ?? [];
   const kept = useMemo(() => (mode === 'modify' ? preservedNotes(base, item) : []), [mode, base, item]);
   const risk = useMemo(
@@ -141,7 +142,11 @@ export default function AiProposalDialog({ mode, result, base, targetLabel, busy
           {kept.length > 0 && (
             <p role="note" className="text-xs text-slate-400">Kept as they are (the model cannot edit them): {kept.join(', ')}.</p>
           )}
-          {validated ? (
+          {notExecuted && result.validation.errors.length === 0 ? (
+            <p role="alert" className="text-xs text-amber-300 border border-amber-500/30 bg-amber-500/5 rounded px-2 py-1.5">
+              <span className="font-medium">Not executed.</span> This build cannot run model-written scripts in an isolated process, so these scripts only passed the security screen and a syntax check. Nothing was run. Review them carefully before applying.
+            </p>
+          ) : validated ? (
             <p role="status" className="text-xs text-green-400 border border-green-600/30 bg-green-500/5 rounded px-2 py-1.5">
               Scripts were test-run in the sandbox on a stand-in response: they parse and use only known APIs. They have not run against your API.
             </p>

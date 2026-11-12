@@ -10,10 +10,14 @@ export interface AiAssertionSuggestion {
   script: string;
   confidence: 'high' | 'medium' | 'low';
   volatile?: boolean;
+  /** false = screened and syntax-checked only, NOT run on the response (no isolated runner in this build). */
+  executed?: boolean;
 }
 
 export interface AiSuggestAssertionsResult {
   suggestions: AiAssertionSuggestion[];
+  /** false = at least one suggestion was not run (parse-only mode). */
+  executed?: boolean;
   /** Why some suggestions were dropped (titles + reasons, capped). */
   discarded: Array<{ title: string; reason: string }>;
   discardedCount: number;
@@ -63,6 +67,8 @@ export interface AiGenerateRequestResult {
   /** `validated: false` = the scripts could not be validated in the sandbox (after one retry). */
   validation: {
     validated: boolean;
+    /** false = the scripts were only screened and syntax-checked, never run (parse-only mode). */
+    executed?: boolean;
     errors: Array<{ field: 'tests' | 'preRequest'; reason: string }>;
     /** Scripts the security screen refused: already removed from the draft, never offered. */
     removed?: Array<{ field: 'tests' | 'preRequest'; reason: string }>;

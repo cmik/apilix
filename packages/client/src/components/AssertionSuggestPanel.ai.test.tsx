@@ -95,3 +95,44 @@ describe('AssertionSuggestPanel AI layer', () => {
     expect(screen.queryByRole('button', { name: /Improve with AI/ })).toBeNull();
   });
 });
+
+describe('AssertionSuggestPanel: parse-only suggestions (not executed)', () => {
+  const notRun = () => aiResult({
+    executed: false,
+    suggestions: [
+      { id: 'ai1', title: 'Status is a known value', kind: 'body', confidence: 'high', executed: false, script: "apx.test('Status is a known value', () => { apx.expect(['active','pending']).to.include(apx.response.json().status); });" },
+    ],
+  });
+
+  it('badges AI suggestions "not executed", never pre-selects them and explains why', async () => {
+    render(<AssertionSuggestPanel response={response} tabId="t1" existingScript="" onClose={() => {}} aiAssist={assist({ run: vi.fn(async () => notRun()) })} />);
+    fireEvent.click(screen.getByRole('button', { name: /Improve with AI/ }));
+    await waitFor(() => screen.getByRole('checkbox', { name: /Status is a known value/ }));
+    expect(screen.getByRole('checkbox', { name: /Status is a known value/ })).not.toBeChecked();
+    expect(screen.getByText('not executed')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent(/Not executed.*isolated process.*none is pre-selected/);
+    // Local suggestions are unaffected.
+    expect(screen.getByRole('checkbox', { name: /Status code is 201/ })).toBeChecked();
+  });
+
+  it('can still be added on an explicit click', async () => {
+    const seen: string[] = [];
+    const on = (e: Event) => seen.push((e as CustomEvent<InjectTestSnippetDetail>).detail.snippet);
+    document.addEventListener(INJECT_TEST_SNIPPET, on);
+    try {
+      render(<AssertionSuggestPanel response={response} tabId="t1" existingScript="" onClose={() => {}} aiAssist={assist({ run: vi.fn(async () => notRun()) })} />);
+      fireEvent.click(screen.getByRole('button', { name: /Improve with AI/ }));
+      await waitFor(() => screen.getByRole('checkbox', { name: /Status is a known value/ }));
+      fireEvent.click(screen.getByRole('checkbox', { name: /Status is a known value/ }));
+      fireEvent.click(screen.getByRole('button', { name: /^Add \d+ tests?$/ }));
+      expect(seen.some(s => s.includes('known value'))).toBe(true);
+    } finally { document.removeEventListener(INJECT_TEST_SNIPPET, on); }
+  });
+
+  it('an executed suggestion keeps its AI badge and no "not executed" badge', async () => {
+    render(<AssertionSuggestPanel response={response} tabId="t1" existingScript="" onClose={() => {}} aiAssist={assist()} />);
+    fireEvent.click(screen.getByRole('button', { name: /Improve with AI/ }));
+    await waitFor(() => screen.getByRole('checkbox', { name: /Status is a known value/ }));
+    expect(screen.queryByText('not executed')).toBeNull();
+  });
+});
