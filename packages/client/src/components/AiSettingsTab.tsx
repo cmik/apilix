@@ -29,7 +29,7 @@ function isElectron(): boolean {
 }
 
 export default function AiSettingsTab() {
-  const { state, dispatch, saveAiKey } = useApp();
+  const { state, dispatch, saveAiKey, syncAiConfig } = useApp();
   const { settings: s, keyStatus, inFlight, lastError } = state.ai;
 
   const [keyInput, setKeyInput] = useState('');
@@ -69,7 +69,16 @@ export default function AiSettingsTab() {
     }
     dispatch({ type: 'AI_REQUEST_START', payload: 'test' });
     try {
-      const r = await aiTest();
+      let r;
+      try {
+        r = await aiTest();
+      } catch (first) {
+        // The server keeps the config in memory only: if it restarted since we pushed it, send it again once.
+        const code = toAiApiError(first).code;
+        if (!s.enabled || (code !== 'DISABLED' && code !== 'NO_PROVIDER')) throw first;
+        try { await syncAiConfig(); } catch { /* the retry below reports the real error */ }
+        r = await aiTest();
+      }
       dispatch({ type: 'AI_REQUEST_DONE', payload: 'test' });
       setTestResult({ ok: true, text: `Connected · ${r.model} · ${r.latencyMs} ms` });
     } catch (err) {

@@ -8,6 +8,7 @@ import type { AiState } from '../types';
 
 const dispatch = vi.fn();
 const saveAiKey = vi.fn(async () => {});
+const syncAiConfig = vi.fn(async () => {});
 let ai: AiState;
 
 vi.mock('../store', () => ({
@@ -24,6 +25,7 @@ vi.mock('../store', () => ({
     },
     dispatch,
     saveAiKey,
+    syncAiConfig,
     secretSet: new Set<string>(),
   }),
 }));
@@ -53,6 +55,7 @@ beforeEach(() => {
   ai = makeAi();
   dispatch.mockClear();
   saveAiKey.mockClear();
+  syncAiConfig.mockClear();
   aiTest.mockReset();
   aiPreview.mockReset();
 });
@@ -156,6 +159,29 @@ describe('AiSettingsTab', () => {
     fireEvent.click(screen.getByText('Test connection'));
     expect(await screen.findByText('bad key (AUTH)')).toBeInTheDocument();
     expect(dispatch).toHaveBeenCalledWith({ type: 'AI_REQUEST_FAIL', payload: { feature: 'test', code: 'AUTH', message: 'bad key' } });
+  });
+
+  it('Test connection re-syncs the config and retries once when the server lost it (DISABLED / NO_PROVIDER)', async () => {
+    ai = makeAi({ enabled: true, consentGiven: true, model: 'm' });
+    const { AiApiError } = await import('../api');
+    const E = AiApiError as unknown as new (m: string, c: string) => Error;
+    aiTest.mockRejectedValueOnce(new E('AI features are disabled', 'DISABLED')).mockResolvedValueOnce({ ok: true, model: 'm', latencyMs: 5 });
+    render(<AiSettingsTab />);
+    fireEvent.click(screen.getByText('Test connection'));
+    expect(await screen.findByText('Connected · m · 5 ms')).toBeInTheDocument();
+    expect(syncAiConfig).toHaveBeenCalledTimes(1);
+    expect(aiTest).toHaveBeenCalledTimes(2);
+  });
+
+  it('Test connection does not re-sync on other errors', async () => {
+    ai = makeAi({ enabled: true, consentGiven: true, model: 'm' });
+    const { AiApiError } = await import('../api');
+    aiTest.mockRejectedValue(new (AiApiError as unknown as new (m: string, c: string) => Error)('bad key', 'AUTH'));
+    render(<AiSettingsTab />);
+    fireEvent.click(screen.getByText('Test connection'));
+    expect(await screen.findByText('bad key (AUTH)')).toBeInTheDocument();
+    expect(syncAiConfig).not.toHaveBeenCalled();
+    expect(aiTest).toHaveBeenCalledTimes(1);
   });
 
   it('"See what will be sent" opens the preview with redaction stats', async () => {

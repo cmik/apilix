@@ -7,6 +7,7 @@ import { API_BASE, aiPutConfig, aiClearConfig } from './api';
 import type { PostmanVersion } from './utils/postmanValidator';
 import { buildSecretSet } from './utils/secretMask';
 import { normalizeGlobalState, mergeGlobalMetaWithValues } from './utils/globalVariables';
+import { createAiConfigPusher } from './utils/aiConfigPush';
 import { DEFAULT_AI_SETTINGS, aiDestination, applyAiSettingsPatch, validateAiSettings } from './utils/aiDefaults';
 
 const STORAGE_KEY = 'apilix_persist'; // legacy key — kept for migration only
@@ -1124,6 +1125,8 @@ interface AppContextValue {
    * `state`. `remember: false` keeps it in memory for this session only.
    */
   saveAiKey: (key: string | null, opts?: { remember?: boolean }) => Promise<void>;
+  /** Re-send the AI config to the local server now (it keeps it in memory only). */
+  syncAiConfig: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -1138,6 +1141,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // to that destination: changing provider/base URL must not make it follow.
   const aiKeyDestRef = useRef<string | null>(null);
   const aiKeyStatusRef = useRef<AiKeyStatus>('none');
+  const aiPusherRef = useRef(createAiConfigPusher());
   const [aiLoaded, setAiLoaded] = useState(false);
   const [aiKeyVersion, setAiKeyVersion] = useState(0);
   const latestAiSettingsRef = useRef(initialState.ai.settings);
@@ -1528,24 +1532,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // so nothing can reach a provider while the feature is off.
   useEffect(() => {
     if (!aiLoaded) return;
-    let cancelled = false;
-    let retry: ReturnType<typeof setTimeout> | null = null;
-    const push = (attempt: number) => {
-      const settings = state.ai.settings;
-      const call = settings.enabled && validateAiSettings(settings) === null
-        ? aiPutConfig(settings, aiKeyFor(settings))
-        : aiClearConfig();
-      call.catch(() => {
-        // Server may not be up yet: retry once.
-        if (!cancelled && attempt === 0) retry = setTimeout(() => push(1), 2000);
-      });
-    };
-    push(0);
-    return () => {
-      cancelled = true;
-      if (retry) clearTimeout(retry);
-    };
+    // Serialized, superseding and retried with backoff (see utils/aiConfigPush.ts).
+    return aiPusherRef.current.push(() => sendAiConfig(state.ai.settings));
   }, [state.ai.settings, aiLoaded, aiKeyVersion]);
+
+  function sendAiConfig(settings: AppState['ai']['settings']): Promise<unknown> {
+    return settings.enabled && validateAiSettings(settings) === null
+      ? aiPutConfig(settings, aiKeyFor(settings))
+      : aiClearConfig();
+  }
+
+  /** Re-send the current config now (the server keeps it in memory and may have restarted). */
+  async function syncAiConfig(): Promise<void> {
+    await aiPusherRef.current.flush(() => sendAiConfig(latestAiSettingsRef.current));
+  }
 
   async function saveAiKey(key: string | null, opts?: { remember?: boolean }): Promise<void> {
     const trimmed = key === null ? null : key.trim();
@@ -1558,7 +1558,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Push to the server right away so a "Test" clicked next never races the effect below.
     const settings = latestAiSettingsRef.current;
     if (settings.enabled && validateAiSettings(settings) === null) {
-      try { await aiPutConfig(settings, aiKeyFor(settings)); } catch { /* the effect below retries */ }
+      try { await syncAiConfig(); } catch { /* the push effect retries */ }
     }
     setAiKeyVersion(v => v + 1);
   }
@@ -1609,7 +1609,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AppContext.Provider value={{ state, dispatch, getActiveEnvironment, getEnvironmentVars, getCollectionVars, secretSet, saveAiKey }}>
+    <AppContext.Provider value={{ state, dispatch, getActiveEnvironment, getEnvironmentVars, getCollectionVars, secretSet, saveAiKey, syncAiConfig }}>
       {children}
     </AppContext.Provider>
   );
