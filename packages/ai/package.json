@@ -12,7 +12,8 @@
     "./redact": { "require": "./src/redact.js", "default": "./src/redact.js" },
     "./errors": { "require": "./src/errors.js", "default": "./src/errors.js" },
     "./budget": { "require": "./src/budget.js", "default": "./src/budget.js" },
-    "./validate": { "require": "./src/validate.js", "default": "./src/validate.js" }
+    "./validate": { "require": "./src/validate.js", "default": "./src/validate.js" },
+    "./doc-describe": { "require": "./src/doc-describe.js", "default": "./src/doc-describe.js" }
   },
   "files": ["src"],
   "engines": { "node": ">=22.12.0" },

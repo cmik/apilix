@@ -7,6 +7,7 @@ const { redactContext, scrubSecretValues, redactScript } = require('./redact');
 const { estimateTokens } = require('./budget');
 const { getPrompt } = require('./prompts');
 const { validateOutput } = require('./validate');
+const { describeDocs, collectEntries } = require('./doc-describe');
 
 module.exports = {
   createProvider,
@@ -20,4 +21,6 @@ module.exports = {
   estimateTokens,
   getPrompt,
   validateOutput,
+  describeDocs,
+  collectEntries,
 };
