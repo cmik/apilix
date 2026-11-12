@@ -73,3 +73,16 @@ test('parseJsonLoose strips fences and rejects garbage', () => {
   assert.equal(parseJsonLoose('nope'), undefined);
   assert.equal(parseJsonLoose(undefined), undefined);
 });
+
+test('307 redirect to another host is not followed (no credential replay)', async () => {
+  const other = await startFake((_c, res) => json(res, 200, { choices: [{ message: { content: '{"ok":true}' } }] }));
+  const fake = await startFake((_c, res) => { res.writeHead(307, { location: `${other.url}/v1/chat/completions` }); res.end(); });
+  try {
+    await assert.rejects(
+      createProvider({ kind: 'openai-compat', baseUrl: fake.url, model: 'm', apiKey: 'sk-secret-123456' })
+        .complete({ system: 's', messages: [{ role: 'user', content: 'hi' }], schema: 'connectionTest' }),
+      e => e.code === 'NETWORK',
+    );
+    assert.equal(other.calls.length, 0);
+  } finally { await fake.close(); await other.close(); }
+});

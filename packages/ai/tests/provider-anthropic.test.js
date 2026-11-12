@@ -119,3 +119,12 @@ test('model rejecting forced tool_choice → retries with auto and remembers it'
     assert.deepEqual(fake.calls[2].body.tool_choice, { type: 'auto' });
   } finally { await fake.close(); }
 });
+
+test('307 redirect to another host is not followed (no credential replay)', async () => {
+  const other = await startFake((_c, res) => json(res, 200, toolReply({ ok: true })));
+  const fake = await startFake((_c, res) => { res.writeHead(307, { location: `${other.url}/v1/messages` }); res.end(); });
+  try {
+    await assert.rejects(createProvider(cfg(fake, { model: 'redir-model' })).complete(req), e => e.code === 'NETWORK');
+    assert.equal(other.calls.length, 0, 'second host must receive nothing');
+  } finally { await fake.close(); await other.close(); }
+});

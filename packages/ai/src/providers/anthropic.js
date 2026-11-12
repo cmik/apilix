@@ -52,6 +52,8 @@ async function call({ config, transport = {}, system, messages, schema, schemaNa
     },
     timeout: config.timeoutMs,
     signal,
+    // Never follow redirects: the credential header would be replayed to another host.
+    maxRedirects: 0,
     httpAgent: transport.httpAgent,
     httpsAgent: transport.httpsAgent,
     ...(transport.proxy !== undefined ? { proxy: transport.proxy } : {}),
