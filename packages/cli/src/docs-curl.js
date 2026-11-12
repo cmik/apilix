@@ -16,7 +16,7 @@ function authValue(req, key) {
 }
 
 function generateCurl(req) {
-  const parts = [`curl -X ${req.method}`];
+  const parts = [`curl -X ${shellQuote(req.method)}`];
   let url = req.fullUrl;
   const auth = req.auth;
 

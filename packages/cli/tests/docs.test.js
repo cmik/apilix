@@ -62,7 +62,7 @@ test('docs: markdown with curl snippets', async () => {
   const r = await run(['docs', 'c.json', '--format', 'md', '--snippets', 'curl'], dir);
   assert.equal(r.code, 0);
   assert.match(r.stdout, /^# CLI Demo/);
-  assert.match(r.stdout, /curl -X GET/);
+  assert.match(r.stdout, /curl -X 'GET'/);
   assert.match(r.stdout, /Authorization: Bearer <redacted>/);
   assert.ok(!r.stdout.includes('TOP-SECRET-TOKEN'));
 });
@@ -154,4 +154,9 @@ test('docs: --out pointing at the collection or environment file is refused (exi
   const r = await run(['docs', 'c.json', '--out', 'link.json'], dir);
   assert.equal(r.code, 2);
   assert.equal(await fs.readFile(path.join(dir, 'c.json'), 'utf8'), before);
+});
+
+test('generateCurl shell-quotes the method', () => {
+  const out = generateCurl({ method: 'GET; echo injected', fullUrl: 'https://x.test/', headers: [] });
+  assert.ok(out.startsWith("curl -X 'GET; echo injected'"));
 });
