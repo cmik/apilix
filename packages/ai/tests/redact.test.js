@@ -177,3 +177,14 @@ test('prose such as "Basic authentication" is not masked; {{var}} survives; reda
   const { value } = redactContext({ response: { status: 200, body: `{"note":"${JWT}"}` } }, { redactSecrets: false });
   assert.ok(json(value).includes('eyJhbGci'));
 });
+
+test('base64 padded, unpadded and url-safe forms of a secret are scrubbed', () => {
+  for (const secret of ['abcd', 'abcde', 'abcdef', 'user:pa55w0rd?>~']) {
+    const b64 = Buffer.from(secret, 'utf8').toString('base64');
+    const forms = [b64, b64.replace(/=+$/, ''), b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')];
+    for (const f of forms) {
+      const out = scrubSecretValues('x ' + f + ' y', [secret]);
+      assert.ok(!out.includes(f), 'form ' + f + ' of ' + secret + ' leaked: ' + out);
+    }
+  }
+});

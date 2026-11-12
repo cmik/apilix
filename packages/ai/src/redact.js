@@ -27,7 +27,9 @@ function normalizeSecrets(secretValues) {
     if (enc !== v) list.push(enc);
     // Secrets also travel base64-encoded (Basic auth, signed payloads, custom headers).
     const b64 = Buffer.from(v, 'utf8').toString('base64');
-    list.push(b64, b64.replace(/=+$/, ''), b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''));
+    // Padding is at most two '=' chars: strip it without a backtracking regex (CodeQL js/polynomial-redos).
+    const b64NoPad = b64.endsWith('==') ? b64.slice(0, -2) : b64.endsWith('=') ? b64.slice(0, -1) : b64;
+    list.push(b64, b64NoPad, b64NoPad.replace(/\+/g, '-').replace(/\//g, '_'));
   }
   // Longest first so a secret containing another secret is masked entirely.
   return [...new Set(list)].sort((a, b) => b.length - a.length);
