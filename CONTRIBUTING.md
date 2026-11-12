@@ -14,7 +14,8 @@ apilix/
 │   ├── core/          @apilix/core   — execution engine, sandbox, OAuth, TLS utils
 │   ├── cli/           @apilix/cli    — headless CLI runner (shipped as a binary)
 │   ├── client/        apilix-client  — React + Vite frontend
-│   └── server/        @apilix/server — Express API server
+│   ├── server/        @apilix/server — Express API server
+│   └── ai/            @apilix/ai     — optional AI foundation (providers, redaction, schemas)
 ├── electron/          Electron desktop wrapper
 ├── bin/               Entry-point shim for the CLI (apilix.js)
 └── package.json       Root workspace manifest, pkg bundler config
@@ -22,7 +23,7 @@ apilix/
 
 `packages/core` is the shared library consumed by both `packages/server` and the CLI. All HTTP execution logic, scripting, OAuth, and TLS configuration live there.
 
-The root `workspaces` field covers `packages/*`, so a single `npm install` from the repo root links all four workspace packages and hoists shared dependencies.
+The root `workspaces` field covers `packages/*`, so a single `npm install` from the repo root links all five workspace packages and hoists shared dependencies.
 
 ---
 
@@ -141,6 +142,17 @@ test: adding or updating tests
 Do not add the same dependency in multiple places; prefer pulling shared runtime deps into `packages/core`.
 
 ---
+
+## Adding an AI prompt or output schema
+
+AI features live on top of `packages/ai` (`@apilix/ai`). Everything that leaves the machine must go through its redaction (`src/redact.js`).
+
+1. Add the JSON Schema of the model output to `packages/ai/src/schemas/index.js` (root must be an object schema: the Anthropic provider uses it as a tool `input_schema`).
+2. Add a prompt in `packages/ai/src/prompts/index.js` with a `version`. Wrap anything untrusted (responses, field names, imported text) with `wrapUntrusted()`.
+3. Build the context with `redactContext()`/`buildPreviewContext()` in `src/context.js`; never concatenate raw request or response data into a prompt.
+4. Call `provider.complete({ system, messages, schema })`; it validates the output and retries once.
+5. Add a route under `/api/ai/` in `packages/server/ai-routes.js` (loopback-only, 2 MB limit, one request at a time) and cover it in `ai-routes.test.js` with a fake provider. Tests must never call a real model.
+6. Do not log prompts, replies or keys.
 
 ## Adding a new export to @apilix/core
 
