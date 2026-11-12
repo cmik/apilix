@@ -305,18 +305,22 @@ function standInResponse(tests) {
 }
 
 /**
- * Dry-run the scripts of a draft. Returns the list of problems (empty = validated). A problem flagged
- * `refused` means the security screen rejected the script: it was never executed and must not be offered.
+ * Dry-run the scripts of a draft. `errors` is the list of problems; a problem flagged `refused` means the
+ * security screen rejected the script: it was never executed and must not be offered. `notExecuted` counts
+ * the scripts that only got the screen + a syntax check (parse-only mode): they are reported, not "validated".
  */
 async function validateScripts(draft) {
   const errors = [];
+  let notExecuted = 0;
   const response = standInResponse(draft.tests);
   for (const field of ['tests', 'preRequest']) {
     const code = draft[field];
     if (!code) continue;
     const v = await dryRunScript(code, { response, mode: 'lenient' });
     if (!v.ok) errors.push({ field, reason: oneLine(neutralizeAiText(v.reason || 'failed'), 240), ...(v.screened === false ? { refused: true } : {}), ...(v.infra ? { infra: true } : {}) });
+    else if (v.executed === false) notExecuted++;
   }
+  errors.notExecuted = notExecuted;
   return errors;
 }
 
@@ -324,7 +328,7 @@ async function validateScripts(draft) {
  * @param {{ provider: { complete: Function }, instruction: string, current?: object, neighbors?: object[],
  *   variables?: Array<{name:string, scope?:string, secret?:boolean}>, maxContextTokens?: number,
  *   redactSecrets?: boolean, secretValues?: string[], language?: string, signal?: AbortSignal }} input
- * @returns {Promise<{ draft: object, validation: { validated: boolean, errors: Array<{field:string, reason:string}> },
+ * @returns {Promise<{ draft: object, validation: { validated: boolean, executed: boolean, errors: Array<{field:string, reason:string}> },
  *   warnings: string[], usage: {inputTokens:number, outputTokens:number}, retried: boolean }>}
  */
 async function generateRequest(input) {
@@ -352,6 +356,7 @@ async function generateRequest(input) {
   const first = await ask([{ role: 'user', content: prompt.user }]);
   let draft = sanitizeDraft(first.data, warnings);
   let errors = await validateScripts(draft);
+  let notExecuted = errors.notExecuted;
   let retried = false;
 
   // A problem that is not about the script (busy, cancelled, unavailable) is not something the model can fix.
@@ -369,6 +374,7 @@ async function generateRequest(input) {
       const retryErrors = await validateScripts(retryDraft);
       draft = retryDraft;
       errors = retryErrors;
+      notExecuted = retryErrors.notExecuted;
       warnings.length = 0;
       warnings.push(...retryWarnings);
     } catch (err) {
@@ -385,10 +391,11 @@ async function generateRequest(input) {
     warnings.push(`The ${e.field === 'tests' ? 'test' : 'pre-request'} script was refused for security reasons and removed from the proposal.`);
   }
   errors = errors.filter(x => !x.refused);
+  if (notExecuted > 0) warnings.push('The scripts were NOT executed: this build cannot run them in an isolated process. They passed the security screen and a syntax check only.');
 
   const check = validateOutput('requestDraft', { ...draft, auth: draft.auth, preRequest: draft.preRequest });
   if (!check.ok) throw new AiError('INVALID_OUTPUT', `The generated request is not valid (${check.formatted})`);
-  return { draft, validation: { validated: errors.length === 0, errors, removed }, warnings: [...new Set(warnings)].slice(0, 10), usage, retried };
+  return { draft, validation: { validated: errors.length === 0 && notExecuted === 0, executed: notExecuted === 0, errors, removed }, warnings: [...new Set(warnings)].slice(0, 10), usage, retried };
 }
 
 module.exports = { generateRequest, sanitizeDraft, validateScripts, captureExpression, describeItem, fitPrompt };

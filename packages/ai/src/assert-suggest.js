@@ -192,11 +192,13 @@ async function suggestAssertions(input) {
     let verdict;
     if (Date.now() > deadline) verdict = { ok: false, reason: 'validation time budget exhausted' };
     else verdict = await dryRunScript(c.script, { response, mode: 'strict', expects: c.kind === 'capture' ? 'capture' : 'test' });
-    if (verdict.ok) suggestions.push({ id: suggestionId(c.script, suggestions), ...c });
+    if (verdict.ok) suggestions.push({ id: suggestionId(c.script, suggestions), ...c, executed: verdict.executed !== false });
     else discarded.push({ title: c.title, reason: cleanTitle(verdict.reason || 'failed validation') });
   }
   return {
     suggestions,
+    // false = at least one suggestion was only screened and syntax-checked, never run (parse-only mode).
+    executed: suggestions.every(s => s.executed),
     discarded: discarded.slice(0, MAX_DISCARDED_REPORTED),
     discardedCount: discarded.length,
     truncated,

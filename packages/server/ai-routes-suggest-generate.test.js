@@ -260,3 +260,35 @@ test('suggest-assertions and generate-request share a sliding-window rate limit 
     }, { scriptRate: { max: 2, windowMs: 60 * 1000 }, now: () => clock });
   } finally { await fake.close(); }
 });
+
+// ── parse-only mode ──────────────────────────────────────────────────────────────
+
+test('APILIX_AI_DRY_RUN=off: both routes answer without executing anything and say so', async () => {
+  const prev = process.env.APILIX_AI_DRY_RUN;
+  process.env.APILIX_AI_DRY_RUN = 'off';
+  let n = 0; // 1st provider call serves /suggest-assertions, 2nd serves /generate-request
+  const fake = await startFakeProvider((res) => {
+    n++;
+    chatReply(n === 1
+      ? { suggestions: [{ title: 'Status is 201', kind: 'status', confidence: 'high', script: "apx.test('Status is 201', () => { apx.expect(apx.response.code).to.equal(201); });" }] }
+      : { name: 'List', method: 'GET', url: '{{baseUrl}}/users', tests: "apx.test('ok', () => { apx.expect(apx.response.code).to.equal(200); });" })(res);
+  });
+  try {
+    await withAiServer(async ({ call }) => {
+      await call('PUT', '/config', { settings: settings({ baseUrl: fake.url, features: { assertSuggest: true, nlGenerate: true } }), apiKey: KEY });
+      const s = await call('POST', '/suggest-assertions', suggestBody());
+      assert.equal(s.status, 200, s.text);
+      assert.equal(s.json.executed, false);
+      assert.equal(s.json.suggestions.length, 1);
+      assert.equal(s.json.suggestions[0].executed, false);
+      const g = await call('POST', '/generate-request', { instruction: 'list users' });
+      assert.equal(g.status, 200, g.text);
+      assert.equal(g.json.validation.executed, false);
+      assert.equal(g.json.validation.validated, false);
+      assert.ok(g.json.warnings.some(w => /NOT executed/.test(w)));
+    });
+  } finally {
+    if (prev === undefined) delete process.env.APILIX_AI_DRY_RUN; else process.env.APILIX_AI_DRY_RUN = prev;
+    await fake.close();
+  }
+});

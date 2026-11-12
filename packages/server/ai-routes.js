@@ -288,7 +288,7 @@ function createAiRouter(deps = {}) {
       signal,
     });
     return {
-      body: { suggestions: r.suggestions, discarded: r.discarded, discardedCount: r.discardedCount, truncated: r.truncated, shapeOnly: r.shapeOnly },
+      body: { suggestions: r.suggestions, executed: r.executed, discarded: r.discarded, discardedCount: r.discardedCount, truncated: r.truncated, shapeOnly: r.shapeOnly },
       usage: r.usage, model: r.model, latencyMs: r.latencyMs,
     };
   }, { featureFlag: 'assertSuggest', rateLimited: true }));

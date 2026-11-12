@@ -20,7 +20,9 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { fork } = require('child_process');
+const vm = require('vm');
 const { screenScript } = require('./script-screen');
+const { resolveDryRunMode } = require('./dry-run-mode');
 
 const WORKER_PATH = path.join(__dirname, 'dry-run-worker.js');
 const WALL_CLOCK_MS = 3000;       // SIGKILL deadline for the child (startup included)
@@ -54,30 +56,30 @@ function realWorkerPath() {
 }
 
 /**
- * Flags and env of the child. Honest about what is applied:
+ * Flags and env of the child. Honest about what is requested (whether it is ENFORCED is decided by the
+ * capability probe in dry-run-mode.js, never assumed here):
  *  - always: empty env (Electron: ELECTRON_RUN_AS_NODE only), --max-old-space-size, --disallow-code-generation-from-strings;
- *  - plain Node with the permission model (>= 23.5 `--permission`, 22.x `--experimental-permission`): no fs read
- *    (except the worker file itself), no fs write, no child_process, no worker threads, no native addons.
- *    Node's permission model has NO network restriction in these versions: the barrier against network
- *    access is that the script has no reference to any host object;
- *  - Electron / pkg: the permission flags are NOT passed (an Electron binary does not guarantee the same
- *    Node flag set), so only process isolation + empty env + heap cap + hard kill remain.
+ *  - when the runtime knows the permission model (>= 23.5 `--permission`, 22.x `--experimental-permission`;
+ *    Electron included, its embedded Node is asked the same way): no fs read except the worker file itself,
+ *    no fs write, no child_process, no worker threads, no native addons. Node's permission model has NO
+ *    network restriction in these versions: the barrier against the network is that the script has no
+ *    reference to any host object;
+ *  - otherwise `permission` is 'none' and the mode resolves to 'parse-only'.
+ * Not applied anywhere: an RSS / off-heap cap. --max-old-space-size bounds the V8 heap only; ulimit / job
+ * object limits are not portable, so binary memory is handled by refusing and deleting its globals.
  * @returns {{ execArgv: string[], env: Record<string,string>, permission: 'permission'|'experimental-permission'|'none' }}
  */
 function startupOptions() {
   const execArgv = [`--max-old-space-size=${HEAP_LIMIT_MB}`, '--disallow-code-generation-from-strings'];
   const env = {};
   let permission = 'none';
-  if (process.versions && process.versions.electron) {
-    env.ELECTRON_RUN_AS_NODE = '1';
-  } else {
-    const known = process.allowedNodeEnvironmentFlags;
-    if (known.has('--permission')) permission = 'permission';
-    else if (known.has('--experimental-permission')) permission = 'experimental-permission';
-    if (permission !== 'none') {
-      // Node resolves the entry point's real path before running it, so the grant must be the real path.
-      execArgv.push(`--${permission}`, `--allow-fs-read=${realWorkerPath()}`);
-    }
+  if (process.versions && process.versions.electron) env.ELECTRON_RUN_AS_NODE = '1';
+  const known = process.allowedNodeEnvironmentFlags;
+  if (known.has('--permission')) permission = 'permission';
+  else if (known.has('--experimental-permission')) permission = 'experimental-permission';
+  if (permission !== 'none') {
+    // Node resolves the entry point's real path before running it, so the grant must be the real path.
+    execArgv.push(`--${permission}`, `--allow-fs-read=${realWorkerPath()}`);
   }
   if (process.platform === 'win32' && process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
   return { execArgv, env, permission };
@@ -110,12 +112,14 @@ function releaseSlot() {
 async function runInChild(payload, signal, hooks = {}) {
   if (process.pkg) return { ok: false, error: 'unavailable' }; // the worker file is not forkable from a pkg snapshot
   if (signal && signal.aborted) return { ok: false, error: 'aborted' };
-  try { await acquireSlot(signal); } catch (e) { return { ok: false, error: e && e.busy ? 'busy' : 'aborted' }; }
+  // The (single, fixed-code) capability probe skips the queue: being busy must not be read as "no isolation".
+  const counted = hooks.bypassQueue !== true;
+  if (counted) try { await acquireSlot(signal); } catch (e) { return { ok: false, error: e && e.busy ? 'busy' : 'aborted' }; }
   let child = null;
   let timer = null;
   let onAbort = null;
   try {
-    const { execArgv, env } = startupOptions();
+    const { execArgv, env } = (typeof hooks.startupOptions === 'function' ? hooks.startupOptions : startupOptions)();
     return await new Promise((resolve) => {
       let out = '';
       let settled = false;
@@ -155,7 +159,22 @@ async function runInChild(payload, signal, hooks = {}) {
       try { if (child.connected) child.disconnect(); } catch { /* closed */ }
       child.unref();
     }
-    releaseSlot();
+    if (counted) releaseSlot();
+  }
+}
+
+/**
+ * Syntax check WITHOUT execution: `new vm.Script` only parses and compiles. No `run*` method is ever called on
+ * the result and nothing is evaluated, so compiling in the server process cannot run the model's code (a
+ * pathological nesting is a caught RangeError; the length is already capped by the screen).
+ * @returns {string | null} the syntax error message, or null when the script compiles.
+ */
+function parseOnlyCheck(code) {
+  try {
+    new vm.Script(`(async function(){\n'use strict';\n${code}\n})`, { filename: 'apilix-parse-only.js' }); // eslint-disable-line no-new
+    return null;
+  } catch (e) {
+    return String((e && e.message) || 'invalid script').slice(0, 160);
   }
 }
 
@@ -173,6 +192,15 @@ async function dryRunScript(code, opts = {}) {
   // Defence in depth only: a refused script is NEVER sent to the child either.
   const screened = screenScript(code);
   if (!screened.ok) return fail(screened.reason, { screened: false });
+
+  // THE gate: a script is executed only when the child is proven to run under the permission model.
+  // Otherwise it is only compiled (never run) and reported as not executed. Never an in-process fallback.
+  const dryMode = await resolveDryRunMode();
+  if (dryMode !== 'isolated') {
+    const syntax = parseOnlyCheck(code);
+    if (syntax) return fail(`syntax error: ${syntax}`);
+    return { ok: true, executed: false, mode: dryMode, tests: [], variables: {} };
+  }
 
   const verdict = await runInChild({ code, response: buildSandboxResponse(response || {}), variables: { ...variables }, timeoutMs: SYNC_TIMEOUT_MS }, signal, { onSpawn });
   if (verdict.ok !== true) {
@@ -193,7 +221,7 @@ async function dryRunScript(code, opts = {}) {
   if (mode === 'lenient') {
     const broken = failed.find(t => STRUCTURAL_ERROR_RE.test(t.error || '') || !TOLERATED_ERROR_RE.test(t.error || ''));
     if (broken) return { ok: false, reason: `${broken.name === '__ScriptError__' ? 'script error' : 'test error'}: ${broken.error || 'failed'}`.slice(0, 240), tests, variables: vars };
-    return { ok: true, tests, variables: vars };
+    return { ok: true, executed: true, tests, variables: vars };
   }
 
   if (failed.length) {
@@ -207,10 +235,10 @@ async function dryRunScript(code, opts = {}) {
       return { ok: false, reason: 'the script does not save a value on this response', tests, variables: vars };
     }
   }
-  return { ok: true, tests, variables: vars };
+  return { ok: true, executed: true, tests, variables: vars };
 }
 
 function liveChildren() { return activeChildren; }
 function waitingRuns() { return waiters.length; }
 
-module.exports = { dryRunScript, buildSandboxResponse, STRUCTURAL_ERROR_RE, runInChild, startupOptions, liveChildren, waitingRuns, WALL_CLOCK_MS, MAX_CONCURRENT_CHILDREN, MAX_WAITING };
+module.exports = { dryRunScript, parseOnlyCheck, buildSandboxResponse, STRUCTURAL_ERROR_RE, runInChild, startupOptions, liveChildren, waitingRuns, WALL_CLOCK_MS, MAX_CONCURRENT_CHILDREN, MAX_WAITING };

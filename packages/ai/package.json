@@ -16,6 +16,7 @@
     "./doc-describe": { "require": "./src/doc-describe.js", "default": "./src/doc-describe.js" },
     "./assert-suggest": { "require": "./src/assert-suggest.js", "default": "./src/assert-suggest.js" },
     "./nl-generate": { "require": "./src/nl-generate.js", "default": "./src/nl-generate.js" },
+    "./dry-run-mode": { "require": "./src/dry-run-mode.js", "default": "./src/dry-run-mode.js" },
     "./dry-run": { "require": "./src/dry-run.js", "default": "./src/dry-run.js" },
     "./script-screen": { "require": "./src/script-screen.js", "default": "./src/script-screen.js" }
   },

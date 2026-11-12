@@ -99,6 +99,7 @@ test('finding 2: an off-heap allocation sent straight to the runner (no filter) 
 test('finding 3: the wait queue is bounded, beyond it a run is "busy" at once (not validated, no error)', async () => {
   const { dryRunScript, liveChildren, waitingRuns, MAX_CONCURRENT_CHILDREN, MAX_WAITING } = require('../src/dry-run');
   const slow = { code: 'Promise.resolve().then(function loop(){ Promise.resolve().then(loop); });', response: buildSandboxResponse(RESPONSE), variables: {}, timeoutMs: 150 };
+  await require('../src/dry-run-mode').resolveDryRunMode(); // the capability probe is not part of what this test measures
   const running = [];
   for (let i = 0; i < MAX_CONCURRENT_CHILDREN + MAX_WAITING; i++) running.push(runInChild(slow));
   await new Promise(r => setImmediate(r));
@@ -126,6 +127,7 @@ test('finding 3: a busy verdict does not trigger a model retry in generateReques
   let calls = 0;
   const provider = { complete: async () => { calls++; return { data: { name: 'n', method: 'GET', url: 'https://a.test', tests: "apx.test('x', () => {});" }, usage: { inputTokens: 1, outputTokens: 1 } }; } };
   const slow = { code: 'Promise.resolve().then(function loop(){ Promise.resolve().then(loop); });', response: buildSandboxResponse(RESPONSE), variables: {}, timeoutMs: 150 };
+  await require('../src/dry-run-mode').resolveDryRunMode();
   const fill = [];
   for (let i = 0; i < dr.MAX_CONCURRENT_CHILDREN + dr.MAX_WAITING; i++) fill.push(runInChild(slow));
   await new Promise(r => setImmediate(r));
