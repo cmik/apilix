@@ -83,6 +83,15 @@ test('loopbackOnly rejects non-loopback addresses and accepts loopback ones', ()
   for (const a of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) assert.deepEqual(run(a), { status: 200, nexted: true });
 });
 
+test('loopbackOnly rejects loopback requests carrying reverse-proxy headers', () => {
+  for (const h of ['x-forwarded-for', 'x-real-ip', 'forwarded', 'via', 'x-forwarded-host']) {
+    let status = 200; let nexted = false;
+    const res = { status(c) { status = c; return this; }, json() { return this; } };
+    loopbackOnly({ socket: { remoteAddress: '127.0.0.1' }, headers: { [h]: '203.0.113.9' } }, res, () => { nexted = true; });
+    assert.deepEqual({ status, nexted }, { status: 403, nexted: false }, h);
+  }
+});
+
 test('PUT /config validates settings (bad provider, non-http baseUrl, bad limits)', async () => {
   await withAiServer({}, async ({ call }) => {
     assert.equal((await call('PUT', '/config', { settings: settings({ provider: 'nope' }) })).status, 400);

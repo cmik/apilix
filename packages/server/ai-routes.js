@@ -21,7 +21,15 @@ const FEATURE_KEYS = ['nlGenerate', 'assertSuggest', 'diagnose', 'scriptAssist',
 const DEFAULT_BASES = { anthropic: 'https://api.anthropic.com', 'openai-compat': 'https://api.openai.com/v1' };
 const MAX_LOG_ENTRIES = 200;
 
+// A same-host reverse proxy makes remote clients look like loopback. Proxies announce
+// themselves with these headers (Apilix itself never sits behind one when run locally).
+const PROXY_HEADERS = ['x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'x-real-ip', 'forwarded', 'via'];
+
 function loopbackOnly(req, res, next) {
+  const headers = req.headers || {};
+  if (PROXY_HEADERS.some(h => headers[h] !== undefined)) {
+    return res.status(403).json({ error: 'Forbidden: loopback only', code: 'FORBIDDEN' });
+  }
   const addr = req.socket && req.socket.remoteAddress;
   if (addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1') return next();
   return res.status(403).json({ error: 'Forbidden: loopback only', code: 'FORBIDDEN' });
