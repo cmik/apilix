@@ -94,6 +94,7 @@ function usage() {
     '                               APILIX_AI_BASE_URL. If the AI call fails, the docs are still generated.',
     '  --ai-language <lang>         Language of AI-written descriptions (e.g. French)',
     '  --no-ai-mark                 Do not mark AI-written descriptions in the output',
+    '  --ai-strict                  Exit with code 1 when the AI step fails or is incomplete (docs are still written)',
     '  --out <file>                 Write to a file instead of stdout',
   ].join('\n');
 }
@@ -636,6 +637,7 @@ function createProgram(io) {
     .option('--ai-describe', 'Fill missing descriptions with an LLM (configure with APILIX_AI_* env vars)')
     .option('--ai-language <lang>', 'Language of AI-written descriptions')
     .option('--no-ai-mark', 'Do not mark AI-written descriptions in the output')
+    .option('--ai-strict', 'Exit with code 1 when the AI step fails or is incomplete (the docs are still written)')
     .option('--out <file>', 'Write output to a file instead of stdout')
     .action((collectionPath, opts) => {
       parsed.command = 'docs';
@@ -655,6 +657,7 @@ function createProgram(io) {
         aiDescribe: opts.aiDescribe === true,
         aiLanguage: opts.aiLanguage,
         aiMark: opts.aiMark !== false,
+        aiStrict: opts.aiStrict === true,
         outPath: opts.out,
       };
     });
@@ -853,10 +856,10 @@ async function describeWithAi({ collection, folder, includeExamples, language, s
     const r = await ai.describeDocs({ provider, model, language, secretValues });
     const n = Object.keys(r.descriptions).length;
     io.stderr.write(`AI: ${n} description${n === 1 ? '' : 's'} generated (${r.usage.inputTokens} input / ${r.usage.outputTokens} output tokens)\n`);
-    return { descriptions: r.descriptions, warnings: r.warnings };
+    return { descriptions: r.descriptions, warnings: r.warnings, failed: r.failedBatches > 0 };
   } catch (err) {
     const detail = err && err.code ? `${err.message} (${err.code})` : (err && err.message) || 'unknown error';
-    return { descriptions: undefined, warnings: [`AI descriptions skipped: ${detail}`] };
+    return { descriptions: undefined, warnings: [`AI descriptions skipped: ${detail}`], failed: true };
   }
 }
 
@@ -906,6 +909,7 @@ async function runDocs(args, io) {
   }
 
   let aiDescriptions;
+  let aiFailed = false;
   const aiWarnings = [];
   if (d.aiDescribe) {
     const secretValues = [];
@@ -920,6 +924,7 @@ async function runDocs(args, io) {
       collection, folder: d.folder, includeExamples: d.includeExamples, language: d.aiLanguage, secretValues, io,
     });
     aiDescriptions = ai.descriptions;
+    aiFailed = ai.failed === true;
     aiWarnings.push(...ai.warnings);
   }
 
@@ -948,6 +953,10 @@ async function runDocs(args, io) {
     io.stderr.write(`Documentation written to ${target}\n`);
   } else {
     io.stdout.write(result.content);
+  }
+  if (aiFailed && d.aiStrict) {
+    io.stderr.write('Error: the AI step failed or was incomplete (--ai-strict). The documentation was written without the missing descriptions.\n');
+    return 1;
   }
   return 0;
 }

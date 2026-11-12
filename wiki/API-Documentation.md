@@ -166,11 +166,12 @@ APILIX_AI_MODEL=<model> APILIX_AI_API_KEY=<key> apilix docs ./collection.json --
 | `--ai-describe` | Fill missing descriptions with an LLM and mark them as AI-written. Configured with `APILIX_AI_MODEL`, `APILIX_AI_API_KEY`, and optionally `APILIX_AI_PROVIDER` (`anthropic` default, or `openai-compat`) and `APILIX_AI_BASE_URL`. Secret environment rows from `-e` are masked before anything is sent. If the AI call fails, a warning is printed and the docs are generated without it |
 | `--ai-language <lang>` | Language of the AI-written descriptions (e.g. `French`) |
 | `--no-ai-mark` | Do not mark AI-written descriptions in the output |
+| `--ai-strict` | Exit with code `1` when the AI step fails or is incomplete (an authentication error, or at least one batch that could not be described). The documentation is still written, without the missing descriptions. Use it in CI so a broken AI step does not go unnoticed |
 | `--out <file>` | Write to a file instead of stdout (missing parent folders are created) |
 
 `--out` is refused if it points to the collection file or to the environment file, including through a symlink, so a mistyped path cannot overwrite your input.
 
-Warnings are printed to stderr as `Warning: ...`; with `--out`, a `Documentation written to <path>` line is printed there too. Exit code `0` on success, `2` for usage or input errors (unknown format, theme, OpenAPI version or snippet language, `--resolve-variables` without `--environment`, unreadable or invalid JSON files, folder not found, refused `--out`, or `--ai-describe` with incomplete `APILIX_AI_*` configuration).
+Warnings are printed to stderr as `Warning: ...`; with `--out`, a `Documentation written to <path>` line is printed there too. Exit code `0` on success, `1` when `--ai-strict` is set and the AI step failed, `2` for usage or input errors (unknown format, theme, OpenAPI version or snippet language, `--resolve-variables` without `--environment`, unreadable or invalid JSON files, folder not found, refused `--out`, or `--ai-describe` with incomplete `APILIX_AI_*` configuration).
 
 ## Limitations
 

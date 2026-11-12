@@ -180,7 +180,7 @@ async function describeDocs({ provider, model, language, maxContextTokens, secre
   const warnings = [];
   const entries = collectEntries(model, warnings);
   const usage = { inputTokens: 0, outputTokens: 0 };
-  if (!entries.length) return { descriptions: {}, warnings, usage, requested: 0 };
+  if (!entries.length) return { descriptions: {}, warnings, usage, requested: 0, failedBatches: 0 };
 
   let batches = buildBatches(entries, { maxContextTokens, secretValues, redactSecrets, warnings });
   if (batches.length > MAX_BATCHES) {
@@ -189,6 +189,7 @@ async function describeDocs({ provider, model, language, maxContextTokens, secre
   }
   const descriptions = {};
   let consecutiveFailures = 0;
+  let failedBatches = 0;
   for (let i = 0; i < batches.length; i++) {
     const prompt = getPrompt('docDescribe', { language, data: JSON.stringify(batches[i], null, 1) });
     try {
@@ -209,6 +210,7 @@ async function describeDocs({ provider, model, language, maxContextTokens, secre
       // One bad batch must not lose the others...
       warnings.push(`Batch ${i + 1}/${batches.length} failed (${code}); its entries stay undocumented.`);
       consecutiveFailures++;
+      failedBatches++;
       // ...but a systemic failure must not keep hitting the provider with every remaining batch.
       const remaining = batches.length - i - 1;
       if (remaining > 0 && (code === 'RATE_LIMIT' || consecutiveFailures >= MAX_CONSECUTIVE_FAILURES)) {
@@ -219,7 +221,8 @@ async function describeDocs({ provider, model, language, maxContextTokens, secre
       }
     }
   }
-  return { descriptions, warnings, usage, requested: entries.length };
+  // `failedBatches` > 0 means some entries could not be described (callers may treat that as an error).
+  return { descriptions, warnings, usage, requested: entries.length, failedBatches };
 }
 
 module.exports = { describeDocs, paramKey, collectEntries, buildBatches, sanitizeAnswer, COLLECTION_KEY };
