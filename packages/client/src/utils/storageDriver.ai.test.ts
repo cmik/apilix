@@ -159,3 +159,36 @@ describe('AI config storage — web (localStorage)', () => {
     expect((await Storage.readAiConfig()).apiKey).toBeNull();
   });
 });
+
+describe('AI config storage — write serialization', () => {
+  it.each([['settings write first', true], ['key write first', false]])('a concurrent settings write never drops a saved key (%s)', async (_n, settingsFirst) => {
+    const e = makeElectron();
+    // Slow reads widen the read-modify-write window.
+    const origRead = e.api.readJsonFile;
+    e.api.readJsonFile = async (p: string) => { await new Promise(r => setTimeout(r, 15)); return origRead(p); };
+    // A settings-only write lands late: without serialization it clobbers the key written meanwhile.
+    const origWrite = e.api.writeJsonFile;
+    e.api.writeJsonFile = async (p: string, d: unknown) => {
+      if (!(d as { encryptedApiKey?: string }).encryptedApiKey) await new Promise(r => setTimeout(r, 40));
+      return origWrite(p, d);
+    };
+    setup(e);
+    const writeSettings = () => Storage.writeAiConfig({ ...settings, model: 'other' }, undefined, { remember: true });
+    const writeKey = () => Storage.writeAiConfig(settings, KEY, { remember: true });
+    await Promise.all(settingsFirst ? [writeSettings(), writeKey()] : [writeKey(), writeSettings()]);
+    const loaded = await Storage.readAiConfig();
+    expect(loaded.apiKey).toBe(KEY);
+    expect(loaded.keyStatus).toBe('ok');
+  });
+
+  it('keeps the queue alive after a failed write', async () => {
+    const e = makeElectron();
+    setup(e);
+    let fail = true;
+    const origWrite = e.api.writeJsonFile;
+    e.api.writeJsonFile = async (p: string, d: unknown) => { if (fail) { fail = false; throw new Error('disk'); } return origWrite(p, d); };
+    await Storage.writeAiConfig(settings, KEY, { remember: true });
+    const status = await Storage.writeAiConfig(settings, KEY, { remember: true });
+    expect(status).toBe('ok');
+  });
+});

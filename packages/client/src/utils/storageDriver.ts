@@ -701,7 +701,21 @@ export async function readAiConfig(): Promise<LoadedAiConfig> {
  * `apiKey`: undefined = leave the stored key untouched, null = remove it, string = set it.
  * Returns the resulting key status.
  */
-export async function writeAiConfig(
+export function writeAiConfig(
+  settings: AiSettings,
+  apiKey: string | null | undefined,
+  opts: { remember: boolean },
+): Promise<AiKeyStatus> {
+  // Writes are read-modify-write on one file: run them one at a time so a debounced
+  // settings save can never overwrite a key saved a moment earlier (or the reverse).
+  const run = aiWriteQueue.then(() => writeAiConfigNow(settings, apiKey, opts));
+  aiWriteQueue = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+let aiWriteQueue: Promise<void> = Promise.resolve();
+
+async function writeAiConfigNow(
   settings: AiSettings,
   apiKey: string | null | undefined,
   opts: { remember: boolean },
@@ -750,7 +764,13 @@ export async function writeAiConfig(
 }
 
 /** Remove the stored key everywhere (disk, localStorage, memory). Settings are kept. */
-export async function clearAiKey(): Promise<void> {
+export function clearAiKey(): Promise<void> {
+  const run = aiWriteQueue.then(() => clearAiKeyNow());
+  aiWriteQueue = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+async function clearAiKeyNow(): Promise<void> {
   sessionAiKey = null;
   const api = eAPI();
   if (api) {
