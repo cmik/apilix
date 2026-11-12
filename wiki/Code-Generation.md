@@ -22,6 +22,7 @@ The **Code Generation** modal converts any request currently open in the Request
     - [Ruby (Net::HTTP)](#ruby-nethttp)
     - [C# (HttpClient)](#c-httpclient)
     - [HURL](#hurl)
+  - [Snippets in API Documentation](#snippets-in-api-documentation)
   - [Auth Handling per Language](#auth-handling-per-language)
   - [Body Modes per Language](#body-modes-per-language)
   - [Copying the Snippet](#copying-the-snippet)
@@ -311,6 +312,12 @@ HTTP *
 - Headers follow the method/URL line with no separator.
 - Body follows a blank line.
 - `HTTP *` is a wildcard status assertion accepted by the `hurl` CLI.
+
+---
+
+## Snippets in API Documentation
+
+The same nine languages are available as optional code snippets when you export [API documentation](API-Documentation) as HTML or Markdown (tick them under **Code snippets** in the export dialog). Unlike the modal above, documentation snippets are built from the documented request after redaction, so credentials appear as `<redacted>` unless **Include credentials** is on, and `{{variable}}` references are kept unless **Resolve** is selected. The `apilix docs` CLI supports only the `curl` snippet.
 
 ---
 

@@ -153,7 +153,7 @@ The Apilix UI is divided into five main zones:
 ### Tools
 - [Browser Capture](Browser-Capture) — Chrome CDP integration, live traffic capture
 - [Import & Export](Import-and-Export) — Postman, OpenAPI, cURL, HAR, Hurl
-- [API Documentation](API-Documentation) — Export collections as HTML, Markdown or OpenAPI docs
+- [API Documentation](API-Documentation) — Export a collection or folder as HTML, Markdown or OpenAPI docs (app or `apilix docs` CLI), redaction of secrets, saved examples
 - [Code Generation](Code-Generation) — Request code snippets in multiple languages
 
 ### Reference

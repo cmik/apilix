@@ -34,6 +34,7 @@ Collections are the primary way to organise your API work in Apilix. A collectio
     - [Timeline Tab](#timeline-tab)
     - [TLS Certificate Tab](#tls-certificate-tab)
     - [Redirect Chain Tab](#redirect-chain-tab)
+    - [Saving a Response](#saving-a-response)
   - [Response Search](#response-search)
   - [Body Editor Find \& Replace](#body-editor-find--replace)
     - [Opening the bar](#opening-the-bar)
@@ -316,10 +317,10 @@ The summary bar at the top of the response shows:
 
 ### Body Tab
 
-The response body is displayed with **syntax highlighting** for JSON, XML, and HTML. You can toggle between:
+The response body is displayed with **syntax highlighting** for JSON, XML, and HTML. The toggles shown depend on the response type:
 
-- **Pretty** — formatted and highlighted
-- **Raw** — unformatted plain text
+- **Tree / Raw** (JSON and XML) — **Tree** is a collapsible, highlighted view; **Raw** is the unformatted text
+- **Source / Preview** (HTML) — **Source** shows the HTML text; **Preview** renders the page
 
 Long JSON responses are fully scrollable. Use **Response Search** (`Ctrl+F`) to find text within large bodies.
 
@@ -381,6 +382,17 @@ When the server returns one or more redirects (3xx responses), the **Redirects**
 The final entry is the resolved response. This is useful for debugging redirect loops, HTTPS upgrades, and canonical URL redirects.
 
 ![Redirect chain](images/collections-redirect-chain.png)
+
+### Saving a Response
+
+Two icon buttons in the Body toolbar let you keep a response:
+
+| Button (tooltip) | What it does |
+|---|---|
+| **Save response to file** | Writes the body to a file. On desktop this opens a Save dialog; in the browser it uses the file picker when available, otherwise it downloads the file. The suggested name comes from the `Content-Disposition` filename when present, otherwise `response` plus an extension inferred from `Content-Type`. Binary responses are written as raw bytes |
+| **Save response as example** | Stores the response (status, headers, body and the request that produced it) on the request as a saved example. Shown only for successful sends of a request that lives in a collection. Disabled for binary responses, responses over 1 MB, and responses that are already saved examples |
+
+Saved examples are listed under the request in the collection tree and are rendered by [API documentation](API-Documentation#saved-examples) export. They are stored as received, so avoid saving responses that contain secrets.
 
 ---
 
@@ -480,7 +492,9 @@ Right-clicking any item in the collection tree reveals a context menu:
 | Settings | Open collection settings (Auth, Variables, Scripts, Description) |
 | Rename | Inline rename |
 | Duplicate | Deep-clone the entire collection |
-| Export | Export as Postman v2.1 JSON, cURL, or Hurl |
+| Export | Open the export dialog (Postman JSON, HAR, Hurl or Docs) |
+| Export as HURL | Download the whole collection directly as a `.hurl` file |
+| Export documentation… | Open the [API documentation](API-Documentation) export dialog (HTML, Markdown or OpenAPI) for the whole collection |
 | Order items A→Z | Sort all direct children of the collection alphabetically (visible when the collection has 2 or more items) |
 | Delete | Delete the collection and all its contents |
 
@@ -493,6 +507,7 @@ Right-clicking any item in the collection tree reveals a context menu:
 | Settings | Folder auth, variables, and scripts |
 | Rename | Inline rename |
 | Duplicate | Deep-clone this folder and its contents |
+| Export documentation… | Open the [API documentation](API-Documentation) export dialog for this folder only |
 | Order items A→Z | Sort the folder's direct children alphabetically (visible when the folder has 2 or more items) |
 | Delete | Delete the folder and its contents |
 
@@ -505,6 +520,8 @@ Right-clicking any item in the collection tree reveals a context menu:
 | Duplicate | Clone this request in the same folder |
 | Move to | Move the request to another collection/folder |
 | Delete | Remove the request |
+
+**Saved examples:** a request that has saved examples shows a **▸ N** toggle on its row. Expand it to view an example in the response panel, rename it (pencil icon) or delete it (**×** icon, with confirmation). See [Saving a Response](#saving-a-response).
 
 **Drag and drop:** Requests and folders can be reordered by dragging within the tree. Dragging across collections or folders moves the item. You can also drag an item directly onto a collection header — when the collection is closed or empty, it is highlighted with an orange ring and dropping appends the item to the collection's root.
 

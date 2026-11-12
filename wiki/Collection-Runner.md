@@ -89,6 +89,10 @@ The same runner engine is also available from the command line for CI jobs, sche
 
 Preferred syntax uses a positional collection file path (`apilix run ./collection.json`). For backward compatibility with older scripts, `--collection ./collection.json` is still supported.
 
+### Generating API Documentation from the CLI
+
+The same binary can turn a collection file into API documentation (HTML, Markdown or OpenAPI) without running any request: `apilix docs ./collection.json --format openapi --openapi-format yaml --out api.yaml`. Literal credentials are redacted unless `--include-credentials` is passed. See [API Documentation Export](API-Documentation#cli) for all `docs` options.
+
 ### Before You Start
 
 - Export or save the collection you want to run as a Postman/Apilix collection JSON file.
