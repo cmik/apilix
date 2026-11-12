@@ -56,3 +56,25 @@ export function validateAiSettings(s: AiSettings): string | null {
 export function mergeAiSettings(base: AiSettings, patch: Partial<Omit<AiSettings, 'features'>> & { features?: Partial<Record<AiFeatureKey, boolean>> }): AiSettings {
   return { ...base, ...patch, features: { ...base.features, ...(patch.features ?? {}) } };
 }
+
+/** Where data would be sent: `provider|normalized base URL` (default base when blank). */
+export function aiDestination(s: Pick<AiSettings, 'provider' | 'baseUrl'>): string {
+  return `${s.provider}|${normalizeBaseUrl(s.baseUrl) || AI_PROVIDER_DEFAULT_BASE[s.provider]}`;
+}
+
+/**
+ * Apply a settings patch, keeping consent bound to the destination it was given for.
+ * Accepting consent (patch.consentGiven === true) binds it to the resulting destination;
+ * if the destination later changes, consent is revoked and AI is switched off until the
+ * user consents again. Legacy consent without a recorded destination adopts the current one.
+ */
+export function applyAiSettingsPatch(base: AiSettings, patch: Parameters<typeof mergeAiSettings>[1]): AiSettings {
+  const next = mergeAiSettings(base, patch);
+  const dest = aiDestination(next);
+  if (patch.consentGiven === true) return { ...next, consentDestination: dest };
+  if (next.consentGiven && next.consentDestination === undefined) return { ...next, consentDestination: dest };
+  if (next.consentGiven && next.consentDestination !== dest) {
+    return { ...next, consentGiven: false, consentDestination: undefined, enabled: false };
+  }
+  return next;
+}

@@ -1,6 +1,7 @@
 import axios from 'axios';
 import type { CollectionItem, BaseCollection, RequestResponse, RunnerIteration, RunnerIterationResult, ScriptLog, CookieJar, RequestSettings, AiSettings } from './types';
 import type { DatabaseConnection } from './types';
+import { normalizeBaseUrl } from './utils/aiDefaults';
 
 // When loaded via file:// (packaged Electron app), relative /api won't work.
 // The preload script exposes the dynamic server port via window.electronAPI.
@@ -506,7 +507,9 @@ export interface AiPreviewResult {
 /** Push settings (and optionally the key) to the server. `apiKey`: undefined = keep, null = clear. */
 export async function aiPutConfig(settings: AiSettings, apiKey?: string | null): Promise<{ ok: boolean; hasKey: boolean }> {
   try {
-    const { consentGiven: _consentGiven, ...serverSettings } = settings;
+    const { consentGiven: _consentGiven, consentDestination: _consentDestination, ...rest } = settings;
+    const baseUrl = normalizeBaseUrl(rest.baseUrl);
+    const serverSettings = { ...rest, ...(baseUrl ? { baseUrl } : {}) };
     const res = await api.put<{ ok: boolean; hasKey: boolean }>('/ai/config', {
       settings: serverSettings,
       ...(apiKey !== undefined ? { apiKey } : {}),

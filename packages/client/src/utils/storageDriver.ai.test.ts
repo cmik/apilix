@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as Storage from './storageDriver';
-import { DEFAULT_AI_SETTINGS } from './aiDefaults';
+import { DEFAULT_AI_SETTINGS, aiDestination } from './aiDefaults';
 
 const KEY = 'sk-ant-REAL-KEY-123456789';
 const settings = { ...DEFAULT_AI_SETTINGS, enabled: true, model: 'm' };
@@ -52,7 +52,7 @@ describe('AI config storage — Electron', () => {
     expect(JSON.stringify([...ls.m.entries()])).not.toContain(KEY);
     expect(JSON.stringify([...ls.m.entries()])).not.toContain('ENC:');
     const loaded = await Storage.readAiConfig();
-    expect(loaded).toEqual({ settings, apiKey: KEY, keyStatus: 'ok' });
+    expect(loaded).toEqual({ settings, apiKey: KEY, keyStatus: 'ok', keyDestination: aiDestination(settings) });
   });
 
   it('does not write the key at all when the keychain is unavailable (encryptString → null)', async () => {
@@ -125,7 +125,7 @@ describe('AI config storage — Electron', () => {
 
   it('first run: no file → no settings, no key', async () => {
     setup(makeElectron());
-    expect(await Storage.readAiConfig()).toEqual({ settings: null, apiKey: null, keyStatus: 'none' });
+    expect(await Storage.readAiConfig()).toEqual({ settings: null, apiKey: null, keyStatus: 'none', keyDestination: null });
   });
 });
 
@@ -133,7 +133,7 @@ describe('AI config storage — web (localStorage)', () => {
   it('remember:true stores the key in localStorage', async () => {
     setup();
     expect(await Storage.writeAiConfig(settings, KEY, { remember: true })).toBe('ok');
-    expect(await Storage.readAiConfig()).toEqual({ settings, apiKey: KEY, keyStatus: 'ok' });
+    expect(await Storage.readAiConfig()).toEqual({ settings, apiKey: KEY, keyStatus: 'ok', keyDestination: aiDestination(settings) });
   });
 
   it('remember:false writes nothing secret to localStorage', async () => {
@@ -190,5 +190,38 @@ describe('AI config storage — write serialization', () => {
     await Storage.writeAiConfig(settings, KEY, { remember: true });
     const status = await Storage.writeAiConfig(settings, KEY, { remember: true });
     expect(status).toBe('ok');
+  });
+});
+
+describe('AI key is bound to its destination', () => {
+  it('records the destination with the key (Electron) and keeps it across settings-only writes', async () => {
+    const e = makeElectron();
+    setup(e);
+    await Storage.writeAiConfig(settings, KEY, { remember: true });
+    await Storage.writeAiConfig({ ...settings, provider: 'openai-compat', baseUrl: 'http://evil.example/v1' }, undefined, { remember: true });
+    const loaded = await Storage.readAiConfig();
+    expect(loaded.apiKey).toBe(KEY);
+    expect(loaded.keyDestination).toBe(aiDestination(settings));
+    expect(loaded.keyDestination).not.toBe(aiDestination({ provider: 'openai-compat', baseUrl: 'http://evil.example/v1' }));
+  });
+
+  it('records the destination with the key (web)', async () => {
+    setup();
+    await Storage.writeAiConfig(settings, KEY, { remember: true });
+    expect((await Storage.readAiConfig()).keyDestination).toBe(aiDestination(settings));
+  });
+
+  it('stores a normalized base URL (no trailing slash)', async () => {
+    const e = makeElectron();
+    setup(e);
+    await Storage.writeAiConfig({ ...settings, baseUrl: ' http://localhost:11434/v1/ ' }, undefined, { remember: true });
+    expect((await Storage.readAiConfig()).settings?.baseUrl).toBe('http://localhost:11434/v1');
+  });
+
+  it('a legacy key without a recorded destination adopts the current settings destination', async () => {
+    const e = makeElectron();
+    setup(e);
+    e.files.set('/data/ai-config.json', { settings, encryptedApiKey: `ENC:${Buffer.from(KEY).toString('base64')}` });
+    expect((await Storage.readAiConfig()).keyDestination).toBe(aiDestination(settings));
   });
 });

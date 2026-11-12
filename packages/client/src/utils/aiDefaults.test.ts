@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_AI_SETTINGS, mergeAiSettings, normalizeBaseUrl, validateAiSettings, isHttpUrl } from './aiDefaults';
+import { DEFAULT_AI_SETTINGS, aiDestination, applyAiSettingsPatch, mergeAiSettings, normalizeBaseUrl, validateAiSettings, isHttpUrl } from './aiDefaults';
 
 describe('aiDefaults', () => {
   it('defaults are opt-in and conservative', () => {
@@ -38,5 +38,38 @@ describe('aiDefaults', () => {
     expect(m.features.dataGen).toBe(true);
     expect(m.features.diagnose).toBe(false);
     expect(DEFAULT_AI_SETTINGS.features.dataGen).toBe(false);
+  });
+});
+
+describe('consent bound to the destination', () => {
+  const consented = applyAiSettingsPatch(DEFAULT_AI_SETTINGS, { consentGiven: true, enabled: true, model: 'm' });
+
+  it('accepting consent records the destination', () => {
+    expect(consented.consentGiven).toBe(true);
+    expect(consented.consentDestination).toBe(aiDestination(consented));
+  });
+
+  it('changing provider revokes consent and disables AI', () => {
+    const next = applyAiSettingsPatch(consented, { provider: 'openai-compat' });
+    expect(next.consentGiven).toBe(false);
+    expect(next.enabled).toBe(false);
+  });
+
+  it('changing the base URL revokes consent; a trailing slash alone does not', () => {
+    expect(applyAiSettingsPatch(consented, { baseUrl: 'https://proxy.example' }).consentGiven).toBe(false);
+    const withBase = applyAiSettingsPatch(DEFAULT_AI_SETTINGS, { consentGiven: true, enabled: true, model: 'm', baseUrl: 'https://api.anthropic.com' });
+    expect(withBase.consentGiven).toBe(true);
+    expect(applyAiSettingsPatch(withBase, { baseUrl: 'https://api.anthropic.com/' }).consentGiven).toBe(true);
+  });
+
+  it('editing the model keeps consent; legacy consent adopts the current destination', () => {
+    expect(applyAiSettingsPatch(consented, { model: 'other' }).consentGiven).toBe(true);
+    const legacy = applyAiSettingsPatch({ ...DEFAULT_AI_SETTINGS, consentGiven: true }, { model: 'x' });
+    expect(legacy.consentGiven).toBe(true);
+    expect(legacy.consentDestination).toBe(aiDestination(legacy));
+  });
+
+  it('destination ignores a trailing slash and defaults to the provider base', () => {
+    expect(aiDestination({ provider: 'anthropic', baseUrl: 'https://api.anthropic.com/' })).toBe(aiDestination({ provider: 'anthropic', baseUrl: '' }));
   });
 });

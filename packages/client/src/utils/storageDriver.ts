@@ -9,6 +9,7 @@
  * is used, and the module remains crash-free.
  */
 
+import { aiDestination, normalizeBaseUrl } from './aiDefaults';
 import type { WorkspaceData, Workspace, SyncMetadata, SyncActivityEntry, AppSettings, HistoryRequest, SavedRunnerRun, SyncSharePolicy, AiSettings, AiKeyStatus } from '../types';
 
 // ─── Electron API shim ────────────────────────────────────────────────────────
@@ -649,20 +650,33 @@ interface StoredAiConfig {
   encryptedApiKey?: string;
   /** Web only: plaintext key, present only when the user chose "remember". */
   apiKey?: string;
+  /** Destination (`provider|baseUrl`) the key was saved for; it must not follow a destination change. */
+  keyDestination?: string;
 }
 
 export interface LoadedAiConfig {
   settings: AiSettings | null;
   apiKey: string | null;
   keyStatus: AiKeyStatus;
+  /** Destination the key belongs to (null when there is no key). */
+  keyDestination: string | null;
 }
 
 const AI_CONFIG_FILE = 'ai-config.json';
 
 /** In-memory key for "don't remember" / no-keychain cases. Never put this in React state. */
 let sessionAiKey: string | null = null;
+let sessionKeyDestination: string | null = null;
 export function getSessionAiKey(): string | null { return sessionAiKey; }
-export function setSessionAiKey(key: string | null): void { sessionAiKey = key && key.length > 0 ? key : null; }
+export function setSessionAiKey(key: string | null, destination?: string | null): void {
+  sessionAiKey = key && key.length > 0 ? key : null;
+  sessionKeyDestination = sessionAiKey ? (destination ?? sessionKeyDestination) : null;
+}
+
+/** A key saved before destinations were recorded is assumed to belong to the current settings. */
+function boundDestination(stored: string | undefined, settings: AiSettings | null): string | null {
+  return stored ?? (settings ? aiDestination(settings) : null);
+}
 
 async function readAiFile(api: ElectronAPI): Promise<StoredAiConfig | null> {
   try {
@@ -682,18 +696,18 @@ export async function readAiConfig(): Promise<LoadedAiConfig> {
     if (file?.encryptedApiKey) {
       let key: string | null = null;
       try { key = await api.decryptString(file.encryptedApiKey); } catch { key = null; }
-      if (key) return { settings, apiKey: key, keyStatus: 'ok' };
+      if (key) return { settings, apiKey: key, keyStatus: 'ok', keyDestination: boundDestination(file.keyDestination, settings) };
       // Wrong machine / OS user / rotated keychain: ask for the key again, never surface the ciphertext.
-      return { settings, apiKey: null, keyStatus: 'needs-reentry' };
+      return { settings, apiKey: null, keyStatus: 'needs-reentry', keyDestination: null };
     }
-    if (sessionAiKey) return { settings, apiKey: sessionAiKey, keyStatus: 'session-only' };
-    return { settings, apiKey: null, keyStatus: 'none' };
+    if (sessionAiKey) return { settings, apiKey: sessionAiKey, keyStatus: 'session-only', keyDestination: boundDestination(sessionKeyDestination ?? undefined, settings) };
+    return { settings, apiKey: null, keyStatus: 'none', keyDestination: null };
   }
   const stored = lsRead<StoredAiConfig>(LS_AI_CONFIG);
   const settings = stored?.settings ?? null;
-  if (stored?.apiKey) return { settings, apiKey: stored.apiKey, keyStatus: 'ok' };
-  if (sessionAiKey) return { settings, apiKey: sessionAiKey, keyStatus: 'session-only' };
-  return { settings, apiKey: null, keyStatus: 'none' };
+  if (stored?.apiKey) return { settings, apiKey: stored.apiKey, keyStatus: 'ok', keyDestination: boundDestination(stored.keyDestination, settings) };
+  if (sessionAiKey) return { settings, apiKey: sessionAiKey, keyStatus: 'session-only', keyDestination: boundDestination(sessionKeyDestination ?? undefined, settings) };
+  return { settings, apiKey: null, keyStatus: 'none', keyDestination: null };
 }
 
 /**
@@ -721,7 +735,10 @@ async function writeAiConfigNow(
   opts: { remember: boolean },
 ): Promise<AiKeyStatus> {
   const api = eAPI();
-  if (typeof apiKey === 'string' && apiKey.length > 0) setSessionAiKey(apiKey);
+  const base = normalizeBaseUrl(settings.baseUrl);
+  settings = { ...settings, ...(base ? { baseUrl: base } : {}) };
+  const dest = aiDestination(settings);
+  if (typeof apiKey === 'string' && apiKey.length > 0) setSessionAiKey(apiKey, dest);
   if (apiKey === null) setSessionAiKey(null);
 
   if (api) {
@@ -739,7 +756,8 @@ async function writeAiConfigNow(
     }
     try {
       const dir = await api.getDataDir();
-      const file: StoredAiConfig = { settings, ...(encryptedApiKey ? { encryptedApiKey } : {}) };
+      const keyDestination = apiKey === undefined ? boundDestination(previous?.keyDestination, settings) : dest;
+      const file: StoredAiConfig = { settings, ...(encryptedApiKey ? { encryptedApiKey, keyDestination: keyDestination ?? dest } : {}) };
       await api.writeJsonFile(`${dir}/${AI_CONFIG_FILE}`, file);
     } catch {
       console.warn('[storageDriver] writeAiConfig: could not write ai-config.json');
@@ -759,7 +777,8 @@ async function writeAiConfigNow(
   } else if (sessionAiKey) {
     status = 'session-only';
   }
-  lsWrite(LS_AI_CONFIG, { settings, ...(stored ? { apiKey: stored } : {}) });
+  const storedDest = apiKey === undefined ? boundDestination(previous?.keyDestination, settings) : dest;
+  lsWrite(LS_AI_CONFIG, { settings, ...(stored ? { apiKey: stored, keyDestination: storedDest ?? dest } : {}) });
   return status;
 }
 
@@ -772,6 +791,7 @@ export function clearAiKey(): Promise<void> {
 
 async function clearAiKeyNow(): Promise<void> {
   sessionAiKey = null;
+  sessionKeyDestination = null;
   const api = eAPI();
   if (api) {
     const file = await readAiFile(api);

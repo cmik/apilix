@@ -1093,6 +1093,8 @@ export interface AiSettings {
   sendResponseBodies: boolean;
   /** True once the user has accepted the first-use disclosure. */
   consentGiven: boolean;
+  /** Destination (`provider|baseUrl`) the consent was given for; a different destination revokes it. */
+  consentDestination?: string;
   outputLanguage?: string;
   features: Record<AiFeatureKey, boolean>;
 }

@@ -17,6 +17,14 @@ describe('AI state slice', () => {
     expect(Object.values(initialState.ai.settings.features).every(v => v === false)).toBe(true);
   });
 
+  it('AI_SET_SETTINGS revokes consent and disables AI when the destination changes', () => {
+    const s1 = appReducer(initialState, { type: 'AI_SET_SETTINGS', payload: { consentGiven: true, enabled: true, model: 'm' } });
+    expect(s1.ai.settings.consentGiven).toBe(true);
+    const s2 = appReducer(s1, { type: 'AI_SET_SETTINGS', payload: { baseUrl: 'https://other.example' } });
+    expect(s2.ai.settings.consentGiven).toBe(false);
+    expect(s2.ai.settings.enabled).toBe(false);
+  });
+
   it('AI_SET_SETTINGS merges fields and deep-merges features', () => {
     const s1 = appReducer(initialState, { type: 'AI_SET_SETTINGS', payload: { enabled: true, model: 'm', features: { diagnose: true } } });
     expect(s1.ai.settings.enabled).toBe(true);
