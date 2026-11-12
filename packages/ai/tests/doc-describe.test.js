@@ -155,3 +155,26 @@ test('an entry that cannot fit even after trimming is skipped with a warning', (
   assert.deepEqual(batches, []);
   assert.match(warnings.join(' '), /too large/);
 });
+
+const manyReq = (n) => ({ info: { name: 'Big', description: 'd' }, item: Array.from({ length: n }, (_, i) => ({ id: `q${i}`, name: `q${i}`, request: { method: 'GET', url: `https://x/${i}` } })) });
+
+test('RATE_LIMIT stops the run instead of calling the provider for every remaining batch', async () => {
+  const provider = fakeProvider((_req, n) => { if (n === 2) throw new AiError('RATE_LIMIT', 'slow down'); return { items: [{ id: 'q0', description: 'kept' }] }; });
+  const r = await describeDocs({ provider, model: buildDocModel(manyReq(100), {}) });
+  assert.equal(provider.calls.length, 2);
+  assert.equal(r.descriptions.q0.description, 'kept', 'batches done before the failure are kept');
+  assert.match(r.warnings.join(' '), /rate limit/);
+  assert.match(r.warnings.join(' '), /remaining batch/);
+});
+
+test('two consecutive failures stop the run; a success in between resets the counter', async () => {
+  const bad = fakeProvider(() => { throw new AiError('TIMEOUT', 't'); });
+  const r = await describeDocs({ provider: bad, model: buildDocModel(manyReq(100), {}) });
+  assert.equal(bad.calls.length, 2);
+  assert.match(r.warnings.join(' '), /2 consecutive failures/);
+
+  const flaky = fakeProvider((_req, n) => { if (n % 2 === 1) throw new AiError('TIMEOUT', 't'); return { items: [] }; });
+  const r2 = await describeDocs({ provider: flaky, model: buildDocModel(manyReq(100), {}) });
+  assert.ok(flaky.calls.length > 2, 'alternating failures never reach 2 in a row');
+  assert.ok(!/consecutive/.test(r2.warnings.join(' ')));
+});

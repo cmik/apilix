@@ -15,6 +15,7 @@ const { getPrompt } = require('./prompts');
 
 const COLLECTION_KEY = '__collection__';
 const MAX_BATCHES = 20;
+const MAX_CONSECUTIVE_FAILURES = 2;
 const MAX_ENTRIES_PER_BATCH = 25;
 const MAX_DESCRIPTION_CHARS = 400;
 const OUTPUT_RESERVE_TOKENS = 1500;
@@ -184,6 +185,7 @@ async function describeDocs({ provider, model, language, maxContextTokens, secre
     batches = batches.slice(0, MAX_BATCHES);
   }
   const descriptions = {};
+  let consecutiveFailures = 0;
   for (let i = 0; i < batches.length; i++) {
     const prompt = getPrompt('docDescribe', { language, data: JSON.stringify(batches[i], null, 1) });
     try {
@@ -197,10 +199,21 @@ async function describeDocs({ provider, model, language, maxContextTokens, secre
       usage.inputTokens += r.usage.inputTokens;
       usage.outputTokens += r.usage.outputTokens;
       Object.assign(descriptions, sanitizeAnswer(batches[i], r.data && r.data.items));
+      consecutiveFailures = 0;
     } catch (err) {
       if (err instanceof AiError && (err.code === 'ABORTED' || err.code === 'AUTH' || err.code === 'NO_PROVIDER')) throw err;
-      // One bad batch must not lose the others.
-      warnings.push(`Batch ${i + 1}/${batches.length} failed (${err instanceof AiError ? err.code : 'ERROR'}); its entries stay undocumented.`);
+      const code = err instanceof AiError ? err.code : 'ERROR';
+      // One bad batch must not lose the others...
+      warnings.push(`Batch ${i + 1}/${batches.length} failed (${code}); its entries stay undocumented.`);
+      consecutiveFailures++;
+      // ...but a systemic failure must not keep hitting the provider with every remaining batch.
+      const remaining = batches.length - i - 1;
+      if (remaining > 0 && (code === 'RATE_LIMIT' || consecutiveFailures >= MAX_CONSECUTIVE_FAILURES)) {
+        warnings.push(code === 'RATE_LIMIT'
+          ? `Stopped after the provider rate limit was hit: ${remaining} remaining batch(es) were not described.`
+          : `Stopped after ${consecutiveFailures} consecutive failures: ${remaining} remaining batch(es) were not described.`);
+        break;
+      }
     }
   }
   return { descriptions, warnings, usage, requested: entries.length };
