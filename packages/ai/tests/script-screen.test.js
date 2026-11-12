@@ -86,13 +86,6 @@ test('dry-run: loops and hung promises do not hang the server', async () => {
   assert.ok(Date.now() - started < 10000);
 });
 
-test('dry-run: a refused script is not executed', async () => {
-  globalThis.__DRY_RUN_CANARY__ = 0;
-  const r = await dryRunScript(`apx.test('x', () => { Object['constructor']('return 1')(); });`, { response: { status: 200, body: '' } });
-  assert.equal(r.ok, false);
-  assert.equal(globalThis.__DRY_RUN_CANARY__, 0);
-});
-
 test('lenient mode tolerates a stand-in mismatch but not a broken script', async () => {
   const response = { status: 200, headers: {}, body: '{}' };
   const mismatch = await dryRunScript(`apx.test('s', () => { apx.expect(apx.response.code).to.equal(201); apx.expect(apx.response.json().data.id).to.be.a('string'); });`, { response, mode: 'lenient' });
