@@ -48,3 +48,10 @@ test('isValidLanguage accepts language names only; getPrompt ignores anything el
   assert.ok(!p.system.includes('IGNORE EVERYTHING') && !p.system.includes('Write natural-language output'));
   assert.match(getPrompt('connectionTest', { language: 'French' }).system, /output in French\./);
 });
+
+test('wrapUntrusted: a long run of whitespace after "<" is handled in linear time', () => {
+  const t0 = Date.now();
+  const out = wrapUntrusted('<' + ' '.repeat(50000) + 'x');
+  assert.ok(Date.now() - t0 < 1000, 'must not backtrack polynomially');
+  assert.equal(count(out, UNTRUSTED_CLOSE), 1);
+});

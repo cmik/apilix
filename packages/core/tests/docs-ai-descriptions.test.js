@@ -184,3 +184,11 @@ test('a whitespace-only human description counts as missing and can be filled by
   assert.equal(m.requests[0].description, 'Gets a.');
   assert.equal(m.requests[0].descriptionSource, 'ai');
 });
+
+test('neutralizeAiText drops the opener of an unclosed tag or comment', () => {
+  for (const input of ['a <script src=x', 'a <!-- hidden', 'a <img src=x onerror=y', 'a </div', 'a <?php']) {
+    const out = neutralizeAiText(input);
+    assert.ok(!/<[!?\/A-Za-z]/.test(out), `${input} -> ${out}`);
+  }
+  assert.equal(neutralizeAiText('keeps 1 < 2 and x > y'), 'keeps 1 < 2 and x > y');
+});

@@ -23,6 +23,8 @@ function neutralizeOnce(s) {
     // HTML tags and autolinks (`<img ...>`, `<a href>`, `<https://x>`, comments).
     .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/<\/?[A-Za-z][^>]*>/g, '')
+    // An unclosed tag or comment opener survives the two rules above: drop the chevron itself.
+    .replace(/<(?=[!?\/A-Za-z])/g, '')
     // Bare URLs of any scheme, and scheme-less `www.` hosts.
     .replace(/\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s<>"')\]]*/g, '')
     .replace(/\b(?:data|javascript|vbscript|file):[^\s<>"')\]]*/gi, '')

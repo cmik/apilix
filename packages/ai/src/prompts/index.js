@@ -5,7 +5,7 @@ const UNTRUSTED_OPEN = '<untrusted_data>';
 const UNTRUSTED_CLOSE = '</untrusted_data>';
 
 // Any spelling of the delimiter: case-insensitive, optional whitespace, open or close.
-const DELIMITER_RE = /<\s*\/?\s*untrusted_data\s*>/gi;
+const DELIMITER_RE = /<(?:\s*\/)?\s*untrusted_data\s*>/gi;
 
 /**
  * Remove delimiter look-alikes until none remain. A single pass is not enough: removing an inner
