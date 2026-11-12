@@ -334,7 +334,7 @@ function buildDocModel(collection, options = {}) {
   });
 
   const baseTitle = opts.title || String(collection.info.name || 'API Documentation');
-  return {
+  const model = {
     title: opts.title || (target ? `${baseTitle} / ${target.name}` : baseTitle),
     description: descText(collection.info.description) + (target && descText(target.description) ? `\n\n${descText(target.description)}` : ''),
     auth: buildAuth(rootAuth, 'collection', opts),
@@ -343,6 +343,55 @@ function buildDocModel(collection, options = {}) {
     requests,
     warnings,
   };
+  applyAiDescriptions(model, opts.descriptions);
+  return model;
+}
+
+const AI_COLLECTION_KEY = '__collection__';
+
+function cleanAiText(v) {
+  return typeof v === 'string' ? v.trim() : '';
+}
+
+/**
+ * Fill MISSING descriptions from `options.descriptions` (keyed by request id, folder id, or
+ * `__collection__`). A description that a human wrote is never replaced. Filled entries are
+ * tagged `descriptionSource: 'ai'` so renderers can mark them. Mutates the freshly built model.
+ */
+function applyAiDescriptions(model, descriptions) {
+  if (!descriptions || typeof descriptions !== 'object') return;
+  const fillList = (list, params) => {
+    if (!Array.isArray(list) || !params || typeof params !== 'object') return;
+    for (const e of list) {
+      if (!e || e.description) continue;
+      const text = Object.prototype.hasOwnProperty.call(params, e.key) ? cleanAiText(params[e.key]) : '';
+      if (text) { e.description = text; e.descriptionSource = 'ai'; }
+    }
+  };
+  const fillNode = (target, entry) => {
+    if (!entry || typeof entry !== 'object') return;
+    const text = cleanAiText(entry.description);
+    if (!target.description && text) { target.description = text; target.descriptionSource = 'ai'; }
+  };
+  fillNode(model, descriptions[AI_COLLECTION_KEY]);
+  const walkNodes = nodes => {
+    for (const n of nodes) {
+      if (n.type === 'folder') {
+        fillNode(n, Object.prototype.hasOwnProperty.call(descriptions, n.id) ? descriptions[n.id] : null);
+        walkNodes(n.children || []);
+      }
+    }
+  };
+  walkNodes(model.tree);
+  for (const req of model.requests) {
+    const d = Object.prototype.hasOwnProperty.call(descriptions, req.id) ? descriptions[req.id] : null;
+    if (!d || typeof d !== 'object') continue;
+    fillNode(req, d);
+    fillList(req.pathVariables, d.params);
+    fillList(req.query, d.params);
+    fillList(req.headers, d.params);
+    if (req.body && Array.isArray(req.body.fields)) fillList(req.body.fields, d.params);
+  }
 }
 
 function collectionVarMap(collection) {
@@ -376,4 +425,4 @@ function buildSnippets(request, options, deps, warnings) {
   return out;
 }
 
-module.exports = { buildDocModel, buildSnippets, createResolver, splitUrl, descText };
+module.exports = { buildDocModel, buildSnippets, createResolver, splitUrl, descText, applyAiDescriptions, AI_COLLECTION_KEY };

@@ -37,12 +37,27 @@ export interface DocsExportOptions {
   renderImages?: boolean;
   /** Override the document title. */
   title?: string;
+  /**
+   * Descriptions to fill where the collection has none, keyed by request id, folder id,
+   * or `__collection__`. A description written by a human is never replaced.
+   */
+  descriptions?: Record<string, DocAiDescription>;
+  /** Mark AI-filled descriptions in the output (badge / note / `x-generated-by`). Default true. */
+  markAiContent?: boolean;
+}
+
+export interface DocAiDescription {
+  description?: string;
+  /** Per-parameter descriptions keyed by parameter / header / field name. */
+  params?: Record<string, string>;
 }
 
 export interface DocKV {
   key: string;
   value: string;
   description?: string;
+  /** 'ai' when `description` was filled from `options.descriptions`. */
+  descriptionSource?: 'ai';
   /** Present for form-data file fields. */
   type?: string;
 }
@@ -93,6 +108,7 @@ export interface DocRequestModel {
   path: string;
   folderPath: string[];
   description: string;
+  descriptionSource?: 'ai';
   headers: DocKV[];
   query: DocKV[];
   pathVariables: DocKV[];
@@ -106,6 +122,7 @@ export interface DocNode {
   id: string;
   name: string;
   description?: string;
+  descriptionSource?: 'ai';
   children?: DocNode[];
   request?: DocRequestModel;
 }
@@ -113,6 +130,7 @@ export interface DocNode {
 export interface DocModel {
   title: string;
   description: string;
+  descriptionSource?: 'ai';
   auth: DocAuth | null;
   variables: DocKV[];
   tree: DocNode[];
