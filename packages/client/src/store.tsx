@@ -3,11 +3,11 @@ import apilixLogo from './assets/apilix2.svg';
 import type { AppState, AppAction, AppSettings, AppCollection, AppEnvironment, CollectionItem, RequestTab, CookieJar, Cookie, MockRoute, MockCollection, Workspace, WorkspaceData, HistoryRequest, SavedRunnerRun, MongoQueryTab } from './types';
 import * as StorageDriver from './utils/storageDriver';
 import * as SnapshotEngine from './utils/snapshotEngine';
-import { API_BASE } from './api';
+import { API_BASE, aiPutConfig, aiClearConfig } from './api';
 import type { PostmanVersion } from './utils/postmanValidator';
 import { buildSecretSet } from './utils/secretMask';
 import { normalizeGlobalState, mergeGlobalMetaWithValues } from './utils/globalVariables';
-import { DEFAULT_AI_SETTINGS, mergeAiSettings } from './utils/aiDefaults';
+import { DEFAULT_AI_SETTINGS, mergeAiSettings, validateAiSettings } from './utils/aiDefaults';
 
 const STORAGE_KEY = 'apilix_persist'; // legacy key — kept for migration only
 
@@ -1119,6 +1119,11 @@ interface AppContextValue {
   getEnvironmentVars: () => Record<string, string>;
   getCollectionVars: (collectionId: string) => Record<string, string>;
   secretSet: Set<string>;
+  /**
+   * Store the AI API key (null = remove it). The key lives in storageDriver and a ref, never in
+   * `state`. `remember: false` keeps it in memory for this session only.
+   */
+  saveAiKey: (key: string | null, opts?: { remember?: boolean }) => Promise<void>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -1127,6 +1132,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, initialState);
   // Track whether a debounced write is in flight to avoid unnecessary I/O
   const [saveTimer, setSaveTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
+  // AI: the API key is intentionally kept out of `state` (which is serialised and shown in devtools).
+  const aiKeyRef = useRef<string | null>(null);
+  const [aiLoaded, setAiLoaded] = useState(false);
+  const [aiKeyVersion, setAiKeyVersion] = useState(0);
+  const latestAiSettingsRef = useRef(initialState.ai.settings);
 
   // ── Async init ───────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1215,6 +1225,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (mergedSettings.captureViewState) {
         dispatch({ type: 'SET_CAPTURE_VIEW_STATE', payload: mergedSettings.captureViewState });
       }
+
+      // AI config is global and stored apart from settings.json and the workspace files.
+      try {
+        const aiCfg = await StorageDriver.readAiConfig();
+        aiKeyRef.current = aiCfg.apiKey;
+        if (aiCfg.settings) dispatch({ type: 'AI_SET_SETTINGS', payload: aiCfg.settings });
+        dispatch({ type: 'AI_SET_KEY_STATUS', payload: aiCfg.keyStatus });
+      } catch {
+        // AI is optional: a storage failure must never block app start.
+      }
+      setAiLoaded(true);
     }
     init();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1471,6 +1492,50 @@ export function AppProvider({ children }: { children: ReactNode }) {
       state.settings.corsAllowedOrigins, state.settings.requestTimeout, state.settings.followRedirects,
       state.settings.sslVerification, state.settings.customCAs, state.settings.clientCertificates, state.storageReady]);
 
+  // ── AI configuration ─────────────────────────────────────────────────────
+  latestAiSettingsRef.current = state.ai.settings;
+
+  // Persist non-secret AI settings (the key is written only by saveAiKey).
+  useEffect(() => {
+    if (!aiLoaded) return;
+    const t = setTimeout(() => {
+      StorageDriver.writeAiConfig(state.ai.settings, undefined, { remember: true }).catch(() => { /* ignore */ });
+    }, 300);
+    return () => clearTimeout(t);
+  }, [state.ai.settings, aiLoaded]);
+
+  // Push AI config to the local server. Disabled (or invalid) config clears it server-side,
+  // so nothing can reach a provider while the feature is off.
+  useEffect(() => {
+    if (!aiLoaded) return;
+    let cancelled = false;
+    let retry: ReturnType<typeof setTimeout> | null = null;
+    const push = (attempt: number) => {
+      const settings = state.ai.settings;
+      const call = settings.enabled && validateAiSettings(settings) === null
+        ? aiPutConfig(settings, aiKeyRef.current)
+        : aiClearConfig();
+      call.catch(() => {
+        // Server may not be up yet: retry once.
+        if (!cancelled && attempt === 0) retry = setTimeout(() => push(1), 2000);
+      });
+    };
+    push(0);
+    return () => {
+      cancelled = true;
+      if (retry) clearTimeout(retry);
+    };
+  }, [state.ai.settings, aiLoaded, aiKeyVersion]);
+
+  async function saveAiKey(key: string | null, opts?: { remember?: boolean }): Promise<void> {
+    const trimmed = key === null ? null : key.trim();
+    const value = trimmed === '' ? null : trimmed;
+    const status = await StorageDriver.writeAiConfig(latestAiSettingsRef.current, value, { remember: opts?.remember !== false });
+    aiKeyRef.current = value;
+    dispatch({ type: 'AI_SET_KEY_STATUS', payload: value === null ? 'none' : status });
+    setAiKeyVersion(v => v + 1);
+  }
+
   function getActiveEnvironment(): AppEnvironment | null {
     if (!state.activeEnvironmentId) return null;
     return state.environments.find(e => e._id === state.activeEnvironmentId) ?? null;
@@ -1517,7 +1582,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AppContext.Provider value={{ state, dispatch, getActiveEnvironment, getEnvironmentVars, getCollectionVars, secretSet }}>
+    <AppContext.Provider value={{ state, dispatch, getActiveEnvironment, getEnvironmentVars, getCollectionVars, secretSet, saveAiKey }}>
       {children}
     </AppContext.Provider>
   );
