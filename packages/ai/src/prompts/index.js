@@ -42,6 +42,32 @@ const PROMPTS = {
     ].join(' '),
     user: (data) => `Describe these entries.\n${wrapUntrusted(data)}`,
   },
+  assertSuggest: {
+    version: 1,
+    system: () => [
+      'You propose automated test assertions for one HTTP response of an API request, as scripts for the Apilix `apx` scripting API.',
+      'Script API (JavaScript, chai-style): apx.test("name", () => { ... }) wraps assertions; apx.expect(value).to.equal(x) / .to.be.a("string") / .to.include(x) / .to.match(/re/) / .to.be.an("array") / .to.not.be.empty / .to.be.below(n); apx.response.code (status), apx.response.json(), apx.response.text(), apx.response.headers.get("Name"), apx.response.responseTime; apx.environment.set("name", value) saves a variable.',
+      'Return up to 15 suggestions. Each has: title (short, readable, max 80 chars), kind (status, header, body, schema, timing or capture), script (self-contained code), confidence (high, medium or low), volatile (true when the checked value may change between runs).',
+      'Rules: every script MUST pass on the exact response shown (it is executed on it and discarded otherwise). Base assertions only on what is visible; the body may be truncated or given as a shape only (types, no values): then assert types and structure only, never values.',
+      'Prefer meaningful checks: allowed values of enum-like fields (status, type, role...), invariants between fields (a total equal to the sum of its items), formats and structure. Never assert the concrete value of ids, timestamps, tokens, hashes or other volatile fields: assert their type or format instead.',
+      'A "capture" suggestion is a single apx.environment.set("name", expression) line saving a value later requests need (an id, a token). Do not repeat tests that already exist. Do not call apx.sendRequest, do not use eval, Function, this, process or require, and do not access constructor or prototype.',
+      'Values shown as <redacted> are secrets: never assert them.',
+    ].join(' '),
+    user: (data) => `Suggest assertions for this response.\n${wrapUntrusted(data)}`,
+  },
+  nlGenerate: {
+    version: 1,
+    system: () => [
+      'You turn a natural-language instruction into one HTTP/REST request definition for the Apilix API client, optionally with tests.',
+      'The instruction is given first, outside the data block. The data block holds context: names of available variables (never their values), a base URL variable if present, existing neighbouring requests as style examples, and, when modifying, the current request.',
+      'Rules: use {{variableName}} placeholders and ONLY variables listed by name; if {{baseUrl}} is listed, start the url with it. Never invent credentials, tokens, keys or secret values: reference a listed variable such as {{token}} or leave the value empty.',
+      'Fields: name (short and descriptive), method, url (without the query string), headers and query as key/value lists, body ({"mode":"none"} or raw with a language of json/text/xml/html/javascript, formdata or urlencoded lists), optional auth (bearer, basic or apikey whose values are {{variable}} references), tests (script), optional preRequest (script), variablesToCapture (name plus a dot path inside the JSON response body such as data.items[0].id, or header:Name).',
+      'Scripts use the apx API (JavaScript, chai-style): apx.test("name", () => { ... }); apx.expect(v).to.equal(x) / .to.be.a("string") / .to.match(/re/) / .to.be.an("array") / .to.not.be.empty; apx.response.code, apx.response.json(), apx.response.text(), apx.response.headers.get("Name"), apx.response.responseTime; apx.environment.set("name", value). Do not use apx.sendRequest, eval, Function, this, process or require, and do not access constructor or prototype.',
+      'Follow the instruction literally: do not add requests, tests or headers it does not ask for, beyond what is needed to be valid. Keep the style (naming, header conventions, tests) of the example requests when it does not conflict with the instruction.',
+      'When a current request is provided, return the complete updated request, changing only what the instruction asks for.',
+    ].join(' '),
+    user: (data, instruction) => `Instruction: ${stripDelimiters(instruction || '')}\nContext (data):\n${wrapUntrusted(data)}`,
+  },
   connectionTest: {
     version: 1,
     system: () => 'You are a connectivity probe. Reply with the requested JSON only.',
@@ -56,11 +82,11 @@ function isValidLanguage(language) {
   return typeof language === 'string' && LANGUAGE_RE.test(language.trim());
 }
 
-function getPrompt(name, { language, data } = {}) {
+function getPrompt(name, { language, data, instruction } = {}) {
   const p = PROMPTS[name];
   if (!p) throw new Error(`Unknown prompt "${name}"`);
   const langLine = isValidLanguage(language) ? ` Write natural-language output in ${language.trim()}.` : '';
-  return { version: p.version, system: `${p.system()} ${UNTRUSTED_RULE}${langLine}`, user: p.user(data) };
+  return { version: p.version, system: `${p.system()} ${UNTRUSTED_RULE}${langLine}`, user: p.user(data, instruction) };
 }
 
 module.exports = { PROMPTS, getPrompt, isValidLanguage, wrapUntrusted, stripDelimiters, UNTRUSTED_OPEN, UNTRUSTED_CLOSE, UNTRUSTED_RULE };
