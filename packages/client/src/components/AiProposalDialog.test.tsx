@@ -161,7 +161,7 @@ describe('AiProposalDialog: refused scripts and unfamiliar hosts (review round 2
     expect(screen.getByText(/Nothing was run/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
     const item = h.onApply.mock.calls[0][0] as CollectionItem;
-    expect((item.event ?? []).some(e => e.listen === 'test' && /constructor/.test(e.script?.exec.join('\n') ?? ''))).toBe(false);
+    expect((item.event ?? []).some(e => e.listen === 'test' && /constructor/.test([e.script?.exec ?? ''].flat().join('\n')))).toBe(false);
   });
 
   it('blocks Apply for a lookalike host carrying a secret until acknowledged', () => {
