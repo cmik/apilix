@@ -67,7 +67,8 @@
       "bin/apilix.js",
       "packages/cli/src/index.js",
       "packages/core/src/index.js",
-      "packages/ai/src/**/*.js"
+      "packages/ai/src/**/*.js",
+      "packages/mcp/src/**/*.js"
     ],
     "assets": [
       "node_modules/csv-parse/dist/cjs/sync.cjs"

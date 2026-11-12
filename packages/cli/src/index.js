@@ -41,6 +41,7 @@ function usage() {
     '  apilix run <collection-file> [options]',
     '  apilix run --collection <collection-file> [options]',
     '  apilix docs <collection-file> [docs options]',
+    '  apilix mcp [--workspace <dir>] [mcp options]   Start the MCP server on stdio (see: apilix mcp --help)',
     '',
     'Options:',
     '  -e, --environment <file>     Environment JSON file with values[]',
@@ -104,7 +105,9 @@ function createIo(overrides = {}) {
     cwd: overrides.cwd || process.cwd(),
     stdout: overrides.stdout || process.stdout,
     stderr: overrides.stderr || process.stderr,
+    stdin: overrides.stdin || process.stdin,
     env: overrides.env || process.env,
+    loadMcp: overrides.loadMcp,
   };
 }
 
@@ -989,9 +992,32 @@ async function runDocs(args, io) {
   return 0;
 }
 
+/**
+ * `apilix mcp [flags]`: Model Context Protocol server over stdio (implemented in @apilix/mcp,
+ * loaded lazily so a CLI build without it still works for run/docs).
+ */
+async function runMcpCommand(argv, io) {
+  let mcp;
+  try {
+    mcp = io.loadMcp ? io.loadMcp() : require('@apilix/mcp');
+  } catch {
+    io.stderr.write('Error: MCP support is not available in this build of the CLI\n');
+    return 2;
+  }
+  const code = await mcp.runMcp(argv, { cwd: io.cwd, stdin: io.stdin, stdout: io.stdout, stderr: io.stderr });
+  if (io.stdout === process.stdout && code !== 0) setTimeout(() => process.exit(code), 50).unref();
+  // Keep-alive sockets opened by runs must not delay the exit once the client closed stdin.
+  else if (io.stdout === process.stdout) setTimeout(() => process.exit(0), 200).unref();
+  return code;
+}
+
 async function runCli(argv, ioOverrides = {}) {
   const io = createIo(ioOverrides);
   let closeDbResources = async () => {};
+
+  if (Array.isArray(argv) && argv[0] === 'mcp') {
+    return runMcpCommand(argv.slice(1), io);
+  }
 
   try {
     const args = parseArgs(argv, io);

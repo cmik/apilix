@@ -15,6 +15,7 @@
   "dependencies": {
     "@apilix/ai": "*",
     "@apilix/core": "*",
+    "@apilix/mcp": "*",
     "chalk": "^4.1.2",
     "commander": "^12.1.0",
     "mysql2": "^3.22.3",
