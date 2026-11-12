@@ -153,3 +153,23 @@ test('an AI image description never becomes an <img>, a link or a URL in any exp
   }
   assert.ok(!generateDocs(col, { format: 'html', descriptions }).content.includes('<img src="https://evil'));
 });
+
+test('openapi marks AI-written info and tag (folder) descriptions, and only those', () => {
+  const { spec } = generateDocs(collection(), { format: 'openapi', descriptions });
+  assert.equal(spec.info.description, 'Shop API.');
+  assert.equal(spec.info['x-generated-by'], 'ai');
+  const tag = spec.tags.find(t => t.name === 'Orders');
+  assert.equal(tag.description, 'Everything about orders.');
+  assert.equal(tag['x-generated-by'], 'ai');
+
+  const human = collection();
+  human.info.description = 'Human API.';
+  human.item[0].description = 'Human folder.';
+  const h = generateDocs(human, { format: 'openapi', descriptions }).spec;
+  assert.equal(h.info['x-generated-by'], undefined);
+  assert.equal(h.tags.find(t => t.name === 'Orders')['x-generated-by'], undefined);
+
+  const off = generateDocs(collection(), { format: 'openapi', descriptions, markAiContent: false }).spec;
+  assert.equal(off.info['x-generated-by'], undefined);
+  assert.equal(off.tags.find(t => t.name === 'Orders')['x-generated-by'], undefined);
+});

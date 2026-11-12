@@ -234,11 +234,13 @@ function buildOpenApi(model, options = {}, extraWarnings = []) {
   const paths = {};
   const usedIds = new Set();
   const tagDescriptions = new Map();
+  const aiTags = new Set();
   (function collectTags(nodes, trail) {
     for (const n of nodes) {
       if (n.type !== 'folder') continue;
       const t = trail.concat(n.name);
       if (n.description) tagDescriptions.set(t.join(' / '), n.description);
+      if (n.description && n.descriptionSource === 'ai' && markAi) aiTags.add(t.join(' / '));
       collectTags(n.children || [], t);
     }
   })(model.tree, []);
@@ -342,8 +344,12 @@ function buildOpenApi(model, options = {}, extraWarnings = []) {
     info: { title: model.title, version: '1.0.0' },
   };
   if (model.description) spec.info.description = model.description;
+  if (model.description && model.descriptionSource === 'ai' && markAi) spec.info['x-generated-by'] = 'ai';
   if (servers.length) spec.servers = servers;
-  if (tagOrder.length) spec.tags = tagOrder.map(name => (tagDescriptions.has(name) ? { name, description: tagDescriptions.get(name) } : { name }));
+  if (tagOrder.length) spec.tags = tagOrder.map(name => {
+    if (!tagDescriptions.has(name)) return { name };
+    return { name, description: tagDescriptions.get(name), ...(aiTags.has(name) ? { 'x-generated-by': 'ai' } : {}) };
+  });
   if (rootScheme) spec.security = [{ [rootScheme.name]: rootScheme.scopes }];
   spec.paths = paths;
   if (Object.keys(schemes).length) spec.components = { securitySchemes: schemes };
