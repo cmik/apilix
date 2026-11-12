@@ -15,6 +15,7 @@ const { estimateTokens, truncateText, truncateJson } = require('./budget');
 const { redactRequest, redactResponse, redactScript, scrubSecretValues, scrubTokenPatterns } = require('./redact');
 const { buildShapeSchema } = require('./context');
 const { getPrompt } = require('./prompts');
+const crypto = require('crypto');
 const { dryRunScript } = require('./dry-run');
 
 const KINDS = ['status', 'header', 'body', 'schema', 'timing', 'capture'];
@@ -149,6 +150,14 @@ function sanitizeSuggestions(items) {
   return out;
 }
 
+/** Stable id derived from the script text, so a re-run proposing the same script gets the same id. */
+function suggestionId(script, taken) {
+  const base = `ai-${crypto.createHash('sha256').update(String(script)).digest('hex').slice(0, 10)}`;
+  let id = base;
+  for (let n = 2; taken.some(s => s.id === id); n++) id = `${base}-${n}`;
+  return id;
+}
+
 /**
  * @param {{ provider: { complete: Function }, request?: object, name?: string,
  *   response: { status?: number, statusText?: string, headers?: object, body?: string, responseTime?: number },
@@ -183,7 +192,7 @@ async function suggestAssertions(input) {
     let verdict;
     if (Date.now() > deadline) verdict = { ok: false, reason: 'validation time budget exhausted' };
     else verdict = await dryRunScript(c.script, { response, mode: 'strict', expects: c.kind === 'capture' ? 'capture' : 'test' });
-    if (verdict.ok) suggestions.push({ id: `ai${suggestions.length + 1}`, ...c });
+    if (verdict.ok) suggestions.push({ id: suggestionId(c.script, suggestions), ...c });
     else discarded.push({ title: c.title, reason: cleanTitle(verdict.reason || 'failed validation') });
   }
   return {

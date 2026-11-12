@@ -46,7 +46,8 @@ test('only suggestions that pass on the captured response are kept', async () =>
   });
   const r = await suggestAssertions({ provider, request, response, secretValues: [SECRET] });
   assert.deepEqual(r.suggestions.map(s => s.title), ['Status is 201', 'Total is the sum of the items', 'Status is a known value', 'Save id']);
-  assert.deepEqual(r.suggestions.map(s => s.id), ['ai1', 'ai2', 'ai3', 'ai4']);
+  assert.equal(new Set(r.suggestions.map(s => s.id)).size, r.suggestions.length, 'ids are unique');
+  assert.ok(r.suggestions.every(s => /^ai-[0-9a-f]{10}$/.test(s.id)), 'ids derive from the script, not from the position');
   assert.equal(r.discardedCount, 5);
   assert.ok(r.discarded.every(d => d.reason));
 });
