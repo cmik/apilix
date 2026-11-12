@@ -6,7 +6,8 @@
  * The user's sentence is trusted input; everything taken from the collection (neighbouring requests,
  * the request being modified, variable names) is untrusted data (wrapUntrusted) and redacted first.
  * The model's draft is schema-checked, sanitised field by field, and its scripts are dry-run in the
- * real sandbox (one retry with the error, then the proposal is returned marked "not validated").
+ * child-process sandbox (one retry with the error, then the proposal is returned marked "not validated").
+ * A script refused by the security screen is dropped from the draft and reported in `validation.removed`.
  * Nothing is applied here: the client shows the draft and the user decides.
  */
 
@@ -32,6 +33,10 @@ const VAR_NAME_RE = /^[A-Za-z_][A-Za-z0-9_.-]{0,59}$/;
 const CAPTURE_PATH_RE = /^(?:header:[A-Za-z0-9-]{1,80}|[A-Za-z_$][\w$-]{0,60}(?:\.[\w$-]{1,60}|\[\d{1,3}\]){0,8})$/;
 const CREDENTIAL_HEADERS = new Set(['authorization', 'proxy-authorization', 'cookie', 'x-api-key', 'api-key', 'x-auth-token', 'x-access-token']);
 const VAR_REF_RE = /^\{\{[^{}\s]{1,100}\}\}$/;
+// Names that carry a credential in a header, a query parameter or a body field (X-Secret, X-Custom-Token, api_key, client_secret...).
+const SENSITIVE_NAME_RE = /(?:passw(?:or)?d|passwd|pwd|secret|token|api[_-]?key|apikey|credential|private[_-]?key|signature|authorization)|^(?:key|auth|sig)$|[_-](?:key|auth)$/i;
+const NOT_A_SECRET_VALUE_RE = /^(?:\d+(?:\.\d+)?|true|false|null)$/i;
+const DANGEROUS_SCHEMES = new Set(['javascript', 'data', 'file', 'vbscript', 'blob', 'about', 'jar', 'view-source']);
 
 function clip(v, max) {
   const s = v === undefined || v === null ? '' : String(v);
@@ -127,7 +132,15 @@ function fitPrompt(args, language, maxContextTokens) {
   throw new AiError('TOO_LARGE', 'The instruction and context are too large for the configured context limit');
 }
 
-function sanitizePairs(list, { credentialGuard, warnings }) {
+/** A literal value under a credential-looking name is dropped: a model must only reference variables. */
+function guardLiteral(name, value, where, warnings) {
+  if (!value || !SENSITIVE_NAME_RE.test(name) || NOT_A_SECRET_VALUE_RE.test(value)) return value;
+  if (/^(?:Bearer |Basic |Token )?\{\{[^{}\s]{1,100}\}\}$/.test(value)) return value;
+  warnings.push(`The value of the "${clip(name, 40)}" ${where} was left empty: a model must not provide credentials.`);
+  return '';
+}
+
+function sanitizePairs(list, { credentialGuard, guard, warnings }) {
   const out = [];
   for (const p of Array.isArray(list) ? list : []) {
     if (!p || typeof p.key !== 'string') continue;
@@ -139,7 +152,11 @@ function sanitizePairs(list, { credentialGuard, warnings }) {
       if (CREDENTIAL_HEADERS.has(key.toLowerCase()) && value && !/^(?:Bearer |Basic |Token )?\{\{[^{}\s]{1,100}\}\}$/.test(value)) {
         warnings.push(`The value of the "${key}" header was left empty: a model must not provide credentials.`);
         value = '';
+      } else {
+        value = guardLiteral(key, value, 'header', warnings);
       }
+    } else if (guard) {
+      value = guardLiteral(key, value, guard, warnings);
     }
     out.push({ key, value });
     if (out.length >= MAX_PAIRS) break;
@@ -168,25 +185,58 @@ function sanitizeAuth(auth, warnings) {
   }
 }
 
+/** Blank literal credentials in a raw body: JSON ("password": "x") and form-style (password=x) pairs. */
+function guardRawBody(raw, warnings) {
+  const json = /("(?:[^"\\\n]|\\.){1,100}"\s*:\s*)"((?:[^"\\]|\\.)*)"/g;
+  let out = raw.replace(json, (m, head, val) => {
+    const name = head.replace(/\s*:\s*$/, '').slice(1, -1);
+    return guardLiteral(name, val, 'body field', warnings) === val ? m : `${head}""`;
+  });
+  if (!/^\s*[[{<]/.test(out)) {
+    out = out.replace(/(^|&)([A-Za-z0-9_.-]{1,100})=([^&\n]*)/g, (m, amp, name, val) => (guardLiteral(name, val, 'body field', warnings) === val ? m : `${amp}${name}=`));
+  }
+  return out;
+}
+
 function sanitizeBody(body, warnings) {
   if (!body || typeof body !== 'object') return { mode: 'none' };
   switch (body.mode) {
     case 'raw': {
       const raw = typeof body.raw === 'string' ? body.raw.slice(0, 20000) : '';
       if (!raw) return { mode: 'none' };
-      return { mode: 'raw', raw, language: ['json', 'text', 'xml', 'html', 'javascript'].includes(body.language) ? body.language : 'json' };
+      return { mode: 'raw', raw: guardRawBody(raw, warnings), language: ['json', 'text', 'xml', 'html', 'javascript'].includes(body.language) ? body.language : 'json' };
     }
-    case 'formdata': return { mode: 'formdata', formdata: sanitizePairs(body.formdata, { warnings }) };
-    case 'urlencoded': return { mode: 'urlencoded', urlencoded: sanitizePairs(body.urlencoded, { warnings }) };
+    case 'formdata': return { mode: 'formdata', formdata: sanitizePairs(body.formdata, { guard: 'body field', warnings }) };
+    case 'urlencoded': return { mode: 'urlencoded', urlencoded: sanitizePairs(body.urlencoded, { guard: 'body field', warnings }) };
     default: return { mode: 'none' };
   }
 }
 
+/** Same rule as the client (utils/ai/draftToItem.ts): `host:port` is not a scheme, `javascript:`/`data:`/`file:` are. */
+function hasForeignScheme(u) {
+  const m = /^([a-z][a-z0-9+.-]*):/i.exec(u);
+  if (!m || /^https?$/i.test(m[1])) return false;
+  if (DANGEROUS_SCHEMES.has(m[1].toLowerCase())) return true;
+  return !/^\d{1,5}(?:[/?#]|$)/.test(u.slice(m[0].length)); // `localhost:3000/x`, `api.example.com:8080` are host:port
+}
+
 function sanitizeUrl(url, warnings) {
-  const u = oneLine(url, MAX_URL_CHARS);
-  if (/^[a-z][a-z0-9+.-]*:/i.test(u) && !/^https?:/i.test(u)) {
+  let u = oneLine(url, MAX_URL_CHARS);
+  if (hasForeignScheme(u)) {
     warnings.push('The URL used an unsupported scheme and was cleared.');
     return '';
+  }
+  const q = u.indexOf('?');
+  if (q !== -1) {
+    const hash = u.indexOf('#', q);
+    const query = u.slice(q + 1, hash === -1 ? undefined : hash);
+    const guarded = query.split('&').map((part) => {
+      const eq = part.indexOf('=');
+      if (eq === -1) return part;
+      const name = part.slice(0, eq);
+      return `${name}=${guardLiteral(name, part.slice(eq + 1), 'query parameter', warnings)}`;
+    }).join('&');
+    u = `${u.slice(0, q + 1)}${guarded}${hash === -1 ? '' : u.slice(hash)}`;
   }
   return u;
 }
@@ -228,7 +278,7 @@ function sanitizeDraft(data, warnings) {
     method: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].includes(d.method) ? d.method : 'GET',
     url: sanitizeUrl(d.url, warnings),
     headers: sanitizePairs(d.headers, { credentialGuard: true, warnings }),
-    query: sanitizePairs(d.query, { warnings }),
+    query: sanitizePairs(d.query, { guard: 'query parameter', warnings }),
     body: sanitizeBody(d.body, warnings),
     ...(auth ? { auth } : {}),
     tests,
@@ -242,7 +292,10 @@ function standInResponse(tests) {
   return { status: m ? Number(m[1]) : 200, statusText: '', headers: { 'content-type': 'application/json' }, body: '{}', responseTime: 100 };
 }
 
-/** Dry-run the scripts of a draft. Returns the list of problems (empty = validated). */
+/**
+ * Dry-run the scripts of a draft. Returns the list of problems (empty = validated). A problem flagged
+ * `refused` means the security screen rejected the script: it was never executed and must not be offered.
+ */
 async function validateScripts(draft) {
   const errors = [];
   const response = standInResponse(draft.tests);
@@ -250,7 +303,7 @@ async function validateScripts(draft) {
     const code = draft[field];
     if (!code) continue;
     const v = await dryRunScript(code, { response, mode: 'lenient' });
-    if (!v.ok) errors.push({ field, reason: oneLine(neutralizeAiText(v.reason || 'failed'), 240) });
+    if (!v.ok) errors.push({ field, reason: oneLine(neutralizeAiText(v.reason || 'failed'), 240), ...(v.screened === false ? { refused: true } : {}) });
   }
   return errors;
 }
@@ -311,9 +364,18 @@ async function generateRequest(input) {
     }
   }
 
+  // A script the security screen refused is removed from the draft: it is never shown as applicable.
+  const removed = [];
+  for (const e of errors.filter(x => x.refused)) {
+    draft[e.field] = '';
+    removed.push({ field: e.field, reason: e.reason });
+    warnings.push(`The ${e.field === 'tests' ? 'test' : 'pre-request'} script was refused for security reasons and removed from the proposal.`);
+  }
+  errors = errors.filter(x => !x.refused);
+
   const check = validateOutput('requestDraft', { ...draft, auth: draft.auth, preRequest: draft.preRequest });
   if (!check.ok) throw new AiError('INVALID_OUTPUT', `The generated request is not valid (${check.formatted})`);
-  return { draft, validation: { validated: errors.length === 0, errors }, warnings: [...new Set(warnings)].slice(0, 10), usage, retried };
+  return { draft, validation: { validated: errors.length === 0, errors, removed }, warnings: [...new Set(warnings)].slice(0, 10), usage, retried };
 }
 
 module.exports = { generateRequest, sanitizeDraft, validateScripts, captureExpression, describeItem, fitPrompt };

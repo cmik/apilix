@@ -86,12 +86,22 @@ test('assertion mismatches against the stand-in response are not errors', async 
   assert.equal(r.validation.validated, true);
 });
 
-test('a hostile generated script is not executed and the proposal is not validated', async () => {
-  globalThis.__CANARY2__ = 'intact';
-  const evil = draft({ tests: "apx.test('x', () => { Object['constructor']('globalThis.__CANARY2__ = 1')(); });", variablesToCapture: [] });
+test('a script refused by the security screen is removed from the proposal, never offered', async () => {
+  const evil = draft({ tests: "apx.test('x', () => { Object['constructor']('return 1')(); });", preRequest: "apx.environment.set('a', 'b'); while (true) {}", variablesToCapture: [] });
   const r = await generateRequest({ provider: fake([evil, evil]), instruction: 'x' });
+  assert.equal(r.draft.tests, '');
+  assert.equal(r.draft.preRequest, '');
+  assert.equal(r.validation.validated, true, 'nothing refused remains to validate');
+  assert.deepEqual(r.validation.removed.map(x => x.field).sort(), ['preRequest', 'tests']);
+  assert.ok(r.warnings.some(w => /refused for security/.test(w)));
+});
+
+test('a script that passes the screen but fails its dry-run stays, flagged not validated', async () => {
+  const bad = draft({ tests: "apx.test('x', () => { apx.nope(); });", variablesToCapture: [] });
+  const r = await generateRequest({ provider: fake([bad, bad]), instruction: 'x' });
   assert.equal(r.validation.validated, false);
-  assert.equal(globalThis.__CANARY2__, 'intact');
+  assert.ok(r.draft.tests.includes('apx.nope'));
+  assert.deepEqual(r.validation.removed, []);
 });
 
 test('schema-invalid output twice -> INVALID_OUTPUT (propagated by the provider layer)', async () => {
@@ -162,4 +172,37 @@ test('context shrinks (fewer examples) to fit, cost computed on the real prompt;
   assert.ok(Math.ceil(sent / 4) <= 1400 - Math.floor(1400 * 0.35));
   await assert.rejects(() => generateRequest({ provider: fake([draft()]), instruction: 'x', maxContextTokens: 500 }), (e) => e.code === 'TOO_LARGE');
   await assert.rejects(() => generateRequest({ provider: fake([draft()]), instruction: '   ' }), (e) => e.code === 'BAD_REQUEST');
+});
+
+test('sanitizeUrl keeps host:port URLs and clears every non-http(s) scheme', () => {
+  const w = [];
+  for (const u of ['localhost:3000/users', 'api.example.com:8080/x', '127.0.0.1:8080', 'https://a.test/x', 'http://a.test', '{{baseUrl}}/users', '/users']) {
+    assert.equal(sanitizeDraft({ name: 'n', method: 'GET', url: u }, w).url, u, u);
+  }
+  assert.deepEqual(w, []);
+  for (const u of ['javascript:alert(1)', 'javascript:1;alert(1)', 'javascript:80/alert(1)', 'JaVaScRiPt:alert(1)', 'data:text/html,<b>x</b>', 'data:1', 'file:///etc/passwd', 'ftp://a.test', 'mailto:a@b.test', 'vbscript:x']) {
+    const ww = [];
+    assert.equal(sanitizeDraft({ name: 'n', method: 'GET', url: u }, ww).url, '', u);
+    assert.ok(ww.some(x => /unsupported scheme/.test(x)), u);
+  }
+});
+
+test('credential guard covers the query string, raw bodies, form fields and X-*-Token style headers', () => {
+  const w = [];
+  const d = sanitizeDraft({
+    name: 'n', method: 'POST',
+    url: 'https://a.test/x?api_key=sk-live-1234567890&page=2&token={{tok}}',
+    headers: [{ key: 'X-Secret', value: 'hunter2hunter2' }, { key: 'X-Custom-Token', value: 'abcdef123456' }, { key: 'X-Foo-Key', value: 'abc' }, { key: 'X-Tenant', value: 'acme' }, { key: 'X-Custom-Token-2', value: '{{tok}}' }],
+    query: [{ key: 'access_token', value: 'literal-token-value' }, { key: 'limit', value: '10' }],
+    body: { mode: 'raw', raw: '{"password": "hunter2hunter2", "max_tokens": 100, "name": "bob", "client_secret": "{{cs}}"}', language: 'json' },
+  }, w);
+  assert.equal(d.url, 'https://a.test/x?api_key=&page=2&token={{tok}}');
+  assert.deepEqual(d.headers.map(h => [h.key, h.value]), [['X-Secret', ''], ['X-Custom-Token', ''], ['X-Foo-Key', ''], ['X-Tenant', 'acme'], ['X-Custom-Token-2', '{{tok}}']]);
+  assert.deepEqual(d.query, [{ key: 'access_token', value: '' }, { key: 'limit', value: '10' }]);
+  assert.equal(d.body.raw, '{"password": "", "max_tokens": 100, "name": "bob", "client_secret": "{{cs}}"}');
+  const form = sanitizeDraft({ name: 'n', method: 'POST', url: 'https://a.test', body: { mode: 'urlencoded', urlencoded: [{ key: 'password', value: 'abc12345' }, { key: 'user', value: 'bob' }] } }, []);
+  assert.deepEqual(form.body.urlencoded, [{ key: 'password', value: '' }, { key: 'user', value: 'bob' }]);
+  const rawForm = sanitizeDraft({ name: 'n', method: 'POST', url: 'https://a.test', body: { mode: 'raw', raw: 'user=bob&password=abc12345', language: 'text' } }, []);
+  assert.equal(rawForm.body.raw, 'user=bob&password=');
+  assert.ok(w.length >= 6);
 });

@@ -187,6 +187,20 @@ test('/generate-request retries once on a failing script, then flags the draft a
   } finally { await fake.close(); }
 });
 
+test('/generate-request removes a script refused by the security screen and says so', async () => {
+  const fake = await startFakeProvider(chatReply(draftBody({ tests: "apx.test('x', () => { Object['constructor']('return 1')(); });", variablesToCapture: [] })));
+  try {
+    await withAiServer(async ({ call }) => {
+      await call('PUT', '/config', { settings: settings({ baseUrl: fake.url, features: { nlGenerate: true } }), apiKey: KEY });
+      const r = await call('POST', '/generate-request', genBody());
+      assert.equal(r.status, 200);
+      assert.equal(r.json.draft.tests, '');
+      assert.equal(r.json.validation.removed[0].field, 'tests');
+      assert.ok(r.json.warnings.some(w => /refused for security/.test(w)));
+    });
+  } finally { await fake.close(); }
+});
+
 test('/generate-request: invalid structure twice -> 422 INVALID_OUTPUT after one retry', async () => {
   const fake = await startFakeProvider(chatReply({ name: 'x', method: 'TRACE', url: 5 }));
   try {
