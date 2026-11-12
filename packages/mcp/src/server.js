@@ -6,6 +6,8 @@ const { createRedactor } = require('./redact');
 const { WorkspaceError } = require('./workspace');
 const { okResult, failResult, safeMessage } = require('./common');
 const readTools = require('./tools');
+const execTools = require('./exec-tools');
+const { createSession } = require('./exec');
 
 const INSTRUCTIONS = [
   'Apilix exposes API collections stored in a workspace folder.',
@@ -28,10 +30,10 @@ function createMcpServer(cfg) {
   const log = cfg.log || (() => {});
   const redactor = createRedactor({ includeCredentials: opts.includeCredentials });
   const limits = { maxOutputChars: opts.maxOutputChars, maxFileBytes: opts.maxFileBytes };
-  const ajv = new Ajv({ allErrors: false, strict: true, coerceTypes: false, useDefaults: false });
+  const ajv = new Ajv({ allErrors: false, strict: true, allowUnionTypes: true, coerceTypes: false, useDefaults: false });
 
   const ctx = {
-    opts, workspaces, redactor, limits, session: cfg.session || null, log,
+    opts, workspaces, redactor, limits, session: cfg.session || createSession(), log,
     async loadCollection(id) {
       const c = await workspaces.loadCollection(id);
       redactor.addCollection(c.value);
@@ -44,7 +46,7 @@ function createMcpServer(cfg) {
     },
   };
 
-  const all = [...readTools.tools, ...(cfg.extraTools || [])].map((t) => ({ ...t, validate: ajv.compile(t.inputSchema) }));
+  const all = [...readTools.tools, ...execTools.tools, ...(cfg.extraTools || [])].map((t) => ({ ...t, validate: ajv.compile(t.inputSchema) }));
   // Tools gated by a flag are listed only when enabled; calling them anyway returns an explanatory error.
   const enabled = (t) => !t.enabled || t.enabled(opts);
   const visible = () => all.filter(enabled);

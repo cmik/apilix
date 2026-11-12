@@ -20,6 +20,10 @@ const REDACTED = core.REDACTED;
 const MIN_SECRET_LENGTH = 4;
 const MAX_SECRETS = 2000;
 
+function decodeSafe(s) {
+  try { return decodeURIComponent(s); } catch { return s; }
+}
+
 function createRedactor({ includeCredentials = false } = {}) {
   /** values that must never be returned, whatever --include-credentials says */
   const hardSecrets = new Set();
@@ -61,6 +65,37 @@ function createRedactor({ includeCredentials = false } = {}) {
         }
       }
     };
+    const addQueryString = (qs) => {
+      for (const pair of String(qs).split('&')) {
+        const i = pair.indexOf('=');
+        if (i > 0 && core.isSensitiveKey(pair.slice(0, i))) add(softSecrets, decodeSafe(pair.slice(i + 1)));
+      }
+    };
+    const walkJson = (node, forced, depth) => {
+      if (depth > 20) return;
+      if (Array.isArray(node)) { for (const n of node) walkJson(n, forced, depth + 1); return; }
+      if (node && typeof node === 'object') { for (const [k, v] of Object.entries(node)) walkJson(v, forced || core.isSensitiveKey(k), depth + 1); return; }
+      if (forced && typeof node === 'string') add(softSecrets, node);
+    };
+    /** Literal values under credential-looking names: URL query, urlencoded/form bodies, JSON bodies. */
+    const visitRequestLiterals = (req) => {
+      const raw = typeof req.url === 'string' ? req.url : (req.url && typeof req.url.raw === 'string' ? req.url.raw : '');
+      const q = raw.indexOf('?');
+      if (q >= 0) addQueryString(raw.slice(q + 1).split('#')[0]);
+      for (const row of (req.url && Array.isArray(req.url.query) ? req.url.query : [])) {
+        if (row && typeof row.key === 'string' && core.isSensitiveKey(row.key) && typeof row.value === 'string') add(softSecrets, row.value);
+      }
+      const b = req.body;
+      if (!b || typeof b !== 'object') return;
+      for (const row of [...(Array.isArray(b.urlencoded) ? b.urlencoded : []), ...(Array.isArray(b.formdata) ? b.formdata : [])]) {
+        if (row && typeof row.key === 'string' && core.isSensitiveKey(row.key) && typeof row.value === 'string') add(softSecrets, row.value);
+      }
+      if (b.mode === 'raw' && typeof b.raw === 'string' && b.raw.length < 200000) {
+        const t = b.raw.trim();
+        if (t.startsWith('{') || t.startsWith('[')) { try { walkJson(JSON.parse(t), false, 0); } catch { /* not JSON */ } }
+        else if (t.includes('=')) addQueryString(t);
+      }
+    };
     const visit = (node, depth) => {
       if (!node || typeof node !== 'object' || depth > 40 || seen.has(node)) return;
       seen.add(node);
@@ -76,6 +111,7 @@ function createRedactor({ includeCredentials = false } = {}) {
           }
         }
       }
+      if (req && typeof req === 'object') visitRequestLiterals(req);
       for (const v of Array.isArray(node.variable) ? node.variable : []) {
         if (v && typeof v.key === 'string' && (v.type === 'secret' || core.isSensitiveName(v.key))) add(softSecrets, v.value == null ? '' : String(v.value));
       }

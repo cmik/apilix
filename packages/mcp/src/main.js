@@ -4,6 +4,7 @@ const path = require('node:path');
 const { parseMcpArgs, helpText } = require('./args');
 const { createWorkspaces } = require('./workspace');
 const { createMcpServer } = require('./server');
+const { installHostGuard } = require('./host-guard');
 
 const pkg = require('../package.json');
 
@@ -57,11 +58,17 @@ async function runMcp(argv, io = {}, hooks = {}) {
   }
 
   if (opts.includeCredentials) log('warning: --include-credentials is set: credentials are NOT redacted in what is returned to the agent (secret-flagged environment values stay hidden).');
+  if (!opts.noRun && opts.allowHosts.length === 0) log('warning: run tools can reach ANY host this machine can reach; use --allow-host <pattern> to restrict, or --no-run to disable them.');
   log(`ready (workspaces: ${workspaces.labels.join(', ')}; write ${opts.allowWrite ? 'ENABLED' : 'disabled'}; run ${opts.noRun ? 'disabled' : 'enabled'}${opts.noRun ? '' : `; hosts ${opts.allowHosts.length ? opts.allowHosts.join(',') : 'unrestricted'}`})`);
 
+  let guard = null;
+  if (!opts.noRun && opts.allowHosts.length > 0) {
+    guard = installHostGuard(opts.allowHosts, { onDeny: (h) => log(`blocked outgoing connection to "${h}" (not in --allow-host)`) });
+  }
   try {
     await server.serve(stdin, stdout);
   } finally {
+    if (guard) guard.uninstall();
     for (const r of restore) r();
   }
   await new Promise((resolve) => stdout.write('', resolve));

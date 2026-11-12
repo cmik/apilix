@@ -30,10 +30,17 @@ function startServer(args = [], { cwd, env } = {}) {
     }
   });
   child.stderr.on('data', (d) => { stderr += d.toString('utf8'); });
-  const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
+  let exitInfo = null;
+  const exited = new Promise((resolve) => child.on('exit', (code, signal) => {
+    exitInfo = { code, signal };
+    for (const [, fn] of waiting) fn({ error: { code: -1, message: `server exited (${code}): ${stderr.slice(0, 500)}` } });
+    waiting.clear();
+    resolve(exitInfo);
+  }));
 
   function request(method, params, { timeoutMs = 60000 } = {}) {
     const id = nextId++;
+    if (exitInfo) return Promise.resolve({ error: { code: -1, message: `server exited (${exitInfo.code}): ${stderr.slice(0, 500)}` } });
     return new Promise((resolve, reject) => {
       const t = setTimeout(() => { waiting.delete(id); reject(new Error(`timeout waiting for ${method}`)); }, timeoutMs);
       waiting.set(id, (m) => { clearTimeout(t); resolve(m); });

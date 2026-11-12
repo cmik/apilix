@@ -66,3 +66,16 @@ test('clip adds an explicit truncation marker', () => {
   const r = createRedactor();
   assert.match(r.text('x'.repeat(50), 10), /^x{10}\.\.\.\[truncated 40 chars\]$/);
 });
+
+test('literal credentials found in request URLs, query rows, form and JSON bodies become secrets', () => {
+  const r = createRedactor();
+  r.addCollection({ info: { name: 'x' }, item: [
+    { name: 'a', request: { method: 'POST', url: { raw: 'https://h.test/p?x=1&client_secret=urlSecret_111222&ok=fine', query: [{ key: 'apikey', value: 'queryRow_333444' }] },
+      body: { mode: 'raw', raw: '{"user":"bob","nested":{"password":"jsonPw_555666"},"list":[{"token":"jsonTok_777888"}]}' } } },
+    { name: 'b', request: { method: 'POST', url: 'x', body: { mode: 'urlencoded', urlencoded: [{ key: 'password', value: 'formPw_999000' }, { key: 'name', value: 'plainValue' }] } } },
+  ] });
+  for (const s of ['urlSecret_111222', 'queryRow_333444', 'jsonPw_555666', 'jsonTok_777888', 'formPw_999000']) {
+    assert.ok(!r.scrub(`echo ${s} echo`).includes(s), s);
+  }
+  assert.equal(r.scrub('plainValue bob fine'), 'plainValue bob fine');
+});
