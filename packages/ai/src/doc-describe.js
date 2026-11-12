@@ -42,7 +42,7 @@ function missing(list, skip) {
 }
 
 /** Entries (collection, folders, requests) that lack a description or have undocumented parameters. */
-function collectEntries(model, warnings) {
+function collectEntries(model, warnings, stats) {
   const entries = [];
   if (!model.description) entries.push({ id: COLLECTION_KEY, kind: 'collection', name: clip(model.title, MAX_NAME_CHARS) });
   const walk = (nodes, trail) => {
@@ -84,18 +84,19 @@ function collectEntries(model, warnings) {
       entries.push(entry);
     }
   }
-  return dropDuplicateIds(entries, warnings);
+  return dropDuplicateIds(entries, warnings, stats);
 }
 
 /**
  * Answers are matched back by id, so two entries sharing an id (common after an import or a
  * duplication) would both receive the same text, one of them wrongly. Skip every such entry.
  */
-function dropDuplicateIds(entries, warnings) {
+function dropDuplicateIds(entries, warnings, stats) {
   const counts = new Map();
   for (const e of entries) counts.set(e.id, (counts.get(e.id) || 0) + 1);
   const dup = [...counts].filter(([, n]) => n > 1).map(([id]) => id);
   if (!dup.length) return entries;
+  if (stats) stats.skipped += entries.filter(e => counts.get(e.id) > 1).length;
   if (warnings) {
     warnings.push(`Skipped ${dup.length} id(s) shared by several items (${dup.slice(0, 3).map(String).join(', ')}${dup.length > 3 ? ', …' : ''}): give them unique ids to get descriptions.`);
   }
@@ -103,7 +104,7 @@ function dropDuplicateIds(entries, warnings) {
 }
 
 /** Split entries into batches that fit the context budget. */
-function buildBatches(entries, { maxContextTokens = 8000, secretValues, redactSecrets = true, warnings } = {}) {
+function buildBatches(entries, { maxContextTokens = 8000, secretValues, redactSecrets = true, warnings, stats } = {}) {
   const budget = Math.max(500, maxContextTokens - OUTPUT_RESERVE_TOKENS - SYSTEM_RESERVE_TOKENS);
   const batches = [];
   let current = [];
@@ -116,6 +117,7 @@ function buildBatches(entries, { maxContextTokens = 8000, secretValues, redactSe
     // Cost what is actually sent: the prompt pretty-prints each batch (indentation is not free).
     const cost = estimateTokens(JSON.stringify(entry, null, 1)) + 2;
     if (cost > budget) {
+      if (stats) stats.skipped++;
       if (warnings) warnings.push(`Skipped "${clip(entry.name || entry.id, 60)}": too large for the context budget even after trimming.`);
       continue;
     }
@@ -174,17 +176,20 @@ function sanitizeAnswer(batch, items) {
  * @param {{ provider: { complete: Function }, model: object, language?: string,
  *   maxContextTokens?: number, secretValues?: string[], redactSecrets?: boolean, signal?: AbortSignal }} input
  * @returns {Promise<{ descriptions: Record<string, {description?: string, params?: Record<string,string>}>,
- *   warnings: string[], usage: {inputTokens:number, outputTokens:number}, requested: number }>}
+ *   warnings: string[], usage: {inputTokens:number, outputTokens:number}, requested: number,
+ *   failedBatches: number, skipped: number }>}
  */
 async function describeDocs({ provider, model, language, maxContextTokens, secretValues, redactSecrets, signal }) {
   const warnings = [];
-  const entries = collectEntries(model, warnings);
+  const stats = { skipped: 0 };
+  const entries = collectEntries(model, warnings, stats);
   const usage = { inputTokens: 0, outputTokens: 0 };
-  if (!entries.length) return { descriptions: {}, warnings, usage, requested: 0, failedBatches: 0 };
+  if (!entries.length) return { descriptions: {}, warnings, usage, requested: 0, failedBatches: 0, skipped: stats.skipped };
 
-  let batches = buildBatches(entries, { maxContextTokens, secretValues, redactSecrets, warnings });
+  let batches = buildBatches(entries, { maxContextTokens, secretValues, redactSecrets, warnings, stats });
   if (batches.length > MAX_BATCHES) {
     warnings.push(`Too many entries: only the first ${MAX_BATCHES} batches were described.`);
+    stats.skipped += batches.slice(MAX_BATCHES).reduce((n, b) => n + b.length, 0);
     batches = batches.slice(0, MAX_BATCHES);
   }
   const descriptions = {};
@@ -221,8 +226,8 @@ async function describeDocs({ provider, model, language, maxContextTokens, secre
       }
     }
   }
-  // `failedBatches` > 0 means some entries could not be described (callers may treat that as an error).
-  return { descriptions, warnings, usage, requested: entries.length, failedBatches };
+  // `failedBatches` > 0 or `skipped` > 0 means some entries were not described (callers may treat that as an error).
+  return { descriptions, warnings, usage, requested: entries.length, failedBatches, skipped: stats.skipped };
 }
 
 module.exports = { describeDocs, paramKey, collectEntries, buildBatches, sanitizeAnswer, COLLECTION_KEY };

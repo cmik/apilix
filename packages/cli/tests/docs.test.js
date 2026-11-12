@@ -364,3 +364,21 @@ test('docs -e reads the environment file only once', async () => {
     assert.equal(reads, 1);
   } finally { fs.readFile = original; await fake.close(); }
 });
+
+test('docs --ai-describe --ai-strict: entries skipped (shared ids) make strict exit 1 even if no batch failed', async () => {
+  const dir = await fixtures();
+  const dupCol = { info: { name: 'Dup', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' }, item: [
+    { id: 'same', name: 'a', request: { method: 'GET', url: 'https://x.test/a' } },
+    { id: 'same', name: 'b', request: { method: 'GET', url: 'https://x.test/b' } },
+  ] };
+  await fs.writeFile(path.join(dir, 'dup.json'), JSON.stringify(dupCol));
+  const ok = await fakeLlm(llmReply([]));
+  try {
+    const env = { APILIX_AI_PROVIDER: 'openai-compat', APILIX_AI_MODEL: 'm', APILIX_AI_BASE_URL: ok.url };
+    const strict = await runAi(['docs', 'dup.json', '--format', 'md', '--ai-describe', '--ai-strict'], dir, env);
+    assert.equal(strict.code, 1, strict.stderr);
+    assert.match(strict.stderr, /Skipped 1 id/);
+    const lax = await runAi(['docs', 'dup.json', '--format', 'md', '--ai-describe'], dir, env);
+    assert.equal(lax.code, 0, lax.stderr);
+  } finally { await ok.close(); }
+});

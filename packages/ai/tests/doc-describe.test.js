@@ -192,3 +192,26 @@ test('whitespace-only descriptions are collected as undocumented', () => {
   const ids = collectEntries(buildDocModel(col, {})).map(e => e.id);
   assert.deepEqual(ids.sort(), ['__collection__', 'r']);
 });
+
+test('entries skipped for size or truncated by the batch cap are reported in `skipped`', async () => {
+  const query = Array.from({ length: 40 }, (_, i) => ({ key: `p${i}`, value: 'x'.repeat(80) }));
+  const huge = { info: { name: 'H', description: 'd' }, item: [{ id: 'big', name: 'big', request: { method: 'GET', url: { raw: 'https://x/a', query } } }] };
+  const provider = fakeProvider({ items: [] });
+  const tiny = await describeDocs({ provider, model: buildDocModel(huge, {}), maxContextTokens: 100 });
+  assert.equal(tiny.failedBatches, 0);
+  assert.ok(tiny.skipped > 0, 'oversized entries count as skipped');
+  const ok = await describeDocs({ provider: fakeProvider({ items: [] }), model: buildDocModel(manyReq(3), {}) });
+  assert.equal(ok.skipped, 0);
+  const many = await describeDocs({ provider: fakeProvider({ items: [] }), model: buildDocModel(manyReq(2000), {}) });
+  assert.match(many.warnings.join(' '), /Too many entries/);
+  assert.ok(many.skipped > 0, 'entries beyond the batch cap count as skipped');
+});
+
+test('entries sharing an id count as skipped', async () => {
+  const col = { info: { name: 'D', description: '' }, item: [
+    { id: 'same', name: 'a', request: { method: 'GET', url: 'https://x/a' } },
+    { id: 'same', name: 'b', request: { method: 'GET', url: 'https://x/b' } },
+  ] };
+  const r = await describeDocs({ provider: fakeProvider({ items: [] }), model: buildDocModel(col, {}) });
+  assert.ok(r.skipped >= 2);
+});

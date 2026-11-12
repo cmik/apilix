@@ -871,7 +871,7 @@ async function describeWithAi({ collection, folder, includeExamples, language, s
     const r = await ai.describeDocs({ provider, model, language, secretValues });
     const n = Object.keys(r.descriptions).length;
     io.stderr.write(`AI: ${n} description${n === 1 ? '' : 's'} generated (${r.usage.inputTokens} input / ${r.usage.outputTokens} output tokens)\n`);
-    return { descriptions: r.descriptions, warnings: r.warnings, failed: r.failedBatches > 0 };
+    return { descriptions: r.descriptions, warnings: r.warnings, failed: r.failedBatches > 0 || r.skipped > 0 };
   } catch (err) {
     const detail = err && err.code ? `${err.message} (${err.code})` : (err && err.message) || 'unknown error';
     return { descriptions: undefined, warnings: [`AI descriptions skipped: ${detail}`], failed: true };
