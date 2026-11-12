@@ -49,6 +49,85 @@ test('network and flow-control APIs are refused', () => {
   refused(`fetch('http://example.com');`);
 });
 
+test('B1 (descriptor chain), B2 (regex/division desync) and B3 (U+2028 comment) are refused by the filter', () => {
+  const b1 = `const OP = Object.getOwnPropertyDescriptor((Object), 'proto'+'type').value; const getter = Object.getOwnPropertyDescriptor(OP, '__pro'+'to__').get; const FP = getter.call((Object)); const F = Object.getOwnPropertyDescriptor(FP, 'constr'+'uctor').value; F('return process.pid')()`;
+  refused(b1);
+  refused(`if (1) /'/.test('a'); ${b1} /'/.test('b')`);
+  refused(`if (1) /'/.test('a'); const x = 1; /'/.test('b')`);
+  refused(`// note const F=Object['constructor']; apx.environment.set('E', F('return process.pid')());`);
+  refused(`// note const F=Object['constructor'];`);
+  refused(`apx.test('x', () => { x. constructor; });`);
+  refused(`apx.test('x', () => { x . constructor; });`);
+});
+
+test('regex versus division is decided conservatively', () => {
+  ok(`apx.expect(a / 2).to.equal(1);`);
+  ok(`const r = /ab+c/i.test(x);`);
+  ok(`const half = total / 2;`);
+  refused(`const half = (a + b) / 2;`);   // ambiguous after ")": refused
+  refused(`if (x) /re/.test(y);`);
+  refused(`x++ /re/.test(y);`);
+  refused(`const o = {}; } /re/;`);
+  refused(`const r = /[/]/v.test(x);`);
+});
+
+test('numbers cannot hide a property access', () => {
+  refused(`1..constructor.constructor('return 1')();`);
+  refused(`0x1.constructor`);
+  refused(`1_0constructor`);
+  refused(`5.toString()`);
+});
+
+test('property-lookup helpers and reflection are refused', () => {
+  for (const code of [
+    `Object.getOwnPropertyDescriptor(a, 'b')`, `Object.getOwnPropertyDescriptors(a)`, `Object.getOwnPropertyNames(a)`,
+    `Object.getPrototypeOf(a)`, `Object.setPrototypeOf(a, b)`, `Object.entries(a)`, `Object.fromEntries(a)`, `Object.hasOwn(a, 'b')`,
+    `f.call(a)`, `f.apply(a, [])`, `f.bind(a)`, `Reflect.ownKeys(a)`, `new Proxy({}, {})`, `Symbol.iterator`, `globalThis.x`, `import('fs')`,
+    `with (a) { b }`, `class A {}`, `const o = { get x() { return 1; } };`, `const o = { set x(v) {} };`,
+  ]) refused(code);
+});
+
+test('unbounded loops and awaits in loops are refused; evidently bounded loops pass', () => {
+  refused(`while (true) {}`);
+  refused(`do { x++; } while (x < 3);`);
+  refused(`for (;;) {}`);
+  refused(`for (let i = 0; ; i++) {}`);
+  refused(`for (let i = 0; i < 10; i--) {}`);
+  refused(`for (let i = 0; i < n; i++) {}`);
+  refused(`for await (const x of xs) {}`);
+  refused(`while(true){ await null; }`);
+  refused(`for (const x of xs) { await f(x); }`);
+  ok(`let s = 0; for (let i = 0; i < 10; i++) { s += i; }`);
+  ok(`for (let i = 0; i < json.items.length; ++i) { s += 1; }`);
+  ok(`for (const item of json.items) { apx.expect(item.id).to.be.a('string'); }`);
+  ok(`for (const k in json) { s += 1; }`);
+  ok(`await Promise.resolve(1);`);
+});
+
+test('string concatenation cannot build a property name', () => {
+  refused(`x['a' + 'b']`);
+  refused(`x['con' + 'structor']`);
+  refused(`x[\`a\${b}\`]`);
+  refused(`x[k]`);
+  refused(`x['a'.concat('b')]`);
+  ok(`x['a']`);
+  ok(`x[0]`);
+});
+
+test('escape sequences, interpolations and non-ASCII code are refused', () => {
+  refused(`const s = 'con\\x73tructor';`);
+  refused(`const s = 'con\\
+structor';`);
+  refused(`const s = 'con\\u0073tructor';`);
+  refused('const s = `${ // \'\n}`; Object["constructor"];');
+  refused('const s = `${a + "x"}`;');
+  refused('const s = `${ {}.a }`;');
+  refused(`const café = 1;`);
+  refused(`const a = 1;\u0000`);
+  ok('const s = `n=${json.items.length} ${a + b}`;');
+  ok(`const s = "it\\'s";`);
+});
+
 test('unterminated or oversized input is refused, never thrown', () => {
   refused(`apx.test('x`);
   refused('`abc');

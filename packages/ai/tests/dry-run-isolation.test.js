@@ -125,7 +125,8 @@ test('B4 through dryRunScript: the verdict is a rejection, a concurrent HTTP req
 test('an aborted request kills its child immediately', async () => {
   const ac = new AbortController();
   let pid = 0;
-  const running = dryRunScript(`while(true){}`, { response: RESPONSE, signal: ac.signal, onSpawn: (p) => { pid = p; } });
+  // Passes the filter (no loop keyword) yet never finishes: a promise storm.
+  const running = dryRunScript(`Promise.resolve().then(function loop(){ Promise.resolve().then(loop); });`, { response: RESPONSE, signal: ac.signal, onSpawn: (p) => { pid = p; } });
   await new Promise(r => setTimeout(r, 200));
   assert.ok(pid > 0 && alive(pid), 'child should be running');
   const t0 = Date.now();
@@ -139,7 +140,12 @@ test('an aborted request kills its child immediately', async () => {
 });
 
 test('a child that dies (OOM / crash) means a rejected script, not a server error', async () => {
-  const v = await dryRunScript(`const keep = []; while (true) keep.push(new Array(2**22).fill(1));`, { response: RESPONSE });
+  const oom = `const keep = []; while (true) keep.push(new Array(2**22).fill(1));`;
+  const raw = await runInChild(payload(oom));
+  assert.equal(raw.ok, false);
+  assert.equal(raw.error, 'child crashed');
+  // Through the full path a filter-passing OOM (a bounded-looking loop) is also just a rejection.
+  const v = await dryRunScript(`const keep = []; for (let i = 0; i < 100000; i++) { keep.push(new Array(2**22).fill(i)); }`, { response: RESPONSE });
   assert.equal(v.ok, false);
   assert.match(v.reason, /could not be run|did not finish/);
 });
