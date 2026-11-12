@@ -26,6 +26,8 @@ export interface AssertionSuggestion {
   volatile?: boolean;
   /** Pre-checked in the UI. */
   recommended: boolean;
+  /** Where it comes from: the local inference (default) or the AI layer. */
+  source?: 'local' | 'ai';
 }
 
 export interface InferenceInput {
