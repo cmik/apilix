@@ -124,3 +124,56 @@ test('secret in cookie header and environment-like nested JSON is masked in resp
   assert.ok(!s.includes('tok-987654'));
   assert.match(s, /\\"id\\": 1/);
 });
+
+const { redactRequest, redactResponse, scrubTokenPatterns } = require('../src/redact');
+const JWT = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcDEF123_-xyz';
+
+test('header with a neutral name carrying a Bearer JWT is masked', () => {
+  const out = redactRequest({ method: 'GET', url: 'https://x.test/', header: [{ key: 'X-Custom', value: `Bearer ${JWT}` }, { key: 'X-Trace', value: 'abc' }] });
+  const s = json(out);
+  assert.ok(!s.includes('eyJhbGci'), s);
+  assert.ok(s.includes('"abc"'));
+});
+
+test('JWT, ghp_, sk-, xox and AKIA tokens in free-text body values are masked', () => {
+  const body = JSON.stringify({ note: `tok ghp_${'a'.repeat(36)} and ${JWT}`, other: 'sk-live-ABCDEFGH12345678', slack: 'xoxb-123456789012-abcdefABCDEF', aws: 'AKIAIOSFODNN7EXAMPLE', keep: 'hello' });
+  const { value } = redactContext({ response: { status: 200, body } });
+  const s = json(value);
+  for (const leak of ['ghp_aaaa', 'eyJhbGci', 'sk-live-ABCD', 'xoxb-1234', 'AKIAIOSFODNN7']) assert.ok(!s.includes(leak), leak);
+  assert.ok(s.includes('hello'));
+});
+
+test('URL with a sensitive query param inside a body value is masked', () => {
+  const { value } = redactContext({ response: { status: 200, body: '{"next":"https://api.test/cb?code=CODE1234&page=2"}' } });
+  assert.ok(!json(value).includes('CODE1234'));
+  assert.ok(json(value).includes('page=2'));
+});
+
+test('scripts: literal secret under a neutral variable name and URL credentials are masked', () => {
+  const src = [
+    'const k = "sk-live-ABCDEFGH12345678";',
+    'const u = "https://user:pw0rd@h.example.com/?token=TTTT7777&q=1";',
+    'const ok = "https://h.example.com/items?page=2";',
+  ].join('\n');
+  const { value } = redactContext({ scripts: { test: src } });
+  const out = value.scripts.test;
+  for (const leak of ['sk-live-ABCD', 'pw0rd', 'TTTT7777']) assert.ok(!out.includes(leak), leak);
+  assert.ok(out.includes('page=2'));
+});
+
+test('base64-encoded secret values are scrubbed', () => {
+  const secret = 'envSecretValue99';
+  const b64 = Buffer.from(secret).toString('base64');
+  const { value } = redactContext({
+    request: { method: 'GET', url: 'https://x.test/', header: [{ key: 'X-A', value: b64 }, { key: 'X-B', value: b64.replace(/=+$/, '') }] },
+  }, { secretValues: [secret] });
+  assert.ok(!json(value).includes(b64.replace(/=+$/, '')), json(value));
+});
+
+test('prose such as "Basic authentication" is not masked; {{var}} survives; redactSecrets:false keeps token shapes', () => {
+  assert.equal(scrubTokenPatterns('Use Basic authentication here'), 'Use Basic authentication here');
+  assert.equal(scrubTokenPatterns('Bearer {{token}}'), 'Bearer {{token}}');
+  assert.ok(!scrubTokenPatterns('Basic dXNlcjpwYXNz1234').includes('dXNlcjpw'));
+  const { value } = redactContext({ response: { status: 200, body: `{"note":"${JWT}"}` } }, { redactSecrets: false });
+  assert.ok(json(value).includes('eyJhbGci'));
+});

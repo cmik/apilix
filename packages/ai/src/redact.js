@@ -25,6 +25,9 @@ function normalizeSecrets(secretValues) {
     let enc = v;
     try { enc = encodeURIComponent(v); } catch { /* keep raw */ }
     if (enc !== v) list.push(enc);
+    // Secrets also travel base64-encoded (Basic auth, signed payloads, custom headers).
+    const b64 = Buffer.from(v, 'utf8').toString('base64');
+    list.push(b64, b64.replace(/=+$/, ''), b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''));
   }
   // Longest first so a secret containing another secret is masked entirely.
   return [...new Set(list)].sort((a, b) => b.length - a.length);
@@ -71,6 +74,32 @@ function redactScript(text) {
     return `${kq}${key}${kq}${sep}${q}${REDACTED}${q}`;
   });
   out = out.replace(AUTH_SCHEME_LITERAL, (_m, scheme) => `${scheme} ${REDACTED}`);
+  // user:pass@host and ?token=… inside URL literals (the by-name pass above only sees assignments).
+  if (/https?:\/\//i.test(out)) out = core.redactUrlsInText(out, false);
+  return out;
+}
+
+// Well-known credential shapes, masked wherever they appear (header values, bodies, scripts,
+// free text), whatever the surrounding field is called.
+const TOKEN_PATTERNS = [
+  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g,                    // JWT
+  /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/g,                 // GitHub
+  /\bsk-[A-Za-z0-9_-]{16,}/g,                                                       // sk-… (OpenAI, Anthropic, Stripe live)
+  /\bxox[abprs]-[A-Za-z0-9-]{10,}/g,                                                // Slack
+  /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,                                                // AWS access key id
+];
+const AUTH_SCHEME_ANYWHERE = /\b(Bearer|Basic|Token|Digest)(\s+)(?!\{\{)([A-Za-z0-9._~+/=-]{8,})/g;
+
+/** Mask well-known credential shapes in any text. Pure; {{variables}} are untouched. */
+function scrubTokenPatterns(text) {
+  if (typeof text !== 'string' || !text) return text;
+  let out = text;
+  for (const re of TOKEN_PATTERNS) out = out.replace(re, REDACTED);
+  out = out.replace(AUTH_SCHEME_ANYWHERE, (m, scheme, ws, cred) => {
+    // "Basic authentication" is prose; only mask non-Bearer schemes that look like a credential.
+    if (scheme !== 'Bearer' && !/[\d=+/]/.test(cred)) return m;
+    return `${scheme}${ws}${REDACTED}`;
+  });
   return out;
 }
 
@@ -89,9 +118,16 @@ function apply(st, str, fn) {
   if (typeof str !== 'string' || !str) return str === undefined || str === null ? '' : String(str);
   const before = countMarks(str);
   let out = fn ? fn(str) : str;
+  if (!st.include) out = scrubTokenPatterns(out);
   const scrubbed = scrubSecretValues(out, st.secrets);
   st.count += Math.max(0, countMarks(scrubbed) - before);
   return scrubbed;
+}
+
+/** Body text: by-name JSON/XML/form redaction, then URLs embedded in values (?code=…, user:pass@). */
+function redactBodyWithUrls(text, include) {
+  const out = core.redactBodyText(text, include);
+  return typeof out === 'string' && /https?:\/\//i.test(out) ? core.redactUrlsInText(out, include) : out;
 }
 
 function redactPairs(list, st) {
@@ -152,13 +188,13 @@ function redactAuth(auth, st) {
 function redactBody(body, st) {
   if (!body || typeof body !== 'object') return body;
   const out = { mode: body.mode };
-  if (body.raw !== undefined) out.raw = apply(st, body.raw, v => core.redactBodyText(v, st.include));
+  if (body.raw !== undefined) out.raw = apply(st, body.raw, v => redactBodyWithUrls(v, st.include));
   if (body.urlencoded) out.urlencoded = redactPairs(body.urlencoded, st);
   if (body.formdata) out.formdata = redactPairs(body.formdata, st);
   if (body.graphql) {
     out.graphql = {
       query: apply(st, body.graphql.query),
-      variables: apply(st, body.graphql.variables, v => core.redactBodyText(v, st.include)),
+      variables: apply(st, body.graphql.variables, v => redactBodyWithUrls(v, st.include)),
     };
   }
   return out;
@@ -186,7 +222,7 @@ function redactResponse(response, opts = {}) {
   if (!response || typeof response !== 'object') return response;
   const out = { status: response.status, statusText: response.statusText };
   if (response.headers) out.headers = redactHeaders(response.headers, st);
-  if (response.body !== undefined) out.body = apply(st, response.body, v => core.redactBodyText(v, st.include));
+  if (response.body !== undefined) out.body = apply(st, response.body, v => redactBodyWithUrls(v, st.include));
   return out;
 }
 
@@ -216,6 +252,7 @@ module.exports = {
   REDACTED,
   scrubSecretValues,
   redactScript,
+  scrubTokenPatterns,
   redactRequest,
   redactResponse,
   redactContext,
