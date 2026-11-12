@@ -87,6 +87,7 @@ function usage() {
     '  --snippets <list>            Comma-separated snippet languages (CLI supports: curl)',
     '  --theme <dark|light|auto>    HTML theme (default: dark)',
     '  --no-examples                Omit saved examples',
+    '  --no-images                  HTML: do not render images; show them as text links and block image loading (default: render)',
     '  --out <file>                 Write to a file instead of stdout',
   ].join('\n');
 }
@@ -624,6 +625,7 @@ function createProgram(io) {
     .option('--snippets <list>', 'Comma-separated snippet languages (curl)')
     .option('--theme <dark|light|auto>', 'HTML theme', 'dark')
     .option('--no-examples', 'Omit saved examples')
+    .option('--no-images', 'HTML only: render images as text links instead of loading them')
     .option('--out <file>', 'Write output to a file instead of stdout')
     .action((collectionPath, opts) => {
       parsed.command = 'docs';
@@ -639,6 +641,7 @@ function createProgram(io) {
         snippets: opts.snippets,
         theme: opts.theme,
         includeExamples: opts.examples !== false,
+        renderImages: opts.images !== false,
         outPath: opts.out,
       };
     });
@@ -860,6 +863,7 @@ async function runDocs(args, io) {
     secretVariableKeys,
     includeCredentials: d.includeCredentials,
     includeExamples: d.includeExamples,
+    renderImages: d.renderImages !== false,
     snippetLanguages,
     theme: d.theme,
   }, { snippetLanguages: CLI_SNIPPET_LANGUAGES });

@@ -33,6 +33,7 @@ export default function ExportDocsModal({ collection, folder, onClose }: ExportD
   const [snippets, setSnippets] = useState<Set<string>>(new Set());
   const [includeExamples, setIncludeExamples] = useState(true);
   const [theme, setTheme] = useState<DocsTheme>('dark');
+  const [renderImages, setRenderImages] = useState(true);
   const [includeCredentials, setIncludeCredentials] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -46,7 +47,8 @@ export default function ExportDocsModal({ collection, folder, onClose }: ExportD
     includeExamples,
     includeCredentials,
     theme,
-  }), [format, openapiFormat, openapiVersion, folder?.id, variableMode, snippets, includeExamples, includeCredentials, theme]);
+    renderImages,
+  }), [format, openapiFormat, openapiVersion, folder?.id, variableMode, snippets, includeExamples, includeCredentials, theme, renderImages]);
 
   const generated = useMemo<{ result: DocsResult | null; error: string | null }>(() => {
     try {
@@ -137,6 +139,10 @@ export default function ExportDocsModal({ collection, folder, onClose }: ExportD
                     <button key={t} onClick={() => setTheme(t)} className={segBtn(theme === t)}>{t[0].toUpperCase() + t.slice(1)}</button>
                   ))}
                 </div>
+                <label className="mt-2 flex items-start gap-2 text-xs text-slate-300 cursor-pointer">
+                  <input type="checkbox" className="mt-0.5 accent-orange-500" checked={renderImages} onChange={e => setRenderImages(e.target.checked)} />
+                  <span>Render images <span className="text-slate-500">(loads remote images when the file is opened)</span></span>
+                </label>
               </section>
             )}
 

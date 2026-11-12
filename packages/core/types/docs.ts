@@ -27,6 +27,14 @@ export interface DocsExportOptions {
   includeCredentials?: boolean;
   /** HTML theme. Default 'dark'. */
   theme?: DocsTheme;
+  /**
+   * HTML only. Render images from descriptions (`<img>` and `![alt](url)`). Default true.
+   * Privacy: with true, remote (http/https) images are fetched by the viewer when the
+   * file is opened, which discloses the viewer's IP address and the open event to the image host.
+   * With false the CSP is `img-src 'none'` and each image becomes a text link (alt text or URL).
+   * Markdown and OpenAPI output are unaffected (images stay in the description text).
+   */
+  renderImages?: boolean;
   /** Override the document title. */
   title?: string;
 }

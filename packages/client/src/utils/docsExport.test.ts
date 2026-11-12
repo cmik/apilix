@@ -173,4 +173,20 @@ describe('exportCollectionDocs escaped-form secret masking', () => {
     expect(v).toContain('a&b<c>\\"d\\\\e\\nf');
     expect(v).toContain('a&b<c>"d\\e<br>f');
   });
+
+  it('passes renderImages through to the HTML renderer (default on, off -> links and img-src none)', () => {
+    const col = makeCollection();
+    col.item[0].item![1].request!.description = 'pic ![logo](https://img.test/a.png) <img src="https://img.test/b.png" alt="bee">';
+    const on = exportCollectionDocs(col, { format: 'html' });
+    expect(on.content).toContain('<img src="https://img.test/a.png" alt="logo">');
+    expect(on.content).toContain('img-src data: https: http:');
+    const off = exportCollectionDocs(col, { format: 'html', renderImages: false });
+    expect(off.content).not.toMatch(/<img\b/);
+    expect(off.content).toContain("img-src 'none'");
+    expect(off.content).toContain('<a href="https://img.test/b.png"');
+    const md = exportCollectionDocs(col, { format: 'markdown', renderImages: false });
+    expect(md.content).toContain('![logo](https://img.test/a.png)');
+    const spec = exportCollectionDocs(col, { format: 'openapi', openapiFormat: 'json', renderImages: false });
+    expect(spec.content).toContain('![logo](https://img.test/a.png)');
+  });
 });

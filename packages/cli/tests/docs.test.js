@@ -160,3 +160,24 @@ test('generateCurl shell-quotes the method', () => {
   const out = generateCurl({ method: 'GET; echo injected', fullUrl: 'https://x.test/', headers: [] });
   assert.ok(out.startsWith("curl -X 'GET; echo injected'"));
 });
+
+test('docs: --no-images renders images as links and blocks image loading; default keeps images', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'apilix-docs-img-'));
+  const col = JSON.parse(JSON.stringify(collection));
+  col.item[1].request.description = 'x ![logo](https://img.test/a.png) <img src="https://img.test/b.png" alt="bee">';
+  await fs.writeFile(path.join(dir, 'c.json'), JSON.stringify(col));
+  const on = await run(['docs', 'c.json'], dir);
+  assert.equal(on.code, 0);
+  assert.match(on.stdout, /<img src="https:\/\/img\.test\/a\.png" alt="logo">/);
+  assert.match(on.stdout, /img-src data: https: http:/);
+  const off = await run(['docs', 'c.json', '--no-images'], dir);
+  assert.equal(off.code, 0);
+  assert.ok(!/<img\b/.test(off.stdout));
+  assert.match(off.stdout, /img-src 'none'/);
+  assert.match(off.stdout, /<a href="https:\/\/img\.test\/a\.png"[^>]*>logo<\/a>/);
+  assert.match(off.stdout, /<a href="https:\/\/img\.test\/b\.png"[^>]*>bee<\/a>/);
+  const md = await run(['docs', 'c.json', '--format', 'md', '--no-images'], dir);
+  assert.equal(md.code, 0);
+  assert.match(md.stdout, /!\[logo\]\(https:\/\/img\.test\/a\.png\)/);
+  assert.match(usage(), /--no-images/);
+});
