@@ -1,6 +1,7 @@
 'use strict';
 
 const { buildSnippets } = require('./doc-model');
+const { parseAttrs, decodeAttrEntities } = require('./doc-attrs');
 
 const AUTH_LABELS = {
   bearer: 'Bearer token', basic: 'Basic auth', apikey: 'API key', oauth2: 'OAuth 2.0',
@@ -31,7 +32,39 @@ function span(text) {
   return String(text == null ? '' : text).replace(/\s*[\r\n]+\s*/g, ' ').replace(/`/g, "'");
 }
 
-/** Escape raw HTML in markdown prose, leaving fenced blocks and code spans intact. */
+const IMG_TAG_RE = /<img\b([^<>]*)>/gi;
+const SAFE_IMG_SRC_RE = /^(https?:\/\/|data:image\/(png|jpe?g|gif|webp);base64,)/i;
+
+/** Convert a raw <img> tag with a safe src to Markdown image syntax; null when the src is not allowed. */
+function imgTagToMarkdown(rawAttrs) {
+  let src = null;
+  let alt = '';
+  for (const a of parseAttrs(rawAttrs)) {
+    if (a.name === 'src' && src == null) src = a.value;
+    else if (a.name === 'alt' && alt === '') alt = decodeAttrEntities(a.value);
+  }
+  if (src == null) return null;
+  const url = src.replace(/[\u0000-\u0020]+/g, '');
+  if (!SAFE_IMG_SRC_RE.test(url)) return null;
+  const label = alt.replace(/[\[\]\\\r\n]+/g, ' ').trim();
+  return `![${escHtml(label)}](${escHtml(url.replace(/\(/g, '%28').replace(/\)/g, '%29'))})`;
+}
+
+/** Escape HTML in one text run, keeping <img> tags with a safe src as Markdown images. */
+function escapeKeepingImages(text) {
+  let out = '';
+  let last = 0;
+  let m;
+  IMG_TAG_RE.lastIndex = 0;
+  while ((m = IMG_TAG_RE.exec(text)) !== null) {
+    const md = imgTagToMarkdown(m[1]);
+    out += escHtml(text.slice(last, m.index)) + (md != null ? md : escHtml(m[0]));
+    last = m.index + m[0].length;
+  }
+  return out + escHtml(text.slice(last));
+}
+
+/** Escape raw HTML in markdown prose, leaving fenced blocks and code spans intact. Safe <img> tags become Markdown images. */
 function prose(text) {
   const lines = String(text == null ? '' : text).split(/\r?\n/);
   let fenceMark = null;
@@ -42,7 +75,7 @@ function prose(text) {
       return line;
     }
     if (m) { fenceMark = m[1]; return line; }
-    return line.split(/(`[^`]*`)/).map((part, i) => (i % 2 ? part : escHtml(part))).join('');
+    return line.split(/(`[^`]*`)/).map((part, i) => (i % 2 ? part : escapeKeepingImages(part))).join('');
   }).join('\n');
 }
 

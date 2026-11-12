@@ -206,6 +206,22 @@ test('redaction and rendering stay fast on adversarial input (per-input budgets)
     ['xml "<?" x200000', () => r.redactBodyText('<?'.repeat(200000), false)],
     ['xml attrs 400KB', () => r.redactBodyText(`<a ${'x="1" '.repeat(50000)}>`, false)],
     ['json-like array spaces', () => r.redactBodyText(`{"tokens":[${' '.repeat(100000)}1]`, false)],
+    ['json-like array spaces 500KB', () => r.redactBodyText(`{"tokens":[${' '.repeat(big)}1]`, false)],
+    ['json-like array "1," x', () => r.redactBodyText(`{"tokens":[${'1,'.repeat(big / 2)}1]`, false)],
+    ['json-like array ", " x', () => r.redactBodyText(`{"tokens":[${', '.repeat(big / 2)}1]`, false)],
+    ['json-like array commas+spaces', () => r.redactBodyText(`{"tokens":[${' ,'.repeat(big / 2)}1]`, false)],
+    ['json-like nested "[" x', () => r.redactBodyText(`{"tokens":${'['.repeat(big)}1`, false)],
+    ['json-like nested "[ " x', () => r.redactBodyText(`{"tokens":${'[ '.repeat(big / 2)}1`, false)],
+    ['json-like nested "[1," x', () => r.redactBodyText(`{"tokens":${'[1,'.repeat(big / 3)}`, false)],
+    ['json-like "\"tokens\":[" x (no close)', () => r.redactBodyText(`{${'"tokens":['.repeat(big / 10)}`, false)],
+    ['json-like \"a\":\" x (unterminated)', () => r.redactBodyText(`{${'"a":"'.repeat(big / 6)}`, false)],
+    ['json-like escaped quotes', () => r.redactBodyText(`{"a":"${'\\"'.repeat(big / 2)}`, false)],
+    ['json-like key spaces', () => r.redactBodyText(`{"password"${' '.repeat(big)}:`, false)],
+    ['json-like value spaces', () => r.redactBodyText(`{"password":${' '.repeat(big)}"x`, false)],
+    ['json-like "{{" x', () => r.redactBodyText(`{"password":${'{{'.repeat(big / 2)}`, false)],
+    ['json-like "{{a" x', () => r.redactBodyText(`{"password":${'{{a '.repeat(big / 4)}`, false)],
+    ['json-like bare tokens', () => r.redactBodyText(`{"password":${'a '.repeat(100000)}`, false)],
+    ['json-like many sensitive keys', () => r.redactBodyText(`{${'"token":1,'.repeat(20000)}`, false)],
     ['openapi "{{"+spaces', () => generateDocs({ info: { name: 'T' }, item: [{ name: 'r', request: { method: 'GET', url: `http://h/{{${' '.repeat(40000)}x` } }] }, { format: 'openapi' })],
     ['openapi "{{ x" x', () => generateDocs({ info: { name: 'T' }, item: [{ name: 'r', request: { method: 'GET', url: `http://h/${'{{ x '.repeat(40000)}` } }] }, { format: 'openapi' })],
     ['html "<A0..." +list', () => descDoc(`<A${'0'.repeat(50000)}\n* ${' '.repeat(50000)}x\n#${' '.repeat(50000)}x`)],
@@ -219,7 +235,7 @@ test('redaction and rendering stay fast on adversarial input (per-input budgets)
     ['html "[a](" x20000', () => descDoc('[a]('.repeat(20000))],
     ['html "[a](u" x20000', () => descDoc('[a](u'.repeat(20000))],
   ];
-  for (const [label, fn] of inputs) within(label, 1500, fn);
+  for (const [label, fn] of inputs) { const t0 = Date.now(); within(label, 1500, fn); if (process.env.PERF_LOG) console.log(label, Date.now() - t0); }
 });
 
 test('redactUrlsInText: a leading junk char before a scheme does not hide userinfo when another URL is present', () => {
@@ -229,7 +245,7 @@ test('redactUrlsInText: a leading junk char before a scheme does not hide userin
   }
   const q = r.redactUrlsInText('https://ok.example/a +https://h/p?token=SEKRET', false);
   assert.ok(!q.includes('SEKRET'), q);
-  assert.ok(r.redactUrlsInText('https://ok.example/a?x=1 and https://other.example/b', false).includes('https://other.example/b'));
+  assert.equal(r.redactUrlsInText('https://ok.example/a?x=1 and https://other.example/b', false), 'https://ok.example/a?x=1 and https://other.example/b');
   assert.equal(r.redactUrlsInText('(https://h/x?token=S)', false), '(https://h/x?token=<redacted>)');
   assert.equal(r.redactUrlsInText('https://h/a(b)?token=S)', false).endsWith(')'), true);
 });
@@ -333,4 +349,181 @@ test('markdown: backslash before backtick cannot break out of escaping', () => {
   const col = { info: { name: 'A\\`<b>' }, item: [] };
   const md = generateDocs(col, { format: 'markdown' }).content;
   assert.ok(md.includes('A\\\\\\`&lt;b&gt;'), md.split('\n')[0]);
+});
+
+test('redactJsonLike (invalid JSON): everything under a sensitive key is redacted, variables kept', () => {
+  const cases = [
+    ['{"tokens":[ 1 , 2 ,  true,\n"SEKRET",[ 3,[ 4 ]],{"n":"SEKRET2"}] bad', ['SEKRET', 'SEKRET2']],
+    ['{"password":{"a":"SEKRET","b":[1,{"c":"SEKRET2"}]} bad', ['SEKRET', 'SEKRET2']],
+    ['{"a": {"secret": "SEKRET"} bad', ['SEKRET']],
+    ['{"password":"SEKRET unterminated', ['SEKRET']],
+    ['{"token": SEKRET, "x":1 bad', ['SEKRET']],
+    ['{"tokens":[,,SEKRET,  ,"SEKRET2"] bad', ['SEKRET', 'SEKRET2']],
+  ];
+  for (const [text, secrets] of cases) {
+    const out = r.redactBodyText(text, false);
+    for (const s of secrets) assert.ok(!out.includes(s), `${s} leaked: ${JSON.stringify(text)} -> ${out}`);
+    assert.ok(out.includes('<redacted>'), out);
+  }
+  assert.equal(r.redactBodyText('{"tokens":[{{a}}, "{{b}}", "", null] bad', false), '{"tokens":[{{a}}, "{{b}}", "", null] bad');
+  assert.equal(r.redactBodyText('{"user":"bob","n":[1,2] bad', false), '{"user":"bob","n":[1,2] bad');
+});
+
+test('redactJsonLike: adversarial whitespace/comma/bracket variants stay linear and leak nothing', () => {
+  const big = 200000;
+  const inputs = {
+    spaces: `{"tokens":[${' '.repeat(big)}SEKRET]`,
+    commas: `{"tokens":[${',  '.repeat(big / 3)}SEKRET]`,
+    nested: `{"tokens":${'[ '.repeat(big / 2)}SEKRET`,
+    repeated: `{${'"tokens":[1,'.repeat(big / 14)}SEKRET`,
+  };
+  for (const [label, text] of Object.entries(inputs)) {
+    const out = within(`json-like ${label}`, 750, () => r.redactBodyText(text, false));
+    assert.ok(!out.includes('SEKRET'), `${label} leaked the secret`);
+  }
+});
+
+test('redactJsonLike: Unicode whitespace between key, colon and value cannot hide a secret', () => {
+  const spaces = [' ', ' ', '\u000b', ' ', ' ', '﻿', '　', ' '];
+  for (const ws of spaces) {
+    const label = `U+${ws.charCodeAt(0).toString(16)}`;
+    for (const text of [
+      `{"token"${ws}:"SEKRET"}`,
+      `{"token":${ws}"SEKRET"}`,
+      `{"token"${ws}:${ws}"SEKRET"${ws},"b":"keep"}`,
+      `{"token":${ws}SEKRET${ws}}`,
+      `{"token":${ws}["SEKRET"${ws},${ws}"SEKRET"]${ws}`,
+      `{"token":${ws}SEKRET,"b":"keep"`,
+    ]) {
+      const out = r.redactBodyText(text, false);
+      assert.ok(!out.includes('SEKRET'), `${label} leaked: ${JSON.stringify(text)} -> ${JSON.stringify(out)}`);
+      assert.ok(out.includes('<redacted>'), `${label}: ${JSON.stringify(out)}`);
+    }
+  }
+  // a non-secret sibling after a Unicode space is untouched
+  assert.ok(r.redactBodyText('{"token": "SEKRET","b": "keep"', false).includes('"b": "keep"'));
+});
+
+test('redactJsonLike: comments between key, colon and value cannot hide a secret', () => {
+  const cases = [
+    '{"token":/*c*/"SEKRET","b":"keep"}',
+    '{"token":/* a */["SEKRET"]}',
+    '{"token": // c\n "SEKRET"}',
+    '{"token"/*c*/:"SEKRET"}',
+    '{"token"// c\n:"SEKRET"}',
+    '{"token"/*a*/:/*b*/ /*c*/ ["SEKRET", /*d*/ "SEKRET"] bad',
+    '{"token":/*c*/ SEKRET, "b":"keep"}',
+    '{"token":/*c*/{"a":"SEKRET"} bad',
+    '{"token":/* unterminated "SEKRET"',
+    '{"a":1, // note\n "token":/*c*/"SEKRET"}',
+  ];
+  for (const text of cases) {
+    const out = r.redactBodyText(text, false);
+    assert.ok(!out.includes('SEKRET'), `leaked: ${JSON.stringify(text)} -> ${JSON.stringify(out)}`);
+  }
+  const keep = r.redactBodyText('{"token":/*c*/"SEKRET","b":"keep"}', false);
+  assert.ok(keep.includes('"b":"keep"'), keep);
+});
+
+test('redactJsonLike: an orphan or missing quote cannot shift the string parity and hide a key', () => {
+  const cases = [
+    '{user":"bob","password":"SEKRET"}',
+    '{"note":"it"s","password":"SEKRET","token":"T0K"}',
+    '{"name":"a,"password":"SEKRET","x":1}',
+    '{"name":"a\\","password":"SEKRET"}',
+    '{"a":"unterminated, "password":"SEKRET"}',
+    '{"a":1,"b":"x"y","token":"T0K"}',
+    '{"user":"bob,"password":"SEKRET"}',
+    '{"a":""","password":"SEKRET"}',
+  ];
+  for (const text of cases) {
+    const out = r.redactBodyText(text, false);
+    for (const s of ['SEKRET', 'T0K']) assert.ok(!out.includes(s), `${s} leaked: ${JSON.stringify(text)} -> ${JSON.stringify(out)}`);
+  }
+  assert.ok(!r.redactBodyText("{'password':'SEKRET'}", false).includes('SEKRET'));
+  assert.ok(!r.redactBodyText('{password:"SEKRET"}', false).includes('SEKRET'));
+});
+
+test('redactJsonLike: percent-encoded sensitive keys are recognised in invalid JSON too', () => {
+  for (const text of ['{"tok%65n":"SEKRET"', '{"tok%65n":"SEKRET",}', '{"a":1,"%70assword":["SEKRET"] bad', '{"api%2Dkey":SEKRET,}']) {
+    const out = r.redactBodyText(text, false);
+    assert.ok(!out.includes('SEKRET'), `leaked: ${JSON.stringify(text)} -> ${JSON.stringify(out)}`);
+  }
+  // valid JSON path agrees
+  assert.ok(!r.redactBodyText('{"tok%65n":"SEKRET"}', false).includes('SEKRET'));
+});
+
+test('redactJsonLike: quote-heavy adversarial input stays linear', () => {
+  const n = 150000;
+  const inputs = {
+    'quotes only': '"'.repeat(n),
+    'key quotes': `{"password":${'"'.repeat(n)}`,
+    'orphan keys': `{${'a":"b",'.repeat(n / 8)}"password":"SEKRET"`,
+    'sensitive keys': `{${'"token"'.repeat(n / 8)}:`,
+    'sensitive pairs': `{${'a"token":1,'.repeat(n / 12)}`,
+    'comments': `{"a"${'/*'.repeat(n / 2)}`,
+    'comments closed': `{${'"a"/*'.repeat(n / 6)}*/}`,
+    'line comments': `{"token":${'//\n'.repeat(n / 3)}"SEKRET"`,
+  };
+  for (const [label, text] of Object.entries(inputs)) {
+    const out = within(`json-like ${label}`, 1500, () => r.redactBodyText(text, false));
+    assert.ok(!out.includes('SEKRET'), `${label} leaked`);
+  }
+});
+
+test('markdown and HTML: a very long <img> attribute is linear (no quadratic regex)', () => {
+  const big = 200000;
+  const inputs = {
+    'a x200000': '<img ' + 'a'.repeat(big) + '>',
+    'a- x100000': '<img ' + 'a-'.repeat(big / 2) + '>',
+    'a  x100000': '<img ' + 'a '.repeat(big / 2) + '>',
+    'a= x100000': '<img ' + 'a='.repeat(big / 2) + '>',
+    'a=" x66666': '<img ' + 'a="'.repeat(big / 3) + '>',
+    "a=' x66666": "<img " + "a='".repeat(big / 3) + '>',
+    'many tags': '<img a '.repeat(big / 7),
+    'src then junk': '<img src="https://h/x.png" ' + 'b-'.repeat(big / 2) + '>',
+  };
+  for (const [label, description] of Object.entries(inputs)) {
+    const doc = { info: { name: 'T', description }, item: [] };
+    within(`markdown ${label}`, 1500, () => generateDocs(doc, { format: 'markdown' }));
+    for (const renderImages of [true, false]) {
+      within(`html(${renderImages}) ${label}`, 1500, () => generateDocs(doc, { format: 'html', renderImages }));
+    }
+  }
+  const ok = generateDocs({ info: { name: 'T', description: '<img src="https://h/x.png" ' + 'b-'.repeat(1000) + ' alt="ok">' }, item: [] }, { format: 'markdown' }).content;
+  assert.match(ok, /!\[ok\]\(https:\/\/h\/x\.png\)/);
+});
+
+test('renderImages=false: images inside links never produce nested anchors', () => {
+  const descs = [
+    '[![build](https://img.shields.io/b.svg)](https://ci.example/run)',
+    '<a href="https://ci.example/run"><img src="https://img.shields.io/b.svg" alt="build"></a>',
+    '<a href="https://ci.example/run">![build](https://img.shields.io/b.svg)</a>',
+    '[![](https://img.shields.io/b.svg)](https://ci.example/run)',
+  ];
+  for (const description of descs) {
+    for (const renderImages of [true, false]) {
+      const out = generateDocs({ info: { name: 'T', description }, item: [] }, { format: 'html', renderImages }).content;
+      const main = out.split('<main>')[1].split('</main>')[0];
+      assert.ok(!/<a\b[^>]*>(?:(?!<\/a>)[\s\S])*<a\b/.test(main), `nested <a> (renderImages=${renderImages}): ${description} -> ${main}`);
+      assert.equal((main.match(/<a /g) || []).length, 1, `exactly one link (renderImages=${renderImages}): ${main}`);
+      assert.match(main, /<a href="https:\/\/ci\.example\/run" rel="noopener noreferrer nofollow">/, 'outer link target kept');
+      if (renderImages) assert.match(main, /<img src="https:\/\/img\.shields\.io\/b\.svg"/);
+      else assert.ok(!/<img\b/.test(main));
+    }
+  }
+});
+
+test('img alt attributes: entities are not double-escaped and code placeholders do not leak', () => {
+  const desc = '<img src="https://h/a.png" alt="a&quot;b&amp;c"> <img src="https://h/b.png" alt="`tick`">';
+  const on = generateDocs({ info: { name: 'T', description: desc }, item: [] }, { format: 'html' }).content;
+  assert.match(on, /<img src="https:\/\/h\/a\.png" alt="a&quot;b&amp;c">/);
+  assert.ok(!/&amp;quot;|&amp;amp;/.test(on), 'no double escaping');
+  assert.ok(!/alt="[^"]*[\u0000-\u0002]/.test(on) && !/alt=" 0 "/.test(on), 'no placeholder in alt');
+  assert.match(on, /<img src="https:\/\/h\/b\.png" alt="tick">/);
+  const off = generateDocs({ info: { name: 'T', description: desc }, item: [] }, { format: 'html', renderImages: false }).content;
+  assert.ok(!/&amp;quot;|&amp;amp;/.test(off));
+  assert.ok(!/[\u0000-\u0002]/.test(off.split('<main>')[1]));
+  const md = generateDocs({ info: { name: 'T', description: desc }, item: [] }, { format: 'markdown' }).content;
+  assert.match(md, /!\[a"b&amp;c\]\(https:\/\/h\/a\.png\)/);
 });

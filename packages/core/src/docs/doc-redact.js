@@ -205,7 +205,7 @@ function redactJsonValue(node, includeCredentials, forced = false) {
   if (Array.isArray(node)) return node.map(n => redactJsonValue(n, false, forced));
   if (node && typeof node === 'object') {
     const out = {};
-    for (const [k, v] of Object.entries(node)) out[k] = redactJsonValue(v, false, forced || isSensitiveName(k));
+    for (const [k, v] of Object.entries(node)) out[k] = redactJsonValue(v, false, forced || isSensitiveKey(k));
     return out;
   }
   if (forced && node !== null && node !== '') return redactValue(node, false);
@@ -247,27 +247,208 @@ function restoreVars(text, vars) {
     .replace(/\b9170000000\d{5}\b/g, m => vars[Number(m) - NUM_BASE] ?? m);
 }
 
-const STR = '"(?:[^"\\\\]|\\\\.)*"';
-
-/** Regex fallback for JSON-like text that does not parse. */
-function redactJsonLike(text) {
-  const keyRe = new RegExp(`(${STR})(\\s*:\\s*)(${STR}|\\[[^\\]]*\\]|[^\\s,}\\]]+)`, 'g');
-  return text.replace(keyRe, (m, key, colon, val) => {
-    let name;
-    try { name = JSON.parse(key); } catch { name = key.slice(1, -1); }
-    if (!isSensitiveName(name)) return m;
-    if (val.startsWith('[')) {
-      return `${key}${colon}${val.replace(new RegExp(STR, 'g'), s => (isVarRefOnly(s.slice(1, -1)) || s === '""' ? s : `"${REDACTED}"`)).replace(/(?<=[\[,]\s*)(-?\d[\w.+-]*|true|false)(?=\s*[,\]])/g, REDACTED_TOKEN)}`;
-    }
-    if (val.startsWith('"')) {
-      const inner = val.slice(1, -1);
-      return inner === '' || isVarRefOnly(inner) ? m : `${key}${colon}"${REDACTED}"`;
-    }
-    if (val.startsWith('{')) return m;
-    return isVarRefOnly(val) || val === 'null' ? m : `${key}${colon}"${REDACTED}"`;
-  });
-}
 const REDACTED_TOKEN = `"${REDACTED}"`;
+
+/** Same set of characters as JS `\s` (incl. NBSP, \v, U+2028/9, U+FEFF, U+2000-200A, U+3000). */
+function isWs(c) {
+  if (typeof c !== 'string' || c === '') return false;
+  const k = c.charCodeAt(0);
+  return k === 32 || (k >= 9 && k <= 13) || k === 0xa0 || k === 0x1680 || (k >= 0x2000 && k <= 0x200a)
+    || k === 0x2028 || k === 0x2029 || k === 0x202f || k === 0x205f || k === 0x3000 || k === 0xfeff;
+}
+
+/** End index (exclusive) of the string starting at text[i] === '"', or -1 when unterminated. */
+function stringEnd(text, i) {
+  for (let j = i + 1; j < text.length; j++) {
+    const c = text[j];
+    if (c === '\\') j++;
+    else if (c === '"') return j + 1;
+  }
+  return -1;
+}
+
+/** End index (exclusive) of a {{var}} reference starting at text[i], or -1. */
+function varRefEnd(text, i) {
+  if (text[i] !== '{' || text[i + 1] !== '{') return -1;
+  let j = i + 2;
+  while (j < text.length && text[j] !== '{' && text[j] !== '}') j++;
+  return j > i + 2 && text[j] === '}' && text[j + 1] === '}' ? j + 2 : -1;
+}
+
+function isBareStop(c) {
+  return isWs(c) || c === ',' || c === ':' || c === '{' || c === '}' || c === '[' || c === ']' || c === '"';
+}
+
+/** End index (exclusive) of a /* *\/ or // comment starting at text[i], or -1 when text[i] does not start one. */
+function commentEnd(text, i) {
+  if (text[i] !== '/') return -1;
+  if (text[i + 1] === '*') {
+    const e = text.indexOf('*/', i + 2);
+    return e < 0 ? text.length : e + 2;
+  }
+  if (text[i + 1] === '/') {
+    let j = i + 2;
+    while (j < text.length && text[j] !== '\n' && text[j] !== '\r' && text[j] !== '\u2028' && text[j] !== '\u2029') j++;
+    return j;
+  }
+  return -1;
+}
+
+/** Index of the first character at or after p that is neither whitespace nor part of a comment. */
+function skipGap(text, p) {
+  const n = text.length;
+  while (p < n) {
+    if (isWs(text[p])) { p++; continue; }
+    const ce = commentEnd(text, p);
+    if (ce < 0) break;
+    p = ce;
+  }
+  return p;
+}
+
+function keyName(text, from, to) {
+  const inner = text.slice(from + 1, to - 1);
+  if (!inner.includes('\\')) return inner;
+  try { return JSON.parse(text.slice(from, to)); } catch { return inner; }
+}
+
+/**
+ * Lenient single-pass scanner for JSON-like text (linear, no regular
+ * expressions over untrusted input). Returns the ranges to replace and the end
+ * of what was scanned. Everything under a sensitive key is redacted: scalars,
+ * array elements and nested objects; `//` and block comments, any Unicode
+ * whitespace and unquoted/single-quoted keys are tolerated. A forced state
+ * (`keyForced`) lasts until the value ends (`,` `}` `]`), so comments or extra
+ * tokens in between cannot clear it. Empty strings, null and pure {{var}}
+ * values survive. With `stopAtEnd` the scan begins right after a key's colon
+ * and stops where that value ends.
+ */
+function scanJsonLike(text, start, forced0, stopAtEnd) {
+  const n = text.length;
+  const stack = []; // { f: forced flag of the open container }
+  const edits = [];
+  let keyForced = forced0;
+  let valueSeen = false;
+  let i = start;
+  const forcedNow = () => keyForced || (stack.length > 0 && stack[stack.length - 1].f);
+  const done = () => stopAtEnd && stack.length === 0;
+  while (i < n) {
+    const c = text[i];
+    if (c === '"') {
+      const e = stringEnd(text, i);
+      if (e < 0) {
+        if (forcedNow()) edits.push([i, n]);
+        return { edits, end: n };
+      }
+      const p = skipGap(text, e);
+      if (text[p] === ':' && !(done() && !valueSeen)) {
+        if (done()) return { edits, end: i };
+        keyForced = isSensitiveKey(keyName(text, i, e));
+        i = p + 1;
+        continue;
+      }
+      if (forcedNow()) {
+        const inner = text.slice(i + 1, e - 1);
+        if (inner !== '' && inner !== REDACTED && !isVarRefOnly(inner)) edits.push([i, e]);
+      }
+      if (stack.length === 0) valueSeen = true;
+      i = e;
+    } else if (c === '{' && varRefEnd(text, i) < 0 || c === '[') {
+      stack.push({ f: Boolean(forcedNow()) });
+      keyForced = false;
+      i++;
+    } else if (c === '}' || c === ']') {
+      if (stack.length === 0) {
+        if (stopAtEnd) return { edits, end: i };
+        keyForced = false;
+      } else {
+        stack.pop();
+        keyForced = false; // the container was the value
+        if (stack.length === 0) valueSeen = true;
+      }
+      i++;
+    } else if (c === ',') {
+      if (done()) return { edits, end: i };
+      keyForced = false;
+      i++;
+    } else if (isWs(c) || c === ':') {
+      i++;
+    } else if (commentEnd(text, i) >= 0) {
+      const ce = commentEnd(text, i);
+      // An unterminated block comment swallows the rest of the text: under a sensitive key that is a value.
+      if (text[i + 1] === '*' && ce === n && !text.endsWith('*/') && forcedNow()) edits.push([i, n]);
+      i = ce;
+    } else {
+      let e = i;
+      while (e < n) {
+        const v = varRefEnd(text, e);
+        if (v >= 0) { e = v; continue; }
+        if (isBareStop(text[e])) break;
+        e++;
+      }
+      if (e === i) e = i + 1; // stray '{' / '}' safety net (cannot happen, kept for termination)
+      const tok = text.slice(i, e);
+      if (forcedNow()) {
+        if (tok !== 'null' && !isVarRefOnly(tok)) edits.push([i, e]);
+      } else if (text[skipGap(text, e)] === ':') {
+        // Unquoted / single-quoted key: {password: "x"}, {'password': 'x'}
+        keyForced = isSensitiveKey(tok.replace(/^'|'$/g, ''));
+      }
+      if (stack.length === 0) valueSeen = true;
+      i = e;
+    }
+  }
+  return { edits, end: n };
+}
+
+function applyEdits(text, edits) {
+  if (edits.length === 0) return text;
+  const parts = [];
+  let last = 0;
+  for (const [from, to] of edits) {
+    if (from < last) continue;
+    parts.push(text.slice(last, from), REDACTED_TOKEN);
+    last = to;
+  }
+  parts.push(text.slice(last));
+  return parts.join('');
+}
+
+/**
+ * Defensive resynchronisation. A stray, missing or unbalanced quote shifts the
+ * string parity of the main scan, so a real `"key":` may be read as the inside
+ * of a string. Look at every pair of adjacent unescaped quotes as a possible
+ * key (the way an unanchored search would) and force-scan the value after
+ * every sensitive one. Ranges already scanned are skipped, so the cost stays
+ * linear.
+ */
+function resyncEdits(text) {
+  const n = text.length;
+  const edits = [];
+  let covered = 0;
+  let prev = -1;
+  for (let j = 0; j < n; j++) {
+    const c = text[j];
+    if (c === '\\') { j++; continue; }
+    if (c !== '"') continue;
+    if (prev >= 0) {
+      let p = j + 1;
+      while (p < n && isWs(text[p])) p++;
+      if (text[p] === ':' && p >= covered && isSensitiveKey(keyName(text, prev, j + 1))) {
+        const r = scanJsonLike(text, p + 1, true, true);
+        for (const e of r.edits) edits.push(e);
+        covered = r.end;
+      }
+    }
+    prev = j;
+  }
+  return edits;
+}
+
+function redactJsonLike(text) {
+  const first = applyEdits(text, scanJsonLike(text, 0, false, false).edits);
+  return applyEdits(first, resyncEdits(first));
+}
 
 function redactUrlEncodedText(text) {
   return text.split('&').map(pair => {
@@ -291,7 +472,6 @@ function makeFinder(text) {
   };
 }
 
-const isWs = c => c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f';
 const isNameChar = c => /[\w.:-]/.test(c);
 
 /** Redact sensitive attribute values in one opening tag (linear manual scan). */

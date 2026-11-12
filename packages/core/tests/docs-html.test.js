@@ -140,3 +140,72 @@ test('description: <img> and markdown images render for safe sources only', () =
   assert.ok(brk.includes('alt="a&quot; onerror=&quot;x"'));
   assert.ok(!/"\s+onerror=/.test(brk)); // quote is escaped, so no attribute breakout
 });
+
+// ─── renderImages option ─────────────────────────────────────────────────────
+
+const IMG_DESC = [
+  'MD ![logo](https://img.test/a.png) and ![](http://img.test/b.png)',
+  'HTML <img src="https://img.test/c.png" alt="cee" width="10" onerror="x()"> and <img src="https://img.test/d.png">',
+  'DATA ![dd](data:image/png;base64,AAAA) <img src="data:image/gif;base64,BBBB" alt="gg">',
+  'BAD <img src="javascript:alert(1)"> ![j](javascript:alert(1))',
+].join('\n\n');
+const imgCol = () => {
+  const col = makeCollection();
+  col.info.description = IMG_DESC;
+  col.item[0].item[0].request.description = IMG_DESC;
+  return col;
+};
+
+test('renderImages default and true: images rendered, CSP allows http(s) and data', () => {
+  for (const opts of [{}, { renderImages: true }]) {
+    const out = html(opts, imgCol());
+    assert.match(out, /<img src="https:\/\/img\.test\/a\.png" alt="logo">/);
+    assert.match(out, /<img src="https:\/\/img\.test\/c\.png" alt="cee" width="10">/);
+    assert.match(out, /<img src="data:image\/png;base64,AAAA" alt="dd">/);
+    assert.match(out, /img-src data: https: http:/);
+  }
+});
+
+test('renderImages false: no <img>, no src=, links instead, restrictive CSP', () => {
+  const out = html({ renderImages: false }, imgCol());
+  assert.ok(!/<img\b/i.test(out), 'no <img> tag');
+  assert.ok(!/<[^>]*\ssrc=/i.test(out), "no src attribute on any real tag");
+  assert.match(out, /img-src 'none'/);
+  assert.ok(!/img-src[^;]*(https|http|data):/.test(out));
+  assert.match(out, /<a href="https:\/\/img\.test\/a\.png" rel="noopener noreferrer nofollow">logo<\/a>/);
+  assert.match(out, /<a href="http:\/\/img\.test\/b\.png" rel="noopener noreferrer nofollow">http:\/\/img\.test\/b\.png<\/a>/);
+  assert.match(out, /<a href="https:\/\/img\.test\/c\.png" rel="noopener noreferrer nofollow">cee<\/a>/);
+  assert.match(out, /<a href="https:\/\/img\.test\/d\.png" rel="noopener noreferrer nofollow">https:\/\/img\.test\/d\.png<\/a>/);
+  // data: images are not valid link targets: degrade to alt text, never an href/src
+  assert.ok(!/data:image/.test(out), 'data URI is dropped');
+  assert.match(out, /DATA dd gg/);
+  assert.ok(!/onerror/.test(out));
+});
+
+test('security is identical with renderImages on and off', () => {
+  for (const renderImages of [true, false]) {
+    const out = html({ renderImages }, imgCol());
+    assert.ok(!/href="javascript:/i.test(out) && !/src="javascript:/i.test(out));
+    assert.ok(!/<img src="javascript/i.test(out));
+    assert.ok(!/\sonerror=/i.test(out));
+    assert.ok(!/<script/i.test(out));
+    assert.match(out, /&lt;img src=&quot;javascript:alert\(1\)&quot;&gt;/);
+  }
+});
+
+test('renderMarkdownSafe takes renderImages explicitly; images inside tables/lists/headings follow it', () => {
+  const md = '# T ![h](https://i.test/h.png)\n\n- item ![l](https://i.test/l.png)\n\n<table><tr><td><img src="https://i.test/t.png" alt="tt"></td></tr></table>';
+  assert.equal((renderMarkdownSafe(md).match(/<img /g) || []).length, 3);
+  const off = renderMarkdownSafe(md, false);
+  assert.ok(!/<img/.test(off));
+  assert.equal((off.match(/<a href="https:\/\/i\.test\//g) || []).length, 3);
+});
+
+test('renderImages false also applies to parameter descriptions', () => {
+  const col = makeCollection();
+  col.item[0].item[0].request.header = [{ key: 'H', value: 'v', description: '![x](https://i.test/p.png)' }];
+  assert.match(html({}, col), /<img src="https:\/\/i\.test\/p\.png"/);
+  const off = html({ renderImages: false }, col);
+  assert.ok(!/<img/.test(off));
+  assert.match(off, /<a href="https:\/\/i\.test\/p\.png"/);
+});

@@ -3,12 +3,13 @@
 /**
  * Static, self-contained HTML documentation renderer.
  * - Every dynamic string passes through esc().
- * - No scripts, no external stylesheets/fonts; images from descriptions may load (img-src only). A restrictive CSP is embedded.
+ * - No scripts, no external stylesheets/fonts; images from descriptions load only when options.renderImages !== false (img-src only; otherwise img-src 'none' and images become text links). A restrictive CSP is embedded.
  * - Deterministic output (no timestamps / random ids).
  * - Theme toggle is CSS-only (hidden checkbox), so no JavaScript is needed.
  */
 
 const { buildSnippets } = require('./doc-model');
+const { parseAttrs, decodeAttrEntities } = require('./doc-attrs');
 
 const AUTH_LABELS = {
   bearer: 'Bearer token', basic: 'Basic auth', apikey: 'API key', oauth2: 'OAuth 2.0',
@@ -82,13 +83,35 @@ function nextTag(raw, from) {
   return null;
 }
 
+function attrValue(rawAttrs, wanted) {
+  const hit = parseAttrs(rawAttrs).find(a => a.name === wanted);
+  return hit ? hit.value : null;
+}
+
+const SAFE_LINK_RE = /^(https?:\/\/|mailto:|#)/i;
+
+/**
+ * Text replacement for an image when images are disabled: a link (same scheme
+ * checks as <a href>) labelled with alt text or the URL; a data: image (not a
+ * valid link target) degrades to its alt text. When the image already sits
+ * inside a link (`inLink`), only the text is emitted so anchors never nest.
+ * Returns null when `url` is not an allowed image source (callers then fall
+ * back to their normal handling). `alt` must already be HTML-escaped; `url` is
+ * escaped here when `escapeUrl`.
+ */
+function imageAsLink(url, alt, escapeUrl, inLink = false) {
+  if (!SAFE_IMG_SRC_RE.test(url)) return null;
+  const safeUrl = escapeUrl ? esc(url) : url;
+  if (SAFE_LINK_RE.test(url)) {
+    if (inLink) return alt || safeUrl;
+    return `<a href="${safeUrl}" rel="noopener noreferrer nofollow">${alt || safeUrl}</a>`;
+  }
+  return alt || 'image';
+}
+
 function safeAttrs(tag, rawAttrs) {
   let out = '';
-  const attrRe = /([a-zA-Z_:][-\w:.]*)\s*(?:=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?/g;
-  let m;
-  while ((m = attrRe.exec(rawAttrs)) !== null) {
-    const name = m[1].toLowerCase();
-    const val = m[2] != null ? m[2] : m[3] != null ? m[3] : m[4] != null ? m[4] : '';
+  for (const { name, value: val } of parseAttrs(rawAttrs)) {
     if (tag === 'a' && name === 'href') {
       const url = val.replace(/[\u0000- ]+/g, '');
       if (/^(https?:\/\/|mailto:|#)/i.test(url)) out += ` href="${esc(url)}" rel="noopener noreferrer nofollow"`;
@@ -96,7 +119,7 @@ function safeAttrs(tag, rawAttrs) {
       const url = val.replace(/[\u0000-\u0020]+/g, '');
       if (SAFE_IMG_SRC_RE.test(url)) out += ` src="${esc(url)}"`;
     } else if (tag === 'img' && (name === 'alt' || name === 'title')) {
-      out += ` ${name}="${esc(val)}"`;
+      out += ` ${name}="${esc(decodeAttrEntities(val))}"`;
     } else if (tag === 'img' && (name === 'width' || name === 'height') && /^\d{1,4}$/.test(val)) {
       out += ` ${name}="${val}"`;
     } else if ((tag === 'td' || tag === 'th') && (name === 'colspan' || name === 'rowspan') && /^\d{1,2}$/.test(val)) {
@@ -109,8 +132,9 @@ function safeAttrs(tag, rawAttrs) {
 /**
  * Sanitize an HTML fragment. `allowed` is the set of tag names to keep.
  * `textFn` renders the text between tags (defaults to esc).
+ * When `renderImages` is false, <img> becomes a text link instead of an image.
  */
-function sanitizeHtml(src, allowed, textFn) {
+function sanitizeHtml(src, allowed, textFn, renderImages = true) {
   const render = textFn || esc;
   const stack = [];
   let out = '';
@@ -127,6 +151,13 @@ function sanitizeHtml(src, allowed, textFn) {
     if (!allowed.has(tag)) { out += esc(m[0]); continue; }
     if (VOID_TAGS.has(tag)) {
       if (!closing) {
+        if (tag === 'img' && !renderImages) {
+          const src = attrValue(m[3], 'src');
+          const alt = attrValue(m[3], 'alt');
+          const asLink = src == null ? null : imageAsLink(src.replace(/[\u0000-\u0020]+/g, ''), alt ? esc(decodeAttrEntities(alt)) : '', true, stack.includes('a'));
+          out += asLink != null ? asLink : esc(m[0]);
+          continue;
+        }
         const attrs = safeAttrs(tag, m[3]);
         if (tag !== 'img' || / src="/.test(attrs)) out += `<${tag}${attrs}>`;
         else out += esc(m[0]);
@@ -152,7 +183,7 @@ const BLOCK_START_RE = /^\s*<\/?(p|ul|ol|li|table|thead|tbody|tfoot|tr|th|td|cap
 
 // ─── Minimal safe markdown renderer ──────────────────────────────────────────
 
-function renderInline(text) {
+function renderInline(text, renderImages = true) {
   const codes = [];
   const links = [];
   const tags = [];
@@ -162,21 +193,38 @@ function renderInline(text) {
   // is escaped by sanitizeHtml.
   const raw = String(text == null ? '' : text).replace(/[\u0000-\u0002]/g, '');
   const withCodes = raw.replace(/`([^`]+)`/g, (m, c) => { codes.push(esc(c)); return `\u0000${codes.length - 1}\u0000`; });
-  let s = sanitizeHtml(withCodes, INLINE_TAGS)
+  let s = sanitizeHtml(withCodes, INLINE_TAGS, undefined, renderImages)
     .replace(/<\/?(?:b|strong|i|em|u|s|del|ins|code|kbd|mark|small|sub|sup|a|br|img)\b[^>]*>/gi, m => { tags.push(m); return `\u0002${tags.length - 1}\u0002`; });
   // Markdown images: ![alt](url) -> <img>, only for safe sources.
-  s = s.replace(/!\[([^\[\]]{0,500})\]\(([^()\s]{1,2000})\)/g, (m, alt, url) => {
+  const imageText = new Map(); // tag index -> plain text of an image degraded to a link
+  const openAnchorsBefore = (whole, offset) => {
+    let depth = 0;
+    whole.slice(0, offset).replace(/\u0002(\d+)\u0002/g, (mm, i) => {
+      const t = tags[Number(i)];
+      if (/^<a[\s>]/i.test(t)) depth++;
+      else if (/^<\/a\s*>/i.test(t)) depth = Math.max(0, depth - 1);
+      return mm;
+    });
+    return depth > 0;
+  };
+  s = s.replace(/!\[([^\[\]]{0,500})\]\(([^()\s]{1,2000})\)/g, (m, alt, url, offset, whole) => {
     const rawUrl = url.replace(/\u0000(\d+)\u0000/g, (mm, i) => `\`${codes[Number(i)]}\``);
     if (!SAFE_IMG_SRC_RE.test(rawUrl)) return m;
-    tags.push(`<img src="${rawUrl}" alt="${alt}">`);
+    if (renderImages) tags.push(`<img src="${rawUrl}" alt="${alt}">`);
+    else {
+      tags.push(imageAsLink(rawUrl, alt, false, openAnchorsBefore(whole, offset)));
+      imageText.set(tags.length - 1, alt || (SAFE_LINK_RE.test(rawUrl) ? rawUrl : 'image'));
+    }
     return `\u0002${tags.length - 1}\u0002`;
   });
   // Links are stashed behind placeholders so the emphasis rules below can never
   // rewrite an href value (e.g. https://a.com/*b*c).
   s = s.replace(/\[([^\[\]]{1,500})\]\(([^()\s]{1,2000})\)/g, (m, label, url) => {
     const rawUrl = url.replace(/\u0000(\d+)\u0000/g, (mm, i) => `\`${codes[Number(i)]}\``);
-    if (!/^(https?:\/\/|mailto:|#)/i.test(rawUrl)) return label;
-    links.push({ label, url: rawUrl });
+    // A link label must not contain another anchor: degrade image-links to text.
+    const flat = label.replace(/\u0002(\d+)\u0002/g, (mm, i) => (imageText.has(Number(i)) ? imageText.get(Number(i)) : mm));
+    if (!/^(https?:\/\/|mailto:|#)/i.test(rawUrl)) return flat;
+    links.push({ label: flat, url: rawUrl });
     return `\u0001${links.length - 1}\u0001`;
   });
   const emphasis = t => t
@@ -188,18 +236,19 @@ function renderInline(text) {
     return `<a href="${l.url}" rel="noopener noreferrer nofollow">${emphasis(l.label)}</a>`;
   });
   s = s.replace(/\u0000(\d+)\u0000/g, (m, i) => `<code>${codes[Number(i)]}</code>`);
-  s = s.replace(/\u0002(\d+)\u0002/g, (m, i) => tags[Number(i)]);
+  // Code-span placeholders that ended up inside a tag (e.g. an alt attribute) become their literal text.
+  s = s.replace(/\u0002(\d+)\u0002/g, (m, i) => tags[Number(i)].replace(/\u0000(\d+)\u0000/g, (mm, j) => codes[Number(j)] ?? ''));
   return s;
 }
 
 /** Render a small, safe subset of Markdown (headings, lists, fences, inline). */
-function renderMarkdownSafe(src) {
+function renderMarkdownSafe(src, renderImages = true) {
   const lines = String(src == null ? '' : src).replace(/\u0000/g, '').split(/\r?\n/);
   const out = [];
   let para = [];
   let list = null;
-  const flushPara = () => { if (para.length) { out.push(`<p>${renderInline(para.join(' '))}</p>`); para = []; } };
-  const flushList = () => { if (list) { out.push(`<${list.tag}>${list.items.map(i => `<li>${renderInline(i)}</li>`).join('')}</${list.tag}>`); list = null; } };
+  const flushPara = () => { if (para.length) { out.push(`<p>${renderInline(para.join(' '), renderImages)}</p>`); para = []; } };
+  const flushList = () => { if (list) { out.push(`<${list.tag}>${list.items.map(i => `<li>${renderInline(i, renderImages)}</li>`).join('')}</${list.tag}>`); list = null; } };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const fenceM = line.match(/^\s*(`{3,})/);
@@ -217,14 +266,14 @@ function renderMarkdownSafe(src) {
       const text = () => buf.join('\n');
       const inPre = () => (text().match(/<pre\b/gi) || []).length > (text().match(/<\/pre>/gi) || []).length;
       while (i + 1 < lines.length && (lines[i + 1].trim() !== '' || inPre())) buf.push(lines[++i]);
-      out.push(sanitizeHtml(text(), ALL_TAGS));
+      out.push(sanitizeHtml(text(), ALL_TAGS, undefined, renderImages));
       continue;
     }
     const head = line.match(/^(#{1,6})\s/);
     if (head) {
       flushPara(); flushList();
       const lvl = Math.min(6, head[1].length + 3);
-      out.push(`<h${lvl}>${renderInline(line.slice(head[0].length).trimStart())}</h${lvl}>`);
+      out.push(`<h${lvl}>${renderInline(line.slice(head[0].length).trimStart(), renderImages)}</h${lvl}>`);
       continue;
     }
     const li = line.match(/^\s*([-*+]|\d+\.)\s/);
@@ -293,11 +342,11 @@ a{color:var(--accent)}
 @media (max-width:760px){.app{flex-direction:column}nav.side{position:static;width:auto;height:auto;flex:none}main{padding:16px}}
 `;
 
-function kvTable(list) {
+function kvTable(list, renderImages = true) {
   if (!list || !list.length) return '';
   const hasDesc = list.some(e => e.description);
   const head = `<tr><th>Name</th><th>Value</th>${hasDesc ? '<th>Description</th>' : ''}</tr>`;
-  const rows = list.map(e => `<tr><td><code>${esc(e.key)}</code></td><td>${esc(e.value)}${e.type === 'file' ? ' <span class="muted">(file)</span>' : ''}</td>${hasDesc ? `<td>${renderInline(e.description || '')}</td>` : ''}</tr>`);
+  const rows = list.map(e => `<tr><td><code>${esc(e.key)}</code></td><td>${esc(e.value)}${e.type === 'file' ? ' <span class="muted">(file)</span>' : ''}</td>${hasDesc ? `<td>${renderInline(e.description || '', renderImages)}</td>` : ''}</tr>`);
   return `<table>${head}${rows.join('')}</table>`;
 }
 
@@ -319,11 +368,11 @@ function authHtml(auth) {
   return h;
 }
 
-function bodyHtml(body) {
+function bodyHtml(body, renderImages = true) {
   if (!body) return '';
   let h = '<h4>Body</h4>';
   if (body.mode === 'raw') h += `<p class="muted">raw (${esc(body.language || 'text')})</p><pre><code>${esc(body.raw || '')}</code></pre>`;
-  else if (body.mode === 'urlencoded' || body.mode === 'formdata') h += `<p class="muted">${esc(body.mode)}</p>${kvTable(body.fields) || '<p class="muted">No fields</p>'}`;
+  else if (body.mode === 'urlencoded' || body.mode === 'formdata') h += `<p class="muted">${esc(body.mode)}</p>${kvTable(body.fields, renderImages) || '<p class="muted">No fields</p>'}`;
   else if (body.mode === 'graphql') {
     h += `<p class="muted">GraphQL</p><pre><code>${esc(body.graphql.query)}</code></pre>`;
     if (body.graphql.variables) h += `<h4>Variables</h4><pre><code>${esc(body.graphql.variables)}</code></pre>`;
@@ -331,13 +380,13 @@ function bodyHtml(body) {
   return h;
 }
 
-function examplesHtml(examples) {
+function examplesHtml(examples, renderImages = true) {
   return examples.map(ex => {
     let h = `<h4>Example: ${esc(ex.name)}${ex.code || ex.status ? ` <span class="muted">(${esc([ex.code, ex.status].filter(Boolean).join(' '))})</span>` : ''}</h4>`;
     if (ex.originalRequest && (ex.originalRequest.method || ex.originalRequest.url)) {
       h += `<p class="muted">Request: <code>${esc([ex.originalRequest.method, ex.originalRequest.url].filter(Boolean).join(' '))}</code></p>`;
     }
-    h += kvTable(ex.headers);
+    h += kvTable(ex.headers, renderImages);
     if (ex.body) h += `<pre><code>${esc(ex.body)}</code></pre>`;
     return h;
   }).join('');
@@ -345,6 +394,7 @@ function examplesHtml(examples) {
 
 function renderHtml(model, options, deps) {
   const warnings = [];
+  const renderImages = options.renderImages !== false;
   const theme = ['dark', 'light', 'auto'].includes(options.theme) ? options.theme : 'dark';
   let n = 0;
   const anchors = new Map();
@@ -363,13 +413,13 @@ function renderHtml(model, options, deps) {
     const cls = KNOWN_METHODS.has(m) ? `m-${m}` : '';
     let h = `<section class="req" id="${anchors.get(req)}"><h3>${esc(req.name)}</h3>`;
     h += `<div class="endpoint"><span class="badge ${cls}">${esc(req.method)}</span><code>${esc(req.fullUrl)}</code></div>`;
-    if (req.description) h += `<div class="desc">${renderMarkdownSafe(req.description)}</div>`;
+    if (req.description) h += `<div class="desc">${renderMarkdownSafe(req.description, renderImages)}</div>`;
     h += authHtml(req.auth);
-    if (req.pathVariables.length) h += `<h4>Path variables</h4>${kvTable(req.pathVariables)}`;
-    if (req.query.length) h += `<h4>Query parameters</h4>${kvTable(req.query)}`;
-    if (req.headers.length) h += `<h4>Headers</h4>${kvTable(req.headers)}`;
-    h += bodyHtml(req.body);
-    h += examplesHtml(req.examples);
+    if (req.pathVariables.length) h += `<h4>Path variables</h4>${kvTable(req.pathVariables, renderImages)}`;
+    if (req.query.length) h += `<h4>Query parameters</h4>${kvTable(req.query, renderImages)}`;
+    if (req.headers.length) h += `<h4>Headers</h4>${kvTable(req.headers, renderImages)}`;
+    h += bodyHtml(req.body, renderImages);
+    h += examplesHtml(req.examples, renderImages);
     for (const s of buildSnippets(req, options, deps, warnings)) {
       h += `<details><summary>${esc(s.label)}</summary><pre><code>${esc(s.code)}</code></pre></details>`;
     }
@@ -380,20 +430,20 @@ function renderHtml(model, options, deps) {
     return nodes.map(node => {
       if (node.type === 'folder') {
         const tag = `h${Math.min(6, depth + 1)}`;
-        return `<${tag} class="folder-h">${esc(node.name)}</${tag}>${node.description ? `<div class="desc">${renderMarkdownSafe(node.description)}</div>` : ''}${bodyNodes(node.children || [], depth + 1)}`;
+        return `<${tag} class="folder-h">${esc(node.name)}</${tag}>${node.description ? `<div class="desc">${renderMarkdownSafe(node.description, renderImages)}</div>` : ''}${bodyNodes(node.children || [], depth + 1)}`;
       }
       return requestHtml(node.request);
     }).join('\n');
   }
 
   const content = bodyNodes(model.tree, 2);
-  const varsHtml = model.variables.length ? `<h2 class="folder-h">Variables</h2>${kvTable(model.variables)}` : '';
+  const varsHtml = model.variables.length ? `<h2 class="folder-h">Variables</h2>${kvTable(model.variables, renderImages)}` : '';
 
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data: https: http:; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src ${renderImages ? 'data: https: http:' : "'none'"}; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="generator" content="Apilix">
 <title>${esc(model.title)}</title>
@@ -406,7 +456,7 @@ function renderHtml(model, options, deps) {
 <main>
 <label for="tt" class="toggle">Light / Dark</label>
 <h1>${esc(model.title)}</h1>
-${model.description ? `<div class="desc">${renderMarkdownSafe(model.description)}</div>` : ''}
+${model.description ? `<div class="desc">${renderMarkdownSafe(model.description, renderImages)}</div>` : ''}
 ${authHtml(model.auth)}
 ${varsHtml}
 ${content}
