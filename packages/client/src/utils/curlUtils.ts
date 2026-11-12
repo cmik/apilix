@@ -205,7 +205,7 @@ function shellQuote(s: string): string {
 }
 
 export function buildCurlCommand(p: CurlBuildParams): string {
-  const parts: string[] = [`curl -X ${p.method}`];
+  const parts: string[] = [`curl -X ${shellQuote(p.method)}`];
 
   // Auth
   if (p.authType === 'bearer' && p.authBearer) {

@@ -1390,3 +1390,52 @@ describe('Database Actions', () => {
     expect(result.activeDatabaseId).toBe('db2');
   });
 });
+
+describe('example ids', () => {
+  it('assigns ids to imported examples that have none', () => {
+    const col = { _id: 'c1', info: { name: 'C', schema: '' }, item: [
+      { id: 'i1', name: 'R', request: { method: 'GET', url: { raw: '' } }, response: [{ name: 'ok', code: 200 }, { id: 'keep', name: 'x' }] },
+    ] } as never;
+    const next = appReducer(initialState, { type: 'ADD_COLLECTION', payload: col });
+    const ex = next.collections[0].item[0].response!;
+    expect(ex[0].id).toBeTruthy();
+    expect(ex[1].id).toBe('keep');
+  });
+
+  it('assigns ids to examples on UPDATE_COLLECTION', () => {
+    const col = { _id: 'c1', info: { name: 'C', schema: '' }, item: [
+      { id: 'i1', name: 'R', request: { method: 'GET', url: { raw: '' } }, response: [{ name: 'ok' }] },
+    ] } as never;
+    const start = { ...initialState, collections: [col] };
+    const next = appReducer(start, { type: 'UPDATE_COLLECTION', payload: col });
+    expect(next.collections[0].item[0].response![0].id).toBeTruthy();
+  });
+});
+
+describe('OPEN_TAB with a response', () => {
+  const item = { id: 'i1', name: 'R', request: { method: 'GET', url: { raw: '' } } } as never;
+  const resp = { status: 200, statusText: 'OK', responseTime: 0, headers: {}, body: '', size: 0, testResults: [], error: null } as never;
+
+  it('stores the response on a newly opened tab', () => {
+    const next = appReducer(initialState, { type: 'OPEN_TAB', payload: { collectionId: 'c1', item, response: resp } });
+    expect(next.response).toBe(resp);
+    expect(next.tabs[0].response).toBe(resp);
+  });
+
+  it('replaces the response of an already open tab and keeps it when switching back', () => {
+    const opened = appReducer(initialState, { type: 'OPEN_TAB', payload: { collectionId: 'c1', item } });
+    const next = appReducer(opened, { type: 'OPEN_TAB', payload: { collectionId: 'c1', item, response: resp } });
+    expect(next.tabs).toHaveLength(1);
+    expect(next.tabs[0].response).toBe(resp);
+    const again = appReducer(next, { type: 'OPEN_TAB', payload: { collectionId: 'c1', item } });
+    expect(again.response).toBe(resp);
+  });
+
+  it('derives stable example ids from the item id and position', () => {
+    const col = { _id: 'c1', info: { name: 'C', schema: '' }, item: [
+      { id: 'i1', name: 'R', request: { method: 'GET', url: { raw: '' } }, response: [{ name: 'a' }, { name: 'b' }] },
+    ] } as never;
+    const next = appReducer(initialState, { type: 'ADD_COLLECTION', payload: col });
+    expect(next.collections[0].item[0].response!.map(e => e.id)).toEqual(['i1:ex0', 'i1:ex1']);
+  });
+});

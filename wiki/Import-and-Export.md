@@ -30,6 +30,7 @@ Apilix can exchange data with other tools through a variety of formats — both 
     - [Postman JSON](#postman-json)
     - [HAR](#har)
     - [HURL](#hurl)
+    - [API documentation](#api-documentation)
   - [Exporting — Web Mode](#exporting--web-mode)
   - [Exporting — Desktop (Electron)](#exporting--desktop-electron)
   - [Selecting Collections and Environments](#selecting-collections-and-environments)
@@ -360,19 +361,20 @@ Response data is not imported.
 
 ## Export Formats
 
-Three formats are available from the Export modal:
+Four formats are available from the Export modal:
 
 | Format | Button label | File extension | Includes environments |
 |---|---|---|---|
 | **Postman JSON** | Postman JSON | `*.postman_collection.json` | Yes (`*.postman_environment.json`) |
 | **HAR** | HAR | `*.har` | No |
 | **HURL** | HURL | `*.hurl` | No |
+| **Docs** | Docs | `*.docs.html`, `*.docs.md`, `*.openapi.yaml/json` | No |
 
-Select the format using the three-button toggle at the top of the Export modal.
+Select the format using the four-button toggle at the top of the Export modal.
 
 ### Postman JSON
 
-Exports each selected collection as a **Postman Collection v2.1** JSON file. Includes the collection's auth settings, pre/post scripts, and collection-level variables.
+Exports each selected collection as a **Postman Collection v2.1** JSON file. Includes the collection's auth settings, pre/post scripts, collection-level variables, and any saved examples (see [Saved examples](API-Documentation#saved-examples)).
 
 When environments are selected, each is exported as a separate `*.postman_environment.json` file that can be imported directly into Postman, Insomnia, or another Apilix instance.
 
@@ -383,6 +385,10 @@ Exports each selected collection as an **HTTP Archive (HAR)** file. HAR files ca
 ### HURL
 
 Exports each selected collection as a **HURL** plain-text file. HURL is a simple, VCS-friendly format runnable with the `hurl` CLI tool.
+
+### API documentation
+
+The **Docs** format generates human-readable documentation (static HTML or Markdown) or an OpenAPI 3.0.3/3.1 spec for a single collection. Select exactly one collection, pick **Docs** and click **Configure…** (the button replaces **Export**) to open the documentation dialog, where you choose options, check the preview and click **Save…**. The folder picker described under [Exporting — Desktop](#exporting--desktop-electron) is not used for this format. Credentials are redacted by default. You can also right-click a collection or folder and choose **Export documentation…**, or run `apilix docs` from the CLI. See [API Documentation](API-Documentation) for all options.
 
 ---
 
@@ -433,6 +439,7 @@ The heading shows a running count: `Collections (3/10)`.
 | HAR | ✅ | ✅ | Browser DevTools → Apilix, proxy recordings |
 | HURL | ✅ | ✅ | Text-based CI/CD-friendly HTTP requests |
 | cURL | ✅ (single command) | — | Copy from browser DevTools → Apilix |
+| API documentation (HTML / Markdown / OpenAPI 3.0.3 or 3.1) | — (OpenAPI output can be re-imported) | ✅ (Docs format, context menu, `apilix docs`) | Share read-only API docs or feed gateways and SDK generators |
 | **Apilix Workspace Export** | ✅ (via Manage Workspaces) | ✅ (via Manage Workspaces) | Full workspace backup and transfer between Apilix instances |
 | **Apilix Sync Config Export** | ✅ (via Manage Workspaces) | ✅ (via Sync tab) | Move sync credentials to a new machine |
 
@@ -467,7 +474,7 @@ The heading shows a running count: `Collections (3/10)`.
 
 1. In Postman: **File → Export** → **Collection v2.1** → save the `.json` file.
 2. In Apilix: **Import → Upload File** → select the file.
-3. The collection appears in your sidebar immediately.
+3. The collection appears in your sidebar immediately. Saved example responses attached to requests are kept and show up as a **▸ N** toggle on the request in the collection tree.
 
 To also migrate environments:
 1. In Postman: **Environments** → export each environment as JSON.

@@ -10,6 +10,7 @@ import type {
 } from './oauth';
 
 // Re-export OAuth types
+export * from './docs';
 export type { OAuth2Config, OAuth2GrantType, OAuth2PresetProvider, OAuth2CustomHeader, OAuth2TokenResponse, OAuth2TokenRefreshResult, OAuth2PresetConfig };
 
 export interface CollectionAuth {
@@ -191,6 +192,21 @@ export interface CollectionItem {
   variable?: CollectionVariable[];
   auth?: CollectionAuth;
   description?: string;
+  /** Postman saved examples (item.response[]). Preserved on import; rendered by docs export. */
+  response?: CollectionExample[];
+}
+
+/** Postman-compatible saved example response (item.response[] entry). */
+export interface CollectionExample {
+  id?: string;
+  name?: string;
+  status?: string;
+  code?: number;
+  _postman_previewlanguage?: string;
+  header?: Array<{ key: string; value: string; disabled?: boolean }> | null;
+  body?: string;
+  cookie?: unknown[];
+  originalRequest?: Partial<CollectionRequest>;
 }
 
 export interface RequestSettings {
@@ -334,6 +350,8 @@ export interface RequestResponse {
   resultView?: 'table' | 'json';
   resultTable?: QueryResultTable;
   responseTime: number;
+  /** True when this response was built from a saved example rather than a live request. */
+  isExample?: boolean;
   resolvedUrl?: string;
   headers: Record<string, string>;
   body: string;
@@ -1156,7 +1174,7 @@ export type AppAction =
   | { type: 'UPDATE_COLLECTION'; payload: AppCollection }
   | { type: 'ADD_CONSOLE_LOG'; payload: ConsoleEntry }
   | { type: 'CLEAR_CONSOLE_LOGS' }
-  | { type: 'OPEN_TAB'; payload: { collectionId: string; item: CollectionItem } }
+  | { type: 'OPEN_TAB'; payload: { collectionId: string; item: CollectionItem; response?: RequestResponse | null } }
   | { type: 'OPEN_HISTORY_SNAPSHOT'; payload: { collectionId: string; item: CollectionItem } }
   | { type: 'CLOSE_TAB'; payload: string }
   | { type: 'SET_ACTIVE_TAB'; payload: string }

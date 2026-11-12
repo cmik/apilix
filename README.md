@@ -18,6 +18,7 @@ A lightweight, open-source alternative API testing tool — available as a **des
 - **Pre-request & Test scripts** (`apx.*` Postman-compatible API, including `apx.sendRequest()`)
 - **Collection Runner** with CSV data-driven testing and multi-iteration support
 - **Headless CLI runner** (`@apilix/cli`) — run collections from CI/CD pipelines without the UI; supports JSON, JUnit, and table reporters, CSV data files, and `setNextRequest()` flow control; ships as a standalone binary (no Node.js required)
+- **API documentation export** — turn a collection or folder into self-contained HTML, Markdown, or OpenAPI 3.0.3/3.1 (JSON/YAML) from the app or with `apilix docs`; credentials are redacted by name by default
 - **Environment variables** with `{{variable}}` substitution
 - **Global variables** — cross-collection variables manageable via the Globals panel and scriptable with `apx.globals.*`
 - **Saved database connections** — workspace-scoped MySQL, PostgreSQL, MongoDB, SQLite, Redis, Cassandra, DynamoDB, Oracle, and MSSQL profiles reusable across requests, scripts, and the Database panel

@@ -1,0 +1,206 @@
+'use strict';
+
+const { buildSnippets } = require('./doc-model');
+const { parseAttrs, decodeAttrEntities } = require('./doc-attrs');
+
+const AUTH_LABELS = {
+  bearer: 'Bearer token', basic: 'Basic auth', apikey: 'API key', oauth2: 'OAuth 2.0',
+  digest: 'Digest', oauth1: 'OAuth 1.0', hawk: 'Hawk', awsv4: 'AWS Signature', ntlm: 'NTLM',
+};
+const FIELD_LABELS = {
+  token: 'Token', username: 'Username', password: 'Password', value: 'Value',
+  clientId: 'Client ID', clientSecret: 'Client secret', accessToken: 'Access token',
+};
+
+const LANG_MAP = { json: 'json', xml: 'xml', html: 'html', javascript: 'javascript', text: '' };
+
+function cell(text) {
+  return String(text == null ? '' : text).replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\r?\n/g, '<br>');
+}
+
+function escHtml(text) {
+  return String(text == null ? '' : text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/** Single-line, HTML-escaped text for headings, code spans and list entries. */
+function inline(text) {
+  return escHtml(text).replace(/\s*[\r\n]+\s*/g, ' ').replace(/\\/g, '\\\\').replace(/`/g, '\\`');
+}
+
+/** Text inside a code span: no HTML escaping (code spans are literal), single line, no backtick breakout. */
+function span(text) {
+  return String(text == null ? '' : text).replace(/\s*[\r\n]+\s*/g, ' ').replace(/`/g, "'");
+}
+
+const IMG_TAG_RE = /<img\b([^<>]*)>/gi;
+const SAFE_IMG_SRC_RE = /^(https?:\/\/|data:image\/(png|jpe?g|gif|webp);base64,)/i;
+
+/** Convert a raw <img> tag with a safe src to Markdown image syntax; null when the src is not allowed. */
+function imgTagToMarkdown(rawAttrs) {
+  let src = null;
+  let alt = '';
+  for (const a of parseAttrs(rawAttrs)) {
+    if (a.name === 'src' && src == null) src = a.value;
+    else if (a.name === 'alt' && alt === '') alt = decodeAttrEntities(a.value);
+  }
+  if (src == null) return null;
+  const url = src.replace(/[\u0000-\u0020]+/g, '');
+  if (!SAFE_IMG_SRC_RE.test(url)) return null;
+  const label = alt.replace(/[\[\]\\\r\n]+/g, ' ').trim();
+  return `![${escHtml(label)}](${escHtml(url.replace(/\(/g, '%28').replace(/\)/g, '%29'))})`;
+}
+
+/** Escape HTML in one text run, keeping <img> tags with a safe src as Markdown images. */
+function escapeKeepingImages(text) {
+  let out = '';
+  let last = 0;
+  let m;
+  IMG_TAG_RE.lastIndex = 0;
+  while ((m = IMG_TAG_RE.exec(text)) !== null) {
+    const md = imgTagToMarkdown(m[1]);
+    out += escHtml(text.slice(last, m.index)) + (md != null ? md : escHtml(m[0]));
+    last = m.index + m[0].length;
+  }
+  return out + escHtml(text.slice(last));
+}
+
+/** Escape raw HTML in markdown prose, leaving fenced blocks and code spans intact. Safe <img> tags become Markdown images. */
+function prose(text) {
+  const lines = String(text == null ? '' : text).split(/\r?\n/);
+  let fenceMark = null;
+  return lines.map(line => {
+    const m = line.match(/^\s*(`{3,}|~{3,})/);
+    if (fenceMark) {
+      if (m && m[1][0] === fenceMark[0] && m[1].length >= fenceMark.length) fenceMark = null;
+      return line;
+    }
+    if (m) { fenceMark = m[1]; return line; }
+    return line.split(/(`[^`]*`)/).map((part, i) => (i % 2 ? part : escapeKeepingImages(part))).join('');
+  }).join('\n');
+}
+
+/** Fenced code block whose fence is longer than any backtick run inside. */
+function fence(code, lang) {
+  const runs = String(code).match(/`+/g) || [];
+  const len = Math.max(3, ...runs.map(r => r.length + 1));
+  const f = '`'.repeat(len);
+  return `${f}${lang || ''}\n${code}\n${f}`;
+}
+
+function table(headers, rows) {
+  if (!rows.length) return '';
+  const lines = [`| ${headers.join(' | ')} |`, `| ${headers.map(() => '---').join(' | ')} |`];
+  for (const r of rows) lines.push(`| ${r.map(cell).join(' | ')} |`);
+  return lines.join('\n');
+}
+
+function kvTable(list) {
+  const hasDesc = list.some(e => e.description);
+  return hasDesc
+    ? table(['Name', 'Value', 'Description'], list.map(e => [e.key, e.value, e.description || '']))
+    : table(['Name', 'Value'], list.map(e => [e.key, e.value]));
+}
+
+function authLines(auth) {
+  if (!auth || auth.type === 'noauth') return [];
+  const lines = [`**Authentication:** ${AUTH_LABELS[auth.type] || auth.type}${auth.source !== 'request' ? ` (inherited from ${auth.source})` : ''}`];
+  if (auth.type === 'apikey') lines.push('', `Sent in ${auth.in}: \`${span(auth.name)}\``);
+  if (auth.oauth2) {
+    const o = auth.oauth2;
+    lines.push('', `Grant type: \`${span(o.grantType)}\``);
+    if (o.authorizationUrl) lines.push(`Authorization URL: \`${span(o.authorizationUrl)}\``);
+    if (o.tokenUrl) lines.push(`Token URL: \`${span(o.tokenUrl)}\``);
+    if (o.scopes && o.scopes.length) lines.push(`Scopes: ${o.scopes.map(s => `\`${span(s)}\``).join(', ')}`);
+  }
+  if (auth.fields && auth.fields.length) {
+    lines.push('', table(['Field', 'Value'], auth.fields.map(f => [FIELD_LABELS[f.key] || f.key, f.value])));
+  }
+  return lines;
+}
+
+function bodyLines(body) {
+  if (!body) return [];
+  const lines = ['**Body**', ''];
+  if (body.mode === 'raw') {
+    lines.push(`Mode: raw (${body.language || 'text'})`, '', fence(body.raw || '', LANG_MAP[body.language] || ''));
+  } else if (body.mode === 'urlencoded' || body.mode === 'formdata') {
+    lines.push(`Mode: ${body.mode}`, '', kvTable(body.fields || []) || '_No fields_');
+  } else if (body.mode === 'graphql') {
+    lines.push('Mode: GraphQL', '', fence(body.graphql.query, 'graphql'));
+    if (body.graphql.variables) lines.push('', '**Variables**', '', fence(body.graphql.variables, 'json'));
+  } else if (body.mode === 'file') {
+    lines.push('Mode: binary file');
+  }
+  return lines;
+}
+
+function exampleLines(examples) {
+  const lines = [];
+  for (const ex of examples) {
+    lines.push(`**Example: ${inline(ex.name)}**${ex.status || ex.code ? ` (${[ex.code, ex.status].filter(Boolean).join(' ')})` : ''}`, '');
+    if (ex.originalRequest && (ex.originalRequest.method || ex.originalRequest.url)) {
+      lines.push(`Request: \`${span([ex.originalRequest.method, ex.originalRequest.url].filter(Boolean).join(' '))}\``, '');
+    }
+    if (ex.headers.length) lines.push(kvTable(ex.headers), '');
+    if (ex.body) lines.push(fence(ex.body, LANG_MAP[ex.language] || ''), '');
+  }
+  return lines;
+}
+
+function requestLines(req, level, options, deps, warnings) {
+  const h = '#'.repeat(Math.min(level, 6));
+  const lines = [`${h} ${inline(req.name)}`, '', `\`${span(req.method)} ${span(req.fullUrl)}\``, ''];
+  if (req.description) lines.push(prose(req.description), '');
+  const auth = authLines(req.auth);
+  if (auth.length) lines.push(...auth, '');
+  if (req.pathVariables.length) lines.push('**Path variables**', '', kvTable(req.pathVariables), '');
+  if (req.query.length) lines.push('**Query parameters**', '', kvTable(req.query), '');
+  if (req.headers.length) lines.push('**Headers**', '', kvTable(req.headers), '');
+  const body = bodyLines(req.body);
+  if (body.length) lines.push(...body, '');
+  const ex = exampleLines(req.examples);
+  if (ex.length) lines.push(...ex);
+  for (const s of buildSnippets(req, options, deps, warnings)) {
+    lines.push(`**${inline(s.label)}**`, '', fence(s.code, ''), '');
+  }
+  return lines;
+}
+
+function renderNodes(nodes, level, options, deps, warnings) {
+  const lines = [];
+  for (const n of nodes) {
+    if (n.type === 'folder') {
+      lines.push(`${'#'.repeat(Math.min(level, 6))} ${inline(n.name)}`, '');
+      if (n.description) lines.push(prose(n.description), '');
+      lines.push(...renderNodes(n.children || [], level + 1, options, deps, warnings));
+    } else {
+      lines.push(...requestLines(n.request, level, options, deps, warnings));
+    }
+  }
+  return lines;
+}
+
+function toc(nodes, depth, lines) {
+  for (const n of nodes) {
+    lines.push(`${'  '.repeat(depth)}- ${n.type === 'request' ? `\`${span(n.request.method)}\` ` : ''}${inline(n.name)}`);
+    if (n.children) toc(n.children, depth + 1, lines);
+  }
+}
+
+function renderMarkdown(model, options, deps) {
+  const warnings = [];
+  const lines = [`# ${inline(model.title)}`, ''];
+  if (model.description) lines.push(prose(model.description), '');
+  const auth = authLines(model.auth);
+  if (auth.length) lines.push(...auth, '');
+  if (model.variables.length) lines.push('## Variables', '', kvTable(model.variables), '');
+  if (model.tree.length) {
+    lines.push('## Contents', '');
+    toc(model.tree, 0, lines);
+    lines.push('');
+  }
+  lines.push(...renderNodes(model.tree, 2, options, deps, warnings));
+  return { content: `${lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()}\n`, warnings };
+}
+
+module.exports = { renderMarkdown, fence };

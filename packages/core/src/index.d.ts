@@ -5,3 +5,5 @@ export { InputError, prepareCollectionRun, executePreparedCollectionRun } from '
 export { generatePKCEVerifier, generatePKCEChallenge, verifyPKCEChallenge, refreshOAuth2Token, exchangeAuthorizationCodeForToken, validateOAuth2Config } from './oauth';
 export { getSystemCAs, makeHttpsAgent } from './tls-utils';
 export { summarizeRun, buildJsonReport, buildJUnitReport } from './runner-reporters';
+// API documentation export (HTML / Markdown / OpenAPI); see ./docs/index.d.ts for the full signatures.
+export { generateDocs, buildDocModel } from './docs';

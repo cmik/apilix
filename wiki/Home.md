@@ -30,7 +30,7 @@ Apilix is a lightweight, open-source API development and testing tool built for 
 | 🌍 | Environments & variable scopes | 🎭 | Built-in Mock Server with WebSocket support |
 | ✍️ | Pre-request & test scripts (`pm.*` compatible) | 🔄 | Sync via Git, S3, HTTP, or Team server |
 | 📥 | Import: Postman, OpenAPI, cURL, HAR, Hurl | 🌊 | Chrome CDP browser traffic capture |
-| 📤 | Export: Postman, cURL, Hurl, Code Snippets | 🔍 | Response search, JSONPath/JMESPath tester |
+| 📤 | Export: Postman, cURL, Hurl, Code Snippets, HTML/Markdown/OpenAPI docs | 🔍 | Response search, JSONPath/JMESPath tester |
 | 🕸️ | GraphQL with schema introspection | 🏷️ | Network timeline, TLS chain, redirect chain |
 | 🍪 | Cookie manager | 🕐 | Request History with snapshot re-open |
 | ⚡ | Keyboard shortcuts & dark/light theme | 🖥️ | Headless CLI runner — JSON & JUnit reporters, CSV data |
@@ -153,6 +153,7 @@ The Apilix UI is divided into five main zones:
 ### Tools
 - [Browser Capture](Browser-Capture) — Chrome CDP integration, live traffic capture
 - [Import & Export](Import-and-Export) — Postman, OpenAPI, cURL, HAR, Hurl
+- [API Documentation](API-Documentation) — Export a collection or folder as HTML, Markdown or OpenAPI docs (app or `apilix docs` CLI), redaction of secrets, saved examples
 - [Code Generation](Code-Generation) — Request code snippets in multiple languages
 
 ### Reference

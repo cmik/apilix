@@ -23,9 +23,15 @@ function baseParams(): CurlBuildParams {
 }
 
 describe('buildCurlCommand — basic structure', () => {
-  it('starts with curl -X METHOD', () => {
+  it("starts with curl -X 'METHOD' (shell-quoted)", () => {
     const result = buildCurlCommand(baseParams());
-    expect(result).toMatch(/^curl -X GET/);
+    expect(result).toMatch(/^curl -X 'GET'/);
+  });
+
+  it('shell-quotes a hostile method so it cannot inject commands', () => {
+    const result = buildCurlCommand({ ...baseParams(), method: "GET; echo 'injected'" });
+    expect(result.startsWith("curl -X 'GET; echo '\\''injected'\\'''")).toBe(true);
+    expect(result).not.toMatch(/^curl -X GET;/);
   });
 
   it('ends with the quoted URL as the last part', () => {

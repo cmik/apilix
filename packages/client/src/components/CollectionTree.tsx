@@ -1,7 +1,8 @@
-import { useState, useRef, useEffect, createContext, useContext, lazy, Suspense } from 'react';
+import { useState, useRef, useEffect, useMemo, createContext, useContext, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import type { CollectionItem, AppCollection, MockCollection, MockRoute } from '../types';
 import { useApp, generateId } from '../store';
+import { renameExampleOnItem, removeExampleFromItem, exampleToResponse, withExamples } from '../utils/exampleUtils';
 import { buildVarMap, buildCollectionDefinitionVarMap, resolveVariables } from '../utils/variableResolver';
 import { buildVariableSuggestions } from '../utils/variableAutocomplete';
 import {
@@ -36,6 +37,7 @@ import {
 } from './Icons';
 
 const ItemSettingsModal = lazy(() => import('./ItemSettingsModal'));
+const ExportDocsModal = lazy(() => import('./ExportDocsModal'));
 
 // ─── Send-to-Mock helpers ────────────────────────────────────────────────────
 
@@ -216,6 +218,13 @@ interface RevealState {
 }
 
 const RevealCtx = createContext<RevealState | null>(null);
+/** The example currently shown in the response panel. Matched against state.response by reference, so it
+ *  clears itself as soon as another response replaces it. */
+interface ExampleSelection { exampleId: string; response: unknown }
+const ExampleSelCtx = createContext<{ selected: ExampleSelection | null; select: (s: ExampleSelection) => void }>({
+  selected: null,
+  select: () => {},
+});
 
 const METHOD_COLORS: Record<string, string> = {
   GET: 'text-green-400',
@@ -549,6 +558,10 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
   const collapseSignal = useContext(CollapseCtx);
   const expandSignal = useContext(ExpandCtx);
   const revealCtx = useContext(RevealCtx);
+  const exampleSel = useContext(ExampleSelCtx);
+  const [examplesOpen, setExamplesOpen] = useState(false);
+  const [renamingExample, setRenamingExample] = useState<{ id: string; value: string } | null>(null);
+  const [pendingExampleDelete, setPendingExampleDelete] = useState<{ id: string; name: string } | null>(null);
   const [open, setOpen] = useState(() => expandSignal >= collapseSignal);
 
   useEffect(() => {
@@ -565,6 +578,7 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
   const [renaming, setRenaming] = useState(!!startRenaming);
   const [renameVal, setRenameVal] = useState(item.name);
   const [showSettings, setShowSettings] = useState(false);
+  const [showDocs, setShowDocs] = useState(false);
   const [newItemId, setNewItemId] = useState<string | null>(null);
   const [mockItems, setMockItems] = useState<CollectionItem[] | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string; isFolder: boolean } | null>(null);
@@ -737,6 +751,7 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
     ...(isFolder ? [
       { label: 'Add request', icon: IconAddRequest, onClick: handleAddRequest },
       { label: 'Add folder', icon: IconAddFolder, onClick: handleAddFolder },
+      ...(item.id ? [{ label: 'Export documentation…', icon: IconDownload, onClick: () => setShowDocs(true) }] : []),
       ...((item.item?.length ?? 0) >= 2 && !!item.id ? [{
         label: 'Order items A→Z',
         icon: IconSort,
@@ -843,6 +858,16 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
 
         {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
 
+        {showDocs && item.id && (
+          <Suspense fallback={null}>
+            <ExportDocsModal
+              collection={collection}
+              folder={{ id: item.id, name: item.name }}
+              onClose={() => setShowDocs(false)}
+            />
+          </Suspense>
+        )}
+
         {showSettings && (
           <Suspense fallback={null}>
             <ItemSettingsModal
@@ -948,11 +973,97 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
             : <span className={`truncate ${isActive ? 'text-white' : 'text-slate-300'}`}>{item.name}</span>
           }
         </button>
+        {item.response && item.response.length > 0 && (
+          <button
+            className="px-1.5 py-0.5 mr-0.5 rounded text-[10px] text-slate-500 hover:text-slate-200 hover:bg-slate-600/60 shrink-0"
+            title={examplesOpen ? 'Hide examples' : 'Show examples'}
+            onClick={e => { e.stopPropagation(); setExamplesOpen(o => !o); }}
+          >
+            {examplesOpen ? '▾' : '▸'} {item.response.length}
+          </button>
+        )}
         <KebabBtn onClick={openMenu} />
         {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
       </div>
       {dropPos === 'after' && (
         <div className="absolute bottom-0 left-2 right-0 h-0.5 bg-orange-500 rounded-full z-10 pointer-events-none" />
+      )}
+      {item.id && item.response && item.response.length > 0 && (examplesOpen || item.response.some(ex => ex.id === exampleSel.selected?.exampleId && state.response === exampleSel.selected?.response)) && (
+        <div>
+          {item.response.map(ex => {
+            const code = ex.code ?? 0;
+            const color = code >= 500 ? 'text-red-400' : code >= 400 ? 'text-orange-400' : code >= 300 ? 'text-yellow-400' : 'text-green-400';
+            const persist = (updated: CollectionItem) => {
+              dispatch({ type: 'UPDATE_COLLECTION', payload: { ...collection, item: updateItemById(collection.item, item.id!, updated) } });
+              // Sync only the examples into every open tab of this request, keeping unsaved request edits
+              for (const tab of state.tabs) {
+                if (tab.collectionId === collectionId && tab.item.id === item.id) {
+                  dispatch({ type: 'UPDATE_TAB_ITEM', payload: { tabId: tab.id, item: withExamples(tab.item, updated.response) } });
+                }
+              }
+            };
+            const commitExampleRename = () => {
+              if (renamingExample && renamingExample.value.trim()) persist(renameExampleOnItem(item, renamingExample.id, renamingExample.value.trim()));
+              setRenamingExample(null);
+            };
+            const isRenaming = !!ex.id && renamingExample?.id === ex.id;
+            const isSelected = !!ex.id && exampleSel.selected?.exampleId === ex.id
+              && state.response === exampleSel.selected.response;
+            return (
+              <div
+                key={ex.id}
+                className={`flex items-center group rounded text-xs ${isSelected ? 'bg-slate-600' : 'hover:bg-slate-700/50'}`}
+                style={{ paddingLeft: indentPx + 20 }}
+              >
+                <button
+                  className="flex items-center gap-2 flex-1 min-w-0 py-1"
+                  title="View example"
+                  onClick={() => {
+                    if (isRenaming) return;
+                    const response = exampleToResponse(ex);
+                    dispatch({ type: 'OPEN_TAB', payload: { collectionId, item, response } });
+                    dispatch({ type: 'SET_VIEW', payload: 'request' });
+                    if (ex.id) exampleSel.select({ exampleId: ex.id, response });
+                  }}
+                >
+                  <span className={`font-bold w-8 shrink-0 ${color}`}>{code || '—'}</span>
+                  {isRenaming
+                    ? <InlineRename value={renamingExample!.value} onChange={v => setRenamingExample({ id: ex.id!, value: v })} onConfirm={commitExampleRename} onCancel={() => setRenamingExample(null)} />
+                    : <span className={`truncate ${isSelected ? 'text-white' : 'text-slate-400'}`}>{ex.name || 'Example'}</span>}
+                </button>
+                <button
+                  className="opacity-0 group-hover:opacity-100 px-1 text-slate-500 hover:text-slate-200"
+                  title="Rename example"
+                  onClick={() => { if (ex.id) setRenamingExample({ id: ex.id, value: ex.name ?? '' }); }}
+                >✎</button>
+                <button
+                  className="opacity-0 group-hover:opacity-100 px-1.5 text-slate-500 hover:text-red-400"
+                  title="Delete example"
+                  onClick={() => { if (ex.id) setPendingExampleDelete({ id: ex.id, name: ex.name || 'Example' }); }}
+                >×</button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {pendingExampleDelete && item.id && (
+        <ConfirmModal
+          title="Delete example?"
+          message={<>Delete example <strong className="text-slate-200">{pendingExampleDelete.name}</strong>? This cannot be undone.</>}
+          confirmLabel="Delete"
+          danger={true}
+          onConfirm={() => {
+            const updated = removeExampleFromItem(item, pendingExampleDelete.id);
+            dispatch({ type: 'UPDATE_COLLECTION', payload: { ...collection, item: updateItemById(collection.item, item.id!, updated) } });
+            for (const tab of state.tabs) {
+              if (tab.collectionId === collectionId && tab.item.id === item.id) {
+                dispatch({ type: 'UPDATE_TAB_ITEM', payload: { tabId: tab.id, item: withExamples(tab.item, updated.response) } });
+              }
+            }
+            setPendingExampleDelete(null);
+          }}
+          onCancel={() => setPendingExampleDelete(null)}
+        />
       )}
       {mockItems && (
         <SendToMockModal
@@ -1036,6 +1147,7 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
   const [renaming, setRenaming] = useState(!!startRenaming);
   const [renameVal, setRenameVal] = useState(startRenaming ? '' : collection.info.name);
   const [showSettings, setShowSettings] = useState(false);
+  const [showDocs, setShowDocs] = useState(false);
   const [newItemId, setNewItemId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
@@ -1220,6 +1332,7 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
     { label: 'Add to Mock Server', icon: IconMock, onClick: handleSendCollectionToMock },
     { label: 'Export', icon: IconDownload, onClick: handleExport },
     { label: 'Export as HURL', icon: IconDownload, onClick: handleExportHurl },
+    { label: 'Export documentation…', icon: IconDownload, onClick: () => setShowDocs(true) },
     ...(collection.item.length >= 2 ? [{
       label: 'Order items A→Z',
       icon: IconSort,
@@ -1317,6 +1430,12 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
       )}
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
+
+      {showDocs && (
+        <Suspense fallback={null}>
+          <ExportDocsModal collection={collection} onClose={() => setShowDocs(false)} />
+        </Suspense>
+      )}
 
       {showSettings && (
         <Suspense fallback={null}>
@@ -1452,6 +1571,8 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
   // Track the active highlight timeout so rapid re-fires don't clear a newer highlight early
   // collectionsRef is declared below (shared with drag-drop logic) and always kept current
   const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [selectedExample, setSelectedExample] = useState<ExampleSelection | null>(null);
+  const exampleSelValue = useMemo(() => ({ selected: selectedExample, select: setSelectedExample }), [selectedExample]);
 
   useEffect(() => {
     function onReveal(e: Event) {
@@ -1755,6 +1876,7 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
   return (
     <DragCtx.Provider value={dragCtxValue}>
       <RevealCtx.Provider value={revealState}>
+      <ExampleSelCtx.Provider value={exampleSelValue}>
       <CollapseCtx.Provider value={collapseSignal}>
       <ExpandCtx.Provider value={expandSignal}>
       <div
@@ -1810,6 +1932,7 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
       </div>
       </ExpandCtx.Provider>
       </CollapseCtx.Provider>
+      </ExampleSelCtx.Provider>
       </RevealCtx.Provider>
     </DragCtx.Provider>
   );

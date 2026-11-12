@@ -14,6 +14,7 @@ const oauth = require('./oauth');
 const tlsUtils = require('./tls-utils');
 const runnerReporters = require('./runner-reporters');
 const variableResolver = require('./variable-resolver');
+const docs = require('./docs');
 
 module.exports = {
   // request engine
@@ -57,4 +58,8 @@ module.exports = {
 
   // variable resolver — single canonical export
   resolveVariables: variableResolver.resolveVariables,
+
+  // API documentation export
+  generateDocs: docs.generateDocs,
+  buildDocModel: docs.buildDocModel,
 };

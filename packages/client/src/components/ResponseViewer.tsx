@@ -1,6 +1,8 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, createContext, useContext } from 'react';
 import { JSONPath } from 'jsonpath-plus';
-import { useApp } from '../store';
+import { useApp, generateId } from '../store';
+import { findItemInTree, updateItemById } from '../utils/treeHelpers';
+import { buildExampleFromResponse, addExampleToItem, exampleSaveBlocker } from '../utils/exampleUtils';
 import type { TestResult, TlsCertInfo, NetworkTimings, RedirectHop } from '../types';
 import SaveToVarModal from './SaveToVarModal';
 import TestValueModal from './TestValueModal';
@@ -809,6 +811,29 @@ export default function ResponseViewer() {
 
   const { response, isLoading } = state;
 
+  const activeTab = state.tabs.find(t => t.id === state.activeTabId) ?? null;
+  const exampleCollection = activeTab ? state.collections.find(c => c._id === activeTab.collectionId) : undefined;
+  const exampleBlocker = response ? exampleSaveBlocker(response) : null;
+  const canSaveExample = !!(response && !response.error && activeTab?.item.id && exampleCollection
+    && findItemInTree(exampleCollection.item, activeTab.item.id));
+  const [exampleSaved, setExampleSaved] = useState(false);
+  const exampleSavedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (exampleSavedTimer.current) clearTimeout(exampleSavedTimer.current); }, []);
+
+  const handleSaveAsExample = () => {
+    if (!response || !activeTab?.item.id || !exampleCollection) return;
+    const stored = findItemInTree(exampleCollection.item, activeTab.item.id);
+    if (!stored) return;
+    const example = buildExampleFromResponse(response, activeTab.item, generateId());
+    const updated = addExampleToItem(stored, example);
+    dispatch({ type: 'UPDATE_COLLECTION', payload: { ...exampleCollection, item: updateItemById(exampleCollection.item, activeTab.item.id, updated) } });
+    dispatch({ type: 'UPDATE_TAB_ITEM', payload: { tabId: activeTab.id, item: { ...activeTab.item, response: updated.response } } });
+    setExampleSaved(true);
+    if (exampleSavedTimer.current) clearTimeout(exampleSavedTimer.current);
+    exampleSavedTimer.current = setTimeout(() => setExampleSaved(false), 2000);
+  };
+
+
   const availableTabs = useMemo<RespTab[]>(() => {
     const tabs: RespTab[] = ['Body', 'Headers', 'Test Results'];
     if (response?.redirectChain && response.redirectChain.length > 0) tabs.push('Redirects');
@@ -1200,6 +1225,20 @@ export default function ResponseViewer() {
             >
               {copied ? '✓' : '⧉'}
             </button>
+            {canSaveExample && (
+              <button
+                onClick={handleSaveAsExample}
+                disabled={!!exampleBlocker}
+                className={`text-xs px-1.5 py-0.5 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${exampleSaved ? 'text-green-400' : 'text-slate-500 hover:text-slate-300'}`}
+                title={exampleBlocker ? exampleBlocker : exampleSaved ? 'Example saved! Rename it from the collection tree' : 'Save response as example'}
+              >
+                {exampleSaved ? '✓' : (
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ display: 'inline' }}>
+                    <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+                  </svg>
+                )}
+              </button>
+            )}
             <button
               onClick={handleSaveToFile}
               disabled={saveState === 'saving'}
