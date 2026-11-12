@@ -129,3 +129,29 @@ test('items sharing an id are skipped with a warning instead of receiving the sa
   assert.match(r.warnings.join(' '), /shared by several items/);
   assert.ok(!provider.calls[0].messages[0].content.includes('"https://x/a"'));
 });
+
+test('a single huge request is trimmed: no entry can blow the token budget', async () => {
+  const fields = Array.from({ length: 600 }, (_, i) => ({ key: `field${i}`, value: 'v'.repeat(500), type: 'text' }));
+  const huge = { info: { name: 'H', description: 'd' }, item: [
+    { id: 'big', name: 'N'.repeat(5000), request: { method: 'POST', url: `https://x/${'u'.repeat(100000)}`, body: { mode: 'formdata', formdata: fields } } },
+  ] };
+  const warnings = [];
+  const entries = collectEntries(buildDocModel(huge, {}), warnings);
+  const big = entries.find(e => e.id === 'big');
+  assert.ok(big.name.length <= 201 && big.url.length <= 301);
+  assert.equal(big.params.length, 40);
+  assert.ok(big.params.every(p => !p.example || p.example.length <= 81));
+  assert.match(warnings.join(' '), /only the first 40/);
+  const { estimateTokens } = require('../src/budget');
+  const maxContextTokens = 8000;
+  const batches = buildBatches(entries, { maxContextTokens });
+  for (const b of batches) assert.ok(estimateTokens(JSON.stringify(b, null, 1)) <= maxContextTokens - 1500);
+});
+
+test('an entry that cannot fit even after trimming is skipped with a warning', () => {
+  const entries = [{ id: 'a', kind: 'request', name: 'a', params: Array.from({ length: 40 }, (_, i) => ({ name: `p${i}`, in: 'query', example: 'x'.repeat(80) })) }];
+  const warnings = [];
+  const batches = buildBatches(entries, { maxContextTokens: 100, warnings });
+  assert.deepEqual(batches, []);
+  assert.match(warnings.join(' '), /too large/);
+});

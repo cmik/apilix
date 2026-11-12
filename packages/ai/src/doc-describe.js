@@ -18,10 +18,22 @@ const MAX_BATCHES = 20;
 const MAX_ENTRIES_PER_BATCH = 25;
 const MAX_DESCRIPTION_CHARS = 400;
 const OUTPUT_RESERVE_TOKENS = 1500;
+const SYSTEM_RESERVE_TOKENS = 500;
+// Per-field caps: body and exampleResponse were already bounded, everything else was not.
+const MAX_NAME_CHARS = 200;
+const MAX_URL_CHARS = 300;
+const MAX_FOLDER_CHARS = 200;
+const MAX_EXAMPLE_CHARS = 80;
+const MAX_PARAMS_PER_ENTRY = 40;
 const SKIPPED_HEADERS = new Set(['authorization', 'proxy-authorization', 'cookie', 'set-cookie', 'content-type', 'accept', 'user-agent', 'host', 'content-length', 'accept-encoding', 'connection']);
 
 /** Parameter key shared with the doc model: the same name can exist in path, query, header and body. */
 function paramKey(where, name) { return `${where}:${name}`; }
+
+function clip(v, max) {
+  const str = v === undefined || v === null ? '' : String(v);
+  return str.length > max ? `${str.slice(0, max)}…` : str;
+}
 
 function missing(list, skip) {
   return (Array.isArray(list) ? list : []).filter(e => e && e.key && !e.description && !(skip && skip(e)));
@@ -30,11 +42,11 @@ function missing(list, skip) {
 /** Entries (collection, folders, requests) that lack a description or have undocumented parameters. */
 function collectEntries(model, warnings) {
   const entries = [];
-  if (!model.description) entries.push({ id: COLLECTION_KEY, kind: 'collection', name: model.title });
+  if (!model.description) entries.push({ id: COLLECTION_KEY, kind: 'collection', name: clip(model.title, MAX_NAME_CHARS) });
   const walk = (nodes, trail) => {
     for (const n of nodes) {
       if (n.type === 'folder') {
-        if (!n.description) entries.push({ id: n.id, kind: 'folder', name: n.name, folder: trail.join(' / ') || undefined });
+        if (!n.description) entries.push({ id: n.id, kind: 'folder', name: clip(n.name, MAX_NAME_CHARS), folder: clip(trail.join(' / '), MAX_FOLDER_CHARS) || undefined });
         walk(n.children || [], trail.concat(n.name));
       }
     }
@@ -43,20 +55,24 @@ function collectEntries(model, warnings) {
   for (const r of model.requests) {
     const params = [];
     const add = (list, where, skip) => {
-      for (const p of missing(list, skip)) params.push({ name: p.key, in: where, ...(p.value && p.value !== REDACTED ? { example: p.value } : {}) });
+      for (const p of missing(list, skip)) params.push({ name: clip(p.key, MAX_NAME_CHARS), in: where, ...(p.value && p.value !== REDACTED ? { example: clip(p.value, MAX_EXAMPLE_CHARS) } : {}) });
     };
     add(r.pathVariables, 'path');
     add(r.query, 'query');
     add(r.headers, 'header', e => SKIPPED_HEADERS.has(String(e.key).toLowerCase()));
     if (r.body && Array.isArray(r.body.fields)) add(r.body.fields, 'body');
+    if (params.length > MAX_PARAMS_PER_ENTRY) {
+      if (warnings) warnings.push(`"${clip(r.name, 60)}" has ${params.length} undocumented parameters: only the first ${MAX_PARAMS_PER_ENTRY} were sent.`);
+      params.length = MAX_PARAMS_PER_ENTRY;
+    }
     if (!r.description || params.length) {
       const entry = {
         id: r.id,
         kind: 'request',
-        name: r.name,
+        name: clip(r.name, MAX_NAME_CHARS),
         method: r.method,
-        url: r.fullUrl,
-        ...(r.folderPath.length ? { folder: r.folderPath.join(' / ') } : {}),
+        url: clip(r.fullUrl, MAX_URL_CHARS),
+        ...(r.folderPath.length ? { folder: clip(r.folderPath.join(' / '), MAX_FOLDER_CHARS) } : {}),
         ...(r.description ? { hasDescription: true } : {}),
         ...(params.length ? { params } : {}),
       };
@@ -85,8 +101,8 @@ function dropDuplicateIds(entries, warnings) {
 }
 
 /** Split entries into batches that fit the context budget. */
-function buildBatches(entries, { maxContextTokens = 8000, secretValues, redactSecrets = true } = {}) {
-  const budget = Math.max(500, maxContextTokens - OUTPUT_RESERVE_TOKENS);
+function buildBatches(entries, { maxContextTokens = 8000, secretValues, redactSecrets = true, warnings } = {}) {
+  const budget = Math.max(500, maxContextTokens - OUTPUT_RESERVE_TOKENS - SYSTEM_RESERVE_TOKENS);
   const batches = [];
   let current = [];
   let used = 0;
@@ -95,7 +111,12 @@ function buildBatches(entries, { maxContextTokens = 8000, secretValues, redactSe
     if (redactSecrets !== false) text = scrubTokenPatterns(text);
     text = scrubSecretValues(text, secretValues);
     const entry = JSON.parse(text);
-    const cost = estimateTokens(text);
+    // Cost what is actually sent: the prompt pretty-prints each batch (indentation is not free).
+    const cost = estimateTokens(JSON.stringify(entry, null, 1)) + 2;
+    if (cost > budget) {
+      if (warnings) warnings.push(`Skipped "${clip(entry.name || entry.id, 60)}": too large for the context budget even after trimming.`);
+      continue;
+    }
     if (current.length && (used + cost > budget || current.length >= MAX_ENTRIES_PER_BATCH)) {
       batches.push(current);
       current = [];
@@ -157,7 +178,7 @@ async function describeDocs({ provider, model, language, maxContextTokens, secre
   const usage = { inputTokens: 0, outputTokens: 0 };
   if (!entries.length) return { descriptions: {}, warnings, usage, requested: 0 };
 
-  let batches = buildBatches(entries, { maxContextTokens, secretValues, redactSecrets });
+  let batches = buildBatches(entries, { maxContextTokens, secretValues, redactSecrets, warnings });
   if (batches.length > MAX_BATCHES) {
     warnings.push(`Too many entries: only the first ${MAX_BATCHES} batches were described.`);
     batches = batches.slice(0, MAX_BATCHES);
