@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { CollectionItem, BaseCollection, RequestResponse, RunnerIteration, RunnerIterationResult, ScriptLog, CookieJar, RequestSettings, AiSettings } from './types';
+import type { CollectionItem, BaseCollection, RequestResponse, RunnerIteration, RunnerIterationResult, ScriptLog, CookieJar, RequestSettings, AiSettings, DocAiDescription } from './types';
 import type { DatabaseConnection } from './types';
 import { normalizeBaseUrl } from './utils/aiDefaults';
 
@@ -540,6 +540,31 @@ export async function aiTest(): Promise<{ ok: boolean; model: string; latencyMs:
 export async function aiPreview(payload: AiPreviewPayload): Promise<AiPreviewResult> {
   try {
     const res = await api.post<AiPreviewResult>('/ai/preview', payload);
+    return res.data;
+  } catch (err) {
+    throw toAiApiError(err);
+  }
+}
+
+export interface AiDescribeDocsResult {
+  descriptions: Record<string, DocAiDescription>;
+  warnings: string[];
+  /** Number of undocumented entries that were submitted. */
+  requested: number;
+}
+
+/**
+ * Ask the model to describe what a collection leaves undocumented. The collection must already be
+ * masked (see `maskCollectionForAi`); the server redacts it again before anything leaves the machine.
+ */
+export async function aiDescribeDocs(payload: {
+  collection: unknown;
+  folder?: string;
+  language?: string;
+  secretValues?: string[];
+}): Promise<AiDescribeDocsResult> {
+  try {
+    const res = await api.post<AiDescribeDocsResult>('/ai/describe-docs', payload, { timeout: 300000 });
     return res.data;
   } catch (err) {
     throw toAiApiError(err);

@@ -50,6 +50,12 @@ If a stored key cannot be decrypted (different machine, new OS user, reinstalled
 
 The key is sent only from the app to the local Apilix server, then to your provider. Apilix's AI routes accept connections from the local machine only, so a network-exposed Apilix cannot be used to spend your key. Provider requests always verify TLS and honour your proxy and custom CA settings.
 
+## Features
+
+| Feature | Where | Setting |
+|---|---|---|
+| Fill missing documentation descriptions | Export documentation dialog, `apilix docs --ai-describe` | *Complete missing documentation descriptions* |
+
 ## Limits
 
 - One AI request runs at a time.
@@ -58,4 +64,4 @@ The key is sent only from the app to the local Apilix server, then to your provi
 
 ## CLI
 
-Future AI-enabled CLI options read their configuration from environment variables only (never command-line arguments, which leak into shell history and process lists): `APILIX_AI_PROVIDER`, `APILIX_AI_MODEL`, `APILIX_AI_API_KEY`, `APILIX_AI_BASE_URL`.
+AI-enabled CLI options (currently `apilix docs --ai-describe`) read their configuration from environment variables only (never command-line arguments, which leak into shell history and process lists): `APILIX_AI_PROVIDER` (`anthropic` by default, or `openai-compat`), `APILIX_AI_MODEL`, `APILIX_AI_API_KEY`, `APILIX_AI_BASE_URL`. See [API Documentation](API-Documentation#ai-written-descriptions).

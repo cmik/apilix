@@ -2,7 +2,11 @@ import { useMemo, useState } from 'react';
 import { useApp } from '../store';
 import type { AppCollection, DocsExportOptions, DocsFormat, DocsResult, DocsTheme } from '../types';
 import { DOC_SNIPPET_LANGUAGES } from '../utils/docsCodeGenAdapter';
-import { docsFilename, exportCollectionDocs } from '../utils/docsExport';
+import { docsFilename, exportCollectionDocs, maskCollectionForAi } from '../utils/docsExport';
+import { buildAiRows, rowsToDescriptions, type AiDescriptionRow } from '../utils/docsAiRows';
+import { AI_PROVIDER_DEFAULT_BASE } from '../utils/aiDefaults';
+import { aiDescribeDocs, toAiApiError } from '../api';
+import { IconSparkle } from './Icons';
 import { saveResponseToFile } from '../utils/responseFileSave';
 import { useToast } from './Toast';
 
@@ -22,7 +26,7 @@ const FORMAT_LABELS: Record<DocsFormat, string> = {
 const PREVIEW_LIMIT = 30000;
 
 export default function ExportDocsModal({ collection, folder, onClose }: ExportDocsModalProps) {
-  const { getActiveEnvironment, secretSet } = useApp();
+  const { state, dispatch, getActiveEnvironment, secretSet } = useApp();
   const toast = useToast();
   const env = getActiveEnvironment();
 
@@ -37,6 +41,17 @@ export default function ExportDocsModal({ collection, folder, onClose }: ExportD
   const [includeCredentials, setIncludeCredentials] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // AI descriptions: generated on request, reviewed/edited by the user, then merged into the export.
+  const ai = state.ai.settings;
+  const aiBusy = state.ai.inFlight.docDescribe === true;
+  const [aiRows, setAiRows] = useState<AiDescriptionRow[]>([]);
+  const [aiMark, setAiMark] = useState(true);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiNotes, setAiNotes] = useState<string[]>([]);
+  const [tab, setTab] = useState<'preview' | 'ai'>('preview');
+  const aiDestination = ai.baseUrl || (ai.provider === 'anthropic' ? 'Anthropic' : AI_PROVIDER_DEFAULT_BASE[ai.provider]);
+  const aiDescriptions = useMemo(() => rowsToDescriptions(aiRows), [aiRows]);
+
   const options: DocsExportOptions = useMemo(() => ({
     format,
     openapiFormat,
@@ -48,7 +63,9 @@ export default function ExportDocsModal({ collection, folder, onClose }: ExportD
     includeCredentials,
     theme,
     renderImages,
-  }), [format, openapiFormat, openapiVersion, folder?.id, variableMode, snippets, includeExamples, includeCredentials, theme, renderImages]);
+    descriptions: Object.keys(aiDescriptions).length ? aiDescriptions : undefined,
+    markAiContent: aiMark,
+  }), [format, openapiFormat, openapiVersion, folder?.id, variableMode, snippets, includeExamples, includeCredentials, theme, renderImages, aiDescriptions, aiMark]);
 
   const generated = useMemo<{ result: DocsResult | null; error: string | null }>(() => {
     try {
@@ -66,6 +83,34 @@ export default function ExportDocsModal({ collection, folder, onClose }: ExportD
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
+  }
+
+  async function handleGenerateAi() {
+    setAiError(null);
+    setAiNotes([]);
+    dispatch({ type: 'AI_REQUEST_START', payload: 'docDescribe' });
+    try {
+      const r = await aiDescribeDocs({
+        collection: maskCollectionForAi(collection, secretSet),
+        folder: folder?.id,
+        language: ai.outputLanguage || undefined,
+        secretValues: [...secretSet],
+      });
+      dispatch({ type: 'AI_REQUEST_DONE', payload: 'docDescribe' });
+      const rows = buildAiRows(collection, folder?.id, r.descriptions);
+      setAiRows(rows);
+      setAiNotes(r.warnings);
+      if (rows.length) setTab('ai');
+      else setAiError(r.requested === 0 ? 'Nothing to describe: every entry already has a description.' : 'The model returned no usable descriptions.');
+    } catch (err) {
+      const e = toAiApiError(err);
+      dispatch({ type: 'AI_REQUEST_FAIL', payload: { feature: 'docDescribe', code: e.code, message: e.message } });
+      setAiError(`${e.message} (${e.code})`);
+    }
+  }
+
+  function updateAiRow(id: string, patch: Partial<AiDescriptionRow>) {
+    setAiRows(prev => prev.map(r => (r.id === id ? { ...r, ...patch } : r)));
   }
 
   async function handleSave() {
@@ -183,6 +228,39 @@ export default function ExportDocsModal({ collection, folder, onClose }: ExportD
             )}
 
             <section>
+              <span className={sectionLabel}>AI descriptions</span>
+              {!ai.enabled ? (
+                <p className="text-xs text-slate-500">AI is off. Enable it in Settings → AI to fill in missing descriptions.</p>
+              ) : !ai.features.docDescribe ? (
+                <p className="text-xs text-slate-500">Turn on “Complete missing documentation descriptions” in Settings → AI.</p>
+              ) : (
+                <div className="space-y-2">
+                  <button
+                    onClick={handleGenerateAi}
+                    disabled={aiBusy}
+                    className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs rounded border border-orange-500/60 text-orange-300 hover:bg-orange-500/10 font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <IconSparkle className="w-3.5 h-3.5" />
+                    {aiBusy ? 'Generating…' : aiRows.length ? 'Regenerate' : 'Generate missing descriptions'}
+                  </button>
+                  <p className="text-xs text-slate-500">
+                    Sends the request structure of undocumented entries to {aiDestination}. Credentials and secret values are redacted first; existing descriptions are never changed.
+                  </p>
+                  {aiRows.length > 0 && (
+                    <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                      <input type="checkbox" className="accent-orange-500" checked={aiMark} onChange={e => setAiMark(e.target.checked)} />
+                      Mark AI-written descriptions
+                    </label>
+                  )}
+                  {aiError && <p className="text-xs text-red-400">{aiError}</p>}
+                  {aiNotes.length > 0 && (
+                    <ul className="text-xs text-amber-400 list-disc pl-4">{aiNotes.map((n, i) => <li key={i}>{n}</li>)}</ul>
+                  )}
+                </div>
+              )}
+            </section>
+
+            <section>
               <label className="flex items-start gap-2 text-xs text-slate-300 cursor-pointer">
                 <input type="checkbox" className="accent-orange-500 mt-0.5" checked={includeCredentials} onChange={e => setIncludeCredentials(e.target.checked)} />
                 Include credentials
@@ -199,8 +277,49 @@ export default function ExportDocsModal({ collection, folder, onClose }: ExportD
 
           {/* Preview */}
           <div className="flex-1 min-w-0 flex flex-col px-4 py-4 min-h-0">
-            <span className={sectionLabel}>Preview</span>
-            {error ? (
+            {aiRows.length > 0 ? (
+              <div className="flex gap-1 rounded-md bg-slate-800 p-0.5 mb-2 w-fit">
+                <button onClick={() => setTab('preview')} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${tab === 'preview' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}>Preview</button>
+                <button onClick={() => setTab('ai')} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${tab === 'ai' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}>
+                  AI descriptions ({aiRows.length})
+                </button>
+              </div>
+            ) : (
+              <span className={sectionLabel}>Preview</span>
+            )}
+            {tab === 'ai' && aiRows.length > 0 ? (
+              <div className="flex-1 min-h-[320px] overflow-y-auto space-y-3 pr-1">
+                <p className="text-xs text-slate-500">Review and edit before exporting. Unchecked entries are left out.</p>
+                {aiRows.map(row => (
+                  <div key={row.id} className={`rounded border p-2.5 space-y-2 ${row.included ? 'border-slate-700 bg-slate-800/40' : 'border-slate-800 opacity-50'}`}>
+                    <label className="flex items-center gap-2 text-xs font-medium text-slate-200 cursor-pointer">
+                      <input type="checkbox" className="accent-orange-500" checked={row.included} onChange={e => updateAiRow(row.id, { included: e.target.checked })} />
+                      <span className="truncate">{row.label}</span>
+                    </label>
+                    {(row.description || row.kind !== 'request') && (
+                      <textarea
+                        value={row.description}
+                        onChange={e => updateAiRow(row.id, { description: e.target.value })}
+                        rows={2}
+                        aria-label={`Description for ${row.label}`}
+                        className="w-full rounded bg-slate-950 border border-slate-700 focus:border-orange-500 outline-none px-2 py-1 text-xs text-slate-200 resize-y"
+                      />
+                    )}
+                    {Object.entries(row.params).map(([name, text]) => (
+                      <div key={name} className="flex items-center gap-2">
+                        <code className="shrink-0 w-28 truncate text-xs text-slate-400" title={name}>{name}</code>
+                        <input
+                          value={text}
+                          onChange={e => updateAiRow(row.id, { params: { ...row.params, [name]: e.target.value } })}
+                          aria-label={`Description for parameter ${name}`}
+                          className="flex-1 min-w-0 rounded bg-slate-950 border border-slate-700 focus:border-orange-500 outline-none px-2 py-1 text-xs text-slate-200"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            ) : error ? (
               <p className="text-xs text-red-400">{error}</p>
             ) : result && format === 'html' ? (
               <iframe
