@@ -10,7 +10,8 @@
       "@apilix/core/tls-utils": ["./packages/core/src/tls-utils.js"],
       "@apilix/core/runner-reporters": ["./packages/core/src/runner-reporters.js"],
       "@apilix/core/variable-resolver": ["./packages/core/src/variable-resolver.js"],
-      "@apilix/core/docs": ["./packages/core/src/docs/index.js"]
+      "@apilix/core/docs": ["./packages/core/src/docs/index.js"],
+      "@apilix/core/redact": ["./packages/core/src/docs/doc-redact.js"]
     }
   },
   "files": []

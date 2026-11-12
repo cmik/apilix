@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildSecretSet, maskSecrets, SECRET_MASK } from './secretMask';
+import { buildAllSecretValues, buildSecretSet, maskSecrets, SECRET_MASK } from './secretMask';
 import type { AppEnvironment } from '../types';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -211,5 +211,17 @@ describe('maskSecrets', () => {
     // Simulates log.args.join(' ') with a secret embedded in one arg
     const logLine = 'token value: tok-abc123 and done';
     expect(maskSecrets(logLine, secrets)).toBe(`token value: ${SECRET_MASK} and done`);
+  });
+});
+
+describe('buildAllSecretValues', () => {
+  it('collects secrets from every environment, not only the active one', () => {
+    const envA = makeEnv('a', [{ key: 'k', value: 'secret-from-A', enabled: true, secret: true }]);
+    const envB = makeEnv('b', [{ key: 'k', value: 'secret-from-B', enabled: true, secret: true }, { key: 'p', value: 'public-value', enabled: true }]);
+    const all = buildAllSecretValues([envA, envB]);
+    expect(all.has('secret-from-A')).toBe(true);
+    expect(all.has('secret-from-B')).toBe(true);
+    expect(all.has('public-value')).toBe(false);
+    expect(buildSecretSet([envA, envB], 'b').has('secret-from-A')).toBe(false);
   });
 });

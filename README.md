@@ -18,6 +18,7 @@ A lightweight, open-source alternative API testing tool — available as a **des
 - **Pre-request & Test scripts** (`apx.*` Postman-compatible API, including `apx.sendRequest()`)
 - **Collection Runner** with CSV data-driven testing and multi-iteration support
 - **Headless CLI runner** (`@apilix/cli`) — run collections from CI/CD pipelines without the UI; supports JSON, JUnit, and table reporters, CSV data files, and `setNextRequest()` flow control; ships as a standalone binary (no Node.js required)
+- **Optional AI (off by default)** — bring your own key (Anthropic or any OpenAI-compatible endpoint, including local models); requests are masked before anything is sent and the key is encrypted with your OS keychain. See the [AI Features](wiki/AI-Features.md) page
 - **API documentation export** — turn a collection or folder into self-contained HTML, Markdown, or OpenAPI 3.0.3/3.1 (JSON/YAML) from the app or with `apilix docs`; credentials are redacted by name by default
 - **Environment variables** with `{{variable}}` substitution
 - **Global variables** — cross-collection variables manageable via the Globals panel and scriptable with `apx.globals.*`
@@ -82,6 +83,7 @@ Data (collections, environments) is stored locally in the app profile:
 | `packages/cli` | `@apilix/cli` | Headless CLI runner — shipped as a standalone binary |
 | `packages/client` | `apilix-client` | React + Vite frontend |
 | `packages/server` | `@apilix/server` | Express API server |
+| `packages/ai` | `@apilix/ai` | Optional AI foundation — provider abstraction, context redaction, schema validation |
 
 ### Install dependencies
 

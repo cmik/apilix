@@ -1,12 +1,14 @@
 import React, { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
 import apilixLogo from './assets/apilix2.svg';
-import type { AppState, AppAction, AppSettings, AppCollection, AppEnvironment, CollectionItem, RequestTab, CookieJar, Cookie, MockRoute, MockCollection, Workspace, WorkspaceData, HistoryRequest, SavedRunnerRun, MongoQueryTab } from './types';
+import type { AppState, AppAction, AppSettings, AppCollection, AppEnvironment, CollectionItem, RequestTab, CookieJar, Cookie, MockRoute, MockCollection, Workspace, WorkspaceData, HistoryRequest, SavedRunnerRun, MongoQueryTab, AiKeyStatus } from './types';
 import * as StorageDriver from './utils/storageDriver';
 import * as SnapshotEngine from './utils/snapshotEngine';
-import { API_BASE } from './api';
+import { API_BASE, aiPutConfig, aiClearConfig } from './api';
 import type { PostmanVersion } from './utils/postmanValidator';
 import { buildSecretSet } from './utils/secretMask';
 import { normalizeGlobalState, mergeGlobalMetaWithValues } from './utils/globalVariables';
+import { createAiConfigPusher } from './utils/aiConfigPush';
+import { DEFAULT_AI_SETTINGS, aiDestination, applyAiSettingsPatch, validateAiSettings } from './utils/aiDefaults';
 
 const STORAGE_KEY = 'apilix_persist'; // legacy key — kept for migration only
 
@@ -153,6 +155,7 @@ export const initialState: AppState = {
     cdpChromePath: undefined,
     cdpPort: 9222,
   },
+  ai: { settings: DEFAULT_AI_SETTINGS, keyStatus: 'none', inFlight: {}, lastError: null },
 };
 
 function removeRequestTab(state: AppState, tabId: string): AppState {
@@ -1007,6 +1010,32 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'UPDATE_SETTINGS':
       return { ...state, settings: { ...state.settings, ...action.payload } };
 
+    // AI state is global (like `settings`): HYDRATE_WORKSPACE never touches it, and the API key is never stored here.
+    case 'AI_SET_SETTINGS':
+      return { ...state, ai: { ...state.ai, settings: applyAiSettingsPatch(state.ai.settings, action.payload) } };
+
+    case 'AI_SET_KEY_STATUS':
+      return { ...state, ai: { ...state.ai, keyStatus: action.payload } };
+
+    case 'AI_REQUEST_START':
+      return { ...state, ai: { ...state.ai, inFlight: { ...state.ai.inFlight, [action.payload]: true }, lastError: null } };
+
+    case 'AI_REQUEST_DONE':
+      return { ...state, ai: { ...state.ai, inFlight: { ...state.ai.inFlight, [action.payload]: false } } };
+
+    case 'AI_REQUEST_FAIL':
+      return {
+        ...state,
+        ai: {
+          ...state.ai,
+          inFlight: { ...state.ai.inFlight, [action.payload.feature]: false },
+          lastError: { code: action.payload.code, message: action.payload.message },
+        },
+      };
+
+    case 'AI_CLEAR_ERROR':
+      return { ...state, ai: { ...state.ai, lastError: null } };
+
     case 'ADD_REQUEST_HISTORY':
       return {
         ...state,
@@ -1091,6 +1120,13 @@ interface AppContextValue {
   getEnvironmentVars: () => Record<string, string>;
   getCollectionVars: (collectionId: string) => Record<string, string>;
   secretSet: Set<string>;
+  /**
+   * Store the AI API key (null = remove it). The key lives in storageDriver and a ref, never in
+   * `state`. `remember: false` keeps it in memory for this session only.
+   */
+  saveAiKey: (key: string | null, opts?: { remember?: boolean }) => Promise<void>;
+  /** Re-send the AI config to the local server now (it keeps it in memory only). */
+  syncAiConfig: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -1099,6 +1135,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, initialState);
   // Track whether a debounced write is in flight to avoid unnecessary I/O
   const [saveTimer, setSaveTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
+  // AI: the API key is intentionally kept out of `state` (which is serialised and shown in devtools).
+  const aiKeyRef = useRef<string | null>(null);
+  // Destination the key was saved for, and the status it had there. The key is only ever sent
+  // to that destination: changing provider/base URL must not make it follow.
+  const aiKeyDestRef = useRef<string | null>(null);
+  const aiKeyStatusRef = useRef<AiKeyStatus>('none');
+  const aiPusherRef = useRef(createAiConfigPusher());
+  const [aiLoaded, setAiLoaded] = useState(false);
+  const [aiKeyVersion, setAiKeyVersion] = useState(0);
+  const latestAiSettingsRef = useRef(initialState.ai.settings);
 
   // ── Async init ───────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1187,6 +1233,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (mergedSettings.captureViewState) {
         dispatch({ type: 'SET_CAPTURE_VIEW_STATE', payload: mergedSettings.captureViewState });
       }
+
+      // AI config is global and stored apart from settings.json and the workspace files.
+      try {
+        const aiCfg = await StorageDriver.readAiConfig();
+        aiKeyRef.current = aiCfg.apiKey;
+        aiKeyDestRef.current = aiCfg.keyDestination;
+        aiKeyStatusRef.current = aiCfg.keyStatus;
+        if (aiCfg.settings) dispatch({ type: 'AI_SET_SETTINGS', payload: aiCfg.settings });
+        dispatch({ type: 'AI_SET_KEY_STATUS', payload: aiCfg.keyStatus });
+      } catch {
+        // AI is optional: a storage failure must never block app start.
+      }
+      setAiLoaded(true);
     }
     init();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1443,6 +1502,67 @@ export function AppProvider({ children }: { children: ReactNode }) {
       state.settings.corsAllowedOrigins, state.settings.requestTimeout, state.settings.followRedirects,
       state.settings.sslVerification, state.settings.customCAs, state.settings.clientCertificates, state.storageReady]);
 
+  // ── AI configuration ─────────────────────────────────────────────────────
+  latestAiSettingsRef.current = state.ai.settings;
+
+  // Persist non-secret AI settings (the key is written only by saveAiKey).
+  useEffect(() => {
+    if (!aiLoaded) return;
+    const t = setTimeout(() => {
+      StorageDriver.writeAiConfig(state.ai.settings, undefined, { remember: true }).catch(() => { /* ignore */ });
+    }, 300);
+    return () => clearTimeout(t);
+  }, [state.ai.settings, aiLoaded]);
+
+  /** The key to send for `settings`: undefined (keep/clear server-side) when it belongs to another destination. */
+  function aiKeyFor(settings: AppState['ai']['settings']): string | null | undefined {
+    const key = aiKeyRef.current;
+    if (key === null) return null;
+    return aiKeyDestRef.current === aiDestination(settings) ? key : undefined;
+  }
+
+  // A key saved for another destination is not usable here: ask for it again instead of sending it.
+  useEffect(() => {
+    if (!aiLoaded || aiKeyRef.current === null) return;
+    const bound = aiKeyDestRef.current === aiDestination(state.ai.settings);
+    dispatch({ type: 'AI_SET_KEY_STATUS', payload: bound ? aiKeyStatusRef.current : 'needs-reentry' });
+  }, [state.ai.settings, aiLoaded, aiKeyVersion]);
+
+  // Push AI config to the local server. Disabled (or invalid) config clears it server-side,
+  // so nothing can reach a provider while the feature is off.
+  useEffect(() => {
+    if (!aiLoaded) return;
+    // Serialized, superseding and retried with backoff (see utils/aiConfigPush.ts).
+    return aiPusherRef.current.push(() => sendAiConfig(state.ai.settings));
+  }, [state.ai.settings, aiLoaded, aiKeyVersion]);
+
+  function sendAiConfig(settings: AppState['ai']['settings']): Promise<unknown> {
+    return settings.enabled && validateAiSettings(settings) === null
+      ? aiPutConfig(settings, aiKeyFor(settings))
+      : aiClearConfig();
+  }
+
+  /** Re-send the current config now (the server keeps it in memory and may have restarted). */
+  async function syncAiConfig(): Promise<void> {
+    await aiPusherRef.current.flush(() => sendAiConfig(latestAiSettingsRef.current));
+  }
+
+  async function saveAiKey(key: string | null, opts?: { remember?: boolean }): Promise<void> {
+    const trimmed = key === null ? null : key.trim();
+    const value = trimmed === '' ? null : trimmed;
+    const status = await StorageDriver.writeAiConfig(latestAiSettingsRef.current, value, { remember: opts?.remember !== false });
+    aiKeyRef.current = value;
+    aiKeyDestRef.current = value === null ? null : aiDestination(latestAiSettingsRef.current);
+    aiKeyStatusRef.current = value === null ? 'none' : status;
+    dispatch({ type: 'AI_SET_KEY_STATUS', payload: aiKeyStatusRef.current });
+    // Push to the server right away so a "Test" clicked next never races the effect below.
+    const settings = latestAiSettingsRef.current;
+    if (settings.enabled && validateAiSettings(settings) === null) {
+      try { await syncAiConfig(); } catch { /* the push effect retries */ }
+    }
+    setAiKeyVersion(v => v + 1);
+  }
+
   function getActiveEnvironment(): AppEnvironment | null {
     if (!state.activeEnvironmentId) return null;
     return state.environments.find(e => e._id === state.activeEnvironmentId) ?? null;
@@ -1489,7 +1609,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AppContext.Provider value={{ state, dispatch, getActiveEnvironment, getEnvironmentVars, getCollectionVars, secretSet }}>
+    <AppContext.Provider value={{ state, dispatch, getActiveEnvironment, getEnvironmentVars, getCollectionVars, secretSet, saveAiKey, syncAiConfig }}>
       {children}
     </AppContext.Provider>
   );

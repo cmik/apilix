@@ -37,6 +37,10 @@
       "require": "./src/variable-resolver.js",
       "default": "./src/variable-resolver.js"
     },
+    "./redact": {
+      "require": "./src/docs/doc-redact.js",
+      "default": "./src/docs/doc-redact.js"
+    },
     "./docs": {
       "require": "./src/docs/index.js",
       "default": "./src/docs/index.js"

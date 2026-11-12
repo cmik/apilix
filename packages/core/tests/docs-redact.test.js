@@ -38,3 +38,11 @@ test('redactBodyText redacts sensitive JSON keys, leaves other text alone', () =
   assert.equal(r.redactBodyText('plain password=abc', false), 'plain password=abc');
   assert.equal(r.redactBodyText('{"a":1}', false), '{"a":1}');
 });
+
+test('redaction helpers are exposed as the public @apilix/core/redact subpath', () => {
+  const pub = require('@apilix/core/redact');
+  assert.equal(pub, r);
+  for (const name of ['REDACTED', 'redactUrl', 'redactHeaderValue', 'redactBodyText', 'isSensitiveName']) {
+    assert.ok(name in pub, name);
+  }
+});

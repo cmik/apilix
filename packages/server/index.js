@@ -14,8 +14,10 @@ const {
   refreshOAuth2Token, exchangeAuthorizationCodeForToken,
   executeMongoIntrospect,
   resolveVariables,
+  makeHttpsAgent, buildProxyOption,
 } = require('@apilix/core');
 const dbManager = require('./database-manager');
+const { createAiRouter, isAiPath } = require('./ai-routes');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -66,8 +68,32 @@ app.use(cors({
   },
   credentials: true,
 }));
-app.use(express.json({ limit: '50mb' }));
+// /api/ai/* has its own 2 MB parser (see ai-routes.js); a parser mounted here would
+// have already consumed the body, so the app-wide 50 MB one skips that prefix.
+const _bigJsonParser = express.json({ limit: '50mb' });
+app.use((req, res, next) => (isAiPath(req.path) ? next() : _bigJsonParser(req, res, next)));
 app.use(express.urlencoded({ extended: true }));
+
+/**
+ * Transport for AI provider calls. Honours the configured proxy and custom CAs,
+ * but ALWAYS verifies TLS: the request carries an API key, so the app-wide
+ * "SSL verification off" default must not apply here.
+ */
+function getAiTransport(targetUrl) {
+  const transport = {};
+  const isHttps = /^https:/i.test(targetUrl || '');
+  if (isHttps) {
+    transport.httpsAgent = makeHttpsAgent(true, serverConfig.customCAs ? { ca: serverConfig.customCAs } : {});
+  }
+  if (serverConfig.proxyEnabled) {
+    const proxyUrl = isHttps ? (serverConfig.httpsProxy || serverConfig.httpProxy) : serverConfig.httpProxy;
+    const proxy = buildProxyOption(proxyUrl, targetUrl, serverConfig);
+    if (proxy) transport.proxy = proxy;
+  }
+  return transport;
+}
+
+app.use('/api/ai', createAiRouter({ getTransport: getAiTransport, dataDir: process.env.APILIX_DATA_DIR }));
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
