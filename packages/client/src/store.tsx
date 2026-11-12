@@ -1533,6 +1533,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const status = await StorageDriver.writeAiConfig(latestAiSettingsRef.current, value, { remember: opts?.remember !== false });
     aiKeyRef.current = value;
     dispatch({ type: 'AI_SET_KEY_STATUS', payload: value === null ? 'none' : status });
+    // Push to the server right away so a "Test" clicked next never races the effect below.
+    const settings = latestAiSettingsRef.current;
+    if (settings.enabled && validateAiSettings(settings) === null) {
+      try { await aiPutConfig(settings, value); } catch { /* the effect below retries */ }
+    }
     setAiKeyVersion(v => v + 1);
   }
 

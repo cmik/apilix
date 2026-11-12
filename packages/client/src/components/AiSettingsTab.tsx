@@ -62,6 +62,11 @@ export default function AiSettingsTab() {
 
   async function handleTest() {
     setTestResult(null);
+    // A key typed but not yet saved would otherwise never reach the server.
+    if (keyInput.trim()) {
+      await saveAiKey(keyInput, { remember });
+      setKeyInput('');
+    }
     dispatch({ type: 'AI_REQUEST_START', payload: 'test' });
     try {
       const r = await aiTest();
