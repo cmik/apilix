@@ -48,7 +48,10 @@ export interface DocsExportOptions {
 
 export interface DocAiDescription {
   description?: string;
-  /** Per-parameter descriptions keyed by parameter / header / field name. */
+  /**
+   * Per-parameter descriptions keyed `in:name` (in = path | query | header | body), because the
+   * same name can exist in several places. A bare `name` key is still accepted.
+   */
   params?: Record<string, string>;
 }
 

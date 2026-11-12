@@ -368,7 +368,7 @@ test('/describe-docs returns descriptions and never sends credentials to the pro
       const r = await call('POST', '/describe-docs', { collection: docCollection(), secretValues: [] });
       assert.equal(r.status, 200);
       assert.equal(r.json.descriptions.r1.description, 'Lists orders.');
-      assert.deepEqual(r.json.descriptions.r1.params, { limit: 'Max rows.' });
+      assert.deepEqual(r.json.descriptions.r1.params, { 'query:limit': 'Max rows.' });
       assert.equal(fake.calls.length, 1);
       const sent = JSON.stringify(fake.calls[0].body);
       assert.ok(!sent.includes('abc123'), 'api_key value must not be sent');

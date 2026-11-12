@@ -360,11 +360,16 @@ function cleanAiText(v) {
  */
 function applyAiDescriptions(model, descriptions) {
   if (!descriptions || typeof descriptions !== 'object') return;
-  const fillList = (list, params) => {
+  // Parameters are keyed `${in}:${name}` (in = path | query | header | body) because the same
+  // name can live in several places. A bare `name` key is still accepted for hand-written input.
+  const fillList = (list, where, params) => {
     if (!Array.isArray(list) || !params || typeof params !== 'object') return;
+    const has = k => Object.prototype.hasOwnProperty.call(params, k);
     for (const e of list) {
       if (!e || e.description) continue;
-      const text = Object.prototype.hasOwnProperty.call(params, e.key) ? cleanAiText(params[e.key]) : '';
+      const scoped = `${where}:${e.key}`;
+      const raw = has(scoped) ? params[scoped] : has(e.key) ? params[e.key] : undefined;
+      const text = cleanAiText(raw);
       if (text) { e.description = text; e.descriptionSource = 'ai'; }
     }
   };
@@ -387,10 +392,10 @@ function applyAiDescriptions(model, descriptions) {
     const d = Object.prototype.hasOwnProperty.call(descriptions, req.id) ? descriptions[req.id] : null;
     if (!d || typeof d !== 'object') continue;
     fillNode(req, d);
-    fillList(req.pathVariables, d.params);
-    fillList(req.query, d.params);
-    fillList(req.headers, d.params);
-    if (req.body && Array.isArray(req.body.fields)) fillList(req.body.fields, d.params);
+    fillList(req.pathVariables, 'path', d.params);
+    fillList(req.query, 'query', d.params);
+    fillList(req.headers, 'header', d.params);
+    if (req.body && Array.isArray(req.body.fields)) fillList(req.body.fields, 'body', d.params);
   }
 }
 

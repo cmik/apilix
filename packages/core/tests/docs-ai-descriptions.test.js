@@ -113,3 +113,14 @@ test('openapi adds x-generated-by only on AI-filled descriptions', () => {
   const off = generateDocs(collection(), { format: 'openapi', descriptions, markAiContent: false }).spec;
   assert.equal(off.paths['/orders'].get['x-generated-by'], undefined);
 });
+
+test('in:name keys fill the right parameter when a name exists in several places', () => {
+  const col = {
+    info: { name: 'S', description: 'd' },
+    item: [{ id: 'q', name: 'q', request: { method: 'POST', url: { raw: 'https://x/o/:id?id=1', host: ['x'], path: ['o', ':id'], variable: [{ key: 'id', value: '7' }], query: [{ key: 'id', value: '1' }] } } }],
+  };
+  const m = buildDocModel(col, { descriptions: { q: { params: { 'path:id': 'Order id.', 'query:id': 'Filter by id.' } } } });
+  const r = m.requests[0];
+  assert.equal(r.pathVariables.find(p => p.key === 'id').description, 'Order id.');
+  assert.equal(r.query.find(p => p.key === 'id').description, 'Filter by id.');
+});

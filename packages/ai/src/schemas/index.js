@@ -22,7 +22,7 @@ const SCHEMAS = {
               type: 'array',
               items: {
                 type: 'object',
-                properties: { name: { type: 'string' }, description: { type: 'string' } },
+                properties: { in: { type: 'string' }, name: { type: 'string' }, description: { type: 'string' } },
                 required: ['name', 'description'],
                 additionalProperties: false,
               },

@@ -20,6 +20,9 @@ const MAX_DESCRIPTION_CHARS = 400;
 const OUTPUT_RESERVE_TOKENS = 1500;
 const SKIPPED_HEADERS = new Set(['authorization', 'proxy-authorization', 'cookie', 'set-cookie', 'content-type', 'accept', 'user-agent', 'host', 'content-length', 'accept-encoding', 'connection']);
 
+/** Parameter key shared with the doc model: the same name can exist in path, query, header and body. */
+function paramKey(where, name) { return `${where}:${name}`; }
+
 function missing(list, skip) {
   return (Array.isArray(list) ? list : []).filter(e => e && e.key && !e.description && !(skip && skip(e)));
 }
@@ -106,10 +109,20 @@ function sanitizeAnswer(batch, items) {
     const text = cleanText(it.description);
     if (text && !entry.hasDescription) d.description = text;
     const params = {};
-    const names = new Set((entry.params || []).map(p => p.name));
+    const askedParams = entry.params || [];
+    const keys = new Set(askedParams.map(p => paramKey(p.in, p.name)));
     for (const p of Array.isArray(it.params) ? it.params : []) {
       const t = cleanText(p && p.description);
-      if (t && p && names.has(p.name)) params[p.name] = t;
+      if (!t || !p) continue;
+      let key = null;
+      if (typeof p.in === 'string' && p.in) {
+        key = paramKey(p.in, p.name);
+      } else {
+        // The model omitted "in": accept it only when the name is unambiguous for this entry.
+        const same = askedParams.filter(a => a.name === p.name);
+        if (same.length === 1) key = paramKey(same[0].in, same[0].name);
+      }
+      if (key && keys.has(key)) params[key] = t;
     }
     if (Object.keys(params).length) d.params = params;
     if (d.description || d.params) out[it.id] = d;
@@ -157,4 +170,4 @@ async function describeDocs({ provider, model, language, maxContextTokens, secre
   return { descriptions, warnings, usage, requested: entries.length };
 }
 
-module.exports = { describeDocs, collectEntries, buildBatches, sanitizeAnswer, COLLECTION_KEY };
+module.exports = { describeDocs, paramKey, collectEntries, buildBatches, sanitizeAnswer, COLLECTION_KEY };

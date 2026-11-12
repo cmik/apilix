@@ -70,7 +70,7 @@ test('describeDocs returns descriptions keyed by id and never overrides existing
   });
   const r = await describeDocs({ provider, model: model(), language: 'fr' });
   assert.equal(r.descriptions.r1.description, 'Lists orders.');
-  assert.deepEqual(r.descriptions.r1.params, { limit: 'Max rows.' });
+  assert.deepEqual(r.descriptions.r1.params, { 'query:limit': 'Max rows.' });
   assert.equal(r.descriptions.r2, undefined);
   assert.equal(r.descriptions.nope, undefined);
   assert.equal(r.descriptions.f1.description, 'Order endpoints.');
@@ -101,4 +101,16 @@ test('a failing batch becomes a warning, other batches survive; AUTH aborts', as
 test('sanitizeAnswer caps description length', () => {
   const out = sanitizeAnswer([{ id: 'a' }], [{ id: 'a', description: 'x'.repeat(2000) }]);
   assert.equal(out.a.description.length, 400);
+});
+
+test('same parameter name in different places keeps its own description (in:name keys)', () => {
+  const batch = [{ id: 'r', params: [{ name: 'id', in: 'path' }, { name: 'id', in: 'query' }, { name: 'page', in: 'query' }] }];
+  const out = sanitizeAnswer(batch, [{ id: 'r', params: [
+    { in: 'path', name: 'id', description: 'Order id.' },
+    { in: 'query', name: 'id', description: 'Filter by id.' },
+    { name: 'page', description: 'Page number.' },   // "in" omitted but unambiguous
+    { name: 'id', description: 'ambiguous: dropped' },
+    { in: 'body', name: 'id', description: 'not asked: dropped' },
+  ] }]);
+  assert.deepEqual(out.r.params, { 'path:id': 'Order id.', 'query:id': 'Filter by id.', 'query:page': 'Page number.' });
 });
