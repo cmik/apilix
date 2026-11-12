@@ -49,11 +49,18 @@ const PROMPTS = {
   },
 };
 
+// The language name is interpolated into the system prompt, so it must be a plain name
+// ("French", "Português (Brasil)"): letters, marks, spaces, parentheses and hyphens only (no line breaks).
+const LANGUAGE_RE = /^[\p{L}\p{M} ()-]{1,40}$/u;
+function isValidLanguage(language) {
+  return typeof language === 'string' && LANGUAGE_RE.test(language.trim());
+}
+
 function getPrompt(name, { language, data } = {}) {
   const p = PROMPTS[name];
   if (!p) throw new Error(`Unknown prompt "${name}"`);
-  const langLine = language ? ` Write natural-language output in ${language}.` : '';
+  const langLine = isValidLanguage(language) ? ` Write natural-language output in ${language.trim()}.` : '';
   return { version: p.version, system: `${p.system()} ${UNTRUSTED_RULE}${langLine}`, user: p.user(data) };
 }
 
-module.exports = { PROMPTS, getPrompt, wrapUntrusted, stripDelimiters, UNTRUSTED_OPEN, UNTRUSTED_CLOSE, UNTRUSTED_RULE };
+module.exports = { PROMPTS, getPrompt, isValidLanguage, wrapUntrusted, stripDelimiters, UNTRUSTED_OPEN, UNTRUSTED_CLOSE, UNTRUSTED_RULE };

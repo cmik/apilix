@@ -825,6 +825,8 @@ async function isSameFile(a, b) {
 }
 
 const AI_PROVIDERS = ['anthropic', 'openai-compat'];
+// The language is interpolated into the model's system prompt: accept a plain name only.
+const AI_LANGUAGE_RE = /^[\p{L}\p{M} ()-]{1,40}$/u;
 
 /** Read the AI configuration from APILIX_AI_* variables. Throws a usage error when it is incomplete. */
 function readAiEnv(env) {
@@ -880,6 +882,9 @@ async function runDocs(args, io) {
   const supported = CLI_SNIPPET_LANGUAGES.map(l => l.id);
   for (const id of snippetLanguages) {
     if (!supported.includes(id)) throw new Error(`Unsupported snippet language "${id}". The CLI supports: ${supported.join(', ')}`);
+  }
+  if (d.aiLanguage !== undefined && !AI_LANGUAGE_RE.test(String(d.aiLanguage))) {
+    throw new Error('--ai-language must be a language name such as "French" (letters, spaces, parentheses and hyphens; max 40 characters)');
   }
   if (d.resolveVariables && !d.environmentPath) {
     throw new Error('--resolve-variables requires --environment <file>');

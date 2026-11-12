@@ -14,7 +14,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const { AiError, httpStatusFor, buildPreviewContext, getPrompt, describeDocs } = require('@apilix/ai');
+const { AiError, httpStatusFor, buildPreviewContext, getPrompt, describeDocs, isValidLanguage } = require('@apilix/ai');
 const { buildDocModel } = require('@apilix/core/docs');
 
 const PROVIDERS = ['anthropic', 'openai-compat'];
@@ -77,7 +77,7 @@ function validateSettings(input) {
   for (const k of FEATURE_KEYS) features[k] = !!(input.features && input.features[k] === true);
   let outputLanguage;
   if (input.outputLanguage !== undefined && input.outputLanguage !== null && input.outputLanguage !== '') {
-    if (typeof input.outputLanguage !== 'string' || input.outputLanguage.length > 40) return { error: 'settings.outputLanguage must be a short string' };
+    if (!isValidLanguage(input.outputLanguage)) return { error: 'settings.outputLanguage must be a language name (letters, spaces, parentheses, hyphens; max 40)' };
     outputLanguage = input.outputLanguage;
   }
   return {
@@ -212,6 +212,7 @@ function createAiRouter(deps = {}) {
     const bad = (m) => Object.assign(new Error(m), { code: 'BAD_REQUEST' });
     if (!collection || typeof collection !== 'object' || !collection.info || !Array.isArray(collection.item)) throw bad('collection must contain info and item[]');
     if (folder !== undefined && typeof folder !== 'string') throw bad('folder must be a string');
+    if (language !== undefined && language !== null && language !== '' && !isValidLanguage(language)) throw bad('language must be a language name (letters, spaces, parentheses, hyphens; max 40)');
     if (secretValues !== undefined && !Array.isArray(secretValues)) throw bad('secretValues must be an array');
     let model;
     try {
@@ -223,7 +224,7 @@ function createAiRouter(deps = {}) {
     const r = await describeDocs({
       provider,
       model,
-      language: typeof language === 'string' && language.length <= 40 ? language : settings.outputLanguage,
+      language: language ? language.trim() : settings.outputLanguage,
       maxContextTokens: settings.maxContextTokens,
       redactSecrets: settings.redactSecrets,
       secretValues: (secretValues || []).slice(0, 1000).filter(x => typeof x === 'string'),
