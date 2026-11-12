@@ -28,7 +28,7 @@ function missing(list, skip) {
 }
 
 /** Entries (collection, folders, requests) that lack a description or have undocumented parameters. */
-function collectEntries(model) {
+function collectEntries(model, warnings) {
   const entries = [];
   if (!model.description) entries.push({ id: COLLECTION_KEY, kind: 'collection', name: model.title });
   const walk = (nodes, trail) => {
@@ -66,7 +66,22 @@ function collectEntries(model) {
       entries.push(entry);
     }
   }
-  return entries;
+  return dropDuplicateIds(entries, warnings);
+}
+
+/**
+ * Answers are matched back by id, so two entries sharing an id (common after an import or a
+ * duplication) would both receive the same text, one of them wrongly. Skip every such entry.
+ */
+function dropDuplicateIds(entries, warnings) {
+  const counts = new Map();
+  for (const e of entries) counts.set(e.id, (counts.get(e.id) || 0) + 1);
+  const dup = [...counts].filter(([, n]) => n > 1).map(([id]) => id);
+  if (!dup.length) return entries;
+  if (warnings) {
+    warnings.push(`Skipped ${dup.length} id(s) shared by several items (${dup.slice(0, 3).map(String).join(', ')}${dup.length > 3 ? ', …' : ''}): give them unique ids to get descriptions.`);
+  }
+  return entries.filter(e => counts.get(e.id) === 1);
 }
 
 /** Split entries into batches that fit the context budget. */
@@ -137,12 +152,12 @@ function sanitizeAnswer(batch, items) {
  *   warnings: string[], usage: {inputTokens:number, outputTokens:number}, requested: number }>}
  */
 async function describeDocs({ provider, model, language, maxContextTokens, secretValues, redactSecrets, signal }) {
-  const entries = collectEntries(model);
+  const warnings = [];
+  const entries = collectEntries(model, warnings);
   const usage = { inputTokens: 0, outputTokens: 0 };
-  if (!entries.length) return { descriptions: {}, warnings: [], usage, requested: 0 };
+  if (!entries.length) return { descriptions: {}, warnings, usage, requested: 0 };
 
   let batches = buildBatches(entries, { maxContextTokens, secretValues, redactSecrets });
-  const warnings = [];
   if (batches.length > MAX_BATCHES) {
     warnings.push(`Too many entries: only the first ${MAX_BATCHES} batches were described.`);
     batches = batches.slice(0, MAX_BATCHES);

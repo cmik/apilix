@@ -114,3 +114,18 @@ test('same parameter name in different places keeps its own description (in:name
   ] }]);
   assert.deepEqual(out.r.params, { 'path:id': 'Order id.', 'query:id': 'Filter by id.', 'query:page': 'Page number.' });
 });
+
+test('items sharing an id are skipped with a warning instead of receiving the same text', async () => {
+  const dup = { info: { name: 'D', description: 'd' }, item: [
+    { id: 'dup', name: 'A', request: { method: 'GET', url: 'https://x/a' } },
+    { id: 'dup', name: 'B', request: { method: 'GET', url: 'https://x/b' } },
+    { id: 'ok', name: 'C', request: { method: 'GET', url: 'https://x/c' } },
+  ] };
+  const provider = fakeProvider({ items: [{ id: 'dup', description: 'ambiguous' }, { id: 'ok', description: 'fine' }] });
+  const r = await describeDocs({ provider, model: buildDocModel(dup, {}) });
+  assert.equal(r.descriptions.dup, undefined);
+  assert.equal(r.descriptions.ok.description, 'fine');
+  assert.equal(r.requested, 1);
+  assert.match(r.warnings.join(' '), /shared by several items/);
+  assert.ok(!provider.calls[0].messages[0].content.includes('"https://x/a"'));
+});
