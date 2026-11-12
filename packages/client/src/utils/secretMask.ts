@@ -47,3 +47,22 @@ export function maskSecrets(text: string, secrets: Set<string>): string {
   }
   return result;
 }
+
+/**
+ * Secret values from EVERY environment plus globals. Used for AI previews, where a response
+ * may have been produced under an environment other than the currently active one.
+ */
+export function buildAllSecretValues(
+  environments: AppEnvironment[],
+  globalVariables: Record<string, string> = {},
+  globalVariableMeta: Record<string, GlobalVariableMeta> = {},
+): Set<string> {
+  const secrets = new Set<string>();
+  for (const env of environments) {
+    for (const v of env.values) {
+      if (v.secret && v.enabled !== false && v.value.length >= MIN_SECRET_LEN) secrets.add(v.value);
+    }
+  }
+  for (const value of collectGlobalSecretValues(globalVariables, globalVariableMeta, MIN_SECRET_LEN)) secrets.add(value);
+  return secrets;
+}

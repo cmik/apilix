@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useApp } from '../store';
 import { aiPreview, toAiApiError, type AiPreviewResult } from '../api';
 import { IconSparkle } from './Icons';
+import { buildAllSecretValues } from '../utils/secretMask';
 
 interface Props {
   onClose: () => void;
@@ -12,7 +13,7 @@ interface Props {
  * redaction. Makes no call to the AI provider (only to the local Apilix server).
  */
 export default function AiPreviewDialog({ onClose }: Props) {
-  const { state, dispatch, secretSet } = useApp();
+  const { state, dispatch } = useApp();
   const [result, setResult] = useState<AiPreviewResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -44,7 +45,7 @@ export default function AiPreviewDialog({ onClose }: Props) {
       item: activeRequest?.item,
       response: response ? { status: response.status, statusText: response.statusText, headers: response.headers, body: response.body } : undefined,
       variables,
-      secretValues: Array.from(secretSet),
+      secretValues: Array.from(buildAllSecretValues(environments, globalVariables, globalVariableMeta)),
       settings: {
         maxContextTokens: ai.settings.maxContextTokens,
         redactSecrets: ai.settings.redactSecrets,
