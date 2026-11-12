@@ -1,0 +1,23 @@
+{
+  "name": "@apilix/mcp",
+  "version": "1.0.0-beta.23",
+  "description": "Apilix MCP server: exposes collections and the request runner to external agents over stdio (JSON-RPC 2.0)",
+  "main": "src/index.js",
+  "exports": {
+    ".": { "require": "./src/index.js", "default": "./src/index.js" },
+    "./rpc": { "require": "./src/rpc.js", "default": "./src/rpc.js" },
+    "./server": { "require": "./src/server.js", "default": "./src/server.js" },
+    "./workspace": { "require": "./src/workspace.js", "default": "./src/workspace.js" },
+    "./redact": { "require": "./src/redact.js", "default": "./src/redact.js" },
+    "./host-guard": { "require": "./src/host-guard.js", "default": "./src/host-guard.js" },
+    "./tools": { "require": "./src/tools.js", "default": "./src/tools.js" },
+    "./args": { "require": "./src/args.js", "default": "./src/args.js" }
+  },
+  "files": ["src"],
+  "engines": { "node": ">=22.12.0" },
+  "scripts": { "test": "node --test" },
+  "dependencies": {
+    "@apilix/core": "*",
+    "ajv": "^8.17.1"
+  }
+}
