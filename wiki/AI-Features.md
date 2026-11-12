@@ -23,6 +23,8 @@ Not supported yet: Azure OpenAI (different authentication and URL scheme).
 
 Use the **OpenAI-compatible** provider and point **Base URL** at your local server. No key is needed and no data leaves your machine. Structured output is less reliable on some local servers; Apilix validates every reply and retries once before reporting an error.
 
+Output-length parameter: requests to the default OpenAI endpoint send `max_completion_tokens` (newer OpenAI models reject `max_tokens`); other servers receive `max_tokens`. If a server rejects the parameter by name, Apilix retries once with the other one and remembers the choice for that server and model.
+
 ## What is sent, and what is masked
 
 When you use an AI feature, Apilix builds a context from the active request and response, **masks it**, and sends it to your provider:
