@@ -128,3 +128,17 @@ test('307 redirect to another host is not followed (no credential replay)', asyn
     assert.equal(other.calls.length, 0, 'second host must receive nothing');
   } finally { await fake.close(); await other.close(); }
 });
+
+test('auto tool_choice memory is per baseUrl+model, not per model name', async () => {
+  const reject = (c, res) => (c.body.tool_choice && c.body.tool_choice.type === 'tool'
+    ? json(res, 400, { error: { message: 'tool_choice: type "tool" and "any" are not supported for this model.' } })
+    : json(res, 200, toolReply({ ok: true })));
+  const a = await startFake(reject);
+  const b = await startFake((_c, res) => json(res, 200, toolReply({ ok: true })));
+  try {
+    await createProvider(cfg(a, { model: 'shared-name' })).complete(req);
+    assert.equal(a.calls.length, 2);
+    await createProvider(cfg(b, { model: 'shared-name' })).complete(req);
+    assert.deepEqual(b.calls[0].body.tool_choice, { type: 'tool', name: 'connectionTest' });
+  } finally { await a.close(); await b.close(); }
+});
