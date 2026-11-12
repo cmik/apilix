@@ -327,3 +327,40 @@ test('docs --ai-describe: --ai-language must be a plain language name (exit 2, n
     assert.equal(ok.code, 0, ok.stderr);
   } finally { await fake.close(); }
 });
+
+test('docs: --ai-language / --no-ai-mark / --ai-strict without --ai-describe warn that they are ignored', async () => {
+  const dir = await fixtures();
+  const r = await runAi(['docs', 'c.json', '--format', 'md', '--ai-language', 'French', '--no-ai-mark', '--ai-strict'], dir, {});
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stderr, /--ai-language has no effect without --ai-describe/);
+  assert.match(r.stderr, /--no-ai-mark has no effect without --ai-describe/);
+  assert.match(r.stderr, /--ai-strict has no effect without --ai-describe/);
+  const plain = await runAi(['docs', 'c.json', '--format', 'md'], dir, {});
+  assert.doesNotMatch(plain.stderr, /no effect/);
+});
+
+test('docs --ai-describe: plain http:// to a non-local host warns; localhost does not', async () => {
+  const dir = await fixtures();
+  const fake = await fakeLlm(llmReply([]));
+  try {
+    const local = await runAi(['docs', 'c.json', '--format', 'md', '--ai-describe'], dir, { APILIX_AI_PROVIDER: 'openai-compat', APILIX_AI_MODEL: 'm', APILIX_AI_BASE_URL: fake.url });
+    assert.doesNotMatch(local.stderr, /unencrypted/);
+    // `.invalid` never resolves: the call fails fast, but the http:// warning is printed before it.
+    const remote = await runAi(['docs', 'c.json', '--format', 'md', '--ai-describe'], dir, { APILIX_AI_PROVIDER: 'openai-compat', APILIX_AI_MODEL: 'm', APILIX_AI_BASE_URL: 'http://127.0.0.1.nip.invalid/v1' });
+    assert.match(remote.stderr, /plain http:\/\/ to a non-local host/);
+  } finally { await fake.close(); }
+});
+
+test('docs -e reads the environment file only once', async () => {
+  const dir = await fixtures();
+  const fs = require('node:fs/promises');
+  const original = fs.readFile;
+  let reads = 0;
+  fs.readFile = async (p, ...rest) => { if (String(p).endsWith('e.json')) reads++; return original.call(fs, p, ...rest); };
+  const fake = await fakeLlm(llmReply([]));
+  try {
+    const r = await runAi(['docs', 'c.json', '--format', 'md', '-e', 'e.json', '--ai-describe'], dir, { APILIX_AI_PROVIDER: 'openai-compat', APILIX_AI_MODEL: 'm', APILIX_AI_BASE_URL: fake.url });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(reads, 1);
+  } finally { fs.readFile = original; await fake.close(); }
+});

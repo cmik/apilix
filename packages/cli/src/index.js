@@ -838,7 +838,19 @@ function readAiEnv(env) {
   if (provider === 'anthropic' && !apiKey) throw new Error('--ai-describe requires APILIX_AI_API_KEY for the anthropic provider');
   const baseUrl = String(env.APILIX_AI_BASE_URL || '').trim();
   if (baseUrl && !/^https?:\/\//i.test(baseUrl)) throw new Error('APILIX_AI_BASE_URL must be an http(s) URL');
-  return { provider, model, apiKey, baseUrl };
+  const warnings = [];
+  if (baseUrl && /^http:\/\//i.test(baseUrl) && !isLocalHost(baseUrl)) {
+    warnings.push('APILIX_AI_BASE_URL uses plain http:// to a non-local host: the API key and the (redacted) documentation data travel unencrypted. Use https://.');
+  }
+  return { provider, model, apiKey, baseUrl, warnings };
+}
+
+/** True for localhost, 127.0.0.0/8 and ::1 (where plain http does not cross the network). */
+function isLocalHost(url) {
+  let host;
+  try { host = new URL(url).hostname.toLowerCase(); } catch { return false; }
+  host = host.replace(/^\[|\]$/g, '');
+  return host === 'localhost' || host.endsWith('.localhost') || host === '::1' || /^127\.\d+\.\d+\.\d+$/.test(host);
 }
 
 /**
@@ -847,6 +859,7 @@ function readAiEnv(env) {
  */
 async function describeWithAi({ collection, folder, includeExamples, language, secretValues, io }) {
   const cfg = readAiEnv(io.env);
+  for (const w of cfg.warnings) io.stderr.write(`Warning: ${w}\n`);
   let ai;
   try { ai = require('@apilix/ai'); } catch {
     throw new Error('AI support is not available in this build of the CLI');
@@ -902,12 +915,19 @@ async function runDocs(args, io) {
 
   const collection = normalizeCollection(await readJsonFile(io, args.collectionPath, 'collection'));
 
+  // The environment file is read once and shared by variable resolution and the AI secret list.
+  const envJson = d.environmentPath ? await readJsonFile(io, d.environmentPath, 'environment') : undefined;
+  const envRows = envJson === undefined
+    ? []
+    : (() => {
+      const env = envJson && envJson.environment && envJson.environment.values ? envJson.environment : envJson;
+      return env && Array.isArray(env.values) ? env.values : [];
+    })();
+
   let variables;
   let secretVariableKeys;
   if (d.environmentPath) {
-    const envJson = await readJsonFile(io, d.environmentPath, 'environment');
-    const env = envJson && envJson.environment && envJson.environment.values ? envJson.environment : envJson;
-    const rows = env && Array.isArray(env.values) ? env.values : [];
+    const rows = envRows;
     secretVariableKeys = rows.filter(r => r && r.secret === true && typeof r.key === 'string').map(r => r.key);
     const blocked = new Set(secretVariableKeys);
     variables = Object.fromEntries(Object.entries(normalizeEnvironment(envJson).vars).filter(([k]) => !blocked.has(k)));
@@ -916,14 +936,17 @@ async function runDocs(args, io) {
   let aiDescriptions;
   let aiFailed = false;
   const aiWarnings = [];
+  if (!d.aiDescribe) {
+    const ignored = [];
+    if (d.aiLanguage !== undefined) ignored.push('--ai-language');
+    if (d.aiMark === false) ignored.push('--no-ai-mark');
+    if (d.aiStrict) ignored.push('--ai-strict');
+    for (const flag of ignored) aiWarnings.push(`${flag} has no effect without --ai-describe.`);
+  }
   if (d.aiDescribe) {
     const secretValues = [];
-    if (d.environmentPath) {
-      const envJson = await readJsonFile(io, d.environmentPath, 'environment');
-      const env = envJson && envJson.environment && envJson.environment.values ? envJson.environment : envJson;
-      for (const row of env && Array.isArray(env.values) ? env.values : []) {
-        if (row && row.secret === true && typeof row.value === 'string' && row.value) secretValues.push(row.value);
-      }
+    for (const row of envRows) {
+      if (row && row.secret === true && typeof row.value === 'string' && row.value) secretValues.push(row.value);
     }
     const ai = await describeWithAi({
       collection, folder: d.folder, includeExamples: d.includeExamples, language: d.aiLanguage, secretValues, io,
