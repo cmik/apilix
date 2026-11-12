@@ -48,6 +48,9 @@ export function validateAiSettings(s: AiSettings): string | null {
   if (!Number.isInteger(s.maxContextTokens) || s.maxContextTokens < 500 || s.maxContextTokens > 200000) {
     return 'Max context must be between 500 and 200000 tokens';
   }
+  if (s.outputLanguage && !/^[\p{L}\p{M} ()-]{1,40}$/u.test(s.outputLanguage.trim())) {
+    return 'Output language must be a language name such as "English" (letters, spaces, parentheses, hyphens; max 40)';
+  }
   if (s.enabled && !s.model.trim()) return 'Enter a model name to enable AI features';
   return null;
 }

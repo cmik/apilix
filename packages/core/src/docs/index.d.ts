@@ -13,3 +13,5 @@ export function generateDocs(collection: BaseCollection, options?: DocsExportOpt
 export function buildDocModel(collection: BaseCollection, options?: DocsExportOptions): DocModel;
 /** Serialize a plain JSON-compatible value to YAML (used for OpenAPI output). */
 export function toYaml(value: unknown): string;
+/** Flatten model-written text to plain prose: images, links, URLs and HTML are removed (visible text kept). */
+export function neutralizeAiText(text: unknown): string;

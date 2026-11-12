@@ -6,4 +6,6 @@ export interface InjectTestSnippetDetail {
   /** ID of the request tab that originated the action. Used to route the snippet
    *  to the correct tab even if the user switches tabs before confirming. */
   tabId?: string | null;
+  /** When set, the snippet is skipped if the test script already contains any of these substrings. */
+  skipIfPresent?: string[];
 }

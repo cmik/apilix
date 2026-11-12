@@ -17,6 +17,7 @@ const {
   buildJUnitReport,
   resolveVariables,
   generateDocs,
+  buildDocModel,
 } = require('@apilix/core');
 const { CLI_SNIPPET_LANGUAGES } = require('./docs-curl');
 
@@ -88,6 +89,12 @@ function usage() {
     '  --theme <dark|light|auto>    HTML theme (default: dark)',
     '  --no-examples                Omit saved examples',
     '  --no-images                  HTML: do not render images; show them as text links and block image loading (default: render)',
+    '  --ai-describe                Fill missing descriptions with an LLM (marked as AI-generated; data is redacted first).',
+    '                               Configure with APILIX_AI_MODEL, APILIX_AI_API_KEY, APILIX_AI_PROVIDER (anthropic|openai-compat),',
+    '                               APILIX_AI_BASE_URL. If the AI call fails, the docs are still generated.',
+    '  --ai-language <lang>         Language of AI-written descriptions (e.g. French)',
+    '  --no-ai-mark                 Do not mark AI-written descriptions in the output',
+    '  --ai-strict                  Exit with code 1 when the AI step fails or is incomplete (docs are still written)',
     '  --out <file>                 Write to a file instead of stdout',
   ].join('\n');
 }
@@ -97,6 +104,7 @@ function createIo(overrides = {}) {
     cwd: overrides.cwd || process.cwd(),
     stdout: overrides.stdout || process.stdout,
     stderr: overrides.stderr || process.stderr,
+    env: overrides.env || process.env,
   };
 }
 
@@ -626,6 +634,10 @@ function createProgram(io) {
     .option('--theme <dark|light|auto>', 'HTML theme', 'dark')
     .option('--no-examples', 'Omit saved examples')
     .option('--no-images', 'HTML only: render images as text links instead of loading them')
+    .option('--ai-describe', 'Fill missing descriptions with an LLM (configure with APILIX_AI_* env vars)')
+    .option('--ai-language <lang>', 'Language of AI-written descriptions')
+    .option('--no-ai-mark', 'Do not mark AI-written descriptions in the output')
+    .option('--ai-strict', 'Exit with code 1 when the AI step fails or is incomplete (the docs are still written)')
     .option('--out <file>', 'Write output to a file instead of stdout')
     .action((collectionPath, opts) => {
       parsed.command = 'docs';
@@ -642,6 +654,10 @@ function createProgram(io) {
         theme: opts.theme,
         includeExamples: opts.examples !== false,
         renderImages: opts.images !== false,
+        aiDescribe: opts.aiDescribe === true,
+        aiLanguage: opts.aiLanguage,
+        aiMark: opts.aiMark !== false,
+        aiStrict: opts.aiStrict === true,
         outPath: opts.out,
       };
     });
@@ -808,6 +824,60 @@ async function isSameFile(a, b) {
   }
 }
 
+const AI_PROVIDERS = ['anthropic', 'openai-compat'];
+// The language is interpolated into the model's system prompt: accept a plain name only.
+const AI_LANGUAGE_RE = /^[\p{L}\p{M} ()-]{1,40}$/u;
+
+/** Read the AI configuration from APILIX_AI_* variables. Throws a usage error when it is incomplete. */
+function readAiEnv(env) {
+  const provider = String(env.APILIX_AI_PROVIDER || 'anthropic').trim();
+  if (!AI_PROVIDERS.includes(provider)) throw new Error(`APILIX_AI_PROVIDER must be one of: ${AI_PROVIDERS.join(', ')}`);
+  const model = String(env.APILIX_AI_MODEL || '').trim();
+  if (!model) throw new Error('--ai-describe requires APILIX_AI_MODEL (and APILIX_AI_API_KEY for Anthropic)');
+  const apiKey = String(env.APILIX_AI_API_KEY || '').trim();
+  if (provider === 'anthropic' && !apiKey) throw new Error('--ai-describe requires APILIX_AI_API_KEY for the anthropic provider');
+  const baseUrl = String(env.APILIX_AI_BASE_URL || '').trim();
+  if (baseUrl && !/^https?:\/\//i.test(baseUrl)) throw new Error('APILIX_AI_BASE_URL must be an http(s) URL');
+  const warnings = [];
+  if (baseUrl && /^http:\/\//i.test(baseUrl) && !isLocalHost(baseUrl)) {
+    warnings.push('APILIX_AI_BASE_URL uses plain http:// to a non-local host: the API key and the (redacted) documentation data travel unencrypted. Use https://.');
+  }
+  return { provider, model, apiKey, baseUrl, warnings };
+}
+
+/** True for localhost, 127.0.0.0/8 and ::1 (where plain http does not cross the network). */
+function isLocalHost(url) {
+  let host;
+  try { host = new URL(url).hostname.toLowerCase(); } catch { return false; }
+  host = host.replace(/^\[|\]$/g, '');
+  return host === 'localhost' || host.endsWith('.localhost') || host === '::1' || /^127\.\d+\.\d+\.\d+$/.test(host);
+}
+
+/**
+ * Ask the model to describe what the collection leaves undocumented.
+ * A failing AI call is only a warning: the documentation is still generated.
+ */
+async function describeWithAi({ collection, folder, includeExamples, language, secretValues, io }) {
+  const cfg = readAiEnv(io.env);
+  for (const w of cfg.warnings) io.stderr.write(`Warning: ${w}\n`);
+  let ai;
+  try { ai = require('@apilix/ai'); } catch {
+    throw new Error('AI support is not available in this build of the CLI');
+  }
+  const provider = ai.createProvider({ kind: cfg.provider, baseUrl: cfg.baseUrl || undefined, model: cfg.model, apiKey: cfg.apiKey });
+  const model = buildDocModel(collection, { folder, includeCredentials: false, includeExamples });
+  io.stderr.write(`AI: describing undocumented entries with ${cfg.model} (credentials are redacted before sending)\n`);
+  try {
+    const r = await ai.describeDocs({ provider, model, language, secretValues });
+    const n = Object.keys(r.descriptions).length;
+    io.stderr.write(`AI: ${n} description${n === 1 ? '' : 's'} generated (${r.usage.inputTokens} input / ${r.usage.outputTokens} output tokens)\n`);
+    return { descriptions: r.descriptions, warnings: r.warnings, failed: r.failedBatches > 0 || r.skipped > 0 };
+  } catch (err) {
+    const detail = err && err.code ? `${err.message} (${err.code})` : (err && err.message) || 'unknown error';
+    return { descriptions: undefined, warnings: [`AI descriptions skipped: ${detail}`], failed: true };
+  }
+}
+
 async function runDocs(args, io) {
   const d = args.docs;
   if (!args.collectionPath) throw new Error('The collection path is required');
@@ -826,6 +896,9 @@ async function runDocs(args, io) {
   for (const id of snippetLanguages) {
     if (!supported.includes(id)) throw new Error(`Unsupported snippet language "${id}". The CLI supports: ${supported.join(', ')}`);
   }
+  if (d.aiLanguage !== undefined && !AI_LANGUAGE_RE.test(String(d.aiLanguage))) {
+    throw new Error('--ai-language must be a language name such as "French" (letters, spaces, parentheses and hyphens; max 40 characters)');
+  }
   if (d.resolveVariables && !d.environmentPath) {
     throw new Error('--resolve-variables requires --environment <file>');
   }
@@ -842,15 +915,45 @@ async function runDocs(args, io) {
 
   const collection = normalizeCollection(await readJsonFile(io, args.collectionPath, 'collection'));
 
+  // The environment file is read once and shared by variable resolution and the AI secret list.
+  const envJson = d.environmentPath ? await readJsonFile(io, d.environmentPath, 'environment') : undefined;
+  const envRows = envJson === undefined
+    ? []
+    : (() => {
+      const env = envJson && envJson.environment && envJson.environment.values ? envJson.environment : envJson;
+      return env && Array.isArray(env.values) ? env.values : [];
+    })();
+
   let variables;
   let secretVariableKeys;
   if (d.environmentPath) {
-    const envJson = await readJsonFile(io, d.environmentPath, 'environment');
-    const env = envJson && envJson.environment && envJson.environment.values ? envJson.environment : envJson;
-    const rows = env && Array.isArray(env.values) ? env.values : [];
+    const rows = envRows;
     secretVariableKeys = rows.filter(r => r && r.secret === true && typeof r.key === 'string').map(r => r.key);
     const blocked = new Set(secretVariableKeys);
     variables = Object.fromEntries(Object.entries(normalizeEnvironment(envJson).vars).filter(([k]) => !blocked.has(k)));
+  }
+
+  let aiDescriptions;
+  let aiFailed = false;
+  const aiWarnings = [];
+  if (!d.aiDescribe) {
+    const ignored = [];
+    if (d.aiLanguage !== undefined) ignored.push('--ai-language');
+    if (d.aiMark === false) ignored.push('--no-ai-mark');
+    if (d.aiStrict) ignored.push('--ai-strict');
+    for (const flag of ignored) aiWarnings.push(`${flag} has no effect without --ai-describe.`);
+  }
+  if (d.aiDescribe) {
+    const secretValues = [];
+    for (const row of envRows) {
+      if (row && row.secret === true && typeof row.value === 'string' && row.value) secretValues.push(row.value);
+    }
+    const ai = await describeWithAi({
+      collection, folder: d.folder, includeExamples: d.includeExamples, language: d.aiLanguage, secretValues, io,
+    });
+    aiDescriptions = ai.descriptions;
+    aiFailed = ai.failed === true;
+    aiWarnings.push(...ai.warnings);
   }
 
   const result = generateDocs(collection, {
@@ -866,9 +969,11 @@ async function runDocs(args, io) {
     renderImages: d.renderImages !== false,
     snippetLanguages,
     theme: d.theme,
+    descriptions: aiDescriptions,
+    markAiContent: d.aiMark !== false,
   }, { snippetLanguages: CLI_SNIPPET_LANGUAGES });
 
-  for (const warning of result.warnings) io.stderr.write(`Warning: ${warning}\n`);
+  for (const warning of aiWarnings.concat(result.warnings)) io.stderr.write(`Warning: ${warning}\n`);
 
   if (d.outPath) {
     const target = resolvePath(io, d.outPath);
@@ -876,6 +981,10 @@ async function runDocs(args, io) {
     io.stderr.write(`Documentation written to ${target}\n`);
   } else {
     io.stdout.write(result.content);
+  }
+  if (aiFailed && d.aiStrict) {
+    io.stderr.write('Error: the AI step failed or was incomplete (--ai-strict). The documentation was written without the missing descriptions.\n');
+    return 1;
   }
   return 0;
 }

@@ -6,14 +6,16 @@
  */
 
 const redact = require('./doc-redact');
+const { neutralizeAiText } = require('./doc-ai-text');
 
 const NON_HTTP_TYPES = new Set(['mongodb', 'sql', 'database']);
 const NON_HTTP_METHODS = new Set(['MONGO', 'MYSQL', 'POSTGRESQL', 'SQLITE', 'CASSANDRA', 'ORACLE', 'MSSQL', 'REDIS', 'DYNAMODB']);
 
 function descText(d) {
   if (!d) return '';
-  if (typeof d === 'string') return d;
-  if (typeof d === 'object' && typeof d.content === 'string') return d.content;
+  // A description made only of whitespace documents nothing: treat it as missing.
+  if (typeof d === 'string') return d.trim() ? d : '';
+  if (typeof d === 'object' && typeof d.content === 'string') return d.content.trim() ? d.content : '';
   return '';
 }
 
@@ -334,7 +336,7 @@ function buildDocModel(collection, options = {}) {
   });
 
   const baseTitle = opts.title || String(collection.info.name || 'API Documentation');
-  return {
+  const model = {
     title: opts.title || (target ? `${baseTitle} / ${target.name}` : baseTitle),
     description: descText(collection.info.description) + (target && descText(target.description) ? `\n\n${descText(target.description)}` : ''),
     auth: buildAuth(rootAuth, 'collection', opts),
@@ -343,6 +345,61 @@ function buildDocModel(collection, options = {}) {
     requests,
     warnings,
   };
+  applyAiDescriptions(model, opts.descriptions);
+  return model;
+}
+
+const AI_COLLECTION_KEY = '__collection__';
+
+// Model output is untrusted: flatten images, links, URLs and HTML to plain prose (see doc-ai-text.js).
+function cleanAiText(v) {
+  return neutralizeAiText(v);
+}
+
+/**
+ * Fill MISSING descriptions from `options.descriptions` (keyed by request id, folder id, or
+ * `__collection__`). A description that a human wrote is never replaced. Filled entries are
+ * tagged `descriptionSource: 'ai'` so renderers can mark them. Mutates the freshly built model.
+ */
+function applyAiDescriptions(model, descriptions) {
+  if (!descriptions || typeof descriptions !== 'object') return;
+  // Parameters are keyed `${in}:${name}` (in = path | query | header | body) because the same
+  // name can live in several places. A bare `name` key is still accepted for hand-written input.
+  const fillList = (list, where, params) => {
+    if (!Array.isArray(list) || !params || typeof params !== 'object') return;
+    const has = k => Object.prototype.hasOwnProperty.call(params, k);
+    for (const e of list) {
+      if (!e || e.description) continue;
+      const scoped = `${where}:${e.key}`;
+      const raw = has(scoped) ? params[scoped] : has(e.key) ? params[e.key] : undefined;
+      const text = cleanAiText(raw);
+      if (text) { e.description = text; e.descriptionSource = 'ai'; }
+    }
+  };
+  const fillNode = (target, entry) => {
+    if (!entry || typeof entry !== 'object') return;
+    const text = cleanAiText(entry.description);
+    if (!target.description && text) { target.description = text; target.descriptionSource = 'ai'; }
+  };
+  fillNode(model, descriptions[AI_COLLECTION_KEY]);
+  const walkNodes = nodes => {
+    for (const n of nodes) {
+      if (n.type === 'folder') {
+        fillNode(n, Object.prototype.hasOwnProperty.call(descriptions, n.id) ? descriptions[n.id] : null);
+        walkNodes(n.children || []);
+      }
+    }
+  };
+  walkNodes(model.tree);
+  for (const req of model.requests) {
+    const d = Object.prototype.hasOwnProperty.call(descriptions, req.id) ? descriptions[req.id] : null;
+    if (!d || typeof d !== 'object') continue;
+    fillNode(req, d);
+    fillList(req.pathVariables, 'path', d.params);
+    fillList(req.query, 'query', d.params);
+    fillList(req.headers, 'header', d.params);
+    if (req.body && Array.isArray(req.body.fields)) fillList(req.body.fields, 'body', d.params);
+  }
 }
 
 function collectionVarMap(collection) {
@@ -376,4 +433,4 @@ function buildSnippets(request, options, deps, warnings) {
   return out;
 }
 
-module.exports = { buildDocModel, buildSnippets, createResolver, splitUrl, descText };
+module.exports = { buildDocModel, buildSnippets, createResolver, splitUrl, descText, applyAiDescriptions, AI_COLLECTION_KEY };

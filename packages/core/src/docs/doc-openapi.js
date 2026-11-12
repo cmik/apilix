@@ -91,7 +91,7 @@ function mediaFromText(text, mime, v31, isRequestExample) {
   return { media, example: text };
 }
 
-function buildRequestBody(req, v31) {
+function buildRequestBody(req, v31, markAi) {
   const body = req.body;
   if (!body) return null;
   const ctHeader = headerValue(req.headers, 'content-type').split(';')[0].trim();
@@ -102,6 +102,7 @@ function buildRequestBody(req, v31) {
         ? { type: 'string', format: 'binary' }
         : { type: 'string' };
       if (f.description) properties[f.key].description = f.description;
+      if (f.description && f.descriptionSource === 'ai' && markAi) properties[f.key]['x-generated-by'] = 'ai';
     }
     return { type: 'object', properties };
   };
@@ -163,6 +164,7 @@ function buildResponses(req, v31) {
 
 function buildOpenApi(model, options = {}, extraWarnings = []) {
   const v31 = options.openapiVersion === '3.1.0';
+  const markAi = options.markAiContent !== false;
   const warnings = extraWarnings.slice();
   const schemes = {};
   const schemeKeys = new Map();
@@ -232,11 +234,13 @@ function buildOpenApi(model, options = {}, extraWarnings = []) {
   const paths = {};
   const usedIds = new Set();
   const tagDescriptions = new Map();
+  const aiTags = new Set();
   (function collectTags(nodes, trail) {
     for (const n of nodes) {
       if (n.type !== 'folder') continue;
       const t = trail.concat(n.name);
       if (n.description) tagDescriptions.set(t.join(' / '), n.description);
+      if (n.description && n.descriptionSource === 'ai' && markAi) aiTags.add(t.join(' / '));
       collectTags(n.children || [], t);
     }
   })(model.tree, []);
@@ -264,6 +268,7 @@ function buildOpenApi(model, options = {}, extraWarnings = []) {
 
     const op = { summary: req.name, operationId: uniqueId };
     if (req.description) op.description = req.description;
+    if (req.description && req.descriptionSource === 'ai' && markAi) op['x-generated-by'] = 'ai';
     if (req.folderPath.length) {
       const tag = req.folderPath.join(' / ');
       op.tags = [tag];
@@ -278,6 +283,7 @@ function buildOpenApi(model, options = {}, extraWarnings = []) {
       const def = req.pathVariables.find(p => safeName(p.key) === name);
       const p = { name, in: 'path', required: true, schema: { type: 'string' } };
       if (def && def.description) p.description = def.description;
+      if (def && def.description && def.descriptionSource === 'ai' && markAi) p['x-generated-by'] = 'ai';
       if (def && def.value && def.value !== REDACTED) p.example = def.value;
       params.push(p);
     }
@@ -286,6 +292,7 @@ function buildOpenApi(model, options = {}, extraWarnings = []) {
       seen.add(`query:${q.key}`);
       const p = { name: q.key, in: 'query', required: false, schema: { type: 'string' } };
       if (q.description) p.description = q.description;
+      if (q.description && q.descriptionSource === 'ai' && markAi) p['x-generated-by'] = 'ai';
       if (q.value && q.value !== REDACTED) p.example = q.value;
       params.push(p);
     }
@@ -295,12 +302,13 @@ function buildOpenApi(model, options = {}, extraWarnings = []) {
       seen.add(`header:${lower}`);
       const p = { name: h.key, in: 'header', required: false, schema: { type: 'string' } };
       if (h.description) p.description = h.description;
+      if (h.description && h.descriptionSource === 'ai' && markAi) p['x-generated-by'] = 'ai';
       if (h.value && h.value !== REDACTED) p.example = h.value;
       params.push(p);
     }
     if (params.length) op.parameters = params;
 
-    const body = buildRequestBody(req, v31);
+    const body = buildRequestBody(req, v31, markAi);
     if (body) op.requestBody = body;
     op.responses = buildResponses(req, v31);
 
@@ -336,8 +344,12 @@ function buildOpenApi(model, options = {}, extraWarnings = []) {
     info: { title: model.title, version: '1.0.0' },
   };
   if (model.description) spec.info.description = model.description;
+  if (model.description && model.descriptionSource === 'ai' && markAi) spec.info['x-generated-by'] = 'ai';
   if (servers.length) spec.servers = servers;
-  if (tagOrder.length) spec.tags = tagOrder.map(name => (tagDescriptions.has(name) ? { name, description: tagDescriptions.get(name) } : { name }));
+  if (tagOrder.length) spec.tags = tagOrder.map(name => {
+    if (!tagDescriptions.has(name)) return { name };
+    return { name, description: tagDescriptions.get(name), ...(aiTags.has(name) ? { 'x-generated-by': 'ai' } : {}) };
+  });
   if (rootScheme) spec.security = [{ [rootScheme.name]: rootScheme.scopes }];
   spec.paths = paths;
   if (Object.keys(schemes).length) spec.components = { securitySchemes: schemes };

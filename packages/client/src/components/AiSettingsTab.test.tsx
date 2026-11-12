@@ -67,7 +67,7 @@ describe('AiSettingsTab', () => {
     const switches = screen.getAllByRole('switch');
     expect(switches[0]).toHaveAttribute('aria-checked', 'false');
     // every feature switch starts off
-    for (const sw of switches.slice(3)) expect(sw).toHaveAttribute('aria-checked', 'false');
+    for (const sw of switches.slice(3, 10)) expect(sw).toHaveAttribute('aria-checked', 'false');
     expect(screen.getByText('Test connection')).toBeDisabled();
     expect(screen.getByText(/Nothing is sent anywhere until you enable this/)).toBeInTheDocument();
   });

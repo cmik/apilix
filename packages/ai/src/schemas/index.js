@@ -8,6 +8,34 @@ const SCHEMAS = {
     required: ['ok'],
     additionalProperties: false,
   },
+  docDescribe: {
+    type: 'object',
+    properties: {
+      items: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            description: { type: 'string' },
+            params: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: { in: { type: 'string' }, name: { type: 'string' }, description: { type: 'string' } },
+                required: ['name', 'description'],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ['id'],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ['items'],
+    additionalProperties: false,
+  },
 };
 
 function get(name) { return SCHEMAS[name]; }

@@ -206,6 +206,14 @@ Key rules:
 - Multiple `apx.test()` blocks are **independent** — a failure in one does not stop the others.
 - Scripts support **top-level `async/await`**.
 
+### Suggest tests from a response
+
+After a request completes, the **Suggest tests** button in the response toolbar (the checkbox icon) proposes assertions inferred from that response. It works offline and uses no AI: the same response always gives the same suggestions.
+
+- **What it suggests**: the status code, the `Content-Type`, the type of each field of the JSON body (objects up to 3 levels deep; for arrays, the first item), well-known formats (UUID, ISO date, email, URL), stable enum-like fields such as `status` or `type`, and variables worth saving (`id`, `*_id`, tokens).
+- **Volatile values are never asserted**: ids, timestamps and tokens only get a type/format check, and are labelled *may change*. Response time is offered with a generous budget but is unchecked by default, as are captures.
+- **Nothing is written until you click Add.** The chosen tests are appended to the request's Tests tab, and a test that is already there (same code, or a test with the same name) is not added again.
+
 ---
 
 ## Response Object

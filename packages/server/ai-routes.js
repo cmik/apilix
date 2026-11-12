@@ -14,7 +14,8 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const { AiError, httpStatusFor, buildPreviewContext, getPrompt } = require('@apilix/ai');
+const { AiError, httpStatusFor, buildPreviewContext, getPrompt, describeDocs, isValidLanguage } = require('@apilix/ai');
+const { buildDocModel } = require('@apilix/core/docs');
 
 const PROVIDERS = ['anthropic', 'openai-compat'];
 const FEATURE_KEYS = ['nlGenerate', 'assertSuggest', 'diagnose', 'scriptAssist', 'docDescribe', 'dataGen', 'smartImport'];
@@ -76,7 +77,7 @@ function validateSettings(input) {
   for (const k of FEATURE_KEYS) features[k] = !!(input.features && input.features[k] === true);
   let outputLanguage;
   if (input.outputLanguage !== undefined && input.outputLanguage !== null && input.outputLanguage !== '') {
-    if (typeof input.outputLanguage !== 'string' || input.outputLanguage.length > 40) return { error: 'settings.outputLanguage must be a short string' };
+    if (!isValidLanguage(input.outputLanguage)) return { error: 'settings.outputLanguage must be a language name (letters, spaces, parentheses, hyphens; max 40)' };
     outputLanguage = input.outputLanguage;
   }
   return {
@@ -155,11 +156,19 @@ function createAiRouter(deps = {}) {
     res.json({ ok: true });
   });
 
-  router.post('/test', async (req, res) => {
+  /**
+   * Run one AI call under the shared guards: enabled + key, one request at a time,
+   * abort on client disconnect, uniform logging and error mapping.
+   * `fn({ provider, settings, signal })` returns { body, usage?, model?, latencyMs? }.
+   */
+  async function runAiCall(req, res, feature, fn, { featureFlag } = {}) {
     if (!config || !config.settings.enabled) {
       return sendError(res, new AiError('DISABLED', 'AI features are disabled'));
     }
     const { settings, apiKey } = config;
+    if (featureFlag && settings.features[featureFlag] !== true) {
+      return sendError(res, new AiError('DISABLED', 'This AI feature is disabled in the AI settings'));
+    }
     const lockKey = `${req.socket.remoteAddress}|${req.get('x-apilix-client') || ''}`;
     if (busy.has(lockKey)) return res.status(429).json({ error: 'Another AI request is already running', code: 'RATE_LIMIT' });
     busy.add(lockKey);
@@ -171,25 +180,58 @@ function createAiRouter(deps = {}) {
         { kind: settings.provider, baseUrl: settings.baseUrl, model: settings.model, apiKey },
         getTransport(settings.baseUrl || DEFAULT_BASES[settings.provider]),
       );
-      const prompt = getPrompt('connectionTest');
-      const r = await provider.complete({
-        system: prompt.system,
-        messages: [{ role: 'user', content: prompt.user }],
-        schema: 'connectionTest',
-        signal: ac.signal,
-        maxTokens: 64,
-      });
-      logCall({ feature: 'test', model: r.model, inputTokens: r.usage.inputTokens, outputTokens: r.usage.outputTokens, latencyMs: r.latencyMs, ok: true });
-      return res.json({ ok: true, model: r.model, latencyMs: r.latencyMs });
+      const r = await fn({ provider, settings, signal: ac.signal });
+      const usage = r.usage || { inputTokens: 0, outputTokens: 0 };
+      logCall({ feature, model: r.model || settings.model, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, latencyMs: r.latencyMs, ok: true });
+      return res.json(r.body);
     } catch (err) {
-      const code = err instanceof AiError ? err.code : 'INTERNAL';
-      logCall({ feature: 'test', model: settings.model, ok: false, code });
+      const code = err instanceof AiError ? err.code : err && err.code === 'BAD_REQUEST' ? 'BAD_REQUEST' : 'INTERNAL';
+      logCall({ feature, model: settings.model, ok: false, code });
+      if (err && err.code === 'BAD_REQUEST') return res.status(400).json({ error: err.message, code: 'BAD_REQUEST' });
       if (!(err instanceof AiError)) logger.error('AI route error:', code);
       return sendError(res, err);
     } finally {
       busy.delete(lockKey);
     }
-  });
+  }
+
+  router.post('/test', (req, res) => runAiCall(req, res, 'test', async ({ provider, signal }) => {
+    const prompt = getPrompt('connectionTest');
+    const r = await provider.complete({
+      system: prompt.system,
+      messages: [{ role: 'user', content: prompt.user }],
+      schema: 'connectionTest',
+      signal,
+      maxTokens: 64,
+    });
+    return { body: { ok: true, model: r.model, latencyMs: r.latencyMs }, usage: r.usage, model: r.model, latencyMs: r.latencyMs };
+  }));
+
+  router.post('/describe-docs', (req, res) => runAiCall(req, res, 'docDescribe', async ({ provider, settings, signal }) => {
+    const { collection, folder, language, secretValues } = req.body || {};
+    const bad = (m) => Object.assign(new Error(m), { code: 'BAD_REQUEST' });
+    if (!collection || typeof collection !== 'object' || !collection.info || !Array.isArray(collection.item)) throw bad('collection must contain info and item[]');
+    if (folder !== undefined && typeof folder !== 'string') throw bad('folder must be a string');
+    if (language !== undefined && language !== null && language !== '' && !isValidLanguage(language)) throw bad('language must be a language name (letters, spaces, parentheses, hyphens; max 40)');
+    if (secretValues !== undefined && !Array.isArray(secretValues)) throw bad('secretValues must be an array');
+    let model;
+    try {
+      model = buildDocModel(collection, { folder: folder || undefined, includeCredentials: false, includeExamples: true });
+    } catch (e) {
+      throw bad(e.message);
+    }
+    const started = Date.now();
+    const r = await describeDocs({
+      provider,
+      model,
+      language: language ? language.trim() : settings.outputLanguage,
+      maxContextTokens: settings.maxContextTokens,
+      redactSecrets: settings.redactSecrets,
+      secretValues: (secretValues || []).slice(0, 1000).filter(x => typeof x === 'string'),
+      signal,
+    });
+    return { body: { descriptions: r.descriptions, warnings: r.warnings, requested: r.requested }, usage: r.usage, latencyMs: Date.now() - started };
+  }, { featureFlag: 'docDescribe' }));
 
   router.post('/preview', (req, res) => {
     const { item, response, variables, secretValues, settings } = req.body || {};

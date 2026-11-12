@@ -5,6 +5,7 @@ import { findItemInTree, updateItemById } from '../utils/treeHelpers';
 import { buildExampleFromResponse, addExampleToItem, exampleSaveBlocker } from '../utils/exampleUtils';
 import type { TestResult, TlsCertInfo, NetworkTimings, RedirectHop } from '../types';
 import SaveToVarModal from './SaveToVarModal';
+import AssertionSuggestPanel from './AssertionSuggestPanel';
 import TestValueModal from './TestValueModal';
 import UpdateVarModal from './UpdateVarModal';
 import type { VarEntry } from './UpdateVarModal';
@@ -769,6 +770,7 @@ export default function ResponseViewer() {
   const [ctxMenu, setCtxMenu] = useState<{ left: number; top: number; path: (string | number)[]; value: unknown; tabId: string | null; collectionId: string | null } | null>(null);
   const [saveToVarTarget, setSaveToVarTarget] = useState<{ path: (string | number)[]; value: unknown; tabId: string | null; collectionId: string | null } | null>(null);
   const [testValueTarget, setTestValueTarget] = useState<{ path: (string | number)[]; value: unknown; tabId: string | null } | null>(null);
+  const [suggestOpen, setSuggestOpen] = useState(false);
   const [updateVarTarget, setUpdateVarTarget] = useState<{ path: (string | number)[]; value: unknown; collectionId: string | null } | null>(null);
 
   const activeTabId = state.activeTabId;
@@ -816,6 +818,11 @@ export default function ResponseViewer() {
   const exampleBlocker = response ? exampleSaveBlocker(response) : null;
   const canSaveExample = !!(response && !response.error && activeTab?.item.id && exampleCollection
     && findItemInTree(exampleCollection.item, activeTab.item.id));
+  const canSuggestTests = !!(response && !response.error && !response.isExample && (!response.protocol || response.protocol === 'http'));
+  const savedTestScript = useMemo(() => {
+    const exec = activeTab?.item.event?.find(e => e.listen === 'test')?.script.exec;
+    return Array.isArray(exec) ? exec.join('\n') : typeof exec === 'string' ? exec : '';
+  }, [activeTab?.item.event]);
   const [exampleSaved, setExampleSaved] = useState(false);
   const exampleSavedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (exampleSavedTimer.current) clearTimeout(exampleSavedTimer.current); }, []);
@@ -1239,6 +1246,19 @@ export default function ResponseViewer() {
                 )}
               </button>
             )}
+            {canSuggestTests && (
+              <button
+                onClick={() => setSuggestOpen(true)}
+                className="text-xs px-1.5 py-0.5 rounded transition-colors text-slate-500 hover:text-slate-300"
+                title="Suggest tests from this response"
+                aria-label="Suggest tests"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ display: 'inline' }}>
+                  <path d="M9 11l3 3L22 4" />
+                  <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                </svg>
+              </button>
+            )}
             <button
               onClick={handleSaveToFile}
               disabled={saveState === 'saving'}
@@ -1566,6 +1586,15 @@ export default function ResponseViewer() {
             setSaveToVarTarget(null);
           }}
           onClose={() => setSaveToVarTarget(null)}
+        />
+      )}
+
+      {suggestOpen && response && (
+        <AssertionSuggestPanel
+          response={response}
+          tabId={activeTabId}
+          existingScript={savedTestScript}
+          onClose={() => setSuggestOpen(false)}
         />
       )}
 

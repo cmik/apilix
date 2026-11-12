@@ -218,6 +218,13 @@ export default function AiSettingsTab() {
         <p className="text-[11px] text-slate-600">Each switch takes effect as the matching feature becomes available.</p>
       </Section>
 
+      <Section title="Exports">
+        <Row label="Mark AI-written content in exports">
+          <Toggle checked={s.markAiContent !== false} onChange={v => update({ markAiContent: v })} />
+        </Row>
+        <p className="text-[11px] text-slate-600 -mt-1">Default for documentation exports: adds an “AI-generated” badge or note to descriptions written by the model. You can still change it per export.</p>
+      </Section>
+
       {showConsent && (
         <AiConsentModal
           destination={destination}

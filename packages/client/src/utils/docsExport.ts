@@ -102,3 +102,12 @@ export function docsFilename(collectionName: string, result: Pick<DocsResult, 'f
   const suffix = result.format === 'openapi' ? '.openapi' : '.docs';
   return `${safe}${suffix}.${result.extension}`;
 }
+
+/**
+ * Copy of `collection` with every known secret value masked, for sending to the AI describe route.
+ * Same masking as the export itself, so secrets never leave the machine unmasked.
+ */
+export function maskCollectionForAi(collection: AppCollection, secretValues?: Set<string>): AppCollection {
+  if (!secretValues || secretValues.size === 0) return collection;
+  return maskDeep(collection, expandSecretSet(secretValues));
+}
