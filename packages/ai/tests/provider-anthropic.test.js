@@ -99,3 +99,23 @@ test('plain text completion without schema', async () => {
     assert.equal(fake.calls[0].body.tools, undefined);
   } finally { await fake.close(); }
 });
+
+test('model rejecting forced tool_choice → retries with auto and remembers it', async () => {
+  const fake = await startFake((c, res) => {
+    if (c.body.tool_choice && c.body.tool_choice.type === 'tool') {
+      return json(res, 400, { error: { type: 'invalid_request_error', message: 'tool_choice: type "tool" and "any" are not supported for this model.' } });
+    }
+    return json(res, 200, toolReply({ ok: true }));
+  });
+  try {
+    const p = createProvider(cfg(fake, { model: 'thinking-model-x' }));
+    const r = await p.complete(req);
+    assert.deepEqual(r.data, { ok: true });
+    assert.equal(fake.calls.length, 2);
+    assert.deepEqual(fake.calls[1].body.tool_choice, { type: 'auto' });
+    assert.match(fake.calls[1].body.system, /connectionTest/);
+    await p.complete(req);
+    assert.equal(fake.calls.length, 3, 'second call goes straight to auto');
+    assert.deepEqual(fake.calls[2].body.tool_choice, { type: 'auto' });
+  } finally { await fake.close(); }
+});
