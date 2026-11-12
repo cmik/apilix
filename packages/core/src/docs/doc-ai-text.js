@@ -11,8 +11,40 @@
 
 const MAX_PASSES = 10;
 
+/**
+ * Remove HTML comments, tags and autolinks with a character scanner (no regex), then drop the
+ * chevron of any unclosed opener (`<` followed by `!`, `?`, `/` or a letter). Linear time: the
+ * last `>` and last `-->` are located once, so an unclosed opener never rescans the tail.
+ * Splicing across a removal can form a new opener; neutralizeAiText loops to a fixed point.
+ */
+function stripHtml(s) {
+  const lastGt = s.lastIndexOf('>');
+  const lastCommentEnd = s.lastIndexOf('-->');
+  let out = '';
+  let i = 0;
+  while (i < s.length) {
+    const ch = s[i];
+    if (ch !== '<') { out += ch; i++; continue; }
+    if (s.startsWith('!--', i + 1) && i + 4 <= lastCommentEnd) {
+      i = s.indexOf('-->', i + 4) + 3;
+      continue;
+    }
+    const next = s[i + 1] || '';
+    const isLetter = /[A-Za-z]/.test(next);
+    const closable = isLetter || (next === '/' && /[A-Za-z]/.test(s[i + 2] || ''));
+    if (closable && i < lastGt) {
+      i = s.indexOf('>', i) + 1;
+      continue;
+    }
+    if (isLetter || next === '!' || next === '?' || next === '/') { i++; continue; }
+    out += ch;
+    i++;
+  }
+  return out;
+}
+
 function neutralizeOnce(s) {
-  return s
+  return stripHtml(s)
     // Reference definitions: `[id]: https://...`
     .replace(/^[ \t]*\[[^\]\n]*\]:[ \t]*\S.*$/gm, '')
     // Images and links, inline and reference style: keep the visible text only.
@@ -20,11 +52,6 @@ function neutralizeOnce(s) {
     .replace(/!\[([^\]\n]*)\]\[[^\]\n]*\]/g, '$1')
     .replace(/\[([^\]\n]*)\]\([^)\n]*\)/g, '$1')
     .replace(/\[([^\]\n]*)\]\[[^\]\n]*\]/g, '$1')
-    // HTML tags and autolinks (`<img ...>`, `<a href>`, `<https://x>`, comments).
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<\/?[A-Za-z][^>]*>/g, '')
-    // An unclosed tag or comment opener survives the two rules above: drop the chevron itself.
-    .replace(/<(?=[!?\/A-Za-z])/g, '')
     // Bare URLs of any scheme, and scheme-less `www.` hosts.
     .replace(/\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s<>"')\]]*/g, '')
     .replace(/\b(?:data|javascript|vbscript|file):[^\s<>"')\]]*/gi, '')

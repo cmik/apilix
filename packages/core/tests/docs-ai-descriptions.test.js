@@ -192,3 +192,22 @@ test('neutralizeAiText drops the opener of an unclosed tag or comment', () => {
   }
   assert.equal(neutralizeAiText('keeps 1 < 2 and x > y'), 'keeps 1 < 2 and x > y');
 });
+
+test('neutralizeAiText scanner: tags, comments, nesting and openers', () => {
+  const bad = (o) => !/<[!?\/A-Za-z]/.test(o);
+  const cases = ['<script>x</script>', '<script', '<!-- c -->t', '<!-- open', '<img src=x>', '</div>', '</ div', '<scr<script>ipt>', '<<script>', '<<!---->!--x>', '<!<!---->--x>', '<?php x', '<scr<!---->ipt>'];
+  for (const c of cases) {
+    const out = neutralizeAiText(c);
+    assert.ok(bad(out), `${JSON.stringify(c)} -> ${JSON.stringify(out)}`);
+  }
+  assert.equal(neutralizeAiText('a <b>bold</b> <!-- x --> z'), 'a bold z');
+  assert.equal(neutralizeAiText('a < b and c > d'), 'a < b and c > d');
+});
+
+test('neutralizeAiText runs in linear time on long hostile input', () => {
+  for (const unit of ['<a', '<!--', '<', '<a>', ' ']) {
+    const t0 = Date.now();
+    neutralizeAiText(unit.repeat(100000));
+    assert.ok(Date.now() - t0 < 1500, `slow for ${unit}`);
+  }
+});
