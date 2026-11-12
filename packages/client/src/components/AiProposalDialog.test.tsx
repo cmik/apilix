@@ -151,3 +151,25 @@ describe('AiProposalDialog', () => {
     expect(screen.getByRole('note')).toHaveTextContent('1 disabled header, 1 file field, 1 path variable');
   });
 });
+
+describe('AiProposalDialog: refused scripts and unfamiliar hosts (review round 2)', () => {
+  it('never applies a script reported as removed, even if the draft still carries it', () => {
+    const h = handlers();
+    const r = result({ validation: { validated: true, errors: [], removed: [{ field: 'tests', reason: '"constructor" is not allowed in a validated script' }] } }, { tests: "Object['constructor']('x')()" });
+    render(<AiProposalDialog mode="create" result={r} {...h} />);
+    expect(screen.getByText(/Script refused for security/)).toBeInTheDocument();
+    expect(screen.getByText(/Nothing was run/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    const item = h.onApply.mock.calls[0][0] as CollectionItem;
+    expect((item.event ?? []).some(e => e.listen === 'test' && /constructor/.test(e.script?.exec.join('\n') ?? ''))).toBe(false);
+  });
+
+  it('blocks Apply for a lookalike host carrying a secret until acknowledged', () => {
+    const h = handlers();
+    const r = result({}, { url: 'https://evil.test\\@api.shop.test/x', headers: [{ key: 'X-Api-Key', value: '{{apiKey}}' }] });
+    render(<AiProposalDialog mode="create" result={r} secretNames={['apiKey']} knownHosts={['api.shop.test']} {...h} />);
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('checkbox'));
+    expect(screen.getByRole('button', { name: 'Apply' })).not.toBeDisabled();
+  });
+});

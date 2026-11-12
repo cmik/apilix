@@ -145,6 +145,16 @@ describe('draftToItem: modifying keeps what the draft cannot express', () => {
     expect(preservedNotes(undefined, item)).toEqual([]);
     expect(preservedNotes(base, draftToItem(draft))).toEqual([]);
   });
+  it('keeps disabled form / urlencoded rows (unless the draft sets the key) and a file body', () => {
+    const withRows = { ...base, request: { ...base.request, body: { mode: 'urlencoded' as const, urlencoded: [{ key: 'a', value: '1', disabled: true }, { key: 'b', value: '2', disabled: true }, { key: 'c', value: '3' }] } } };
+    const item = draftToItem({ ...draft, body: { mode: 'urlencoded', urlencoded: [{ key: 'b', value: 'x' }] } }, { base: withRows });
+    expect(item.request?.body?.urlencoded).toEqual([{ key: 'b', value: 'x' }, { key: 'a', value: '1', disabled: true }]);
+    expect(preservedNotes(withRows, item)).toContain('1 disabled body row');
+    const fileBase = { ...base, request: { ...base.request, body: { mode: 'file' as const } } };
+    const kept = draftToItem({ ...draft, body: { mode: 'none' } }, { base: fileBase });
+    expect(kept.request?.body).toEqual({ mode: 'file' });
+    expect(draftToItem({ ...draft, body: { mode: 'none' } }).request?.body).toBeUndefined();
+  });
 });
 
 describe('normalizeUrl: host:port is not a scheme', () => {
@@ -152,5 +162,28 @@ describe('normalizeUrl: host:port is not a scheme', () => {
     expect(normalizeUrl('localhost:3000/users')).toBe('http://localhost:3000/users');
     expect(normalizeUrl('api.example.com:8080/x')).toBe('https://api.example.com:8080/x');
     for (const u of ['javascript:alert(1)', 'javascript:1;alert(1)', 'javascript:80/alert(1)', 'data:text/html,x', 'data:1', 'file:///etc/passwd', 'mailto:a@b.test']) expect(normalizeUrl(u)).toBe('');
+  });
+});
+
+describe('normalizeUrl: hostile spellings (review round 2)', () => {
+  it('refuses every dangerous scheme, whatever the case', () => {
+    for (const u of ['javascript:alert(1)', 'JaVaScRiPt:alert(1)', '  javascript:alert(1)', '\tjavascript:alert(1)', '\n javascript:alert(1)', 'data:text/html,<b>', 'vbscript:msgbox(1)', 'DATA:,1', 'file:///etc/passwd']) {
+      expect(normalizeUrl(u), JSON.stringify(u)).toBe('');
+    }
+  });
+  it('never yields a scheme-bearing URL out of a split or encoded scheme', () => {
+    for (const u of ['%6Aavascript:alert(1)', 'java\tscript:alert(1)', 'java\nscript:alert(1)', 'jav&#x61;script:alert(1)']) {
+      expect(normalizeUrl(u), JSON.stringify(u)).toMatch(/^https:\/\//);
+    }
+  });
+  it('makes protocol-relative and backslash hosts explicit, and reads \\ as / like the URL parser', () => {
+    expect(normalizeUrl('//host.test/x')).toBe('https://host.test/x');
+    expect(normalizeUrl('\\\\host.test\\x')).toBe('https://host.test/x');
+    expect(normalizeUrl('https://evil.test\\@good.test/x')).toBe('https://evil.test/@good.test/x');
+    expect(new URL(normalizeUrl('https://evil.test\\@good.test/x')).hostname).toBe('evil.test');
+  });
+  it('keeps user info out of the way: it is part of the authority, not a scheme', () => {
+    expect(normalizeUrl('https://user:pw@host.test/x')).toBe('https://user:pw@host.test/x');
+    expect(normalizeUrl('user@host.test/x')).toBe('https://user@host.test/x');
   });
 });

@@ -220,12 +220,24 @@ function hasForeignScheme(u) {
   return !/^\d{1,5}(?:[/?#]|$)/.test(u.slice(m[0].length)); // `localhost:3000/x`, `api.example.com:8080` are host:port
 }
 
+/** `https://user:secret@host/x`: a literal credential in the URL authority is dropped (`{{variables}}` are kept). */
+function stripLiteralUserInfo(u, warnings) {
+  const m = /^((?:[a-z][a-z0-9+.-]*:)?[\\/]{0,2})([^/\\?#]*)/i.exec(u);
+  if (!m || !m[2].includes('@')) return u;
+  const at = m[2].lastIndexOf('@');
+  const userInfo = m[2].slice(0, at);
+  if (!userInfo.replace(/\{\{[^{}\s]{1,100}\}\}/g, '').replace(/[:]/g, '')) return u;
+  warnings.push('A literal credential in the URL (user:password@host) was removed: use a {{variable}} and the auth settings.');
+  return `${m[1]}${m[2].slice(at + 1)}${u.slice(m[0].length)}`;
+}
+
 function sanitizeUrl(url, warnings) {
   let u = oneLine(url, MAX_URL_CHARS);
   if (hasForeignScheme(u)) {
     warnings.push('The URL used an unsupported scheme and was cleared.');
     return '';
   }
+  u = stripLiteralUserInfo(u, warnings);
   const q = u.indexOf('?');
   if (q !== -1) {
     const hash = u.indexOf('#', q);

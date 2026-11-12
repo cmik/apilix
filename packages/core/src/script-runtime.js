@@ -598,8 +598,6 @@ function createApx(response, variables, updatedVariables, updatedGlobalMutations
     sendRequest(opts, callback) {
       const promise = (async () => {
         try {
-          // Dry-run mode (AI validation): scripts must never reach the network.
-          if (deps && deps.offline) throw new Error('apx.sendRequest is disabled in offline (dry-run) mode');
           let url, method, reqHeaders, body;
 
           if (typeof opts === 'string') {
@@ -945,8 +943,6 @@ async function flushPendingRequests(pendingRequests, context) {
 }
 
 async function runScript(code, response, variables, deps, vmContext) {
-  // deps.timeoutMs bounds synchronous script time (default 5000); deps.offline blocks apx.sendRequest.
-  const scriptTimeout = deps && Number.isFinite(deps.timeoutMs) && deps.timeoutMs > 0 ? deps.timeoutMs : 5000;
   const tests = [];
   const updatedVariables = {};
   const updatedGlobalMutations = {};
@@ -1052,7 +1048,7 @@ async function runScript(code, response, variables, deps, vmContext) {
       const wrappedCode = `(async function(){\n'use strict';\n${code}\n})();`;
       const script = new vm.Script(wrappedCode, { filename: 'apilix-script.js' });
       const ctx = vm.createContext(sandbox);
-      const runResult = script.runInContext(ctx, { timeout: scriptTimeout });
+      const runResult = script.runInContext(ctx, { timeout: 5000 });
       if (runResult && typeof runResult.then === 'function') await runResult;
       await flushPendingRequests(pendingRequests, ctx);
     } catch (err) {

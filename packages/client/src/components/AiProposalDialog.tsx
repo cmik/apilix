@@ -73,9 +73,11 @@ export default function AiProposalDialog({ mode, result, base, targetLabel, busy
 
   const item = useMemo(() => {
     // Modifying keeps the request's name: renaming is a separate, explicit action.
-    const draft = mode === 'modify' && base ? { ...result.draft, name: base.name } : result.draft;
+    let draft = mode === 'modify' && base ? { ...result.draft, name: base.name } : result.draft;
+    // A script the security screen refused is never applicable, even if a server left it in the draft.
+    for (const r of result.validation.removed ?? []) draft = { ...draft, [r.field]: '' };
     return draftToItem(draft, { base: mode === 'modify' ? base : undefined });
-  }, [mode, base, result.draft]);
+  }, [mode, base, result.draft, result.validation.removed]);
 
   const before = useMemo(() => (mode === 'modify' && base ? itemToView(base) : EMPTY_VIEW), [mode, base]);
   const after = useMemo(() => itemToView(item), [item]);

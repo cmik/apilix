@@ -15,4 +15,16 @@ describe('truncateForAi', () => {
     expect(new TextEncoder().encode(r.text).length).toBeLessThanOrEqual(1_800_000);
     expect(r.truncated).toBe(true);
   });
+  it('counts the JSON-escaped size: control characters and quotes grow when escaped', () => {
+    for (const ch of ['\u0001', '"', '\n']) {
+      const r = truncateForAi(ch.repeat(MAX_AI_BODY_CHARS));
+      expect(new TextEncoder().encode(JSON.stringify(r.text)).length).toBeLessThanOrEqual(1_800_000);
+      expect(r.truncated).toBe(true);
+    }
+  });
+  it('never ends on half of a surrogate pair', () => {
+    const r = truncateForAi('a' + '\u{1F600}'.repeat(MAX_AI_BODY_CHARS / 2 + 10));
+    expect(r.text).not.toMatch(/[\ud800-\udbff]$/);
+    expect(new TextEncoder().encode(JSON.stringify(r.text)).length).toBeLessThanOrEqual(1_800_000);
+  });
 });

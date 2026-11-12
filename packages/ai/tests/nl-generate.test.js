@@ -206,3 +206,16 @@ test('credential guard covers the query string, raw bodies, form fields and X-*-
   assert.equal(rawForm.body.raw, 'user=bob&password=');
   assert.ok(w.length >= 6);
 });
+
+test('sanitizeDraft drops a literal credential in the URL authority and keeps {{variables}} (review round 2)', () => {
+  const { sanitizeDraft } = require('../src/nl-generate');
+  const run = (url) => { const w = []; return { url: sanitizeDraft({ url, method: 'GET' }, w).url, w }; };
+  let r = run('https://admin:hunter2@api.test/x?a=1');
+  assert.equal(r.url, 'https://api.test/x?a=1');
+  assert.match(r.w.join(' '), /literal credential in the URL/);
+  r = run('//u:p@h.test/x');
+  assert.equal(r.url, '//h.test/x');
+  r = run('https://{{user}}:{{pass}}@api.test/x');
+  assert.equal(r.url, 'https://{{user}}:{{pass}}@api.test/x');
+  assert.equal(run('api.test/a@b').w.length, 0);
+});

@@ -11,21 +11,37 @@ import type { RequestDraft } from './aiTypes';
  *  - the draft references a secret variable in the URL, headers, auth, query or body.
  */
 
-/** Lower-cased host (no scheme, user info or port). `{{var}}` hosts are kept as-is. null = no host (relative URL). */
+/** Manual fallback for hosts the URL parser cannot take (`{{variable}}` parts). Backslash counts as `/`, as in WHATWG URLs. */
+function manualHost(rest: string): string | null {
+  const authority = rest.split(/[/\\?#]/, 1)[0];
+  const afterUser = authority.includes('@') ? authority.slice(authority.lastIndexOf('@') + 1) : authority;
+  const noPort = afterUser.replace(/:\d{0,5}$/, '');
+  // Only a bare `{{placeholder}}` stands for itself: `{{baseUrl}}.evil.test` is another host.
+  if (/^\{\{[^{}]{1,100}\}\}$/.test(noPort)) return noPort;
+  return noPort.toLowerCase() || null;
+}
+
+/**
+ * Comparable host of a URL: lower-cased, punycode, no scheme / user info / port / trailing dot, decided the
+ * way the URL parser the request engine uses would decide it (`https://evil.test\@good.test` is evil.test;
+ * `//evil.test/x` is a host). `{{var}}` hosts are kept as-is. null = no host (relative URL).
+ */
 export function hostOf(url: string | undefined | null): string | null {
   if (typeof url !== 'string') return null;
   const u = url.trim();
-  if (!u || u.startsWith('/')) return null;
-  const rest = u.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
-  const authority = rest.split(/[/?#]/, 1)[0];
-  const afterUser = authority.includes('@') ? authority.slice(authority.lastIndexOf('@') + 1) : authority;
-  // `{{baseUrl}}/users` is one placeholder; otherwise drop a trailing :port.
-  if (afterUser.startsWith('{{')) {
-    const end = afterUser.indexOf('}}');
-    return end === -1 ? afterUser.toLowerCase() : afterUser.slice(0, end + 2);
+  if (!u) return null;
+  if (/^[\\/]{2,}/.test(u)) return hostOf(`https://${u.replace(/^[\\/]+/, '')}`);
+  if (/^[\\/]/.test(u)) return null;
+  if (u.includes('{{')) {
+    return manualHost(u.replace(/^[a-z][a-z0-9+.-]*:\/\//i, ''));
   }
-  const host = afterUser.replace(/:\d{0,5}$/, '').toLowerCase();
-  return host || null;
+  const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(u) ? u : `https://${u}`;
+  try {
+    const host = new URL(candidate).hostname.replace(/\.$/, '');
+    return host || null;
+  } catch {
+    return manualHost(u.replace(/^[a-z][a-z0-9+.-]*:\/\//i, ''));
+  }
 }
 
 /** Hosts of the items a user already works with (neighbours, the request being modified). */

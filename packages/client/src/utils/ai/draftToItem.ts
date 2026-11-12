@@ -75,9 +75,13 @@ function hasForeignScheme(url: string): boolean {
  * Leaves `{{variable}}` prefixes, absolute URLs and path-only URLs alone.
  */
 export function normalizeUrl(input: string): string {
-  const url = input.trim();
+  let url = input.trim();
   if (!url) return '';
-  if (url.startsWith('{{') || url.startsWith('/') || /^https?:\/\//i.test(url)) return url;
+  // `//host/x` and `\\host` name a host (protocol-relative): make the scheme explicit so the host is plain to see.
+  if (/^[\\/]{2,}/.test(url)) url = `https://${url.replace(/^[\\/]+/, '')}`;
+  // The URL parser reads `\` as `/` before the query: store what it will actually request (https://evil.test\@good.test).
+  if (/^https?:\/\//i.test(url)) return url.replace(/^[^?#]*/, m => m.replace(/\\/g, '/'));
+  if (url.startsWith('{{') || url.startsWith('/')) return url;
   if (hasForeignScheme(url)) return ''; // another scheme (javascript:, data:, file:, ...)
   if (/^(localhost|127\.|0\.0\.0\.0|\[::1\])/i.test(url)) return `http://${url}`;
   return `https://${url}`;
@@ -210,6 +214,10 @@ export function preservedNotes(base: CollectionItem | undefined, item: Collectio
   const files = (base.request?.body?.mode === 'formdata' ? base.request.body.formdata ?? [] : []).filter(f => f.type === 'file');
   const keptFiles = files.filter(f => (item.request?.body?.formdata ?? []).some(x => x.type === 'file' && x.key === f.key));
   if (keptFiles.length) out.push(`${keptFiles.length} file field${keptFiles.length === 1 ? '' : 's'}`);
+  const rowsOf = (it: CollectionItem | undefined) => [...(it?.request?.body?.formdata ?? []), ...(it?.request?.body?.urlencoded ?? [])];
+  const keptRows = rowsOf(base).filter(r => r.disabled && r.key && rowsOf(item).some(x => x.disabled && x.key === r.key));
+  if (keptRows.length) out.push(`${keptRows.length} disabled body row${keptRows.length === 1 ? '' : 's'}`);
+  if (base.request?.body?.mode === 'file' && item.request?.body?.mode === 'file') out.push('the attached file body');
   const u = item.request?.url;
   const vars = typeof u === 'object' && u?.variable ? u.variable.length : 0;
   if (vars) out.push(`${vars} path variable${vars === 1 ? '' : 's'}`);
@@ -228,6 +236,15 @@ export function draftToItem(draft: RequestDraft, options: DraftToItemOptions = {
   const request: CollectionRequest = { method, url, header };
   let body = mapBody(d.body);
   if (kept && body?.mode === 'formdata' && kept.fileFields.length) body = { ...body, formdata: [...(body.formdata ?? []), ...kept.fileFields] };
+  if (kept && body && (body.mode === 'formdata' || body.mode === 'urlencoded') && base?.request?.body?.mode === body.mode) {
+    // Disabled rows are the user's own notes: a draft cannot express them, so they stay.
+    const mine = (body.mode === 'formdata' ? body.formdata : body.urlencoded) ?? [];
+    const old = (body.mode === 'formdata' ? base.request.body.formdata : base.request.body.urlencoded) ?? [];
+    const disabled = old.filter(r => r && r.disabled && r.key && !mine.some(x => x.key === r.key));
+    if (disabled.length) body = body.mode === 'formdata' ? { ...body, formdata: [...mine, ...disabled] as NonNullable<CollectionBody['formdata']> } : { ...body, urlencoded: [...mine, ...disabled] };
+  }
+  // A body the draft format cannot express (a binary file) is not silently dropped when the draft has no body.
+  if (!body && base?.request?.body && base.request.body.mode === 'file') body = base.request.body;
   if (body) request.body = body;
   const auth = mapAuth(d.auth) ?? (base?.request?.auth && base.request.auth.type !== 'inherit' ? base.request.auth : undefined);
   if (auth) request.auth = auth;
