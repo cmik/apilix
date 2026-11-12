@@ -17,6 +17,7 @@ const {
   buildJUnitReport,
   resolveVariables,
   generateDocs,
+  buildDocModel,
 } = require('@apilix/core');
 const { CLI_SNIPPET_LANGUAGES } = require('./docs-curl');
 
@@ -88,6 +89,11 @@ function usage() {
     '  --theme <dark|light|auto>    HTML theme (default: dark)',
     '  --no-examples                Omit saved examples',
     '  --no-images                  HTML: do not render images; show them as text links and block image loading (default: render)',
+    '  --ai-describe                Fill missing descriptions with an LLM (marked as AI-generated; data is redacted first).',
+    '                               Configure with APILIX_AI_MODEL, APILIX_AI_API_KEY, APILIX_AI_PROVIDER (anthropic|openai-compat),',
+    '                               APILIX_AI_BASE_URL. If the AI call fails, the docs are still generated.',
+    '  --ai-language <lang>         Language of AI-written descriptions (e.g. French)',
+    '  --no-ai-mark                 Do not mark AI-written descriptions in the output',
     '  --out <file>                 Write to a file instead of stdout',
   ].join('\n');
 }
@@ -97,6 +103,7 @@ function createIo(overrides = {}) {
     cwd: overrides.cwd || process.cwd(),
     stdout: overrides.stdout || process.stdout,
     stderr: overrides.stderr || process.stderr,
+    env: overrides.env || process.env,
   };
 }
 
@@ -626,6 +633,9 @@ function createProgram(io) {
     .option('--theme <dark|light|auto>', 'HTML theme', 'dark')
     .option('--no-examples', 'Omit saved examples')
     .option('--no-images', 'HTML only: render images as text links instead of loading them')
+    .option('--ai-describe', 'Fill missing descriptions with an LLM (configure with APILIX_AI_* env vars)')
+    .option('--ai-language <lang>', 'Language of AI-written descriptions')
+    .option('--no-ai-mark', 'Do not mark AI-written descriptions in the output')
     .option('--out <file>', 'Write output to a file instead of stdout')
     .action((collectionPath, opts) => {
       parsed.command = 'docs';
@@ -642,6 +652,9 @@ function createProgram(io) {
         theme: opts.theme,
         includeExamples: opts.examples !== false,
         renderImages: opts.images !== false,
+        aiDescribe: opts.aiDescribe === true,
+        aiLanguage: opts.aiLanguage,
+        aiMark: opts.aiMark !== false,
         outPath: opts.out,
       };
     });
@@ -808,6 +821,45 @@ async function isSameFile(a, b) {
   }
 }
 
+const AI_PROVIDERS = ['anthropic', 'openai-compat'];
+
+/** Read the AI configuration from APILIX_AI_* variables. Throws a usage error when it is incomplete. */
+function readAiEnv(env) {
+  const provider = String(env.APILIX_AI_PROVIDER || 'anthropic').trim();
+  if (!AI_PROVIDERS.includes(provider)) throw new Error(`APILIX_AI_PROVIDER must be one of: ${AI_PROVIDERS.join(', ')}`);
+  const model = String(env.APILIX_AI_MODEL || '').trim();
+  if (!model) throw new Error('--ai-describe requires APILIX_AI_MODEL (and APILIX_AI_API_KEY for Anthropic)');
+  const apiKey = String(env.APILIX_AI_API_KEY || '').trim();
+  if (provider === 'anthropic' && !apiKey) throw new Error('--ai-describe requires APILIX_AI_API_KEY for the anthropic provider');
+  const baseUrl = String(env.APILIX_AI_BASE_URL || '').trim();
+  if (baseUrl && !/^https?:\/\//i.test(baseUrl)) throw new Error('APILIX_AI_BASE_URL must be an http(s) URL');
+  return { provider, model, apiKey, baseUrl };
+}
+
+/**
+ * Ask the model to describe what the collection leaves undocumented.
+ * A failing AI call is only a warning: the documentation is still generated.
+ */
+async function describeWithAi({ collection, folder, includeExamples, language, secretValues, io }) {
+  const cfg = readAiEnv(io.env);
+  let ai;
+  try { ai = require('@apilix/ai'); } catch {
+    throw new Error('AI support is not available in this build of the CLI');
+  }
+  const provider = ai.createProvider({ kind: cfg.provider, baseUrl: cfg.baseUrl || undefined, model: cfg.model, apiKey: cfg.apiKey });
+  const model = buildDocModel(collection, { folder, includeCredentials: false, includeExamples });
+  io.stderr.write(`AI: describing undocumented entries with ${cfg.model} (credentials are redacted before sending)\n`);
+  try {
+    const r = await ai.describeDocs({ provider, model, language, secretValues });
+    const n = Object.keys(r.descriptions).length;
+    io.stderr.write(`AI: ${n} description${n === 1 ? '' : 's'} generated (${r.usage.inputTokens} input / ${r.usage.outputTokens} output tokens)\n`);
+    return { descriptions: r.descriptions, warnings: r.warnings };
+  } catch (err) {
+    const detail = err && err.code ? `${err.message} (${err.code})` : (err && err.message) || 'unknown error';
+    return { descriptions: undefined, warnings: [`AI descriptions skipped: ${detail}`] };
+  }
+}
+
 async function runDocs(args, io) {
   const d = args.docs;
   if (!args.collectionPath) throw new Error('The collection path is required');
@@ -853,6 +905,24 @@ async function runDocs(args, io) {
     variables = Object.fromEntries(Object.entries(normalizeEnvironment(envJson).vars).filter(([k]) => !blocked.has(k)));
   }
 
+  let aiDescriptions;
+  const aiWarnings = [];
+  if (d.aiDescribe) {
+    const secretValues = [];
+    if (d.environmentPath) {
+      const envJson = await readJsonFile(io, d.environmentPath, 'environment');
+      const env = envJson && envJson.environment && envJson.environment.values ? envJson.environment : envJson;
+      for (const row of env && Array.isArray(env.values) ? env.values : []) {
+        if (row && row.secret === true && typeof row.value === 'string' && row.value) secretValues.push(row.value);
+      }
+    }
+    const ai = await describeWithAi({
+      collection, folder: d.folder, includeExamples: d.includeExamples, language: d.aiLanguage, secretValues, io,
+    });
+    aiDescriptions = ai.descriptions;
+    aiWarnings.push(...ai.warnings);
+  }
+
   const result = generateDocs(collection, {
     format,
     openapiFormat,
@@ -866,9 +936,11 @@ async function runDocs(args, io) {
     renderImages: d.renderImages !== false,
     snippetLanguages,
     theme: d.theme,
+    descriptions: aiDescriptions,
+    markAiContent: d.aiMark !== false,
   }, { snippetLanguages: CLI_SNIPPET_LANGUAGES });
 
-  for (const warning of result.warnings) io.stderr.write(`Warning: ${warning}\n`);
+  for (const warning of aiWarnings.concat(result.warnings)) io.stderr.write(`Warning: ${warning}\n`);
 
   if (d.outPath) {
     const target = resolvePath(io, d.outPath);
