@@ -28,3 +28,12 @@ test('I1: classifyUrl trims long runs of spaces in linear time (start, end, midd
   assert.deepEqual(classifyUrl('   '), { kind: 'invalid' });
 });
 
+test('m1: a literal control character in the scheme cannot hide an agent-supplied host', () => {
+  const c = coll({ item: [req({ url: { raw: 'ht\ttp://{{h}}/x' } })] });
+  const hit = findHostOverride(c, { variables: { h: 'evil.com' }, anyHost: true });
+  assert.ok(hit, 'refused');
+  assert.equal(findHostOverride(coll({ item: [req({ url: { raw: 'ht\ttp://{{h}}/x' } })] }), { variables: { h: 'evil.com' }, anyHost: false }) !== null, true, 'also in --allow-host mode');
+  // nothing supplied by the agent: unchanged, not refused for being different
+  assert.equal(findHostOverride(c, { variables: {} }), null);
+});
+

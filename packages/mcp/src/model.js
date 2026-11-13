@@ -241,7 +241,7 @@ function classifyUrl(resolved) {
     if (!s.slice(m[1].length + 1).startsWith('//')) return { kind: 'unresolved', text: s };
     scheme = 'http';
   } else if (CONTROL_RE.test(scheme)) {
-    return { kind: 'refuse', text: scheme }; // "ht\ttp://": the parser drops the tab
+    return { kind: 'refuse', text: s }; // "ht\ttp://": the parser drops the tab; the WHOLE text is kept so a changed authority is never taken for "unchanged"
   } else if (!SCHEMES.has(scheme)) {
     return { kind: 'invalid' };
   }
