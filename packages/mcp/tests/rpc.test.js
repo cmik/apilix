@@ -13,6 +13,10 @@ function build(extra = {}) {
       'echo': async (p) => ({ echoed: p }),
       'boom': async () => { throw new Error('secret internal detail'); },
       'bad': async () => { throw new RpcError(CODES.INVALID_PARAMS, 'nope'); },
+      'waitShutdown': async (p, ctx) => new Promise((resolve) => {
+        ctx.shutdown.addEventListener('abort', () => resolve({ stoppedByShutdown: true }));
+        setTimeout(() => resolve({ timedOut: true }), 8000);
+      }),
       'slow': async (p, ctx) => new Promise((resolve) => {
         ctx.signal.addEventListener('abort', () => resolve({ cancelled: true }));
         setTimeout(() => resolve({ slow: true }), 3000);
@@ -239,4 +243,39 @@ test('concurrent requests are answered independently', async () => {
   assert.equal(first.id, 31, 'ping is not blocked by a slow request');
   h.send({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 30 } });
   await h.end();
+});
+
+test('EOF aborts long-running operations (shutdown signal) and serve() ends promptly', async () => {
+  const h = makeHarness(build());
+  h.send(INIT); await h.next();
+  h.send({ jsonrpc: '2.0', id: 40, method: 'waitShutdown' });
+  await new Promise((r) => setTimeout(r, 100));
+  const t0 = Date.now();
+  await Promise.race([h.end(), new Promise((_, rej) => setTimeout(() => rej(new Error('serve() did not end after EOF')), 4000))]);
+  assert.ok(Date.now() - t0 < 3000, `ended in ${Date.now() - t0} ms`);
+  const r = await h.next(1000);
+  assert.deepEqual(r.result, { stoppedByShutdown: true }, 'the operation saw the shutdown, its response is still sent');
+});
+
+test('stop() ends serve() even though stdin stays open', async () => {
+  const server = build();
+  const h = makeHarness(server);
+  h.send(INIT); await h.next();
+  h.send({ jsonrpc: '2.0', id: 41, method: 'waitShutdown' });
+  await new Promise((r) => setTimeout(r, 100));
+  const t0 = Date.now();
+  await server.stop();
+  assert.ok(Date.now() - t0 < 3000);
+});
+
+test('an error on the output stream (EPIPE) ends the session instead of throwing', async () => {
+  const server = build();
+  const { PassThrough } = require('node:stream');
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const done = server.serve(input, output);
+  input.write(`${JSON.stringify(INIT)}\n`);
+  await new Promise((r) => setTimeout(r, 50));
+  output.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+  await Promise.race([done, new Promise((_, rej) => setTimeout(() => rej(new Error('serve() did not end')), 3000))]);
 });

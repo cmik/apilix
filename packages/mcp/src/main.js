@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('node:path');
+const { Writable } = require('node:stream');
 const { parseMcpArgs, helpText, runEnabled, runMode } = require('./args');
 const { createWorkspaces } = require('./workspace');
 const { createMcpServer } = require('./server');
@@ -46,13 +47,16 @@ async function runMcp(argv, io = {}, hooks = {}) {
     extraTools: hooks.extraTools, session: hooks.session,
   });
 
-  // stdout must carry protocol messages only: route stray console output from libraries to stderr.
+  // stdout must carry protocol messages only: route every console method (also table/dir/warn/error/trace)
+  // from libraries and scripts to stderr, scrubbed of the secrets we know.
   const realStdout = process.stdout;
   const restore = [];
   if (stdout === realStdout) {
-    for (const k of ['log', 'info', 'debug']) {
+    const sink = new Writable({ write(chunk, enc, cb) { stderr.write(server.redactor.scrub(chunk.toString('utf8'))); cb(); } });
+    const redirected = new console.Console({ stdout: sink, stderr: sink });
+    for (const k of ['log', 'info', 'debug', 'dir', 'dirxml', 'table', 'warn', 'error', 'trace']) {
       const orig = console[k];
-      console[k] = (...a) => stderr.write(`${a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).map((s) => server.redactor.scrub(String(s))).join(' ')}\n`);
+      console[k] = (...a) => redirected[k](...a);
       restore.push(() => { console[k] = orig; });
     }
   }
@@ -74,9 +78,21 @@ async function runMcp(argv, io = {}, hooks = {}) {
   if (runEnabled(opts) && opts.allowHosts.length > 0) {
     guard = installHostGuard(opts.allowHosts, { onDeny: (h) => log(`blocked outgoing connection to "${h}" (not in --allow-host)`) });
   }
+  // SIGTERM / SIGINT: abort the runs, remove temp files, then end cleanly (only when we own the process streams).
+  const onSignal = (sig) => {
+    log(`received ${sig}: stopping`);
+    workspaces.cleanupTmpSync();
+    server.rpc.stop();
+  };
+  const signalHandlers = [];
+  if (stdout === realStdout && !io.noSignals) {
+    for (const sig of ['SIGTERM', 'SIGINT']) { const h = () => onSignal(sig); process.on(sig, h); signalHandlers.push([sig, h]); }
+  }
   try {
     await server.serve(stdin, stdout);
   } finally {
+    for (const [sig, h] of signalHandlers) process.removeListener(sig, h);
+    workspaces.cleanupTmpSync();
     if (guard) guard.uninstall();
     for (const r of restore) r();
   }

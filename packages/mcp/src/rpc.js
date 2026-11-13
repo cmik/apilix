@@ -54,10 +54,13 @@ function createRpcServer(opts) {
   const scrub = typeof opts.scrub === 'function' ? opts.scrub : v => v;
   const log = typeof opts.log === 'function' ? opts.log : () => {};
   const inflight = new Map(); // id -> AbortController
+  const shutdownCtl = new AbortController(); // aborted at EOF / stop(): long operations must give up (responses still go out)
+  const DRAIN_MS = 5000;
   const pending = new Set();
   let initialized = false;
   let out = null;
   let closed = false;
+  let stopFn = null;
 
   function send(message) {
     if (closed || !out) return;
@@ -108,7 +111,7 @@ function createRpcServer(opts) {
         if (!initialized) throw new RpcError(CODES.NOT_INITIALIZED, 'Server not initialized: send "initialize" first');
         const handler = Object.prototype.hasOwnProperty.call(methods, method) ? methods[method] : null;
         if (!handler) throw new RpcError(CODES.METHOD_NOT_FOUND, `Method not found: ${method}`);
-        result = await handler(params, { signal: controller.signal, id });
+        result = await handler(params, { signal: controller.signal, shutdown: shutdownCtl.signal, id });
       }
       if (controller.signal.aborted) return; // cancelled: the spec says no response
       respond(id, result === undefined ? {} : result);
@@ -174,11 +177,28 @@ function createRpcServer(opts) {
 
   /**
    * Read newline-delimited messages from `input` and write responses to `output`.
-   * Resolves once input ended and all in-flight requests completed.
+   * Resolves once input ended (or stop() was called) and all in-flight requests completed.
    */
   function serve(input, output) {
     out = output;
     return new Promise((resolve) => {
+      let draining = null;
+      /** Abort everything still running, then wait (bounded) for the handlers to wind down. */
+      const drain = () => {
+        if (draining) return draining;
+        shutdownCtl.abort();
+        draining = (async () => {
+          let timer;
+          const limit = new Promise((r) => { timer = setTimeout(r, DRAIN_MS); });
+          await Promise.race([(async () => { while (pending.size > 0) await Promise.allSettled([...pending]); })(), limit]);
+          clearTimeout(timer);
+          closed = true;
+          resolve();
+        })();
+        return draining;
+      };
+      stopFn = drain;
+
       let chunks = [];
       let size = 0;
       let discarding = false;
@@ -218,22 +238,29 @@ function createRpcServer(opts) {
         }
       });
 
-      input.on('end', async () => {
+      input.on('end', () => {
         if (discarding || size > 0) finishLine();
-        // Drain: wait for in-flight requests (they are bounded by tool timeouts).
-        while (pending.size > 0) {
-          await Promise.allSettled([...pending]);
-        }
-        closed = true;
-        resolve();
+        // EOF: the client is gone. Tell long-running operations to stop, then wait (bounded) for them.
+        drain();
       });
       input.on('error', (err) => {
         log(`stdin error: ${err && err.message}`);
+        drain();
       });
+      if (output && typeof output.on === 'function') {
+        // A closed pipe (EPIPE) must end the session cleanly instead of crashing with an uncaught error.
+        output.on('error', (err) => {
+          log(`stdout error: ${err && err.code ? err.code : err && err.message}`);
+          closed = true;
+          drain();
+        });
+      }
     });
   }
 
-  return { serve, handleLine, CODES };
+  /** Stop serving: abort long operations and resolve serve() once they wound down (signals, broken pipe). */
+  const stop = () => (stopFn ? stopFn() : Promise.resolve());
+  return { serve, handleLine, stop, CODES };
 }
 
 module.exports = { createRpcServer, RpcError, CODES, SUPPORTED_PROTOCOLS, DEFAULT_MAX_LINE_BYTES };

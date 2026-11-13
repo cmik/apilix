@@ -109,7 +109,9 @@ async function runTree(ctx, job) {
   const { opts, session } = ctx;
   // A request cancelled (notifications/cancelled) before it started, e.g. while queued behind another run,
   // must not reach the network.
-  const cancelledBeforeStart = () => { if (job.signal && job.signal.aborted) throw new ExpectedError('Cancelled before it started'); };
+  // job.signal: notifications/cancelled for this call; job.shutdown: the client closed stdin / the server is stopping.
+  const signals = [job.signal, job.shutdown].filter(Boolean);
+  const cancelledBeforeStart = () => { if (signals.some((sg) => sg.aborted)) throw new ExpectedError('Cancelled before it started'); };
   cancelledBeforeStart();
   const requestsInTree = job.requestCount * job.iterations;
   if (requestsInTree === 0) throw new ExpectedError('Nothing to run: the selection contains no HTTP requests');
@@ -183,7 +185,7 @@ async function runTree(ctx, job) {
         }
       };
       onAbort = () => { state.cancelled = true; runState.stopped = true; tracker.destroyAll(); };
-      if (job.signal) job.signal.addEventListener('abort', onAbort);
+      for (const sg of signals) sg.addEventListener('abort', onAbort);
 
       const softTimer = setTimeout(() => { state.timedOut = true; runState.stopped = true; }, timeoutMs);
       let hardTimer;
@@ -218,7 +220,7 @@ async function runTree(ctx, job) {
         }
       }
     } finally {
-      if (onAbort && job.signal) job.signal.removeEventListener('abort', onAbort);
+      if (onAbort) for (const sg of signals) sg.removeEventListener('abort', onAbort);
       tracker.stop();
       session.msUsed += Date.now() - started;
     }

@@ -15,6 +15,7 @@
  */
 
 const fs = require('node:fs/promises');
+const fsSync = require('node:fs');
 const fsc = require('node:fs').constants;
 const os = require('node:os');
 const path = require('node:path');
@@ -129,6 +130,7 @@ async function createWorkspaces({ roots, maxFileBytes, explicit = true }) {
   }
   const multi = resolved.length > 1;
   const scanCache = new Map(); // abs -> { mtimeMs, size, classes }
+  const liveTmp = new Set(); // temp files of writes in progress (removed by cleanupTmpSync on a signal)
 
   function formatId(root, rel, sub) {
     const base = multi ? `${root.label}:${rel}` : rel;
@@ -315,6 +317,7 @@ async function createWorkspaces({ roots, maxFileBytes, explicit = true }) {
 
     const tmp = path.join(parentReal, `.apilix-mcp-${crypto.randomBytes(8).toString('hex')}.tmp`);
     let fh;
+    liveTmp.add(tmp);
     try {
       fh = await fs.open(tmp, fsc.O_WRONLY | fsc.O_CREAT | fsc.O_EXCL | (fsc.O_NOFOLLOW || 0), 0o644);
       await fh.writeFile(text, 'utf8');
@@ -346,6 +349,8 @@ async function createWorkspaces({ roots, maxFileBytes, explicit = true }) {
       await fs.unlink(tmp).catch(() => {});
       if (e instanceof WorkspaceError) throw e;
       throw new WorkspaceError('Unable to write file', 'EWRITE');
+    } finally {
+      liveTmp.delete(tmp);
     }
     return { file: formatId(root, segments.join('/'), null), bytes, replaced: !!existing };
   }
@@ -361,6 +366,11 @@ async function createWorkspaces({ roots, maxFileBytes, explicit = true }) {
     loadEnvironment,
     readJsonSafe: (id) => { const p = parseId(id); return readJsonSafe(p.root, p.rel); },
     writeJsonAtomic,
+    /** Synchronously remove temp files of writes still in progress (SIGTERM/SIGINT). */
+    cleanupTmpSync() {
+      for (const t of liveTmp) { try { fsSync.unlinkSync(t); } catch { /* already gone */ } }
+      liveTmp.clear();
+    },
     formatId,
     parseId,
   };
