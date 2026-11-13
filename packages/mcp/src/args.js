@@ -31,7 +31,9 @@ function helpText() {
     '                           and OAuth calls are covered. Without --allow-host or --allow-any-host the run tools are',
     '                           not available. Use PRECISE hosts: never a broad "*.domain" for a host an agent can control.',
     '  --allow-any-host         ENABLE the run tools with NO host restriction: requests (and the secrets they carry) can',
-    '                           be sent to any host this machine can reach (the check that stops agent variables from redirecting a\n                           request is best effort and cannot be relied on here). Cannot be combined with --allow-host.',
+    '                           be sent to any host this machine can reach (the check that stops agent variables from',
+    '                           redirecting a request is best effort and cannot be relied on here).',
+    '                           Cannot be combined with --allow-host.',
     '  --no-run                 Disable run_request / run_collection explicitly (no network, no script execution).',
     '                           Takes priority; cannot be combined with --allow-host / --allow-any-host.',
     '  --allow-write            Enable import_collection (writes inside the workspace; no overwrite without overwrite:true).',
@@ -131,6 +133,8 @@ function parseMcpArgs(argv, cwd = process.cwd()) {
         if (!/^(\*\.)?[a-z0-9._\-\[\]:]+$/.test(v) || v === '*' || v.includes('/')) throw new Error(`--allow-host: invalid pattern "${v}" (use host, *.domain or host:port; a bare "*" is not accepted)`);
         const colons = (v.match(/:/g) || []).length;
         if ((colons === 1 && !/:\d{1,5}$/.test(v)) || /\]:(?!\d{1,5}$)/.test(v) || /^\[[^\]]*$/.test(v)) throw new Error(`--allow-host: invalid pattern "${v}" (an empty or non-numeric port is refused: write host:port, or just host for every port)`);
+        const bare = v.startsWith('[') ? v.slice(1, v.indexOf(']')) : (colons === 1 ? v.slice(0, v.indexOf(':')) : v);
+        if (bare.replace(/^\*\./, '').replace(/\.$/, '') === '') throw new Error(`--allow-host: invalid pattern "${v}" (the host part is empty: write host, *.domain or host:port)`);
         o.allowHosts.push(v);
         break;
       }

@@ -69,3 +69,13 @@ test('--allow-host with an empty or non-numeric port is refused (it would otherw
   for (const bad of ['host:', 'host:abc', '[::1]:', '[::1]:x', '*.a.com:']) assert.throws(() => parseMcpArgs(['--allow-host', bad]), /invalid pattern/, bad);
   for (const ok of ['host', 'host:8080', '[::1]', '[::1]:9000', '*.a.com:443']) assert.doesNotThrow(() => parseMcpArgs(['--allow-host', ok]), ok);
 });
+
+test('m5: --allow-host with an empty host part is refused (":80", "*.:80", "*.", ".", "[]:80")', () => {
+  for (const bad of [':80', '*.:80', '*.', '.', '*..', '[]:80', '[]']) assert.throws(() => parseMcpArgs(['--allow-host', bad]), /invalid pattern/, bad);
+  assert.throws(() => parseMcpArgs(['--allow-host', ':80']), /host part is empty/);
+});
+
+test('help text lines stay within 130 columns and contain no embedded newline', () => {
+  for (const line of helpText().split('\n')) assert.ok(line.length <= 130, `${line.length}: ${line}`);
+  assert.ok(!/\\n/.test(helpText()), 'no literal backslash-n');
+});

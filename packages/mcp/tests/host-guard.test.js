@@ -69,3 +69,14 @@ test('denied[] is bounded and out-of-order uninstalls restore the original conne
   g2.uninstall();
   assert.equal(net.Socket.prototype.connect, original);
 });
+
+test('m5: a trailing dot in a pattern is normalized like the compared host ("localhost." == "localhost")', () => {
+  const p = ['localhost.', '*.corp.io.', 'api.example.com.:8080'].map(parsePattern);
+  assert.ok(isAllowed(p, 'localhost', 80));
+  assert.ok(isAllowed(p, 'localhost.', 80));
+  assert.ok(isAllowed(p, 'a.corp.io', 80));
+  assert.ok(!isAllowed(p, 'corp.io', 80));
+  assert.ok(isAllowed(p, 'api.example.com', 8080));
+  assert.ok(!isAllowed(p, 'api.example.com', 80));
+  assert.deepEqual(parsePattern('*.corp.io.'), { host: 'corp.io', wildcard: true, port: null });
+});

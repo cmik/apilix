@@ -31,7 +31,9 @@ function parsePattern(raw) {
     [host, port] = p.split(':');
   }
   const wildcard = host.startsWith('*.');
-  return { host: wildcard ? host.slice(2) : host, wildcard, port: port === null || port === '' ? null : Number(port) };
+  if (wildcard) host = host.slice(2);
+  if (host.endsWith('.')) host = host.slice(0, -1); // "localhost." is "localhost", as in normalizeHost
+  return { host, wildcard, port: port === null || port === '' ? null : Number(port) };
 }
 
 function isAllowed(patterns, host, port) {
