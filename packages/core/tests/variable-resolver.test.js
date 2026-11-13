@@ -166,3 +166,29 @@ test('user var named $guid in the map cannot shadow the dynamic token', () => {
   assert.match(result, UUID_PATTERN);
   assert.notEqual(result, 'overridden');
 });
+
+test('resolveVariables matches the reference regex on random inputs', () => {
+  const ref = (str, vars) => str.replace(/\{\{([^}]+)\}\}/g, (m, k) => {
+    const t = k.trim();
+    if (t.startsWith('$')) return m; // dynamic tokens are random: excluded from the comparison below
+    return vars[t] !== undefined ? vars[t] : m;
+  });
+  const vars = { a: '1', b: 'two', 'a b': 'x' };
+  const alphabet = ['{', '{{', '}', '}}', 'a', 'b', ' ', 'z', '{{a}}', '{{b}}'];
+  let seed = 12345;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  for (let n = 0; n < 20000; n++) {
+    let s = '';
+    const len = Math.floor(rnd() * 12);
+    for (let i = 0; i < len; i++) s += alphabet[Math.floor(rnd() * alphabet.length)];
+    assert.equal(resolveVariables(s, vars), ref(s, vars), JSON.stringify(s));
+  }
+});
+
+test('resolveVariables is linear on unterminated or malformed openers', () => {
+  for (const s of ['{{$'.repeat(100000), '{{'.repeat(200000), '{{a}'.repeat(100000), '{{}}'.repeat(100000)]) {
+    const t = Date.now();
+    resolveVariables(s, {});
+    assert.ok(Date.now() - t < 500, `slow on ${s.slice(0, 8)}`);
+  }
+});
