@@ -14,7 +14,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const { AiError, httpStatusFor, buildPreviewContext, getPrompt, describeDocs, isValidLanguage, suggestAssertions, generateRequest } = require('@apilix/ai');
+const { AiError, httpStatusFor, buildPreviewContext, getPrompt, describeDocs, isValidLanguage, suggestAssertions, generateRequest, explainFailure } = require('@apilix/ai');
 const { buildDocModel } = require('@apilix/core/docs');
 
 const PROVIDERS = ['anthropic', 'openai-compat'];
@@ -292,6 +292,41 @@ function createAiRouter(deps = {}) {
       usage: r.usage, model: r.model, latencyMs: r.latencyMs,
     };
   }, { featureFlag: 'assertSuggest', rateLimited: true }));
+
+  // Explain failed assertions. Feature flag: `diagnose` ("Explain and diagnose failures" in the AI settings).
+  // The answer is text for display only: nothing is executed or applied.
+  router.post('/explain-failure', (req, res) => runAiCall(req, res, 'diagnose', async ({ provider, settings, signal }) => {
+    const { request, name, response, failures, testScript, variableNames, language, secretValues } = req.body || {};
+    if (!isObj(response) || !Number.isInteger(response.status) || response.status < 100 || response.status > 599) throw bad('response must be an object with an integer status');
+    if (response.body !== undefined && typeof response.body !== 'string') throw bad('response.body must be a string');
+    if ((response.body || '').length > MAX_SUGGEST_BODY_CHARS) throw bad('response.body is too large to analyse');
+    if (response.headers !== undefined && !isObj(response.headers)) throw bad('response.headers must be an object');
+    if (request !== undefined && !isObj(request)) throw bad('request must be an object');
+    if (name !== undefined && typeof name !== 'string') throw bad('name must be a string');
+    if (!Array.isArray(failures) || !failures.some(f => isObj(f) && typeof f.name === 'string')) throw bad('failures must list at least one failed assertion');
+    if (testScript !== undefined && typeof testScript !== 'string') throw bad('testScript must be a string');
+    if (variableNames !== undefined && !Array.isArray(variableNames)) throw bad('variableNames must be an array');
+    checkLanguage(language);
+    const r = await explainFailure({
+      provider,
+      request,
+      name,
+      response,
+      failures: failures.slice(0, 50),
+      testScript: (testScript || '').slice(0, 20000),
+      variableNames: (variableNames || []).slice(0, 500),
+      maxContextTokens: settings.maxContextTokens,
+      redactSecrets: settings.redactSecrets,
+      sendResponseBodies: settings.sendResponseBodies,
+      secretValues: secretList(secretValues),
+      language: language ? language.trim() : settings.outputLanguage,
+      signal,
+    });
+    return {
+      body: { summary: r.summary, likelyCauses: r.likelyCauses, suggestedFixes: r.suggestedFixes, truncated: r.truncated, shapeOnly: r.shapeOnly },
+      usage: r.usage, model: r.model, latencyMs: r.latencyMs,
+    };
+  }, { featureFlag: 'diagnose' }));
 
   router.post('/generate-request', (req, res) => runAiCall(req, res, 'nlGenerate', async ({ provider, settings, signal }) => {
     const { instruction, current, neighbors, variables, language, secretValues } = req.body || {};

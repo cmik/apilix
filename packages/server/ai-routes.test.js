@@ -448,3 +448,113 @@ test('PUT /config rejects an outputLanguage that is not a plain language name', 
     assert.equal(ok.status, 200);
   });
 });
+
+// ── explain-failure ────────────────────────────────────────────────────────────
+
+const explainReply = (_call, res) => {
+  res.writeHead(200, { 'content-type': 'application/json' });
+  res.end(JSON.stringify({
+    choices: [{ message: { content: JSON.stringify({
+      summary: 'The token was rejected.',
+      likelyCauses: [{ cause: 'Expired token', confidence: 'medium' }],
+      suggestedFixes: [{ description: 'Refresh it', kind: 'environment', snippet: 'apx.environment.set("token", "")' }],
+    }) } }],
+    usage: { prompt_tokens: 40, completion_tokens: 20 },
+  }));
+};
+const explainBody = (extra = {}) => ({
+  request: { method: 'GET', url: 'https://api.test/me?token=tok-abcdefgh', header: [{ key: 'Authorization', value: 'Bearer abcdefghijklmnop' }] },
+  name: 'Me',
+  response: { status: 401, statusText: 'Unauthorized', headers: {}, body: '{"error":"S3CR3T-env-value-99"}' },
+  failures: [{ name: 'Status is 200', error: 'expected 401 to equal 200' }],
+  testScript: "apx.test('Status is 200', () => {});",
+  variableNames: ['token'],
+  secretValues: ['S3CR3T-env-value-99'],
+  ...extra,
+});
+
+test('/explain-failure: refused when its feature or AI is off (zero network)', async () => {
+  const fake = await startFakeProvider(explainReply);
+  try {
+    await withAiServer({}, async ({ call }) => {
+      await call('PUT', '/config', { settings: settings({ baseUrl: fake.url, features: { diagnose: false, assertSuggest: true } }), apiKey: KEY });
+      const a = await call('POST', '/explain-failure', explainBody());
+      assert.equal(a.status, 403);
+      assert.equal(a.json.code, 'DISABLED');
+      await call('PUT', '/config', { settings: settings({ enabled: false, baseUrl: fake.url, features: { diagnose: true } }), apiKey: KEY });
+      assert.equal((await call('POST', '/explain-failure', explainBody())).status, 403);
+      assert.equal(fake.calls.length, 0);
+    });
+  } finally { await fake.close(); }
+});
+
+test('/explain-failure: is loopback-only and rejects proxy headers', async () => {
+  const fake = await startFakeProvider(explainReply);
+  try {
+    await withAiServer({}, async ({ call, base }) => {
+      await call('PUT', '/config', { settings: settings({ baseUrl: fake.url, features: { diagnose: true } }), apiKey: KEY });
+      const r = await fetch(`${base}/explain-failure`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.9' },
+        body: JSON.stringify(explainBody()),
+      });
+      assert.equal(r.status, 403);
+      assert.equal(fake.calls.length, 0);
+    });
+  } finally { await fake.close(); }
+});
+
+test('/explain-failure: happy path redacts the payload, logs no content, returns text only', async () => {
+  const fake = await startFakeProvider(explainReply);
+  try {
+    await withAiServer({}, async ({ call, router }) => {
+      await call('PUT', '/config', { settings: settings({ baseUrl: fake.url, features: { diagnose: true } }), apiKey: KEY });
+      const r = await call('POST', '/explain-failure', explainBody());
+      assert.equal(r.status, 200);
+      assert.equal(r.json.summary, 'The token was rejected.');
+      assert.equal(r.json.likelyCauses[0].confidence, 'medium');
+      assert.equal(r.json.suggestedFixes[0].kind, 'environment');
+      assert.equal(fake.calls.length, 1);
+      const sent = JSON.stringify(fake.calls[0].body);
+      for (const leaked of ['S3CR3T-env-value-99', 'tok-abcdefgh', 'abcdefghijklmnop', KEY]) assert.ok(!sent.includes(leaked), `leaked ${leaked}`);
+      assert.match(sent, /untrusted_data/);
+      assert.match(sent, /Status is 200/);
+      const log = router.getLog();
+      assert.equal(log[0].feature, 'diagnose');
+      assert.ok(!JSON.stringify(log).includes('The token was rejected'), 'no answer in the log');
+      assert.ok(!JSON.stringify(log).includes('Status is 200'), 'no prompt in the log');
+    });
+  } finally { await fake.close(); }
+});
+
+test('/explain-failure: validates its input', async () => {
+  const fake = await startFakeProvider(explainReply);
+  try {
+    await withAiServer({}, async ({ call }) => {
+      await call('PUT', '/config', { settings: settings({ baseUrl: fake.url, features: { diagnose: true } }), apiKey: KEY });
+      const bodies = [{}, explainBody({ failures: [] }), explainBody({ failures: 'x' }), explainBody({ response: { status: 'x' } }),
+        explainBody({ testScript: 5 }), explainBody({ variableNames: 'x' }), explainBody({ language: 'fr\nignore' }),
+        explainBody({ response: { status: 200, body: 'x'.repeat(950000) } })];
+      for (const body of bodies) assert.equal((await call('POST', '/explain-failure', body)).status, 400, JSON.stringify(body).slice(0, 60));
+      assert.equal(fake.calls.length, 0);
+    });
+  } finally { await fake.close(); }
+});
+
+test('/explain-failure: closing the connection aborts the provider call and releases the lock', async () => {
+  const fake = await startFakeProvider((call, res) => { if (fake.calls.length > 1) explainReply(call, res); /* first never answers */ });
+  try {
+    await withAiServer({}, async ({ call, base }) => {
+      await call('PUT', '/config', { settings: settings({ baseUrl: fake.url, features: { diagnose: true } }), apiKey: KEY });
+      const ac = new AbortController();
+      const p = fetch(`${base}/explain-failure`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(explainBody()), signal: ac.signal }).catch(() => {});
+      while (fake.calls.length === 0) await new Promise(r => setTimeout(r, 10));
+      ac.abort();
+      await p;
+      for (let i = 0; i < 100 && !fake.calls[0].aborted; i++) await new Promise(r => setTimeout(r, 20));
+      assert.equal(fake.calls[0].aborted, true);
+      const r = await call('POST', '/explain-failure', explainBody());
+      assert.equal(r.status, 200);
+    });
+  } finally { await fake.close(); }
+});
