@@ -64,14 +64,35 @@ function resolveDynamic(token) {
  */
 function resolveVariables(str, vars) {
   if (typeof str !== 'string') return str;
-  return str.replace(/\{\{([^}]+)\}\}/g, (match, key) => {
-    const trimmed = key.trim();
-    if (trimmed.startsWith('$')) {
-      const dynamic = resolveDynamic(trimmed);
-      return dynamic !== null ? dynamic : match;
+  // Linear scan equivalent to /\{\{([^}]+)\}\}/g. The regex rescans to the end of the string for every
+  // unterminated "{{" (quadratic on "{{{{{{..."); here the next "}" position is cached between starts.
+  let out = '';
+  let last = 0;
+  let close = -1; // index of the first "}" at or after the current search position
+  let i = str.indexOf('{{');
+  while (i !== -1) {
+    if (close < i + 2) {
+      close = str.indexOf('}', i + 2);
+      if (close === -1) break; // no "}" left: no later "{{" can terminate either
     }
-    return vars[trimmed] !== undefined ? vars[trimmed] : match;
-  });
+    if (close > i + 2 && str.charCodeAt(close + 1) === 125 /* } */) {
+      const match = str.slice(i, close + 2);
+      const trimmed = str.slice(i + 2, close).trim();
+      let rep;
+      if (trimmed.startsWith('$')) {
+        const dynamic = resolveDynamic(trimmed);
+        rep = dynamic !== null ? dynamic : match;
+      } else {
+        rep = vars[trimmed] !== undefined ? vars[trimmed] : match;
+      }
+      out += str.slice(last, i) + rep;
+      last = close + 2;
+      i = str.indexOf('{{', last);
+    } else {
+      i = str.indexOf('{{', i + 1);
+    }
+  }
+  return last === 0 && out === '' ? str : out + str.slice(last);
 }
 
 module.exports = { resolveVariables };
