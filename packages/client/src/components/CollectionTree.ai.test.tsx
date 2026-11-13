@@ -80,6 +80,24 @@ describe('CollectionTree "Generate request here"', () => {
     expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'OPEN_TAB' }));
   });
 
+  it('adds the request at the destination picked in the command bar (collection root)', async () => {
+    aiGenerateRequest.mockResolvedValue({
+      draft: { name: 'Create user', method: 'POST', url: 'https://x.test/users', body: { mode: 'none' }, tests: "apx.test('ok', () => {});" },
+      validation: { validated: true, errors: [] }, warnings: [], retried: false,
+    });
+    const dispatch = setup({ enabled: true, consentGiven: true, model: 'm', features: { ...DEFAULT_AI_SETTINGS.features, nlGenerate: true } });
+    openFolderMenu();
+    fireEvent.click(screen.getByText(/Generate request here/));
+    fireEvent.change(await screen.findByLabelText('Destination'), { target: { value: 'col1\u0000' } });
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'create a user' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Generate' }));
+    await screen.findByRole('dialog', { name: 'AI proposal' });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    const update = dispatch.mock.calls.map(c => c[0]).find(a => a.type === 'UPDATE_COLLECTION');
+    expect(update.payload.item.map((i: { name: string }) => i.name)).toEqual(['Users', 'Create user']);
+    expect(update.payload.item[0].item).toHaveLength(1);
+  });
+
   it('Ignore leaves the collection untouched', async () => {
     aiGenerateRequest.mockResolvedValue({
       draft: { name: 'X', method: 'GET', url: 'https://x.test' }, validation: { validated: true, errors: [] }, warnings: [], retried: false,

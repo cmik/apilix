@@ -34,6 +34,7 @@ import { handleAiShortcut } from '../utils/ai/aiShortcut';
 
 const CodeGenModal = lazy(() => import('./CodeGenModal'));
 const AiCommandBar = lazy(() => import('./AiCommandBar'));
+import type { AiDestination } from './AiCommandBar';
 const ItemSettingsModal = lazy(() => import('./ItemSettingsModal'));
 
 const DATABASE_METHODS = ['MYSQL', 'POSTGRESQL', 'SQLITE', 'CASSANDRA', 'ORACLE', 'MSSQL', 'REDIS', 'DYNAMODB'] as const;
@@ -1988,7 +1989,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     setAiUndo(cur => (cur && cur.tabId === tabId ? null : cur));
   }
 
-  function applyAiItem(item: CollectionItem, mode: 'create' | 'modify') {
+  function applyAiItem(item: CollectionItem, mode: 'create' | 'modify', dest: AiDestination) {
     if (!activeTab || !edit) return;
     if (mode === 'modify') {
       const prev = edit;
@@ -2004,10 +2005,10 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
       return;
     }
     // New request: a separate item, next to the current one. Existing work is never replaced.
-    const col = state.collections.find(c => c._id === activeTab.collectionId);
+    const col = state.collections.find(c => c._id === dest.collectionId);
     if (col) {
-      const parent = activeTab.item.id ? findParentFolderId(col.item, activeTab.item.id) : null;
-      const items = typeof parent === 'string' ? addItemToFolder(col.item, parent, item) : [...col.item, item];
+      // folderId null = collection root
+      const items = dest.folderId ? addItemToFolder(col.item, dest.folderId, item) : [...col.item, item];
       dispatch({ type: 'UPDATE_COLLECTION', payload: { ...col, item: items } });
       dispatch({ type: 'OPEN_TAB', payload: { collectionId: col._id, item } });
     } else {
