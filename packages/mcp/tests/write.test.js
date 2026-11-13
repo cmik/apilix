@@ -67,7 +67,7 @@ test('no overwrite without overwrite:true; overwrite only replaces a recognised 
 
     const notCollection = await s.call('import_collection', { file: 'notes.json', collection: newCollection('Evil'), overwrite: true });
     assert.equal(notCollection.isError, true);
-    assert.match(notCollection.text, /not a recognised/);
+    assert.match(notCollection.text, /exactly one Postman collection/);
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'notes.json'), 'utf8')), { not: 'a collection' });
 
     const ok = await s.call('import_collection', { file: 'existing.json', collection: newCollection('Replaced'), overwrite: true });
@@ -181,4 +181,20 @@ test('tool descriptions state that write + run is code execution and that worksp
   assert.match(byName.run_request, /even one the operator never reviewed/);
   assert.match(byName.run_collection, /executes its scripts/);
   await s.close();
+});
+
+test('overwrite:true is refused for an environment or a multi-collection file, without writing', async () => {
+  await withServer(['--allow-write'], async (s, dir) => {
+    writeJson(dir, 'env.json', { name: 'E', values: [{ key: 'a', value: 'b' }] });
+    writeJson(dir, 'bundle.json', { collections: [collectionFixture(), collectionFixture()] });
+    for (const f of ['env.json', 'bundle.json']) {
+      const before = fs.readFileSync(path.join(dir, f), 'utf8');
+      const r = await s.call('import_collection', { file: f, collection: newCollection('Evil'), overwrite: true });
+      assert.equal(r.isError, true, f);
+      assert.match(r.text, /exactly one Postman collection/);
+      assert.equal(fs.readFileSync(path.join(dir, f), 'utf8'), before, `${f} untouched`);
+    }
+    const tool = (await s.request('tools/list', {})).result.tools.find((t) => t.name === 'import_collection');
+    assert.match(tool.description, /EXACTLY ONE collection/);
+  });
 });

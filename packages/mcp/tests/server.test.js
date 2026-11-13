@@ -313,3 +313,17 @@ test('collection variables of type "secret" are never returned, even with --incl
     assert.ok(!(await s.call('get_request', { collection: 'c.postman_collection.json', request: 'echo' })).text.includes(SECRET_VAR));
   } finally { await s.close(); await api.close(); }
 });
+
+test('secrets of a file modified after startup are picked up (incremental refresh keeps up with changes)', async () => {
+  const dir = workspaceDir();
+  const s = startServer(['--workspace', dir]);
+  const LATE = 'lateSecret_Pq9Rt5Wx21';
+  try {
+    await s.initialize();
+    await s.call('list_collections');
+    writeJson(dir, 'envs/local.json', { ...environmentFixture('http://127.0.0.1:1'), values: [...environmentFixture('http://127.0.0.1:1').values, { key: 'late', value: LATE, enabled: true, secret: true }] });
+    const r = await s.call('get_request', { collection: 'demo.postman_collection.json', request: `x${LATE}x` });
+    assert.equal(r.isError, true);
+    assert.ok(!r.text.includes(LATE), 'the new secret is masked');
+  } finally { await s.close(); }
+});

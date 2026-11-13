@@ -75,8 +75,8 @@ test('a symlink pointing outside the workspace is refused (file and directory), 
   writeJson(outside, 'secret.json', collectionFixture({ info: { name: 'OUTSIDE', schema: 'x' } }));
   fs.symlinkSync(path.join(outside, 'secret.json'), path.join(dir, 'link.json'));
   fs.symlinkSync(outside, path.join(dir, 'linkdir'));
-  await assert.rejects(ws.loadCollection('link.json'), /escapes/i);
-  await assert.rejects(ws.loadCollection('linkdir/secret.json'), /escapes/i);
+  await assert.rejects(ws.loadCollection('link.json'), /File not found in workspace/);
+  await assert.rejects(ws.loadCollection('linkdir/secret.json'), /File not found in workspace/);
   const idx = await ws.index();
   assert.ok(!idx.collections.some((c) => c.name === 'OUTSIDE'));
 });
@@ -146,8 +146,8 @@ test('writeJsonAtomic: creates, refuses to overwrite without the flag, overwrite
   assert.equal(r2.replaced, true);
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'new.json'), 'utf8')).info.name, 'Newer');
   // not a recognised collection: even overwrite:true is refused
-  await assert.rejects(ws.writeJsonAtomic(null, 'notes.json', text, { overwrite: true }), /not a recognised/);
-  await assert.rejects(ws.writeJsonAtomic(null, 'package.json', text, { overwrite: true }), /not a recognised/);
+  await assert.rejects(ws.writeJsonAtomic(null, 'notes.json', text, { overwrite: true }), /exactly one Postman collection/);
+  await assert.rejects(ws.writeJsonAtomic(null, 'package.json', text, { overwrite: true }), /exactly one Postman collection/);
   // no tmp leftovers
   assert.deepEqual(fs.readdirSync(dir).filter((f) => f.endsWith('.tmp')), []);
 });
@@ -184,4 +184,102 @@ test('multi-workspace write requires an explicit workspace label', async () => {
   const r = await ws.writeJsonAtomic(ws.labels[1], 'x.json', '{"info":{"name":"x"},"item":[]}');
   assert.ok(fs.existsSync(path.join(b, 'x.json')));
   assert.ok(r.file.includes(':'));
+});
+
+test('read access has the same reach as the scan, and every refusal looks exactly like a missing file', { skip: IS_WIN }, async () => {
+  const { dir, ws } = await setup();
+  const col = collectionFixture({ info: { name: 'Hidden', schema: 'x' } });
+  writeJson(dir, '.hidden/c.json', col);
+  writeJson(dir, 'node_modules/pkg/c.json', col);
+  writeJson(dir, 'a/b/c/d/e/f/deep.json', col);
+  writeJson(dir, 'package.json', col);
+  const outside = makeTmp('apilix-outside-');
+  writeJson(outside, 'o.json', col);
+  fs.symlinkSync(path.join(outside, 'o.json'), path.join(dir, 'ln.json'));
+  fs.mkdirSync(path.join(dir, 'adir.json'));
+  const messages = new Set();
+  for (const id of ['missing.json', '.hidden/c.json', 'node_modules/pkg/c.json', 'a/b/c/d/e/f/deep.json', 'package.json', 'ln.json', 'adir.json']) {
+    const e = await ws.loadCollection(id).then(() => null, (x) => x);
+    assert.ok(e, `${id} must be refused`);
+    messages.add(`${e.code}:${e.message}`);
+  }
+  assert.deepEqual([...messages], ['ENOTFOUND:File not found in workspace']);
+  const idx = await ws.index();
+  assert.ok(!idx.collections.some((c) => c.name === 'Hidden'), 'and none of them is listed either');
+});
+
+test('file names containing "#" are listed and loadable; "#<n>" still selects an entry of a multi-entity file', async () => {
+  const { dir, ws } = await setup();
+  writeJson(dir, 'a#b.json', collectionFixture({ info: { name: 'Hash', schema: 'x' } }));
+  writeJson(dir, 'm#1.json', { collections: [collectionFixture({ info: { name: 'M0', schema: 'x' } }), collectionFixture({ info: { name: 'M1', schema: 'x' } })], environments: [] });
+  const idx = await ws.index();
+  const hash = idx.collections.find((c) => c.name === 'Hash');
+  assert.equal(hash.id, 'a#b.json');
+  assert.equal((await ws.loadCollection(hash.id)).value.info.name, 'Hash');
+  const m1 = idx.collections.find((c) => c.name === 'M1');
+  assert.equal(m1.id, 'm#1.json#1');
+  assert.equal((await ws.loadCollection(m1.id)).value.info.name, 'M1');
+});
+
+test('overwrite is allowed only when the target holds exactly one collection', async () => {
+  const { dir, ws } = await setup();
+  const one = collectionFixture({ info: { name: 'One', schema: 'x' } });
+  writeJson(dir, 'one.json', one);
+  writeJson(dir, 'wrapped.json', { collection: one });
+  writeJson(dir, 'multi1.json', { collections: [one], environments: [] });
+  writeJson(dir, 'multi2.json', { collections: [one, one] });
+  writeJson(dir, 'env.json', { name: 'E', values: [] });
+  writeJson(dir, 'mixed.json', { collections: [one], environments: [{ name: 'E', values: [] }] });
+  const text = JSON.stringify(collectionFixture({ info: { name: 'New', schema: 'x' } }));
+  for (const f of ['multi1.json', 'multi2.json', 'env.json', 'mixed.json']) {
+    const before = fs.readFileSync(path.join(dir, f), 'utf8');
+    await assert.rejects(ws.writeJsonAtomic(null, f, text, { overwrite: true }), /exactly one Postman collection/, f);
+    assert.equal(fs.readFileSync(path.join(dir, f), 'utf8'), before, `${f} untouched`);
+  }
+  for (const f of ['one.json', 'wrapped.json']) {
+    const r = await ws.writeJsonAtomic(null, f, text, { overwrite: true });
+    assert.equal(r.replaced, true, f);
+  }
+});
+
+test('written files are 0600 (with and without hard links) and a failed fallback write leaves nothing behind', { skip: IS_WIN }, async () => {
+  const fsp = require('node:fs/promises');
+  const { dir, ws } = await setup();
+  const text = JSON.stringify(collectionFixture({ info: { name: 'Perm', schema: 'x' } }));
+  await ws.writeJsonAtomic(null, 'p1.json', text);
+  assert.equal(fs.statSync(path.join(dir, 'p1.json')).mode & 0o777, 0o600, 'created via link');
+  await ws.writeJsonAtomic(null, 'p1.json', text, { overwrite: true });
+  assert.equal(fs.statSync(path.join(dir, 'p1.json')).mode & 0o777, 0o600, 'replaced via rename');
+
+  const realLink = fsp.link;
+  const realOpen = fsp.open;
+  fsp.link = async () => { throw Object.assign(new Error('no hard links here'), { code: 'EPERM' }); };
+  try {
+    await ws.writeJsonAtomic(null, 'p2.json', text); // fallback: exclusive create
+    assert.equal(fs.statSync(path.join(dir, 'p2.json')).mode & 0o777, 0o600, 'fallback create');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'p2.json'), 'utf8')).info.name, 'Perm');
+    // an existing target is never touched by the fallback
+    await assert.rejects(ws.writeJsonAtomic(null, 'p2.json', 'x'.repeat(10)), /already exists/);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'p2.json'), 'utf8')).info.name, 'Perm');
+    // a write failing halfway: the handle is closed and the partial target removed
+    const target = path.join(dir, 'p3.json');
+    let opened = null;
+    fsp.open = async (p, ...rest) => { const h = await realOpen(p, ...rest); if (p === target) { opened = h; h.writeFile = async () => { throw new Error('disk full'); }; } return h; };
+    await assert.rejects(ws.writeJsonAtomic(null, 'p3.json', text), /Unable to write/);
+    assert.ok(opened, 'the fallback opened the target');
+    assert.ok(!fs.existsSync(target), 'partial file removed');
+  } finally { fsp.link = realLink; fsp.open = realOpen; }
+  assert.deepEqual(fs.readdirSync(dir).filter((f) => f.endsWith('.tmp')), []);
+});
+
+test('the scan cache forgets files that disappeared', async () => {
+  const { dir, ws } = await setup();
+  const before = (await ws.index()).collections.length;
+  const n = ws.cacheSize();
+  writeJson(dir, 'temp.json', collectionFixture({ info: { name: 'Temp', schema: 'x' } }));
+  assert.equal((await ws.index()).collections.length, before + 1);
+  assert.equal(ws.cacheSize(), n + 1);
+  fs.unlinkSync(path.join(dir, 'temp.json'));
+  assert.equal((await ws.index()).collections.length, before);
+  assert.equal(ws.cacheSize(), n);
 });

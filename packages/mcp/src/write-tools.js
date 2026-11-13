@@ -42,7 +42,7 @@ const tools = [
   {
     name: 'import_collection',
     title: 'Write a Postman collection file into the workspace',
-    description: 'Save a Postman Collection v2.0/v2.1 JSON document as a file inside the workspace folder so it can be listed and run. WRITE tool: available only when the server was started with --allow-write. Never replaces an existing file unless overwrite is true, and then only a file that already is a recognised collection. The collection\'s scripts are not executed by this call, but they WILL run if the collection is later run with run_collection/run_request: write + run is arbitrary code execution with the operator\'s rights (the script sandbox is not a security boundary), which is why the server refuses to start with both unless the operator passed --unsafe-allow-write-and-run.',
+    description: 'Save a Postman Collection v2.0/v2.1 JSON document as a file inside the workspace folder so it can be listed and run. WRITE tool: available only when the server was started with --allow-write. Never replaces an existing file unless overwrite is true, and then only a file that holds EXACTLY ONE collection (never an environment, nor a file with several collections/environments). The collection\'s scripts are not executed by this call, but they WILL run if the collection is later run with run_collection/run_request: write + run is arbitrary code execution with the operator\'s rights (the script sandbox is not a security boundary), which is why the server refuses to start with both unless the operator passed --unsafe-allow-write-and-run.',
     enabled: (o) => o.allowWrite === true,
     disabledMessage: 'Writing is disabled on this server (read-only). The operator must start it with --allow-write.',
     inputSchema: {
@@ -51,7 +51,7 @@ const tools = [
         file: { type: 'string', minLength: 6, maxLength: 512, description: 'Relative target path inside the workspace, ending in .json (e.g. "api/users.postman_collection.json"). The folder must already exist.' },
         collection: { type: 'object', description: 'The Postman Collection v2.0/v2.1 document (info + item[]).' },
         workspace: { type: 'string', minLength: 1, maxLength: 100, description: 'Workspace label (required only when several --workspace folders are configured; see list_collections).' },
-        overwrite: { type: 'boolean', description: 'Replace an existing recognised collection file (default false).' },
+        overwrite: { type: 'boolean', description: 'Replace an existing file that holds exactly one collection (default false).' },
       },
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },

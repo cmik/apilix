@@ -28,6 +28,7 @@ const MAX_SCAN_FILES = 1000;
 const MAX_SCAN_BYTES = 128 * 1024 * 1024;
 const SKIP_DIRS = new Set(['node_modules', '.git', '.hg', '.svn']);
 const SKIP_FILES = /^(package(-lock)?|tsconfig(\..*)?|npm-shrinkwrap|composer|\.eslintrc.*)\.json$/i;
+const NOT_FOUND = 'File not found in workspace';
 const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i;
 
 class WorkspaceError extends Error {
@@ -142,12 +143,9 @@ async function createWorkspaces({ roots, maxFileBytes, explicit = true }) {
     if (typeof id !== 'string' || id.length === 0 || id.length > MAX_REL_LENGTH + 40) throw new WorkspaceError('Invalid id', 'EBADPATH');
     let rest = id;
     let sub = null;
-    const hash = rest.lastIndexOf('#');
-    if (hash >= 0) {
-      sub = rest.slice(hash + 1);
-      rest = rest.slice(0, hash);
-      if (!/^\d{1,6}$/.test(sub)) throw new WorkspaceError('Invalid id', 'EBADPATH');
-    }
+    // "<file>.json#<n>" selects the n-th entry of a multi-entity file; a "#" anywhere else is part of the file name.
+    const m = /^(.*\.json)#(\d{1,6})$/i.exec(rest);
+    if (m) { rest = m[1]; sub = m[2]; }
     let root;
     if (multi) {
       const colon = rest.indexOf(':');
@@ -168,23 +166,28 @@ async function createWorkspaces({ roots, maxFileBytes, explicit = true }) {
    */
   async function readJsonSafe(root, rel) {
     const segments = parseRelativePath(rel);
+    // Same reach as the scan: hidden folders, node_modules, config-like files and too-deep paths are not readable.
+    // Every refusal is reported exactly like a missing file, so the answer is not an existence oracle.
+    if (segments.length - 1 > MAX_SCAN_DEPTH
+      || segments.slice(0, -1).some((seg) => seg.startsWith('.') || SKIP_DIRS.has(seg))
+      || SKIP_FILES.test(segments[segments.length - 1])) throw new WorkspaceError(NOT_FOUND, 'ENOTFOUND');
     const abs = path.join(root.real, ...segments);
     let before;
-    try { before = await fs.realpath(abs); } catch { throw new WorkspaceError('File not found in workspace', 'ENOTFOUND'); }
-    if (!isInside(root.real, before) || before === root.real) throw new WorkspaceError('Path escapes the workspace', 'EESCAPE');
+    try { before = await fs.realpath(abs); } catch { throw new WorkspaceError(NOT_FOUND, 'ENOTFOUND'); }
+    if (!isInside(root.real, before) || before === root.real) throw new WorkspaceError(NOT_FOUND, 'ENOTFOUND');
     let fh;
     try {
       fh = await fs.open(before, fsc.O_RDONLY | (fsc.O_NOFOLLOW || 0));
-    } catch (e) {
-      throw new WorkspaceError(e && e.code === 'ELOOP' ? 'Symbolic links are not followed' : 'Unable to open file', 'ENOTFOUND');
+    } catch {
+      throw new WorkspaceError(NOT_FOUND, 'ENOTFOUND');
     }
     try {
       const st = await fh.stat();
-      if (!st.isFile()) throw new WorkspaceError('Not a regular file', 'EBADPATH');
+      if (!st.isFile()) throw new WorkspaceError(NOT_FOUND, 'ENOTFOUND');
       if (st.size > maxFileBytes) throw new WorkspaceError(`File is larger than the ${maxFileBytes}-byte limit`, 'ETOOLARGE');
       let after;
       try { after = await fs.realpath(abs); } catch { throw new WorkspaceError('File changed while opening', 'ERACE'); }
-      if (after !== before || !isInside(root.real, after)) throw new WorkspaceError('Path escapes the workspace', 'EESCAPE');
+      if (after !== before || !isInside(root.real, after)) throw new WorkspaceError(NOT_FOUND, 'ENOTFOUND');
       const lst = await fs.lstat(after);
       if (lst.ino !== st.ino || lst.dev !== st.dev) throw new WorkspaceError('File changed while opening', 'ERACE');
       const buf = Buffer.alloc(st.size);
@@ -206,6 +209,7 @@ async function createWorkspaces({ roots, maxFileBytes, explicit = true }) {
 
   async function scanRoot(root) {
     const found = [];
+    const seen = new Set();
     let visited = 0;
     let skipped = 0;
     let scannedBytes = 0;
@@ -230,6 +234,7 @@ async function createWorkspaces({ roots, maxFileBytes, explicit = true }) {
           if (st.size > maxFileBytes) { skipped += 1; continue; }
           scannedBytes += st.size;
           if (scannedBytes > MAX_SCAN_BYTES) return;
+          seen.add(abs);
           let cached = scanCache.get(abs);
           if (!cached || cached.mtimeMs !== st.mtimeMs || cached.size !== st.size) {
             try {
@@ -250,6 +255,9 @@ async function createWorkspaces({ roots, maxFileBytes, explicit = true }) {
       }
     }
     await walk(root.real, '', 0);
+    // forget files that disappeared (or became unreadable/oversized) so the cache cannot grow without bound
+    const prefix = root.real.endsWith(path.sep) ? root.real : root.real + path.sep;
+    for (const key of [...scanCache.keys()]) if (key.startsWith(prefix) && !seen.has(key)) scanCache.delete(key);
     return { found, skipped };
   }
 
@@ -284,7 +292,7 @@ async function createWorkspaces({ roots, maxFileBytes, explicit = true }) {
 
   /**
    * Atomic write of a JSON text inside a root. Never follows or replaces symlinks, never
-   * overwrites without `overwrite`, and only overwrites files that are recognised collections.
+   * overwrites without `overwrite`, and only overwrites a file that holds exactly one collection.
    */
   async function writeJsonAtomic(rootRef, rel, text, { overwrite = false } = {}) {
     const root = rootRef ? resolved.find((w) => w.label === rootRef) : (resolved.length === 1 ? resolved[0] : null);
@@ -310,16 +318,17 @@ async function createWorkspaces({ roots, maxFileBytes, explicit = true }) {
       try {
         const { doc } = await readJsonSafe(root, segments.join('/'));
         const c = classify(doc);
-        recognised = c.collections.length > 0 || c.environments.length > 0;
+        // exactly ONE collection and nothing else: not a multi-entity file ({collections:[...]}), not an environment
+        recognised = c.collections.length === 1 && c.environments.length === 0 && c.collections[0].sub === null;
       } catch { recognised = false; }
-      if (!recognised) throw new WorkspaceError('Refusing to overwrite a file that is not a recognised collection/environment', 'EBADPATH');
+      if (!recognised) throw new WorkspaceError('Refusing to overwrite: the target must be a file holding exactly one Postman collection (not an environment, nor a file with several collections/environments)', 'EBADPATH');
     }
 
     const tmp = path.join(parentReal, `.apilix-mcp-${crypto.randomBytes(8).toString('hex')}.tmp`);
     let fh;
     liveTmp.add(tmp);
     try {
-      fh = await fs.open(tmp, fsc.O_WRONLY | fsc.O_CREAT | fsc.O_EXCL | (fsc.O_NOFOLLOW || 0), 0o644);
+      fh = await fs.open(tmp, fsc.O_WRONLY | fsc.O_CREAT | fsc.O_EXCL | (fsc.O_NOFOLLOW || 0), 0o600);
       await fh.writeFile(text, 'utf8');
       await fh.sync().catch(() => {});
       await fh.close();
@@ -334,13 +343,23 @@ async function createWorkspaces({ roots, maxFileBytes, explicit = true }) {
           await fs.link(tmp, target); // atomic, fails with EEXIST instead of clobbering
         } catch (e) {
           if (e && e.code === 'EEXIST') throw new WorkspaceError('File already exists; pass overwrite:true to replace it', 'EEXIST');
-          // Filesystems without hard links: fall back to an exclusive create.
-          const h2 = await fs.open(target, fsc.O_WRONLY | fsc.O_CREAT | fsc.O_EXCL | (fsc.O_NOFOLLOW || 0), 0o644).catch((e2) => {
+          // Filesystems without hard links: fall back to an exclusive create (closed and removed again on failure).
+          let h2;
+          try {
+            h2 = await fs.open(target, fsc.O_WRONLY | fsc.O_CREAT | fsc.O_EXCL | (fsc.O_NOFOLLOW || 0), 0o600);
+          } catch (e2) {
             if (e2 && e2.code === 'EEXIST') throw new WorkspaceError('File already exists; pass overwrite:true to replace it', 'EEXIST');
             throw e2;
-          });
-          await h2.writeFile(text, 'utf8');
-          await h2.close();
+          }
+          try {
+            await h2.writeFile(text, 'utf8');
+            await h2.close();
+            h2 = null;
+          } catch (e3) {
+            if (h2) await h2.close().catch(() => {});
+            await fs.unlink(target).catch(() => {}); // we created it: do not leave a partial file
+            throw e3;
+          }
         }
         await fs.unlink(tmp).catch(() => {});
       }
@@ -366,6 +385,7 @@ async function createWorkspaces({ roots, maxFileBytes, explicit = true }) {
     loadEnvironment,
     readJsonSafe: (id) => { const p = parseId(id); return readJsonSafe(p.root, p.rel); },
     writeJsonAtomic,
+    cacheSize: () => scanCache.size,
     /** Synchronously remove temp files of writes still in progress (SIGTERM/SIGINT). */
     cleanupTmpSync() {
       for (const t of liveTmp) { try { fsSync.unlinkSync(t); } catch { /* already gone */ } }

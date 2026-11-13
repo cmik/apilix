@@ -52,11 +52,20 @@ function createMcpServer(cfg) {
   const enabled = (t) => !t.enabled || t.enabled(opts);
   const visible = () => all.filter(enabled);
 
-  /** Register every secret value reachable from the workspace before anything is returned. */
+  /**
+   * Register the secret values reachable from the workspace before anything is returned. Incremental: the scan
+   * cache hands back the same parsed objects for unchanged files, so only new or modified files are walked.
+   */
+  const registered = new WeakSet();
+  let overflowWarned = false;
   async function refreshSecrets() {
     const idx = await workspaces.index();
-    for (const e of idx.environments) redactor.addEnvironment(e.value.values);
-    for (const c of idx.collections) redactor.addCollection(c.value);
+    for (const e of idx.environments) if (!registered.has(e.value)) { registered.add(e.value); redactor.addEnvironment(e.value.values); }
+    for (const c of idx.collections) if (!registered.has(c.value)) { registered.add(c.value); redactor.addCollection(c.value); }
+    if (redactor.overflowed() && !overflowWarned) {
+      overflowWarned = true;
+      log('warning: too many secret values to track; some secrets in the workspace may not be masked. Keep fewer secrets in the workspace files.');
+    }
   }
 
   function describeError(err) {
