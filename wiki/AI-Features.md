@@ -56,6 +56,7 @@ The key is sent only from the app to the local Apilix server, then to your provi
 |---|---|---|
 | Fill missing documentation descriptions | Export documentation dialog, `apilix docs --ai-describe` | *Complete missing documentation descriptions* |
 | Suggest assertions from a response | **Suggest tests** panel of the Response tab, **Improve with AI** | *Suggest assertions from a response* |
+| Explain failed tests | **Test Results** tab of the Response tab, **Explain with AI** (shown when a test failed) | *Explain and diagnose failures* |
 | Generate or modify a request from a sentence | `Ctrl/Cmd+I` in the request builder, **Generate request here…** in a folder's menu | *Generate requests and tests from a description* |
 
 AI-written descriptions in exported docs carry a mark (HTML badge, Markdown note, `x-generated-by: ai` in OpenAPI). **Settings → AI → Exports → Mark AI-written content in exports** sets the default (on); the export dialog can override it per export, and the CLI has `--no-ai-mark`.
@@ -67,6 +68,14 @@ The **Suggest tests** panel always offers local, deterministic suggestions (stat
 - Nothing is sent when the panel opens. The call happens only when you click the button, and the panel says where the request and response go. With **Send response bodies** off, only the structure of the body is sent.
 - **Where isolation is available, every suggestion is test-run before you see it.** The server runs each script, offline, in an isolated child process (see below), on the very response that inspired it. A suggestion that fails, does not parse, registers no test, or saves nothing (for captures) is dropped; the panel says how many were dropped. **Where isolation cannot be proven, nothing is run** ("parse-only" mode, see below): suggestions are only screened and syntax-checked, carry a **not executed** badge, may fail on this response, and are never pre-selected. Local suggestions stay as the fallback: if AI is off or the call fails, you still get them.
 - AI suggestions carry an **AI** badge. Suggestions that may change between runs are flagged and never pre-checked; nothing is added to your script until you click **Add**, and a test already in the script is never duplicated.
+
+### Explain failed tests
+
+When a test fails, the **Test Results** tab shows **Explain with AI** (only when AI is on, consent is given and *Explain and diagnose failures* is enabled; it is **off by default**). The answer is a short diagnosis: a summary, up to four likely causes each with a low / medium / high confidence, and up to four suggested fixes (corrected assertion, missing header or variable, auth issue), optionally with a snippet.
+
+- **What is sent**, after redaction: the request (method, URL, headers, body), the response (status, headers, a truncated body, or only its structure when *Send response bodies* is off), the name and error message of each failed assertion, the test script, and the **names** of the variables you can use. The panel says where it goes and **Preview what is sent** shows the request and response as they would be sent.
+- **What is not sent**: the value of any variable, secret values (masked in every environment, including their base64 and URL-encoded forms), credentials and token-shaped strings, and the API key. Nothing is sent until you click the button; **Cancel** stops the call.
+- **The answer is text only.** It is never applied to your request or script and never executed. A snippet is shown in a code block with a **Copy** button; paste it yourself if it helps. Text is displayed without links, images or HTML, secret values are masked again, and the result carries an **AI-generated** badge. When the evidence is insufficient the model is told to say so with low confidence rather than guess.
 
 ### Generate a request from a sentence
 
