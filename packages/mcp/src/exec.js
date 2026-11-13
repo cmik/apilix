@@ -118,12 +118,6 @@ async function runTree(ctx, job) {
   if (requestsInTree > MAX_REQUESTS_PER_CALL) {
     throw new ExpectedError(`This call would execute ${requestsInTree} requests; the per-call limit is ${MAX_REQUESTS_PER_CALL}. Select a folder or reduce iterations.`);
   }
-  if (session.requestsUsed + requestsInTree > opts.maxRequests) {
-    throw new ExpectedError(`Session request budget exhausted (${session.requestsUsed}/${opts.maxRequests} used, ${requestsInTree} needed). Restart the server to reset it.`);
-  }
-  if (session.msUsed >= opts.maxRunSeconds * 1000) {
-    throw new ExpectedError(`Session run-time budget exhausted (${opts.maxRunSeconds}s). Restart the server to reset it.`);
-  }
   const moved = findHostOverride(job.collection, { environment: job.environment, variables: job.variables, dataRows: job.dataRows || [null], anyHost: opts.allowAnyHost === true });
   if (moved) {
     const what = moved.field === 'url' ? `the target host of "${moved.request}"` : `the ${moved.field} host of "${moved.request}"`;
@@ -132,10 +126,16 @@ async function runTree(ctx, job) {
       : `Refused: the variables/data you supplied would change ${what} from "${moved.from}" to "${moved.to}". Variables and data may not redirect a request to another host (the environment and the collection decide where requests go).`);
   }
 
-  const timeoutMs = Math.min(job.timeoutMs, Math.max(1000, opts.maxRunSeconds * 1000 - session.msUsed));
-
   return session.lock(async () => {
     cancelledBeforeStart(); // it may have been cancelled while waiting for the lock
+    // Budgets are checked HERE, under the lock: calls queued behind another run must see what that run consumed.
+    if (session.requestsUsed + requestsInTree > opts.maxRequests) {
+      throw new ExpectedError(`Session request budget exhausted (${session.requestsUsed}/${opts.maxRequests} used, ${requestsInTree} needed). Restart the server to reset it.`);
+    }
+    if (session.msUsed >= opts.maxRunSeconds * 1000) {
+      throw new ExpectedError(`Session run-time budget exhausted (${opts.maxRunSeconds}s). Restart the server to reset it.`);
+    }
+    const timeoutMs = Math.min(job.timeoutMs, Math.max(1000, opts.maxRunSeconds * 1000 - session.msUsed));
     const tracker = trackSockets();
     const state = { timedOut: false, budgetExceeded: false, cancelled: false };
     const runState = { paused: false, stopped: false };

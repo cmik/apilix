@@ -127,3 +127,13 @@ test('previous scenario still holds: a secret header with data.base pointing at 
     assert.deepEqual(attacker.hits, {});
   });
 });
+
+test('budgets are enforced under the lock: parallel calls cannot exceed --max-requests', async (t) => {
+  await withSetup(t, ['--allow-any-host', '--max-requests', '1'], async ({ s, col, env, api }) => {
+    const calls = await Promise.all([1, 2, 3].map((i) => s.call('run_request', { collection: col, request: 'PathId', environment: env, variables: { id: String(i) } })));
+    assert.equal(calls.filter((c) => !c.isError).length, 1, calls.map((c) => c.text.slice(0, 80)).join(' | '));
+    assert.equal(calls.filter((c) => c.isError && /budget/i.test(c.text)).length, 2);
+    const sent = Object.keys(api.hits).filter((k) => k.startsWith('/p/'));
+    assert.equal(sent.length, 1, `server received ${sent.join(',')}`);
+  });
+});
