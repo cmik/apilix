@@ -1000,7 +1000,11 @@ async function runMcpCommand(argv, io) {
   let mcp;
   try {
     mcp = io.loadMcp ? io.loadMcp() : require('@apilix/mcp');
-  } catch {
+  } catch (e) {
+    // Only "the @apilix/mcp package itself is absent" means "not in this build"; a failure inside it (a missing
+    // dependency, a syntax error...) is a real bug and must surface instead of being masked.
+    const firstLine = String((e && e.message) || '').split('\n')[0];
+    if (!(e && e.code === 'MODULE_NOT_FOUND' && /['"]@apilix\/mcp['"]/.test(firstLine))) throw e;
     io.stderr.write('Error: MCP support is not available in this build of the CLI\n');
     return 2;
   }

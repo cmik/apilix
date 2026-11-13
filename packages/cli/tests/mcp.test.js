@@ -45,9 +45,33 @@ test('apilix mcp with an unknown flag exits 2 and does not start the server', as
 test('a CLI build without @apilix/mcp reports a clear message and exit code 2', async () => {
   const out = sink();
   const err = sink();
-  const code = await runCli(['mcp'], { stdout: out.stream, stderr: err.stream, loadMcp: () => { throw new Error('Cannot find module'); } });
+  const code = await runCli(['mcp'], { stdout: out.stream, stderr: err.stream, loadMcp: () => { throw Object.assign(new Error("Cannot find module '@apilix/mcp'\nRequire stack:\n- /x/cli.js"), { code: 'MODULE_NOT_FOUND' }); } });
   assert.equal(code, 2);
   assert.match(err.text, /MCP support is not available in this build of the CLI/);
+});
+
+test('any other failure while loading @apilix/mcp is NOT masked as "not available"', async () => {
+  const out = sink();
+  const err = sink();
+  // a dependency of @apilix/mcp is missing: the message mentions the package only in the require stack
+  const missingDep = () => { throw Object.assign(new Error("Cannot find module 'ajv'\nRequire stack:\n- /x/node_modules/@apilix/mcp/src/server.js"), { code: 'MODULE_NOT_FOUND' }); };
+  await assert.rejects(runCli(['mcp'], { stdout: out.stream, stderr: err.stream, loadMcp: missingDep }), /Cannot find module 'ajv'/);
+  await assert.rejects(runCli(['mcp'], { stdout: out.stream, stderr: err.stream, loadMcp: () => { throw new SyntaxError('Unexpected token'); } }), /Unexpected token/);
+  assert.doesNotMatch(err.text, /not available in this build/);
+});
+
+test('apilix mcp usage errors for the execution flags exit 2', async () => {
+  for (const args of [['--allow-any-host', '--allow-host', 'a.com'], ['--allow-write', '--allow-any-host'], ['--allow-write', '--allow-host', 'a.com']]) {
+    const out = sink();
+    const err = sink();
+    const code = await runCli(['mcp', ...args], { stdout: out.stream, stderr: err.stream });
+    assert.equal(code, 2, args.join(' '));
+    assert.match(err.text, /mutually exclusive|arbitrary code execution/);
+  }
+  const out = sink();
+  await runCli(['mcp', '--help'], { stdout: out.stream, stderr: sink().stream });
+  assert.match(out.text, /--allow-any-host/);
+  assert.match(out.text, /--unsafe-allow-write-and-run/);
 });
 
 test('bin/apilix.js mcp speaks MCP over stdio (initialize, tools/list, tools/call) and exits 0 on EOF', async () => {
