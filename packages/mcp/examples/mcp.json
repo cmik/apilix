@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "apilix": {
+      "command": "apilix",
+      "args": ["mcp", "--workspace", "/absolute/path/to/api", "--allow-host", "api.example.com"]
+    }
+  }
+}

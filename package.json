@@ -27,6 +27,7 @@
     "test:client": "npm test -w @apilix/client",
     "test:core": "npm test -w @apilix/core",
     "test:ai": "npm test -w @apilix/ai",
+    "test:mcp": "npm test -w @apilix/mcp",
     "test:cli": "npm test -w @apilix/cli",
     "client": "npm run dev -w @apilix/client",
     "setup": "npm install",
@@ -66,7 +67,8 @@
       "bin/apilix.js",
       "packages/cli/src/index.js",
       "packages/core/src/index.js",
-      "packages/ai/src/**/*.js"
+      "packages/ai/src/**/*.js",
+      "packages/mcp/src/**/*.js"
     ],
     "assets": [
       "node_modules/csv-parse/dist/cjs/sync.cjs"

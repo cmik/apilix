@@ -84,6 +84,7 @@ Data (collections, environments) is stored locally in the app profile:
 | `packages/client` | `apilix-client` | React + Vite frontend |
 | `packages/server` | `@apilix/server` | Express API server |
 | `packages/ai` | `@apilix/ai` | Optional AI foundation — provider abstraction, context redaction, schema validation |
+| `packages/mcp` | `@apilix/mcp` | MCP server (`apilix mcp`) — lets external agents browse, run and document collections |
 
 ### Install dependencies
 
@@ -277,6 +278,20 @@ Notes:
 - `json` and `junit` reporters write to standard output unless you pass `--out` or `--out-dir`.
 - `--reporter both` always requires `--out-dir`.
 - Malformed CSV input fails fast with exit code `2` instead of silently falling back to iteration-only execution.
+
+---
+
+## MCP Server (use Apilix from an AI agent)
+
+`apilix mcp` starts a [Model Context Protocol](https://modelcontextprotocol.io) server on stdio so an external agent (Claude Code, Cursor, ...) can list collections, read requests, run them and generate docs. Apilix does not call any model itself.
+
+```bash
+claude mcp add apilix -- apilix mcp --workspace ./api                                  # read-only browsing (default)
+claude mcp add apilix -- apilix mcp --workspace ./api --allow-host api.example.com     # also run requests, to that host only
+claude mcp add apilix -- apilix mcp --workspace ./api --allow-any-host                 # run requests to ANY host (explicit opt-in)
+```
+
+Tools: `list_collections`, `list_requests`, `get_request`, `export_docs`, `get_last_results`; `run_request` / `run_collection` only with `--allow-host` or `--allow-any-host`; `import_collection` only with `--allow-write`. Access is limited to the `--workspace` folder(s), credentials are redacted by default, outputs are bounded. **Running requests sends real HTTP requests and executes collection scripts**, so it is never on by default. The check that stops `variables`/`data` from redirecting a request is best effort: the real barrier is `--allow-host` with precise hosts, and cross-origin redirects forward headers (`Authorization` included) to the redirect host when it is allowed. See the [MCP Server wiki page](wiki/MCP-Server.md) for the flags and the threat model.
 
 ---
 

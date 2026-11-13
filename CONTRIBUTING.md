@@ -15,7 +15,8 @@ apilix/
 │   ├── cli/           @apilix/cli    — headless CLI runner (shipped as a binary)
 │   ├── client/        apilix-client  — React + Vite frontend
 │   ├── server/        @apilix/server — Express API server
-│   └── ai/            @apilix/ai     — optional AI foundation (providers, redaction, schemas)
+│   ├── ai/            @apilix/ai     — optional AI foundation (providers, redaction, schemas)
+│   └── mcp/           @apilix/mcp    — MCP server (`apilix mcp`): stdio JSON-RPC, workspace allow-list, run/docs tools
 ├── electron/          Electron desktop wrapper
 ├── bin/               Entry-point shim for the CLI (apilix.js)
 └── package.json       Root workspace manifest, pkg bundler config
@@ -66,6 +67,9 @@ npm run test:server
 
 # Client tests (Vitest)
 npm run test:client
+
+# MCP server tests (node:test; spawns the server over stdio, local fake HTTP API)
+npm run test:mcp
 ```
 
 All three suites are run in parallel in CI via the GitHub Actions test matrix.

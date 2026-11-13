@@ -159,6 +159,7 @@ The Apilix UI is divided into five main zones:
 ### Reference
 - [Settings & Configuration](Settings-and-Configuration) — Theme, proxy, SSL, timeouts, CORS, and where database tools live
 - [Keyboard Shortcuts](Keyboard-Shortcuts) — Full shortcut reference table
+- [MCP Server](MCP-Server) — Let an external agent (Claude Code, ...) browse, run and document collections through `apilix mcp`; read-only by default, redaction, host allow-list, threat model
 - [AI Features](AI-Features) — Optional AI setup, providers (Anthropic, OpenAI-compatible, local), what is sent and masked, key storage
 - [Security & Encrypted Data](Security-and-Encrypted-Data) — OS keychain, secret variables, remote encryption, TLS, sandbox
 
