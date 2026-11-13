@@ -258,6 +258,21 @@ test('/preview redacts secrets and makes no outbound request', async () => {
   } finally { await fake.close(); }
 });
 
+test('/preview with explain evidence lists failures, script and variable names, masked per mode', async () => {
+  await withAiServer({}, async ({ call }) => {
+    const explain = { failures: [{ name: 'email ok', error: "expected 'john.doe@corp.com' to equal 'x'" }], testScript: "apx.expect(1).to.equal('john.doe@corp.com')", variableNames: ['token'] };
+    const shape = await call('POST', '/preview', { response: { status: 200, headers: {}, body: '{"email":"john.doe@corp.com"}' }, explain, settings: { sendResponseBodies: false } });
+    assert.equal(shape.status, 200);
+    assert.ok(!shape.text.includes('john.doe'), 'shape-only preview leaked');
+    assert.match(shape.text, /Failed assertions/);
+    assert.match(shape.text, /Shape only/);
+    const full = await call('POST', '/preview', { response: { status: 200, headers: {}, body: '{}' }, explain, settings: { sendResponseBodies: true } });
+    assert.equal(full.status, 200);
+    assert.ok(full.json.sections.find(sec => sec.label === 'Test script').text.includes('apx.expect'));
+    assert.ok(full.json.sections.find(sec => sec.label.startsWith('Variable names')).text.includes('token'));
+  });
+});
+
 test('/preview works without any config and rejects malformed input', async () => {
   await withAiServer({}, async ({ call }) => {
     assert.equal((await call('POST', '/preview', { item: { request: { method: 'GET', url: 'x' } } })).status, 200);

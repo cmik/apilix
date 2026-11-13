@@ -38,13 +38,74 @@ function tryParse(text) {
   try { return { ok: true, value: JSON.parse(text) }; } catch { return { ok: false }; }
 }
 
+/**
+ * Shape-only mode: an assertion error can carry real response values (`expected 'a@b.c' to equal 'x'`).
+ * Quoted strings and numbers become placeholders; the assertion kind stays readable. A quote that is
+ * never closed hides everything after it, so a stray apostrophe cannot let a value through.
+ */
+function maskLiterals(text) {
+  if (typeof text !== 'string') return '';
+  let out = text
+    .replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`/g, '<string>');
+  const stray = out.search(/['"`]/);
+  if (stray !== -1) out = `${out.slice(0, stray)}<string>`;
+  out = out
+    .replace(/\S+@\S+/g, '<string>')
+    .replace(/https?:\/\/\S+/gi, '<string>')
+    .replace(/-?\b\d+(?:\.\d+)?\b/g, '<number>');
+  return out;
+}
+
+/** Failure names and messages as they leave: clipped, and value-masked in shape-only mode. */
+function prepareFailures(failures, shapeOnly) {
+  return failures.map(f => ({
+    name: clip(f.name, MAX_FAILURE_NAME_CHARS),
+    error: clip(shapeOnly ? maskLiterals(f.error) : f.error, MAX_FAILURE_ERROR_CHARS),
+  }));
+}
+
+/** The test script as it leaves, or undefined when it is not sent (never in shape-only mode). */
+function prepareScript(testScript, { redactSecrets, shapeOnly }) {
+  if (shapeOnly || !testScript) return undefined;
+  return clip(redactSecrets !== false ? redactScript(testScript) : testScript, MAX_SCRIPT_CHARS);
+}
+
+function finalizeText(text, { secretValues, redactSecrets }) {
+  let out = text;
+  if (redactSecrets !== false) out = scrubTokenPatterns(out);
+  return scrubSecretValues(out, secretValues);
+}
+
+/**
+ * What the feature sends besides the request and response, for the preview dialog. Built with the
+ * same helpers as the real payload so the preview cannot drift from what is sent.
+ */
+function describeExplainEvidence({ failures, testScript, variableNames, secretValues, redactSecrets, sendResponseBodies }) {
+  const shapeOnly = sendResponseBodies === false;
+  const list = prepareFailures(normalizeFailures(failures), shapeOnly);
+  const script = prepareScript(typeof testScript === 'string' ? testScript : '', { redactSecrets, shapeOnly });
+  const names = (Array.isArray(variableNames) ? variableNames : [])
+    .filter(n => typeof n === 'string' && n).slice(0, MAX_VARIABLE_NAMES).map(n => clip(n, MAX_VARIABLE_NAME_CHARS));
+  const opts = { secretValues, redactSecrets };
+  const section = (label, text) => ({ label, text: finalizeText(text, opts), truncated: false });
+  const sections = [
+    section('Mode', shapeOnly
+      ? 'Shape only: the response body is sent as types without values; quoted values and numbers in failure messages are replaced by placeholders; the test script is not sent.'
+      : 'Full: a truncated copy of the response body, the failure messages and the test script are sent.'),
+    section('Failed assertions', JSON.stringify(list, null, 2)),
+    section('Test script', script !== undefined ? script : (shapeOnly ? '(not sent in shape-only mode)' : '(none)')),
+    section('Variable names (never values)', names.length ? names.join(', ') : '(none)'),
+  ];
+  return sections;
+}
+
 function buildData({ request, name, response, failures, testScript, variableNames, secretValues, redactSecrets, sendResponseBodies, bodyTokens, includeScript }) {
   const redReq = redactRequest(request || {}, { secretValues, redactSecrets });
   const redRes = redactResponse(response || {}, { secretValues, redactSecrets });
   const data = {
     request: trimRequest(redReq, name),
     response: { status: redRes.status, statusText: clip(redRes.statusText, 80), headers: trimHeaders(redRes.headers) },
-    failedAssertions: failures.map(f => ({ name: clip(f.name, MAX_FAILURE_NAME_CHARS), error: clip(f.error, MAX_FAILURE_ERROR_CHARS) })),
+    failedAssertions: prepareFailures(failures, sendResponseBodies === false),
   };
   const latency = normalizeLatency(response && response.responseTime);
   if (latency !== undefined) data.response.responseTimeMs = latency;
@@ -65,15 +126,13 @@ function buildData({ request, name, response, failures, testScript, variableName
     truncated = t.truncated;
     data.response.bodyNote = 'The body is not JSON.';
   }
-  if (includeScript && testScript) {
-    const redacted = redactSecrets !== false ? redactScript(testScript) : testScript;
-    data.testScript = clip(redacted, MAX_SCRIPT_CHARS);
+  if (sendResponseBodies === false) {
+    if (testScript) data.testScriptNote = 'Test script not sent (shape-only mode).';
+  } else if (includeScript && testScript) {
+    data.testScript = prepareScript(testScript, { redactSecrets, shapeOnly: false });
   }
   if (variableNames.length) data.variableNames = variableNames;
-  let text = JSON.stringify(data, null, 1);
-  if (redactSecrets !== false) text = scrubTokenPatterns(text);
-  text = scrubSecretValues(text, secretValues);
-  return { text, truncated };
+  return { text: finalizeText(JSON.stringify(data, null, 1), { secretValues, redactSecrets }), truncated };
 }
 
 /** Largest body that keeps the whole prompt (system + user) inside the budget. */
@@ -98,6 +157,14 @@ function cleanLine(v, max, secretValues) {
   return scrubSecretValues(neutralizeAiText(v), secretValues).replace(/\s+/g, ' ').trim().slice(0, max);
 }
 
+const UNSAFE_SNIPPET_WORDS = /\b(fetch|XMLHttpRequest|WebSocket|sendRequest|require|import|eval|Function|process|constructor|__proto__)\b/;
+const SNIPPET_URL = /https?:\/\/(?!\{\{)/i;
+const SNIPPET_HOST = /(?<![:\w{}/])\/\/(?!\{\{)[a-z0-9-]+(?:\.[a-z0-9-]+)+/i;
+
+function isUnsafeSnippet(snippet) {
+  return UNSAFE_SNIPPET_WORDS.test(snippet) || SNIPPET_URL.test(snippet) || SNIPPET_HOST.test(snippet);
+}
+
 /** Keep known fields only, enforce enums and bounds. A snippet keeps its line breaks. */
 function sanitizeExplanation(data, secretValues) {
   const d = data && typeof data === 'object' ? data : {};
@@ -114,8 +181,13 @@ function sanitizeExplanation(data, secretValues) {
     if (!description) continue;
     const fix = { description, kind: FIX_KINDS.includes(f.kind) ? f.kind : 'other' };
     if (typeof f.snippet === 'string' && f.snippet.trim()) {
-      // Plain text for a <pre>: secrets scrubbed, never run, bounded.
-      fix.snippet = scrubSecretValues(f.snippet, secretValues).trim().slice(0, MAX_SNIPPET_CHARS);
+      // Plain text for a <pre>: secrets scrubbed, never run, bounded. Defence in depth: a snippet that
+      // reaches out (network, code loading, eval, prototype tricks) or points at a host is dropped.
+      if (isUnsafeSnippet(f.snippet)) {
+        fix.description = `${description} (A code snippet was removed because it did not look safe.)`.slice(0, MAX_TEXT_CHARS + 60);
+      } else {
+        fix.snippet = scrubSecretValues(f.snippet, secretValues).trim().slice(0, MAX_SNIPPET_CHARS);
+      }
     }
     suggestedFixes.push(fix);
     if (suggestedFixes.length >= MAX_FIXES) break;
@@ -163,4 +235,4 @@ async function explainFailure(input) {
   return { ...explanation, truncated, shapeOnly: input.sendResponseBodies === false, usage: r.usage, model: r.model, latencyMs: r.latencyMs };
 }
 
-module.exports = { explainFailure, sanitizeExplanation, buildData, fitPrompt };
+module.exports = { explainFailure, sanitizeExplanation, buildData, fitPrompt, maskLiterals, describeExplainEvidence };
