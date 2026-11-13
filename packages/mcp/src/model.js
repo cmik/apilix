@@ -211,6 +211,7 @@ function describeRequest(entry, redactor) {
   return out;
 }
 
+const MAX_AUTH_FIELDS = 10000; // safety ceiling on the keys of one auth block; beyond it the block is refused
 const UNRESOLVED_RE = /\{\{/;
 const CONTROL_RE = /[\u0000-\u0020\u007f]/;
 const SCHEMES = new Set(['http', 'https', 'ws', 'wss']);
@@ -299,7 +300,8 @@ function authUrlResolvers(auth) {
     const pairs = Array.isArray(detail)
       ? detail.filter((r) => r && typeof r.key === 'string').map((r) => [r.key, r.value])
       : Object.entries(detail);
-    for (const [key, value] of pairs.slice(0, 50)) {
+    if (pairs.length > MAX_AUTH_FIELDS) { out.push({ field: `auth.${type}`, overflow: true }); continue; } // fail closed
+    for (const [key, value] of pairs) {
       if (typeof value !== 'string' || value === '' || !/url|uri/i.test(key)) continue;
       out.push({ field: `auth.${type}.${key}`, resolve: (vars) => resolveVariables(neutralize(value), vars) });
     }
@@ -350,7 +352,10 @@ function findHostOverride(collection, { environment = {}, variables = {}, dataRo
   };
   let hit = null;
   const checkAuth = (auth, label) => {
-    for (const r of authUrlResolvers(auth)) { hit = hit || check(label, r.field, r.resolve); }
+    for (const r of authUrlResolvers(auth)) {
+      if (r.overflow) hit = hit || { request: label, field: r.field, from: '(too many fields to inspect)', to: '(refused)' };
+      else hit = hit || check(label, r.field, r.resolve);
+    }
   };
   checkAuth(collection && collection.auth, '(collection)');
   (function walk(items, names, depth) {
