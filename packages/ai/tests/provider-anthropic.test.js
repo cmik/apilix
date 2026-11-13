@@ -142,3 +142,14 @@ test('auto tool_choice memory is per baseUrl+model, not per model name', async (
     assert.deepEqual(b.calls[0].body.tool_choice, { type: 'tool', name: 'connectionTest' });
   } finally { await a.close(); await b.close(); }
 });
+
+test('output cut at the token cap fails fast without a retry', async () => {
+  const fake = await startFake((_c, res) => json(res, 200, { content: [{ type: 'text', text: '{"a":"trunc' }], usage: { input_tokens: 10, output_tokens: 100 } }));
+  try {
+    await assert.rejects(
+      createProvider(cfg(fake)).complete({ ...req, maxTokens: 100 }),
+      e => e.code === 'INVALID_OUTPUT' && /too long/.test(e.message),
+    );
+    assert.equal(fake.calls.length, 1);
+  } finally { await fake.close(); }
+});

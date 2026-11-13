@@ -55,6 +55,10 @@ function createProvider(config, transport = {}) {
         ? { ok: false, formatted: 'The output was not valid JSON' }
         : validateOutput(schema, r.data);
       if (v.ok) return done(r.data);
+      // Output cut at the token cap: a retry would be as long and as truncated, so fail fast with a clear message.
+      if (maxTokens && r.usage.outputTokens >= maxTokens - 8) {
+        throw new AiError('INVALID_OUTPUT', 'The model response was too long and was cut off. Ask for a shorter request, without large inline content.');
+      }
       if (attempt === 1) {
         throw new AiError('INVALID_OUTPUT', `The model returned output that does not match the expected structure (${v.formatted})`);
       }
