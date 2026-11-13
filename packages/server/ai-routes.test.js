@@ -273,6 +273,23 @@ test('/preview with explain evidence lists failures, script and variable names, 
   });
 });
 
+test('/preview with explain evidence shows the headers as sent: names only in shape-only mode', async () => {
+  await withAiServer({}, async ({ call }) => {
+    const response = { status: 200, headers: { 'set-cookie': 'sid=SECRET123', 'x-user-email': 'jo@corp.com', location: '/users/4242', 'content-type': 'application/json; boundary=ZZZ' }, body: '{}' };
+    const item = { name: 'r', request: { method: 'GET', url: 'https://api.test/x', header: [{ key: 'x-session', value: 'sess-9999' }] } };
+    const explain = { failures: [{ name: 'user jo@corp.com ok', error: 'bad' }] };
+    const shape = await call('POST', '/preview', { item, response, explain, settings: { sendResponseBodies: false } });
+    assert.equal(shape.status, 200);
+    for (const v of ['SECRET123', 'jo@corp.com', '4242', 'ZZZ', 'sess-9999']) assert.ok(!shape.text.includes(v), `leaked ${v}`);
+    for (const n of ['set-cookie', 'x-user-email', 'location', 'x-session']) assert.ok(shape.text.includes(n), n);
+    assert.ok(shape.text.includes('application/json'));
+    assert.equal(shape.json.sections.filter(sec => sec.label === 'Request').length, 0);
+    const full = await call('POST', '/preview', { item, response, explain, settings: { sendResponseBodies: true, redactSecrets: false } });
+    assert.ok(full.text.includes('/users/4242'));
+    assert.ok(full.text.includes('sess-9999'));
+  });
+});
+
 test('/preview works without any config and rejects malformed input', async () => {
   await withAiServer({}, async ({ call }) => {
     assert.equal((await call('POST', '/preview', { item: { request: { method: 'GET', url: 'x' } } })).status, 200);

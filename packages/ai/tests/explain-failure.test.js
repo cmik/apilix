@@ -220,3 +220,57 @@ test('injection in a response body that makes the model emit a fetch snippet is 
   assert.equal(r.suggestedFixes[0].snippet, undefined);
   assert.match(r.suggestedFixes[0].description, /Add a check/);
 });
+
+const HDR_RESPONSE = {
+  status: 200,
+  statusText: 'OK',
+  headers: {
+    'set-cookie': 'sid=SECRET123',
+    'x-user-email': 'jo@corp.com',
+    location: '/users/4242',
+    'content-type': 'application/json; charset=utf-8; boundary=LEAKYBOUND',
+    'content-length': '42',
+    'www-authenticate': 'Bearer realm="corp-realm", error="invalid_token"',
+  },
+  body: '{"a":1}',
+};
+const HDR_REQUEST = { method: 'GET', url: 'https://api.test/me', header: [{ key: 'x-session', value: 'sess-9999' }, { key: 'Content-Type', value: 'application/json' }] };
+const HDR_FAILURES = [{ name: 'user jo@corp.com has role admin', error: 'nope' }];
+const HDR_VALUES = ['SECRET123', 'jo@corp.com', '4242', 'LEAKYBOUND', 'corp-realm', 'invalid_token', 'sess-9999'];
+
+test('shape-only: response and request header values never leave, names and safe metadata do', async () => {
+  const provider = fake(good);
+  await explainFailure({ provider, request: HDR_REQUEST, response: HDR_RESPONSE, failures: HDR_FAILURES, sendResponseBodies: false });
+  const sent = JSON.stringify(provider.calls[0]);
+  for (const v of HDR_VALUES) assert.ok(!sent.includes(v), `leaked ${v}`);
+  for (const n of ['set-cookie', 'x-user-email', 'location', 'x-session']) assert.ok(sent.includes(n), `missing name ${n}`);
+  assert.ok(sent.includes('application/json; charset=utf-8'));
+  assert.ok(sent.includes('"42"') || sent.includes('\\"42\\"'));
+  assert.match(sent, /user <string> has role admin/);
+});
+
+test('shape-only: www-authenticate keeps only its scheme word (redaction off)', async () => {
+  const provider = fake(good);
+  await explainFailure({ provider, response: HDR_RESPONSE, failures: HDR_FAILURES, sendResponseBodies: false, redactSecrets: false });
+  const sent = JSON.stringify(provider.calls[0]);
+  assert.match(sent, /Bearer/);
+  assert.ok(!sent.includes('corp-realm') && !sent.includes('invalid_token'));
+});
+
+test('full mode: headers are still sent with their values', async () => {
+  const provider = fake(good);
+  await explainFailure({ provider, request: HDR_REQUEST, response: HDR_RESPONSE, failures: HDR_FAILURES, sendResponseBodies: true, redactSecrets: false });
+  const sent = JSON.stringify(provider.calls[0]);
+  assert.ok(sent.includes('/users/4242'));
+  assert.ok(sent.includes('jo@corp.com'));
+  assert.ok(sent.includes('sess-9999'));
+});
+
+test('describeExplainEvidence shows the same header info that is sent, per mode', async () => {
+  const args = { request: HDR_REQUEST, response: HDR_RESPONSE, failures: HDR_FAILURES, redactSecrets: false };
+  const shape = JSON.stringify(describeExplainEvidence({ ...args, sendResponseBodies: false }));
+  for (const v of HDR_VALUES) assert.ok(!shape.includes(v), `preview leaked ${v}`);
+  assert.ok(shape.includes('x-user-email') && shape.includes('application/json; charset=utf-8'));
+  const full = JSON.stringify(describeExplainEvidence({ ...args, sendResponseBodies: true }));
+  assert.ok(full.includes('/users/4242'));
+});

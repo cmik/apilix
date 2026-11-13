@@ -105,7 +105,7 @@ export default function ExplainFailurePanel({ destination, shapeOnly, secrets, r
       </div>
       <p className="text-[11px] text-slate-500">
         {shapeOnly
-          ? `Sends this request, the names of the failed assertions (their messages with quoted values and numbers masked), the structure of the response (types, no values) and the variable names to ${destination}. The test script is not sent.`
+          ? `Sends this request and the response status, header names only (no values, except content-type, content-length, content-encoding and cache-control), the names of the failed assertions (their names and messages with quoted values and numbers masked), the structure of the response (types, no values) and the variable names to ${destination}. The test script is not sent.`
           : `Sends this request, the failed assertions with their messages, the test script, a truncated copy of the response and the variable names to ${destination}.`}
         {' '}Credentials and secret values are redacted first; variable values are never sent.{' '}
         <button type="button" className="underline hover:text-slate-300" onClick={() => setShowPreview(true)}>Preview what is sent</button>

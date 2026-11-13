@@ -59,9 +59,63 @@ function maskLiterals(text) {
 /** Failure names and messages as they leave: clipped, and value-masked in shape-only mode. */
 function prepareFailures(failures, shapeOnly) {
   return failures.map(f => ({
-    name: clip(f.name, MAX_FAILURE_NAME_CHARS),
+    name: clip(shapeOnly ? maskLiterals(f.name) : f.name, MAX_FAILURE_NAME_CHARS),
     error: clip(shapeOnly ? maskLiterals(f.error) : f.error, MAX_FAILURE_ERROR_CHARS),
   }));
+}
+
+const MAX_SHAPE_HEADER_NAMES = 50;
+
+/**
+ * Shape-only header values that are protocol metadata and safe to send. Each sanitizer returns the
+ * value to send, or '' to send the name only (a value that does not look as expected is never sent).
+ */
+const SAFE_HEADER_VALUES = {
+  'content-type': v => {
+    const [media, ...params] = v.split(';').map(x => x.trim());
+    if (!/^[\w.+-]+\/[\w.+-]+$/.test(media)) return '';
+    const charset = params.find(p => /^charset=[\w.-]+$/i.test(p));
+    return charset ? `${media}; ${charset}` : media;
+  },
+  'content-length': v => (/^\d{1,12}$/.test(v.trim()) ? v.trim() : ''),
+  'content-encoding': v => (/^[\w, -]{1,40}$/.test(v) ? v.trim() : ''),
+  'cache-control': v => (/^[\w=, -]{1,100}$/.test(v) ? v.trim() : ''),
+  'www-authenticate': v => {
+    const m = /^\s*([A-Za-z][\w-]{0,30})(?:\s|$)/.exec(v);
+    return m ? m[1] : '';
+  },
+};
+
+/** [name, value] pairs as they leave in shape-only mode: every name, values only for the allowlist. */
+function shapeHeaders(pairs) {
+  const names = [];
+  const values = {};
+  for (const [k, v] of pairs) {
+    if (typeof k !== 'string' || !k) continue;
+    if (names.length >= MAX_SHAPE_HEADER_NAMES) break;
+    const name = clip(k, 100);
+    names.push(name);
+    const sanitize = SAFE_HEADER_VALUES[name.toLowerCase()];
+    const raw = Array.isArray(v) ? v.join(', ') : v;
+    const safe = sanitize && typeof raw === 'string' ? sanitize(raw) : '';
+    if (safe) values[name] = safe;
+  }
+  return { names, values };
+}
+
+/** Response headers as they leave (already redacted): trimmed in full mode, names + allowlist in shape-only. */
+function prepareResponseHeaders(headers, shapeOnly) {
+  if (!shapeOnly) return trimHeaders(headers);
+  return shapeHeaders(Object.entries(headers && typeof headers === 'object' ? headers : {}));
+}
+
+/** The request as it leaves (already redacted); shape-only reduces its headers the same way. */
+function prepareRequest(redReq, name, shapeOnly) {
+  const out = trimRequest(redReq, name);
+  if (shapeOnly && Array.isArray(redReq.header)) {
+    out.headers = shapeHeaders(redReq.header.filter(h => h && h.key && !h.disabled).map(h => [h.key, h.value]));
+  }
+  return out;
 }
 
 /** The test script as it leaves, or undefined when it is not sent (never in shape-only mode). */
@@ -80,7 +134,7 @@ function finalizeText(text, { secretValues, redactSecrets }) {
  * What the feature sends besides the request and response, for the preview dialog. Built with the
  * same helpers as the real payload so the preview cannot drift from what is sent.
  */
-function describeExplainEvidence({ failures, testScript, variableNames, secretValues, redactSecrets, sendResponseBodies }) {
+function describeExplainEvidence({ request, name, response, failures, testScript, variableNames, secretValues, redactSecrets, sendResponseBodies }) {
   const shapeOnly = sendResponseBodies === false;
   const list = prepareFailures(normalizeFailures(failures), shapeOnly);
   const script = prepareScript(typeof testScript === 'string' ? testScript : '', { redactSecrets, shapeOnly });
@@ -88,10 +142,16 @@ function describeExplainEvidence({ failures, testScript, variableNames, secretVa
     .filter(n => typeof n === 'string' && n).slice(0, MAX_VARIABLE_NAMES).map(n => clip(n, MAX_VARIABLE_NAME_CHARS));
   const opts = { secretValues, redactSecrets };
   const section = (label, text) => ({ label, text: finalizeText(text, opts), truncated: false });
+  const redReq = redactRequest(request || {}, { secretValues, redactSecrets });
+  const redRes = redactResponse(response || {}, { secretValues, redactSecrets });
   const sections = [
     section('Mode', shapeOnly
-      ? 'Shape only: the response body is sent as types without values; quoted values and numbers in failure messages are replaced by placeholders; the test script is not sent.'
+      ? 'Shape only: the response body is sent as types without values; response and request headers are sent as names only (plus content-type, content-length, content-encoding, cache-control and the www-authenticate scheme); quoted values and numbers in failure names and messages are replaced by placeholders; the test script is not sent.'
       : 'Full: a truncated copy of the response body, the failure messages and the test script are sent.'),
+    section('Request (as sent)', JSON.stringify(prepareRequest(redReq, name, shapeOnly), null, 2)),
+    section('Response status and headers (as sent)', JSON.stringify({
+      status: redRes.status, statusText: clip(redRes.statusText, 80), headers: prepareResponseHeaders(redRes.headers, shapeOnly),
+    }, null, 2)),
     section('Failed assertions', JSON.stringify(list, null, 2)),
     section('Test script', script !== undefined ? script : (shapeOnly ? '(not sent in shape-only mode)' : '(none)')),
     section('Variable names (never values)', names.length ? names.join(', ') : '(none)'),
@@ -103,8 +163,8 @@ function buildData({ request, name, response, failures, testScript, variableName
   const redReq = redactRequest(request || {}, { secretValues, redactSecrets });
   const redRes = redactResponse(response || {}, { secretValues, redactSecrets });
   const data = {
-    request: trimRequest(redReq, name),
-    response: { status: redRes.status, statusText: clip(redRes.statusText, 80), headers: trimHeaders(redRes.headers) },
+    request: prepareRequest(redReq, name, sendResponseBodies === false),
+    response: { status: redRes.status, statusText: clip(redRes.statusText, 80), headers: prepareResponseHeaders(redRes.headers, sendResponseBodies === false) },
     failedAssertions: prepareFailures(failures, sendResponseBodies === false),
   };
   const latency = normalizeLatency(response && response.responseTime);

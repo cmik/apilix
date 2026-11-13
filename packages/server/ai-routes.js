@@ -378,6 +378,9 @@ function createAiRouter(deps = {}) {
       if (explain && typeof explain === 'object' && Array.isArray(explain.failures)) {
         // Explain failures: also show the failure messages, test script and variable names exactly as they would be sent.
         const extra = describeExplainEvidence({
+          request: item && item.request,
+          name: item && typeof item.name === 'string' ? item.name : undefined,
+          response,
           failures: explain.failures.slice(0, 50),
           testScript: typeof explain.testScript === 'string' ? explain.testScript.slice(0, 20000) : '',
           variableNames: Array.isArray(explain.variableNames) ? explain.variableNames.slice(0, 500) : [],
@@ -385,8 +388,11 @@ function createAiRouter(deps = {}) {
           redactSecrets: merged.redactSecrets,
           sendResponseBodies: merged.sendResponseBodies,
         });
-        preview.sections = [...extra, ...preview.sections];
-        preview.estimatedTokens += extra.reduce((n, sec) => n + Math.ceil(sec.text.length / 4), 0);
+        // The explain sections already show the request and the response status/headers as they are sent
+        // (shape-only reduces headers to names), so the generic versions would be misleading.
+        const generic = new Set(['Request', 'Response (status and headers)']);
+        preview.sections = [...extra, ...preview.sections.filter(sec => !generic.has(sec.label))];
+        preview.estimatedTokens = preview.sections.reduce((n, sec) => n + Math.ceil(sec.text.length / 4), 0);
       }
       return res.json(preview);
     } catch (err) {
