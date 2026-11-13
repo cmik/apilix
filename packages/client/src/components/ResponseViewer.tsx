@@ -6,6 +6,12 @@ import { buildExampleFromResponse, addExampleToItem, exampleSaveBlocker } from '
 import type { TestResult, TlsCertInfo, NetworkTimings, RedirectHop } from '../types';
 import SaveToVarModal from './SaveToVarModal';
 import AssertionSuggestPanel from './AssertionSuggestPanel';
+import type { AiAssistProps } from './AssertionSuggestPanel';
+import { aiSuggestAssertions, toAiApiError } from '../api';
+import { truncateForAi } from '../utils/ai/truncate';
+import { aiFeatureReady } from '../utils/ai/nlContext';
+import { buildAllSecretValues } from '../utils/secretMask';
+import { AI_PROVIDER_DEFAULT_BASE } from '../utils/aiDefaults';
 import TestValueModal from './TestValueModal';
 import UpdateVarModal from './UpdateVarModal';
 import type { VarEntry } from './UpdateVarModal';
@@ -823,6 +829,51 @@ export default function ResponseViewer() {
     const exec = activeTab?.item.event?.find(e => e.listen === 'test')?.script.exec;
     return Array.isArray(exec) ? exec.join('\n') : typeof exec === 'string' ? exec : '';
   }, [activeTab?.item.event]);
+  // Optional AI layer of the "Suggest tests" panel. Nothing is sent until the user clicks the button in the panel.
+  const aiSettings = state.ai.settings;
+  const aiAssist = useMemo<AiAssistProps | undefined>(() => {
+    if (!activeTab || !response || !aiSettings.enabled) return undefined;
+    const enabled = aiFeatureReady(aiSettings, 'assertSuggest');
+    const item = activeTab.item;
+    return {
+      enabled,
+      hint: enabled ? undefined : 'Turn on \u201cSuggest assertions from a response\u201d in Settings \u2192 AI to refine these suggestions with a model.',
+      destination: aiSettings.baseUrl || (aiSettings.provider === 'anthropic' ? 'Anthropic' : AI_PROVIDER_DEFAULT_BASE[aiSettings.provider]),
+      shapeOnly: aiSettings.sendResponseBodies === false,
+      run: async (signal: AbortSignal) => {
+        dispatch({ type: 'AI_REQUEST_START', payload: 'assertSuggest' });
+        try {
+          // The AI routes accept 2 MB of JSON: bound the body here and say so in the result.
+          const { text: sentBody, truncated: bodyTruncated } = truncateForAi(response.bodyBase64 ? '' : response.body ?? '');
+          const result = await aiSuggestAssertions({
+            request: item.request,
+            name: item.name,
+            response: {
+              status: response.status,
+              statusText: response.statusText,
+              headers: response.headers,
+              // A binary payload has no text to analyse.
+              body: sentBody,
+              responseTime: response.responseTime,
+            },
+            existingTests: savedTestScript,
+            secretValues: Array.from(buildAllSecretValues(state.environments, state.globalVariables, state.globalVariableMeta)),
+          }, signal);
+          dispatch({ type: 'AI_REQUEST_DONE', payload: 'assertSuggest' });
+          return bodyTruncated ? { ...result, truncated: true } : result;
+        } catch (err) {
+          // A cancellation is not a failure: no error state.
+          if (signal.aborted) {
+            dispatch({ type: 'AI_REQUEST_DONE', payload: 'assertSuggest' });
+            throw err;
+          }
+          const e = toAiApiError(err);
+          dispatch({ type: 'AI_REQUEST_FAIL', payload: { feature: 'assertSuggest', code: e.code, message: e.message } });
+          throw e;
+        }
+      },
+    };
+  }, [activeTab, response, aiSettings, savedTestScript, state.environments, state.globalVariables, state.globalVariableMeta, dispatch]);
   const [exampleSaved, setExampleSaved] = useState(false);
   const exampleSavedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (exampleSavedTimer.current) clearTimeout(exampleSavedTimer.current); }, []);
@@ -1594,6 +1645,7 @@ export default function ResponseViewer() {
           response={response}
           tabId={activeTabId}
           existingScript={savedTestScript}
+          aiAssist={aiAssist}
           onClose={() => setSuggestOpen(false)}
         />
       )}

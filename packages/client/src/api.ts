@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { AiSuggestAssertionsResult, AiGenerateRequestResult } from './utils/ai/aiTypes';
 import type { CollectionItem, BaseCollection, RequestResponse, RunnerIteration, RunnerIterationResult, ScriptLog, CookieJar, RequestSettings, AiSettings, DocAiDescription } from './types';
 import type { DatabaseConnection } from './types';
 import { normalizeBaseUrl } from './utils/aiDefaults';
@@ -481,6 +482,9 @@ export function toAiApiError(err: unknown): AiApiError {
   if (typeof err === 'object' && err !== null && 'isAxiosError' in err) {
     const e = err as { response?: { status?: number; data?: { error?: string; code?: string } }; message?: string };
     if (e.response) {
+      if (e.response.status === 413) {
+        return new AiApiError('The response is too large to send to the model. Shorten it (or turn off \u201cSend response bodies\u201d in Settings \u2192 AI) and try again.', 'TOO_LARGE', 413);
+      }
       return new AiApiError(e.response.data?.error ?? e.message ?? 'AI request failed', e.response.data?.code ?? 'NETWORK', e.response.status);
     }
     return new AiApiError('Could not reach the local Apilix server', 'NETWORK');
@@ -565,6 +569,47 @@ export async function aiDescribeDocs(payload: {
 }): Promise<AiDescribeDocsResult> {
   try {
     const res = await api.post<AiDescribeDocsResult>('/ai/describe-docs', payload, { timeout: 300000 });
+    return res.data;
+  } catch (err) {
+    throw toAiApiError(err);
+  }
+}
+
+export interface AiSuggestAssertionsPayload {
+  request?: CollectionItem['request'];
+  name?: string;
+  response: Pick<RequestResponse, 'status' | 'statusText' | 'headers' | 'body'> & { responseTime?: number };
+  existingTests?: string;
+  /** Plaintext values of secret variables from every environment; the server scrubs them. */
+  secretValues?: string[];
+  language?: string;
+}
+
+/** Ask the model for assertions; the server returns only those that pass on `response`. */
+export async function aiSuggestAssertions(payload: AiSuggestAssertionsPayload, signal?: AbortSignal): Promise<AiSuggestAssertionsResult> {
+  try {
+    const res = await api.post<AiSuggestAssertionsResult>('/ai/suggest-assertions', payload, { timeout: 120000, signal });
+    return res.data;
+  } catch (err) {
+    throw toAiApiError(err);
+  }
+}
+
+export interface AiGenerateRequestPayload {
+  instruction: string;
+  /** Present = modify this request instead of creating one. */
+  current?: CollectionItem;
+  /** Up to 5 neighbouring requests, used as style examples. */
+  neighbors?: CollectionItem[];
+  /** Variable NAMES only. */
+  variables?: Array<{ name: string; scope?: string; secret?: boolean }>;
+  secretValues?: string[];
+  language?: string;
+}
+
+export async function aiGenerateRequest(payload: AiGenerateRequestPayload, signal?: AbortSignal): Promise<AiGenerateRequestResult> {
+  try {
+    const res = await api.post<AiGenerateRequestResult>('/ai/generate-request', payload, { timeout: 180000, signal });
     return res.data;
   } catch (err) {
     throw toAiApiError(err);

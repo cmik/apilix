@@ -162,6 +162,12 @@ function main() {
 	if (!fs.existsSync(aiEntry)) {
 		throw new Error(`[dist:prepare:server] @apilix/ai missing from packages/server/node_modules (expected ${aiEntry}).`);
 	}
+	// The model-script runner is forked as a separate process (child_process.fork) from this real path:
+	// it must ship next to dry-run.js, outside any asar archive.
+	const aiWorker = path.join(aiDestDir, 'src', 'dry-run-worker.js');
+	if (!fs.existsSync(aiWorker)) {
+		throw new Error(`[dist:prepare:server] @apilix/ai dry-run worker missing (expected ${aiWorker}).`);
+	}
 
 	console.log(`[dist:prepare:server] Rebuilding better-sqlite3 for Electron ${electronVersion} on ${targetPlatform}/${targetArch}...`);
 	run(

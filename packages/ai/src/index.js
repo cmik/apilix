@@ -8,6 +8,10 @@ const { estimateTokens } = require('./budget');
 const { getPrompt, isValidLanguage } = require('./prompts');
 const { validateOutput } = require('./validate');
 const { describeDocs, collectEntries } = require('./doc-describe');
+const { suggestAssertions } = require('./assert-suggest');
+const { generateRequest } = require('./nl-generate');
+const { dryRunScript } = require('./dry-run');
+const { screenScript } = require('./script-screen');
 
 module.exports = {
   createProvider,
@@ -24,4 +28,8 @@ module.exports = {
   validateOutput,
   describeDocs,
   collectEntries,
+  suggestAssertions,
+  generateRequest,
+  dryRunScript,
+  screenScript,
 };

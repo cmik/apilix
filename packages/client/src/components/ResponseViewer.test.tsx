@@ -14,11 +14,13 @@ vi.mock('../store', () => ({
   generateId: () => 'test-id',
 }));
 
+import { DEFAULT_AI_SETTINGS } from '../utils/aiDefaults';
 import ResponseViewer, { applyJsonPathForTest } from './ResponseViewer';
 
 function makeState(body: string) {
   return {
     state: {
+      ai: { settings: DEFAULT_AI_SETTINGS },
       activeTabId: 'tab-1',
       tabs: [],
       collections: [],
@@ -49,6 +51,7 @@ function makeSqlState() {
   };
   return {
     state: {
+      ai: { settings: DEFAULT_AI_SETTINGS },
       activeTabId: 'tab-1',
       tabs: [],
       collections: [],
@@ -76,6 +79,7 @@ function makeHtmlState() {
   const body = '<!doctype html><html><body><h1>Hello</h1></body></html>';
   return {
     state: {
+      ai: { settings: DEFAULT_AI_SETTINGS },
       activeTabId: 'tab-1',
       tabs: [],
       collections: [],
@@ -405,6 +409,7 @@ describe('ResponseViewer save as example', () => {
     const dispatch = vi.fn();
     mockedUseApp.mockReturnValue({
       state: {
+        ai: { settings: DEFAULT_AI_SETTINGS },
         ...base.state,
         response: { ...base.state.response, ...responsePatch },
         collections: [collection],

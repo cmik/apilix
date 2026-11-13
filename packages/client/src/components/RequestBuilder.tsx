@@ -6,7 +6,7 @@ import { useApp, generateId } from '../store';
 import { executeRequest, API_BASE } from '../api';
 import type { ChildRequestLog } from '../api';
 import { getUrlDisplay, buildCollectionDefinitionVarMap, buildVarMap, resolveVariables } from '../utils/variableResolver';
-import { updateItemById, renameItemById, resolveInheritedAuth, resolveInheritedAuthWithSource, findItemInTree, flattenRequestNames, flattenRequestItems, collectAncestorScripts, getRequestBreadcrumb, getRequestBreadcrumbPrefix, applyInheritedAuth } from '../utils/treeHelpers';
+import { addItemToFolder, updateItemById, renameItemById, resolveInheritedAuth, resolveInheritedAuthWithSource, findItemInTree, flattenRequestNames, flattenRequestItems, collectAncestorScripts, getRequestBreadcrumb, getRequestBreadcrumbPrefix, applyInheritedAuth } from '../utils/treeHelpers';
 import { parseCurlCommand } from '../utils/curlUtils';
 import { parseHurlFile } from '../utils/hurlUtils';
 import { openAuthorizationWindow, openAuthorizationWindowPlain } from '../utils/oauth';
@@ -21,7 +21,8 @@ import ScriptTab from './ScriptTab';
 import ScriptEditor from './ScriptEditor';
 import OAuthConfigPanel from './OAuthConfigPanel';
 import { useToast } from './Toast';
-import { IconRequests } from './Icons';
+import { IconRequests, IconSparkle } from './Icons';
+import { findParentFolderId } from '../utils/ai/nlContext';
 import type { SaveExistingRequestTabsResult, UnsavedRequestTabSummary } from '../utils/requestTabSyncGuard';
 import { buildAllVariableSuggestions, DYNAMIC_VARIABLE_SUGGESTIONS, type VariableSuggestion } from '../utils/variableAutocomplete';
 import VarInput from './VarInput';
@@ -29,8 +30,10 @@ import { buildBodyPreview, highlightUnresolved } from '../utils/bodyPreview';
 import { INJECT_TEST_SNIPPET } from '../utils/appEvents';
 import { mergeTestSnippet } from '../utils/testSnippetUtils';
 import type { InjectTestSnippetDetail } from '../utils/appEvents';
+import { handleAiShortcut } from '../utils/ai/aiShortcut';
 
 const CodeGenModal = lazy(() => import('./CodeGenModal'));
+const AiCommandBar = lazy(() => import('./AiCommandBar'));
 const ItemSettingsModal = lazy(() => import('./ItemSettingsModal'));
 
 const DATABASE_METHODS = ['MYSQL', 'POSTGRESQL', 'SQLITE', 'CASSANDRA', 'ORACLE', 'MSSQL', 'REDIS', 'DYNAMODB'] as const;
@@ -971,6 +974,11 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
   const [urlAcLeft, setUrlAcLeft] = useState(0);
   const [showSendMenu, setShowSendMenu] = useState(false);
   const sendMenuRef = useRef<HTMLDivElement>(null);
+  // AI command bar (Ctrl/Cmd+I). `current` is the live editor state, frozen when the bar opens.
+  const [aiBar, setAiBar] = useState<{ current: CollectionItem; initialMode: 'create' | 'modify' } | null>(null);
+  // Editor state before the last applied AI change, so it can be undone (the change is never saved automatically).
+  const [aiUndo, setAiUndo] = useState<{ tabId: string; prev: ReturnType<typeof itemToEditState>; prevDirty: boolean } | null>(null);
+  const _aiOpenRef = useRef<() => boolean>(() => false);
 
   // Swap edit state when active tab changes
   useEffect(() => {
@@ -1007,6 +1015,14 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     cacheRef.current.forEach((v, k) => { if (v.dirty) ids.add(k); });
     onDirtyChange(ids);
   }, [dirty, onDirtyChange]);
+
+  // Ctrl/Cmd+I opens the AI command bar (handler assigned below; it ignores the key when AI is off).
+  useEffect(() => {
+    // The browser default of Ctrl/Cmd+I is only suppressed when the bar really opens.
+    const onKey = (e: KeyboardEvent) => { handleAiShortcut(e, () => _aiOpenRef.current()); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
 
   // Reset body preview to edit mode when switching tabs or changing body type
   useEffect(() => {
@@ -1950,6 +1966,66 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
   }
   _saveRef.current = handleSave;
 
+  // ── AI: natural-language request generation (HTTP/REST only) ──────────────
+  const aiRestOk = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].includes(edit.method)
+    && edit.bodyMode !== 'graphql' && edit.bodyMode !== 'soap';
+  const aiEnabled = state.ai.settings.enabled;
+
+  function openAiBar() {
+    if (!activeTab || !aiEnabled || !aiRestOk) return;
+    const current = buildUpdatedRequestItem(activeTab.item, edit!);
+    setAiBar({ current, initialMode: edit!.url.trim() ? 'modify' : 'create' });
+  }
+  _aiOpenRef.current = () => {
+    // Leave the shortcut alone when AI is off, the request is not REST, or another panel is showing.
+    if (!aiEnabled || !aiRestOk || state.view !== 'request' || aiBar) return false;
+    openAiBar();
+    return true;
+  };
+
+  function applyAiItem(item: CollectionItem, mode: 'create' | 'modify') {
+    if (!activeTab || !edit) return;
+    if (mode === 'modify') {
+      const prev = edit;
+      const next = itemToEditState(item);
+      // Keep what the item cannot express: path variable values and an attached file.
+      setAiUndo({ tabId: activeTab.id, prev, prevDirty: dirty });
+      setEdit(() => ({
+        ...next,
+        bodyFile: prev.bodyFile,
+        pathParams: next.pathParams.map(p => ({ ...p, value: prev.pathParams.find(q => q.key === p.key)?.value || p.value })),
+      }));
+      setActiveRequestTabCached('Tests');
+      return;
+    }
+    // New request: a separate item, next to the current one. Existing work is never replaced.
+    const col = state.collections.find(c => c._id === activeTab.collectionId);
+    if (col) {
+      const parent = activeTab.item.id ? findParentFolderId(col.item, activeTab.item.id) : null;
+      const items = typeof parent === 'string' ? addItemToFolder(col.item, parent, item) : [...col.item, item];
+      dispatch({ type: 'UPDATE_COLLECTION', payload: { ...col, item: items } });
+      dispatch({ type: 'OPEN_TAB', payload: { collectionId: col._id, item } });
+    } else {
+      // Blank tab: open the proposal in a new unsaved tab.
+      dispatch({ type: 'OPEN_TAB', payload: { collectionId: '', item } });
+    }
+  }
+
+  function undoAiChange() {
+    if (!aiUndo || aiUndo.tabId !== activeTab?.id) return;
+    const { prev, prevDirty } = aiUndo;
+    if (prevDirty) {
+      setEdit(() => prev);
+    } else {
+      // The editor was clean before the AI change: undoing it leaves it clean, not "modified".
+      setEditRaw(prev);
+      const existing = cacheRef.current.get(activeTab.id);
+      cacheRef.current.set(activeTab.id, { edit: prev, dirty: false, activeRequestTab: existing?.activeRequestTab ?? 'Params' });
+      setDirty(false);
+    }
+    setAiUndo(null);
+  }
+
   function handleSaveAs(tabId: string, newName: string, targetCollectionId: string) {
     const tab = state.tabs.find(t => t.id === tabId);
     if (!tab) return;
@@ -2144,6 +2220,16 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
           >
             Import
           </button>
+          {aiEnabled && aiRestOk && (
+            <button
+              onClick={openAiBar}
+              title="Generate or modify this request with AI (⌘I / Ctrl+I)"
+              aria-label="Generate with AI"
+              className="px-2.5 py-2 bg-slate-700 hover:bg-slate-600 border border-slate-500 text-orange-400 hover:text-orange-300 text-xs rounded transition-colors shrink-0"
+            >
+              <IconSparkle className="w-4 h-4" />
+            </button>
+          )}
           {edit.method !== 'WS' && (
             <button
               onClick={() => setShowCodeGen(true)}
@@ -2272,6 +2358,15 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
           onPreRequestSyntaxCheck={setPreRequestHasError}
           onTestSyntaxCheck={setTestHasError}
         />
+      )}
+
+      {aiUndo && aiUndo.tabId === activeTab?.id && (
+        <div role="status" className="flex items-center gap-2 px-3 py-1.5 text-xs bg-orange-500/10 border-b border-orange-500/30 text-orange-300 shrink-0">
+          <IconSparkle className="w-3.5 h-3.5 shrink-0" />
+          <span className="flex-1">AI changes were applied to this request. They are not saved yet.</span>
+          <button type="button" onClick={undoAiChange} className="underline hover:text-orange-200">Undo</button>
+          <button type="button" onClick={() => setAiUndo(null)} aria-label="Dismiss" className="text-orange-400/70 hover:text-orange-200 leading-none px-1">×</button>
+        </div>
       )}
 
       {/* Tabs (HTTP only — not WS/MONGO/database) */}
@@ -3370,6 +3465,24 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
           <CodeGenModal
             params={buildResolvedCodeGenParams(edit, allVars)}
             onClose={() => setShowCodeGen(false)}
+          />
+        </Suspense>
+      )}
+
+      {aiBar && activeTab && (
+        <Suspense fallback={null}>
+          <AiCommandBar
+            collectionId={activeTab.collectionId}
+            folderId={(() => {
+              const c = state.collections.find(x => x._id === activeTab.collectionId);
+              const parent = c && activeTab.item.id ? findParentFolderId(c.item, activeTab.item.id) : null;
+              return typeof parent === 'string' ? parent : null;
+            })()}
+            targetLabel={activeTab.collectionId ? 'the same folder as this request' : 'a new unsaved tab'}
+            current={aiBar.current}
+            initialMode={aiBar.initialMode}
+            onApply={applyAiItem}
+            onClose={() => setAiBar(null)}
           />
         </Suspense>
       )}
