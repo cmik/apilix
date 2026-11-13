@@ -210,21 +210,95 @@ function describeRequest(entry, redactor) {
   return out;
 }
 
-/** "host:port" (lower-case, no userinfo) of a URL string, or null when it is not yet a concrete URL. */
-function authorityOf(url) {
-  if (typeof url !== 'string' || url === '' || url.includes('{{')) return null;
-  const m = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i.exec(url.trim());
-  if (!m) return null;
-  const auth = m[1].slice(m[1].lastIndexOf('@') + 1).toLowerCase();
-  return auth || null;
+const UNRESOLVED_RE = /\{\{/;
+const CONTROL_RE = /[\u0000-\u0020\u007f]/;
+const SCHEMES = new Set(['http', 'https', 'ws', 'wss']);
+
+/**
+ * Read a RESOLVED URL string the way the HTTP client (axios, i.e. the WHATWG URL parser) will.
+ * The authority segment is cut out FIRST (text between the scheme separator and the first of / ? # \, as the
+ * WHATWG parser does for http(s)), and only a placeholder left in the HOST part of that segment makes the URL
+ * "unresolved" (a `{{x}}` in the path or query does not). Anything ambiguous is flagged "refuse":
+ * control characters / spaces / tab / newline in the scheme or authority (the parser silently drops some of
+ * them), an authority the parser and an isolated parse of the host part disagree about, an unparseable one.
+ * @returns {{kind:'host',host:string}|{kind:'unresolved',text:string}|{kind:'refuse',text:string}|{kind:'invalid'}}
+ */
+function classifyUrl(resolved) {
+  if (typeof resolved !== 'string') return { kind: 'invalid' };
+  const s = resolved.replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, '');
+  if (s === '') return { kind: 'invalid' };
+  const m = /^([^:/?#\\]*):([/\\]*)/.exec(s);
+  if (!m) return UNRESOLVED_RE.test(s) ? { kind: 'unresolved', text: s } : { kind: 'invalid' };
+  let scheme = m[1].toLowerCase();
+  if (UNRESOLVED_RE.test(scheme)) {
+    // the scheme itself is a placeholder: still read the authority when it is introduced by "//"
+    if (!s.slice(m[1].length + 1).startsWith('//')) return { kind: 'unresolved', text: s };
+    scheme = 'http';
+  } else if (CONTROL_RE.test(scheme)) {
+    return { kind: 'refuse', text: scheme }; // "ht\ttp://": the parser drops the tab
+  } else if (!SCHEMES.has(scheme)) {
+    return { kind: 'invalid' };
+  }
+  const rest = s.slice(m[0].length);
+  const end = rest.search(/[/?#\\]/);
+  const region = end < 0 ? rest : rest.slice(0, end);
+  const hostPart = region.slice(region.lastIndexOf('@') + 1);
+  if (UNRESOLVED_RE.test(hostPart)) return { kind: 'unresolved', text: hostPart.toLowerCase() };
+  if (hostPart === '' || CONTROL_RE.test(region)) return { kind: 'refuse', text: region };
+  try {
+    const full = new URL(`${scheme}://${rest}`).host;
+    const alone = new URL(`${scheme}://${hostPart}/`).host;
+    if (!full || full !== alone) return { kind: 'refuse', text: region };
+    return { kind: 'host', host: full };
+  } catch {
+    return { kind: 'refuse', text: region };
+  }
 }
 
-function rawUrlOf(req) {
+/** Mirror of the engine's applyPathVariables (:name segments of url.variable). */
+function applyPathVariables(url, variables, vars) {
+  let out = url;
+  for (const v of Array.isArray(variables) ? variables : []) {
+    if (!v || v.disabled) continue;
+    const key = resolveVariables(v.key || '', vars);
+    if (!key) continue;
+    const value = encodeURIComponent(resolveVariables(v.value || '', vars));
+    out = out.replace(new RegExp(`:${String(key).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=/|$|\\?|#)`, 'g'), value);
+  }
+  return out;
+}
+
+// dynamic tokens ({{$guid}}, ...) are random: replace them so baseline and effective strings stay comparable
+const neutralize = (raw) => (typeof raw === 'string' ? raw.replace(/\{\{\s*\$[^}]*\}\}/g, 'dyn') : raw);
+
+/** (vars) => resolved URL string, exactly as the engine's resolveUrl builds it. null when there is no URL. */
+function requestUrlResolver(req) {
   const u = req && req.url;
-  if (typeof u === 'string') return u;
-  if (u && typeof u.raw === 'string' && u.raw) return u.raw;
-  if (u && Array.isArray(u.host)) return `${u.protocol ? `${u.protocol}://` : ''}${u.host.join('.')}${u.port ? `:${u.port}` : ''}`;
-  return '';
+  if (typeof u === 'string') return u === '' ? null : (vars) => resolveVariables(neutralize(u), vars);
+  if (!u || typeof u !== 'object') return null;
+  if (typeof u.raw === 'string' && u.raw) return (vars) => applyPathVariables(resolveVariables(neutralize(u.raw), vars), u.variable, vars);
+  const protocol = String(u.protocol || 'https').replace('://', '');
+  const host = (Array.isArray(u.host) ? u.host.join('.') : u.host) || '';
+  const path = (Array.isArray(u.path) ? u.path.join('/') : u.path) || '';
+  if (!host) return null;
+  return (vars) => applyPathVariables(resolveVariables(neutralize(`${protocol}://${host}/${String(path).replace(/^\//, '')}`), vars), u.variable, vars);
+}
+
+/** URL-valued fields of an auth block that the engine resolves with the variables (tokenUrl, authorizationUrl, refreshUrl, ...). */
+function authUrlResolvers(auth) {
+  const out = [];
+  if (!auth || typeof auth !== 'object') return out;
+  for (const [type, detail] of Object.entries(auth)) {
+    if (type === 'type' || !detail || typeof detail !== 'object') continue;
+    const pairs = Array.isArray(detail)
+      ? detail.filter((r) => r && typeof r.key === 'string').map((r) => [r.key, r.value])
+      : Object.entries(detail);
+    for (const [key, value] of pairs.slice(0, 50)) {
+      if (typeof value !== 'string' || value === '' || !/url|uri/i.test(key)) continue;
+      out.push({ field: `auth.${type}.${key}`, resolve: (vars) => resolveVariables(neutralize(value), vars) });
+    }
+  }
+  return out;
 }
 
 const enabledVars = (rows) => {
@@ -233,38 +307,64 @@ const enabledVars = (rows) => {
   return out;
 };
 
+const describeSide = (c) => (c.kind === 'host' ? c.host : (c.kind === 'unresolved' ? '(not defined by the collection or environment)' : '(an ambiguous or unparseable authority)'));
+
 /**
- * Agent-supplied `variables` / `data` must not redirect a request to another host.
- * For every request, the host (host:port) obtained with the agent's values is compared with the host obtained
- * WITHOUT them (collection variables + environment). A literal URL host cannot change at all. When the
- * baseline itself is not a concrete URL (the host variable is defined nowhere but in the agent's values) there
- * is nothing to compare with: the --allow-host list (socket layer) stays the only authority there.
+ * Agent-supplied `variables` / `data` must not redirect a request, nor an auth endpoint (OAuth tokenUrl, ...),
+ * to another host. BEST EFFORT, not a security boundary: it covers the URL of every request and the URL fields
+ * of every auth block (request, folder, collection), NOT what scripts do with pm.variables / pm.sendRequest.
+ * For each of those URLs the host (WHATWG parse, the one the HTTP client uses) obtained with the agent's values
+ * is compared with the host obtained WITHOUT them (collection variables + environment).
+ *  - same host: fine (the agent may change a path/query placeholder, never the authority);
+ *  - different host, or an ambiguous authority (control characters, parser disagreement): refused;
+ *  - no baseline (the host is defined only by the agent's values): refused with `anyHost` (nothing but the
+ *    agent vouches for it, the --allow-host list does not exist); with --allow-host the list stays the only authority.
  * Precedence mirrors the engine: collection vars < agent variables < environment < data row.
- * @returns {{request:string, from:string, to:string}|null} the first violation
+ * @returns {{request:string, field:string, from:string, to:string, noBaseline?:boolean}|null} the first violation
  */
-function findHostOverride(collection, { environment = {}, variables = {}, dataRows = [null] } = {}) {
+function findHostOverride(collection, { environment = {}, variables = {}, dataRows = [null], anyHost = false } = {}) {
   const collVars = enabledVars(collection && collection.variable);
   const base = { ...collVars, ...environment };
+  const fulls = (dataRows && dataRows.length ? dataRows : [null]).map((row) => ({ ...collVars, ...variables, ...environment, ...(row || {}) }));
+  const check = (label, field, resolve) => {
+    const from = classifyUrl(resolve(base));
+    for (const full of fulls) {
+      const to = classifyUrl(resolve(full));
+      if (to.kind === 'invalid' && from.kind !== 'host') continue;
+      if (to.kind === 'host' && from.kind === 'host' && to.host === from.host) continue;
+      if ((to.kind === 'unresolved' || to.kind === 'refuse') && to.kind === from.kind && to.text === from.text) continue; // the agent changed nothing here
+      if (to.kind === 'host' && (from.kind === 'unresolved' || from.kind === 'invalid')) {
+        if (!anyHost) continue; // --allow-host: the list is the authority
+        return { request: label, field, from: describeSide(from), to: to.host, noBaseline: true };
+      }
+      if (to.kind === 'unresolved' && from.kind === 'invalid') continue;
+      return { request: label, field, from: describeSide(from), to: describeSide(to) };
+    }
+    return null;
+  };
   let hit = null;
+  const checkAuth = (auth, label) => {
+    for (const r of authUrlResolvers(auth)) { hit = hit || check(label, r.field, r.resolve); }
+  };
+  checkAuth(collection && collection.auth, '(collection)');
   (function walk(items, names, depth) {
     if (hit || !Array.isArray(items) || depth > MAX_DEPTH) return;
     for (const node of items) {
       if (hit) return;
       if (!node || typeof node !== 'object') continue;
       const here = names.concat(typeof node.name === 'string' ? node.name : '(unnamed)');
-      if (isFolder(node)) { walk(node.item, here, depth + 1); continue; }
-      const raw = rawUrlOf(node.request);
-      if (!raw) continue;
-      const baseline = authorityOf(resolveVariables(raw, base));
-      if (baseline === null) continue;
-      for (const row of dataRows) {
-        const full = { ...collVars, ...variables, ...environment, ...(row || {}) };
-        const effective = authorityOf(resolveVariables(raw, full));
-        if (effective !== baseline) { hit = { request: here.join('/'), from: baseline, to: effective || '(unresolved)' }; return; }
+      const label = here.join('/');
+      if (isFolder(node)) {
+        checkAuth(node.auth, label);
+        walk(node.item, here, depth + 1);
+        continue;
       }
+      const resolve = requestUrlResolver(node.request);
+      if (resolve) hit = check(label, 'url', resolve);
+      if (!hit) checkAuth(node.request && node.request.auth, label);
     }
   }(collection && collection.item, [], 0));
   return hit;
 }
 
-module.exports = { findHostOverride, authorityOf, listNodes, findNode, countRequests, buildRunTree, describeRequest, isNonHttp, isFolder, urlRaw, redactAuth };
+module.exports = { findHostOverride, classifyUrl, listNodes, findNode, countRequests, buildRunTree, describeRequest, isNonHttp, isFolder, urlRaw, redactAuth };

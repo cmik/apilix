@@ -78,3 +78,68 @@ test('describeRequest redacts auth blocks on the request itself', () => {
   const d = describeRequest({ node: item, ref: '@0', path: 'a' }, red);
   assert.deepEqual(d.auth, { type: 'basic', fields: { username: '<redacted>', password: '<redacted>' } });
 });
+
+const { findHostOverride, classifyUrl } = require('../src/model');
+
+const col = (item, extra = {}) => ({ info: { name: 'G' }, item: [{ name: 'R', request: { method: 'GET', url: item.url, auth: item.auth, header: [] } }], ...extra });
+
+test('classifyUrl reads the authority like the WHATWG parser and flags ambiguous ones', () => {
+  assert.deepEqual(classifyUrl('http://127.0.0.1:81/x/{{id}}?k={{k}}'), { kind: 'host', host: '127.0.0.1:81' });
+  assert.deepEqual(classifyUrl('HTTP://User@Example.COM:80/x'), { kind: 'host', host: 'example.com' });
+  assert.equal(classifyUrl('http://{{host}}/x').kind, 'unresolved');
+  assert.equal(classifyUrl('{{base}}/x').kind, 'unresolved');
+  assert.deepEqual(classifyUrl('http://127.0.0.1:81\\@127.0.0.1:82/x'), { kind: 'host', host: '127.0.0.1:81' }, 'a backslash ends the authority, as the client reads it');
+  assert.deepEqual(classifyUrl('http://127.0.0.1:81#@127.0.0.1:82/x'), { kind: 'host', host: '127.0.0.1:81' });
+  assert.equal(classifyUrl('http://127.0.0.1:81\t.x/').kind, 'refuse', 'tab in the authority');
+  assert.equal(classifyUrl('http://127.0.0.1:81\n@127.0.0.1:82/').kind, 'refuse', 'newline in the authority');
+  assert.equal(classifyUrl('ht\ttp://a.com/').kind, 'refuse', 'tab in the scheme');
+  assert.equal(classifyUrl('http://a b.com/').kind, 'refuse', 'space in the authority');
+  assert.equal(classifyUrl('http://{{y}}@evil.test/').kind, 'host', 'a placeholder in the userinfo does not hide the host');
+  assert.equal(classifyUrl('http://evil.test/{{x}}').kind, 'host');
+  assert.equal(classifyUrl('/relative').kind, 'invalid');
+});
+
+test('findHostOverride: a placeholder elsewhere in the URL no longer disables the check', () => {
+  const c = col({ url: 'http://{{host}}/x/{{id}}?k={{k}}' }, { variable: [{ key: 'host', value: '127.0.0.1:81' }] });
+  assert.equal(findHostOverride(c, { dataRows: [{ id: '7', k: '1' }] }), null, 'changing a path/query placeholder is fine');
+  const hit = findHostOverride(c, { dataRows: [{ host: '127.0.0.1:82', id: '1' }] });
+  assert.ok(hit);
+  assert.equal(hit.from, '127.0.0.1:81');
+  assert.equal(hit.to, '127.0.0.1:82');
+});
+
+test('findHostOverride: differential authority tricks are refused, a defined host cannot be moved', () => {
+  const c = col({ url: 'http://{{host}}/x' }, { variable: [{ key: 'host', value: '127.0.0.1:81' }] });
+  for (const evil of ['127.0.0.1:82\\@127.0.0.1:81', '127.0.0.1:82#@127.0.0.1:81', '127.0.0.1:81\t@x', '127.0.0.1:81\n.evil', '127.0.0.1:82/x@127.0.0.1:81', '127.0.0.1:81 .evil']) {
+    assert.ok(findHostOverride(c, { dataRows: [{ host: evil }] }), JSON.stringify(evil));
+  }
+});
+
+test('findHostOverride: no baseline is refused with anyHost, left to the --allow-host list otherwise', () => {
+  const c = col({ url: 'http://{{nb}}/x/{{id}}' });
+  const rows = [{ nb: '127.0.0.1:82', id: '1' }];
+  const hit = findHostOverride(c, { dataRows: rows, anyHost: true });
+  assert.ok(hit && hit.noBaseline);
+  assert.equal(findHostOverride(c, { dataRows: rows, anyHost: false }), null);
+  assert.equal(findHostOverride(c, { dataRows: [{ id: '1' }], anyHost: true }), null, 'nothing defines the host: nothing is sent anywhere');
+  // an agent value that is itself a placeholder or smuggles one is not a way around it
+  assert.ok(findHostOverride(c, { dataRows: [{ nb: '{{z}}.evil.test' }], anyHost: true }));
+  assert.ok(findHostOverride(c, { dataRows: [{ nb: '{{z}}@127.0.0.1:82' }], anyHost: true }));
+});
+
+test('findHostOverride covers OAuth endpoints (request, folder, collection) and the url parts form', () => {
+  const oauth = (tokenUrl) => ({ type: 'oauth2', oauth2: { grantType: 'client_credentials', clientId: 'id', clientSecret: 'literalSecretValue', tokenUrl } });
+  const attack = { tok: 'http://127.0.0.1:82/token' };
+  const reqLevel = col({ url: 'http://127.0.0.1:81/x', auth: oauth('{{tok}}') });
+  assert.ok(findHostOverride(reqLevel, { variables: attack, anyHost: true }), 'undefined tokenUrl host');
+  assert.equal(findHostOverride(reqLevel, { variables: attack, anyHost: false }), null, '--allow-host: the list decides');
+  const withBase = col({ url: 'http://127.0.0.1:81/x', auth: oauth('{{tok}}') }, { variable: [{ key: 'tok', value: 'http://127.0.0.1:81/token' }] });
+  const moved = findHostOverride(withBase, { variables: attack });
+  assert.ok(moved && /oauth2\.tokenUrl/.test(moved.field));
+  const inFolder = { info: { name: 'G' }, item: [{ name: 'F', auth: oauth('{{tok}}'), item: [{ name: 'R', request: { method: 'GET', url: 'http://127.0.0.1:81/x' } }] }] };
+  assert.ok(findHostOverride(inFolder, { variables: attack, anyHost: true }));
+  const inCollection = { info: { name: 'G' }, auth: { type: 'oauth2', oauth2: [{ key: 'tokenUrl', value: '{{tok}}' }] }, item: [{ name: 'R', request: { method: 'GET', url: 'http://127.0.0.1:81/x' } }] };
+  assert.ok(findHostOverride(inCollection, { variables: attack, anyHost: true }));
+  const parts = { info: { name: 'G' }, variable: [{ key: 'h', value: 'a.test' }], item: [{ name: 'R', request: { method: 'GET', url: { protocol: 'http', host: ['{{h}}'], path: ['x'] } } }] };
+  assert.ok(findHostOverride(parts, { dataRows: [{ h: 'b.test' }] }));
+});
