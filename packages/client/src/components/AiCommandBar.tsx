@@ -11,6 +11,45 @@ import { AI_PROVIDER_DEFAULT_BASE } from '../utils/aiDefaults';
 import { IconSparkle } from './Icons';
 import AiProposalDialog from './AiProposalDialog';
 
+export interface AiDestination {
+  collectionId: string;
+  folderId: string | null;
+}
+
+interface DestinationOption extends AiDestination {
+  key: string;
+  label: string;
+  /** Wording used in the proposal ("the folder “X”"). */
+  target: string;
+}
+
+const NEW_TAB_KEY = 'tab:';
+const destKey = (collectionId: string, folderId: string | null) => `${collectionId}\u0000${folderId ?? ''}`;
+
+/** Every collection followed by its folders (depth-first), as flat options with a path label. */
+function buildDestinationOptions(collections: { _id: string; info: { name: string }; item: CollectionItem[] }[]): DestinationOption[] {
+  const out: DestinationOption[] = [];
+  const walk = (items: CollectionItem[], collectionId: string, path: string[]) => {
+    for (const it of items) {
+      if (!Array.isArray(it.item) || !it.id) continue;
+      const next = [...path, it.name];
+      out.push({
+        key: destKey(collectionId, it.id),
+        collectionId,
+        folderId: it.id,
+        label: `${'\u00a0\u00a0'.repeat(path.length)}\u21b3 ${next.join(' / ')}`,
+        target: `the folder \u201c${it.name}\u201d`,
+      });
+      walk(it.item, collectionId, next);
+    }
+  };
+  for (const c of collections) {
+    out.push({ key: destKey(c._id, null), collectionId: c._id, folderId: null, label: c.info.name, target: `the collection \u201c${c.info.name}\u201d` });
+    walk(c.item ?? [], c._id, [c.info.name]);
+  }
+  return out;
+}
+
 export interface AiCommandBarProps {
   collectionId: string;
   /** Folder the new request goes to (null = collection root). Also the source of style examples. */
@@ -21,8 +60,12 @@ export interface AiCommandBarProps {
   current?: CollectionItem | null;
   /** Start in modify mode (the builder shortcut does when a request is open). */
   initialMode?: 'create' | 'modify';
-  /** Create a new request / replace the editor content. Called only after the user clicks Apply. */
-  onApply: (item: CollectionItem, mode: 'create' | 'modify') => void;
+  /**
+   * Create a new request / replace the editor content. Called only after the user clicks Apply.
+   * `destination` is where a new request goes (the picker's choice); folderId null = collection root,
+   * collectionId '' = no collection (new unsaved tab). Ignored in modify mode.
+   */
+  onApply: (item: CollectionItem, mode: 'create' | 'modify', destination: AiDestination) => void;
   onClose: () => void;
 }
 
@@ -75,7 +118,20 @@ export default function AiCommandBar({ collectionId, folderId, targetLabel, curr
     setError(null);
   }
 
-  const collection = state.collections.find(c => c._id === collectionId);
+  const destOptions = buildDestinationOptions(state.collections);
+  const openingKey = destOptions.some(o => o.key === destKey(collectionId, folderId)) ? destKey(collectionId, folderId) : NEW_TAB_KEY;
+  const [chosenKey, setChosenKey] = useState(openingKey);
+  const chosen = destOptions.find(o => o.key === chosenKey);
+  /** Where a request of the given mode goes. Modify mode never moves the request. */
+  function destFor(m: 'create' | 'modify'): AiDestination & { label: string | undefined } {
+    if (m === 'create' && chosenKey !== openingKey) {
+      return chosen
+        ? { collectionId: chosen.collectionId, folderId: chosen.folderId, label: chosen.target }
+        : { collectionId: '', folderId: null, label: 'a new unsaved tab' };
+    }
+    return { collectionId, folderId, label: targetLabel };
+  }
+  const collectionFor = (id: string) => state.collections.find(c => c._id === id);
 
   async function generate(text: string, m: 'create' | 'modify') {
     if (!ready || !text.trim()) return;
@@ -85,19 +141,21 @@ export default function AiCommandBar({ collectionId, folderId, targetLabel, curr
     setPhase('loading');
     setError(null);
     setSubmitted({ instruction: text, mode: m });
+    const dest = destFor(m);
+    const collection = collectionFor(dest.collectionId);
     dispatch({ type: 'AI_REQUEST_START', payload: 'nlGenerate' });
     try {
       const r = await aiGenerateRequest({
         instruction: text.trim(),
         ...(m === 'modify' && current ? { current } : {}),
         // Style examples: neighbours only, redacted again by the server. Names of variables, never values.
-        neighbors: collection ? collectNeighbors(collection.item, folderId, current?.id) : [],
+        neighbors: collection ? collectNeighbors(collection.item, dest.folderId, current?.id) : [],
         variables: collectVariableMeta({
           environments: state.environments,
           activeEnvironmentId: state.activeEnvironmentId,
           globalVariables: state.globalVariables,
           globalVariableMeta: state.globalVariableMeta,
-          collectionVariables: state.collectionVariables[collectionId],
+          collectionVariables: state.collectionVariables[dest.collectionId],
           collection,
         }),
         secretValues: Array.from(buildAllSecretValues(state.environments, state.globalVariables, state.globalVariableMeta)),
@@ -116,12 +174,14 @@ export default function AiCommandBar({ collectionId, folderId, targetLabel, curr
   }
 
   if (phase === 'proposal' && result && submitted) {
+    const dest = destFor(submitted.mode);
+    const collection = collectionFor(dest.collectionId);
     const meta = collectVariableMeta({
       environments: state.environments,
       activeEnvironmentId: state.activeEnvironmentId,
       globalVariables: state.globalVariables,
       globalVariableMeta: state.globalVariableMeta,
-      collectionVariables: state.collectionVariables[collectionId],
+      collectionVariables: state.collectionVariables[dest.collectionId],
       collection,
     });
     return (
@@ -129,11 +189,11 @@ export default function AiCommandBar({ collectionId, folderId, targetLabel, curr
         mode={submitted.mode}
         result={result}
         base={submitted.mode === 'modify' ? current ?? undefined : undefined}
-        targetLabel={targetLabel}
+        targetLabel={dest.label}
         secretNames={meta.filter(v => v.secret).map(v => v.name)}
-        inheritedAuth={inheritedAuthFor(collection, { mode: submitted.mode, folderId, requestId: current?.id })}
-        knownHosts={knownHostsOf([current, ...(collection ? collectNeighbors(collection.item, folderId, current?.id) : [])])}
-        onApply={item => { onApply(item, submitted.mode); onClose(); }}
+        inheritedAuth={inheritedAuthFor(collection, { mode: submitted.mode, folderId: dest.folderId, requestId: current?.id })}
+        knownHosts={knownHostsOf([current, ...(collection ? collectNeighbors(collection.item, dest.folderId, current?.id) : [])])}
+        onApply={item => { onApply(item, submitted.mode, { collectionId: dest.collectionId, folderId: dest.folderId }); onClose(); }}
         onDiscard={onClose}
         onRegenerate={() => { setResult(null); void generate(submitted.instruction, submitted.mode); }}
       />
@@ -179,6 +239,21 @@ export default function AiCommandBar({ collectionId, folderId, targetLabel, curr
                       {m === 'create' ? 'New request' : 'Modify selected request'}
                     </button>
                   ))}
+                </div>
+              )}
+              {mode === 'create' && (
+                <div>
+                  <label htmlFor="ai-destination" className="block text-[11px] text-slate-400 mb-1">Destination</label>
+                  <select
+                    id="ai-destination"
+                    value={chosenKey}
+                    onChange={e => setChosenKey(e.target.value)}
+                    disabled={loading}
+                    className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-orange-500/60 disabled:opacity-50"
+                  >
+                    {openingKey === NEW_TAB_KEY && <option value={NEW_TAB_KEY}>A new unsaved tab</option>}
+                    {destOptions.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+                  </select>
                 </div>
               )}
               <textarea

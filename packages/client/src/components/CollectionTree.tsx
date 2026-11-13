@@ -40,6 +40,7 @@ import {
 const ItemSettingsModal = lazy(() => import('./ItemSettingsModal'));
 const ExportDocsModal = lazy(() => import('./ExportDocsModal'));
 const AiCommandBar = lazy(() => import('./AiCommandBar'));
+import type { AiDestination } from './AiCommandBar';
 
 // ─── Send-to-Mock helpers ────────────────────────────────────────────────────
 
@@ -685,12 +686,15 @@ function ItemNode({ item, collectionId, collection, depth, startRenaming }: Item
   }
 
   /** The AI proposal was reviewed and accepted: add it as a NEW request in this folder (nothing is overwritten). */
-  function handleAiApply(newItem: CollectionItem) {
+  function handleAiApply(newItem: CollectionItem, _mode: 'create' | 'modify', dest: AiDestination) {
     if (!item.id) return;
-    const latest = state.collections.find(c => c._id === collection._id) ?? collection;
-    setOpen(true);
-    dispatch({ type: 'UPDATE_COLLECTION', payload: { ...latest, item: addItemToFolder(latest.item, item.id, newItem) } });
-    dispatch({ type: 'OPEN_TAB', payload: { collectionId: collection._id, item: newItem } });
+    const latest = state.collections.find(c => c._id === dest.collectionId);
+    if (!latest) return;
+    if (dest.collectionId === collection._id && dest.folderId === item.id) setOpen(true);
+    // folderId null = collection root
+    const items = dest.folderId ? addItemToFolder(latest.item, dest.folderId, newItem) : [...latest.item, newItem];
+    dispatch({ type: 'UPDATE_COLLECTION', payload: { ...latest, item: items } });
+    dispatch({ type: 'OPEN_TAB', payload: { collectionId: latest._id, item: newItem } });
     dispatch({ type: 'SET_VIEW', payload: 'request' });
   }
 

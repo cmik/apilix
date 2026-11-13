@@ -74,6 +74,8 @@ Press `Ctrl/Cmd+I` in the request builder, or choose **Generate request here…*
 
 What is sent: your sentence, the **names** (never the values) of the environment, global and collection variables, the `{{baseUrl}}` variable if you have one, and up to five neighbouring requests of the folder as style examples. Neighbouring requests are masked like any other AI payload, saved examples are not sent, and secret values from **all** environments are scrubbed.
 
+In **New request** mode a **Destination** picker lists every collection and its folders (preselected to where you opened the bar). The chosen destination decides which neighbouring requests, collection variables, inherited authentication and known hosts are used as context (and for the security warning below), and where the request is created on **Apply**; it can only be changed before you generate, and **Regenerate** keeps it. Modify mode has no picker.
+
 You then get a **proposal** to review: the request, and a diff of the generated scripts. Nothing is created until you click **Apply**; **Ignore** discards it and **Regenerate** asks again. Proposals carry an **AI-generated** badge.
 
 - **New request** adds a separate request next to the current one (or in the folder you chose, or in a new unsaved tab). It never replaces an existing request.
