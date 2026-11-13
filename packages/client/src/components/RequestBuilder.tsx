@@ -1962,6 +1962,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     // Mark clean in cache
     cacheRef.current.set(activeTab.id, { edit, dirty: false, activeRequestTab });
     setDirty(false);
+    clearAiBanner(activeTab.id); // saved: the "not saved yet" banner no longer applies
     emitDirtyChange();
   }
   _saveRef.current = handleSave;
@@ -1982,6 +1983,10 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     openAiBar();
     return true;
   };
+
+  function clearAiBanner(tabId: string) {
+    setAiUndo(cur => (cur && cur.tabId === tabId ? null : cur));
+  }
 
   function applyAiItem(item: CollectionItem, mode: 'create' | 'modify') {
     if (!activeTab || !edit) return;
@@ -2052,6 +2057,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
     }
     if (tabId === activeTab?.id) {
       setDirty(false);
+      clearAiBanner(tabId); // saved: the "not saved yet" banner no longer applies
     }
     emitDirtyChange();
   }
@@ -3159,6 +3165,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
                     dispatch({ type: 'UPDATE_TAB', payload: { tabId: activeTab.id, collectionId: saveTargetCollectionId, item: updatedItem } });
                     cacheRef.current.set(activeTab.id, { edit, dirty: false, activeRequestTab });
                     setDirty(false);
+                    clearAiBanner(activeTab.id); // saved: the "not saved yet" banner no longer applies
                     setShowSaveToCollection(false);
                     if (closeAfterSaveRef.current) {
                       closeAfterSaveRef.current = false;
@@ -3261,6 +3268,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
                       dispatch({ type: 'CLEAR_TAB_HISTORY_FLAG', payload: activeTab.id });
                       cacheRef.current.set(activeTab.id, { edit, dirty: false, activeRequestTab });
                       setDirty(false);
+                      clearAiBanner(activeTab.id); // saved: the "not saved yet" banner no longer applies
                       emitDirtyChange();
                     } else {
                       const targetCol = state.collections.find(c => c._id === historySaveCollectionId);
