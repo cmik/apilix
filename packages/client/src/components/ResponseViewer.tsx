@@ -6,10 +6,11 @@ import { buildExampleFromResponse, addExampleToItem, exampleSaveBlocker } from '
 import type { TestResult, TlsCertInfo, NetworkTimings, RedirectHop } from '../types';
 import SaveToVarModal from './SaveToVarModal';
 import AssertionSuggestPanel from './AssertionSuggestPanel';
+import ExplainFailurePanel from './ExplainFailurePanel';
 import type { AiAssistProps } from './AssertionSuggestPanel';
-import { aiSuggestAssertions, toAiApiError } from '../api';
+import { aiSuggestAssertions, aiExplainFailure, toAiApiError } from '../api';
 import { truncateForAi } from '../utils/ai/truncate';
-import { aiFeatureReady } from '../utils/ai/nlContext';
+import { aiFeatureReady, collectVariableMeta } from '../utils/ai/nlContext';
 import { buildAllSecretValues } from '../utils/secretMask';
 import { AI_PROVIDER_DEFAULT_BASE } from '../utils/aiDefaults';
 import TestValueModal from './TestValueModal';
@@ -874,6 +875,47 @@ export default function ResponseViewer() {
       },
     };
   }, [activeTab, response, aiSettings, savedTestScript, state.environments, state.globalVariables, state.globalVariableMeta, dispatch]);
+  // "Explain with AI" for failed tests (feature flag `diagnose`). Nothing is sent until the user clicks.
+  const explainReady = !!(response && !response.error && !response.isExample && (!response.protocol || response.protocol === 'http')
+    && aiFeatureReady(aiSettings, 'diagnose'));
+  const explainSecrets = useMemo(
+    () => (explainReady ? buildAllSecretValues(state.environments, state.globalVariables, state.globalVariableMeta) : new Set<string>()),
+    [explainReady, state.environments, state.globalVariables, state.globalVariableMeta],
+  );
+  const runExplain = useCallback(async (signal: AbortSignal) => {
+    if (!activeTab || !response) throw new Error('No response to explain');
+    dispatch({ type: 'AI_REQUEST_START', payload: 'diagnose' });
+    try {
+      const { text: sentBody, truncated: bodyTruncated } = truncateForAi(response.bodyBase64 ? '' : response.body ?? '');
+      const variableNames = collectVariableMeta({
+        environments: state.environments,
+        activeEnvironmentId: state.activeEnvironmentId,
+        globalVariables: state.globalVariables,
+        globalVariableMeta: state.globalVariableMeta,
+        collectionVariables: state.collectionVariables?.[activeTab.collectionId],
+        collection: exampleCollection,
+      }).map(v => v.name);
+      const result = await aiExplainFailure({
+        request: activeTab.item.request,
+        name: activeTab.item.name,
+        response: { status: response.status, statusText: response.statusText, headers: response.headers, body: sentBody, responseTime: response.responseTime },
+        failures: response.testResults.filter(t => t.passed === false).map(t => ({ name: t.name, error: t.error })),
+        testScript: savedTestScript,
+        variableNames,
+        secretValues: Array.from(explainSecrets),
+      }, signal);
+      dispatch({ type: 'AI_REQUEST_DONE', payload: 'diagnose' });
+      return bodyTruncated ? { ...result, truncated: true } : result;
+    } catch (err) {
+      if (signal.aborted) {
+        dispatch({ type: 'AI_REQUEST_DONE', payload: 'diagnose' });
+        throw err;
+      }
+      const e = toAiApiError(err);
+      dispatch({ type: 'AI_REQUEST_FAIL', payload: { feature: 'diagnose', code: e.code, message: e.message } });
+      throw e;
+    }
+  }, [activeTab, response, savedTestScript, exampleCollection, explainSecrets, state.environments, state.activeEnvironmentId, state.globalVariables, state.globalVariableMeta, state.collectionVariables, dispatch]);
   const [exampleSaved, setExampleSaved] = useState(false);
   const exampleSavedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (exampleSavedTimer.current) clearTimeout(exampleSavedTimer.current); }, []);
@@ -1563,6 +1605,16 @@ export default function ResponseViewer() {
 
         {tab === 'Test Results' && (
           <div className="p-3 flex flex-col gap-1">
+            {explainReady && failed > 0 && (
+              <div className="mb-2">
+                <ExplainFailurePanel
+                  destination={aiSettings.baseUrl || (aiSettings.provider === 'anthropic' ? 'Anthropic' : AI_PROVIDER_DEFAULT_BASE[aiSettings.provider])}
+                  shapeOnly={aiSettings.sendResponseBodies === false}
+                  secrets={explainSecrets}
+                  run={runExplain}
+                />
+              </div>
+            )}
             {response.testResults.length === 0 ? (
               <p className="text-slate-500 text-sm">No tests ran. Add test scripts in the Tests tab.</p>
             ) : (

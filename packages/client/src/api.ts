@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { AiSuggestAssertionsResult, AiGenerateRequestResult } from './utils/ai/aiTypes';
+import type { AiSuggestAssertionsResult, AiGenerateRequestResult, AiExplainFailureResult } from './utils/ai/aiTypes';
 import type { CollectionItem, BaseCollection, RequestResponse, RunnerIteration, RunnerIterationResult, ScriptLog, CookieJar, RequestSettings, AiSettings, DocAiDescription } from './types';
 import type { DatabaseConnection } from './types';
 import { normalizeBaseUrl } from './utils/aiDefaults';
@@ -589,6 +589,30 @@ export interface AiSuggestAssertionsPayload {
 export async function aiSuggestAssertions(payload: AiSuggestAssertionsPayload, signal?: AbortSignal): Promise<AiSuggestAssertionsResult> {
   try {
     const res = await api.post<AiSuggestAssertionsResult>('/ai/suggest-assertions', payload, { timeout: 120000, signal });
+    return res.data;
+  } catch (err) {
+    throw toAiApiError(err);
+  }
+}
+
+export interface AiExplainFailurePayload {
+  request?: CollectionItem['request'];
+  name?: string;
+  response: Pick<RequestResponse, 'status' | 'statusText' | 'headers' | 'body'> & { responseTime?: number };
+  /** The failed assertions: name and error message. */
+  failures: Array<{ name: string; error: string | null }>;
+  testScript?: string;
+  /** Variable NAMES only. */
+  variableNames?: string[];
+  /** Plaintext values of secret variables from every environment; the server scrubs them. */
+  secretValues?: string[];
+  language?: string;
+}
+
+/** Ask the model why assertions failed. The answer is text for display only. */
+export async function aiExplainFailure(payload: AiExplainFailurePayload, signal?: AbortSignal): Promise<AiExplainFailureResult> {
+  try {
+    const res = await api.post<AiExplainFailureResult>('/ai/explain-failure', payload, { timeout: 120000, signal });
     return res.data;
   } catch (err) {
     throw toAiApiError(err);
