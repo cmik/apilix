@@ -182,16 +182,21 @@ test('a message split across several chunks (including multi-byte UTF-8) is reas
 
 test('oversized line is discarded with -32600 and the server recovers', async () => {
   const h = makeHarness(build({ maxLineBytes: 1024 }));
-  h.send(INIT); await h.next();
+  h.send(INIT); await h.next(2000);
   h.sendRaw(`${'x'.repeat(5000)}`);
   h.sendRaw(`${'y'.repeat(5000)}\n`);
-  const e = await h.next();
+  // bounded: a server that stops answering must fail these assertions quickly instead of blocking the suite
+  const e = await h.next(2000).catch(() => null);
+  assert.ok(e, 'an error answer arrives within 2 s');
   assert.equal(e.error.code, CODES.INVALID_REQUEST);
   assert.equal(e.id, null);
   assert.match(e.error.message, /too large/i);
   h.send({ jsonrpc: '2.0', id: 3, method: 'ping' });
-  assert.equal((await h.next()).id, 3);
-  await h.end();
+  const ping = await h.next(2000).catch(() => null);
+  assert.ok(ping, 'the server still answers after the oversized line');
+  assert.equal(ping.id, 3);
+  const ended = await Promise.race([h.end().then(() => true), new Promise((r) => setTimeout(() => r(false), 3000))]);
+  assert.equal(ended, true, 'serve() ends at EOF');
 });
 
 test('a last line without trailing newline is still processed at EOF', async () => {
