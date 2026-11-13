@@ -12,7 +12,7 @@ const { WorkspaceError } = require('./workspace');
 const exec = require('./exec');
 const { runEnabled } = require('./args');
 
-const RUN_WARNING = ' This tool SENDS REAL HTTP REQUESTS from the machine running the server (only to the hosts the operator allowed with --allow-host, or to ANY host when started with --allow-any-host) and EXECUTES the collection\'s pre-request/test scripts; requests can have side effects. Variables/data you provide cannot change the host a request is sent to. Scripts are NOT sandboxed against the host: any collection present in the workspace (even one the operator never reviewed, e.g. from a git clone) executes its scripts with the operator\'s rights as soon as it is run, and a collection written with import_collection is just as trusted.';
+const RUN_WARNING = ' This tool SENDS REAL HTTP REQUESTS from the machine running the server (only to the hosts the operator allowed with --allow-host, or to ANY host when started with --allow-any-host) and EXECUTES the collection\'s pre-request/test scripts; requests can have side effects. A best-effort check refuses variables/data that would change the host of a request or of an auth URL (OAuth token URL), but it does not cover scripts. Scripts are NOT sandboxed against the host: any collection present in the workspace (even one the operator never reviewed, e.g. from a git clone) executes its scripts with the operator\'s rights as soon as it is run, and a collection written with import_collection is just as trusted.';
 const RUN_ANNOTATIONS = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true };
 /** Why the run tools are unavailable, and how the operator can enable them. */
 const disabledMessage = (o) => (o.noRun
