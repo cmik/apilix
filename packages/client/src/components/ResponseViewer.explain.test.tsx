@@ -139,4 +139,31 @@ describe('ResponseViewer "Explain with AI"', () => {
     expect(signal.aborted).toBe(true);
     expect(screen.getByRole('button', { name: /Explain with AI/ })).toBeEnabled();
   });
+
+  it('remounts when only the body content changes (same length), keeps state for an identical response', async () => {
+    let signal!: AbortSignal;
+    aiExplainFailure.mockImplementation((_p: unknown, s: AbortSignal) => { signal = s; return new Promise(() => { /* pending */ }); });
+    setup(ready, failing, { body: '{"e":1}' });
+    await openTests();
+    await userEvent.click(screen.getByRole('button', { name: /Explain with AI/ }));
+    await waitFor(() => expect(signal).toBeDefined());
+    mockApp(ready, failing, { body: '{"e":1}' });
+    lastRender!.rerender(<ResponseViewer />);
+    expect(signal.aborted).toBe(false);
+    mockApp(ready, failing, { body: '{"e":2}' });
+    lastRender!.rerender(<ResponseViewer />);
+    expect(signal.aborted).toBe(true);
+    expect(screen.getByRole('button', { name: /Explain with AI/ })).toBeEnabled();
+  });
+
+  it('clears a finished explanation when only the body content changes', async () => {
+    aiExplainFailure.mockResolvedValueOnce({ summary: 'Body answer', likelyCauses: [], suggestedFixes: [], truncated: false, shapeOnly: false });
+    setup(ready, failing, { body: '{"e":1}' });
+    await openTests();
+    await userEvent.click(screen.getByRole('button', { name: /Explain with AI/ }));
+    expect(await screen.findByText('Body answer')).toBeInTheDocument();
+    mockApp(ready, failing, { body: '{"e":9}' });
+    lastRender!.rerender(<ResponseViewer />);
+    expect(screen.queryByText('Body answer')).toBeNull();
+  });
 });

@@ -33,6 +33,7 @@ const MAX_VARIABLE_NAMES = 100;
 const MAX_VARIABLE_NAME_CHARS = 100;
 const OUTPUT_RESERVE_TOKENS = 1500;
 const MIN_BODY_TOKENS = 50;
+const MAX_MASK_INPUT_CHARS = 4000;
 
 function tryParse(text) {
   try { return { ok: true, value: JSON.parse(text) }; } catch { return { ok: false }; }
@@ -45,15 +46,32 @@ function tryParse(text) {
  */
 function maskLiterals(text) {
   if (typeof text !== 'string') return '';
-  let out = text
-    .replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`/g, '<string>');
-  const stray = out.search(/['"`]/);
-  if (stray !== -1) out = `${out.slice(0, stray)}<string>`;
-  out = out
-    .replace(/\S+@\S+/g, '<string>')
+  // Single linear pass over a bounded input: no regex backtracking on attacker-shaped text.
+  const src = text.length > MAX_MASK_INPUT_CHARS ? text.slice(0, MAX_MASK_INPUT_CHARS) : text;
+  let out = '';
+  let i = 0;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch !== "'" && ch !== '"' && ch !== '`') { out += ch; i++; continue; }
+    let j = i + 1;
+    let closed = false;
+    while (j < src.length) {
+      if (src[j] === '\\') { j += 2; continue; }
+      if (src[j] === ch) { closed = true; break; }
+      j++;
+    }
+    out += '<string>';
+    if (!closed) break; // unclosed quote: everything after it is hidden
+    i = j + 1;
+  }
+  // Emails: a whitespace-delimited token with an '@' that has a character on both sides.
+  out = out.split(/(\s+)/).map(tok => {
+    const at = tok.indexOf('@', 1);
+    return at !== -1 && at < tok.length - 1 && !/^\s/.test(tok) ? '<string>' : tok;
+  }).join('');
+  return out
     .replace(/https?:\/\/\S+/gi, '<string>')
     .replace(/-?\b\d+(?:\.\d+)?\b/g, '<number>');
-  return out;
 }
 
 /** Failure names and messages as they leave: clipped, and value-masked in shape-only mode. */

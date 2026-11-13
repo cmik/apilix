@@ -77,6 +77,10 @@ function DbResultTableView({
 }
 
 /** Small non-cryptographic string hash (FNV-1a), only used to tell two responses apart. */
+// Bodies above this size are identified by length + first and last EXPLAIN_HASH_EDGE chars, not hashed in full.
+const EXPLAIN_HASH_FULL_BODY_MAX = 1024 * 1024;
+const EXPLAIN_HASH_EDGE = 64 * 1024;
+
 function hashString(s: string): string {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
@@ -890,12 +894,18 @@ export default function ResponseViewer() {
     [explainReady, state.environments, state.globalVariables, state.globalVariableMeta],
   );
   // The response object has no id or timestamp, so its identity is the tab plus a cheap hash of what the
-  // explanation is about (status, timing, size, body length, failed test names and messages). A new run
+  // explanation is about (status, timing, size, body content, headers, failed test names and messages). A new run
   // or another tab gives a new key, which remounts the panel (clearing its result and aborting a call in flight).
   const explainKey = useMemo(() => {
     if (!response) return 'none';
     const failedSig = response.testResults.filter(t => t.passed === false).map(t => `${t.name}\u0000${t.error ?? ''}`).join('\u0001');
-    return `${activeTab?.id ?? ''}:${hashString(`${response.status}|${response.responseTime}|${response.size}|${response.body?.length ?? 0}|${failedSig}`)}`;
+    const body = typeof response.body === 'string' ? response.body : '';
+    const bodySig = body.length > EXPLAIN_HASH_FULL_BODY_MAX
+      ? `${body.length}|${body.slice(0, EXPLAIN_HASH_EDGE)}|${body.slice(-EXPLAIN_HASH_EDGE)}`
+      : body;
+    let headerSig = '';
+    try { headerSig = JSON.stringify(response.headers ?? {}); } catch { /* unserializable headers: ignore */ }
+    return `${activeTab?.id ?? ''}:${hashString(`${response.status}|${response.responseTime}|${response.size}|${body.length}|${hashString(bodySig)}|${hashString(headerSig)}|${failedSig}`)}`;
   }, [response, activeTab?.id]);
   const explainEvidence = useMemo(() => !explainReady ? undefined : ({
     failures: (response?.testResults ?? []).filter(t => t.passed === false).map(t => ({ name: t.name, error: t.error })),

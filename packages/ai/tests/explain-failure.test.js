@@ -274,3 +274,19 @@ test('describeExplainEvidence shows the same header info that is sent, per mode'
   const full = JSON.stringify(describeExplainEvidence({ ...args, sendResponseBodies: true }));
   assert.ok(full.includes('/users/4242'));
 });
+
+test('maskLiterals runs in linear time on pathological quote input', () => {
+  for (const q of ["'", '"', '`']) {
+    for (const unit of [`\\${q}`, `\\\\${q}`, '1', '@']) {
+      const input = `${q}${unit.repeat(200000)}`;
+      const t0 = Date.now();
+      const out = maskLiterals(input);
+      assert.ok(Date.now() - t0 < 500, `slow for ${q} ${unit}`);
+      assert.ok(!out.includes('@@'));
+    }
+    assert.equal(maskLiterals(`a ${q}b${q} c`), 'a <string> c');
+    assert.equal(maskLiterals(`a ${q}b\\${q}c${q} d`), 'a <string> d');
+    assert.equal(maskLiterals(`a ${q}unclosed 42`), 'a <string>');
+  }
+  assert.equal(maskLiterals(`${'a@'.repeat(100000)}`).includes('a@a@'), false);
+});

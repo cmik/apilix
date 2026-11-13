@@ -590,3 +590,19 @@ test('/explain-failure: closing the connection aborts the provider call and rele
     });
   } finally { await fake.close(); }
 });
+
+test('/preview explain: the test script appears once in full mode and nowhere in shape-only mode', async () => {
+  await withAiServer({}, async ({ call }) => {
+    const SCRIPT = 'apx.test("marker-script-xyz", () => {})';
+    const item = { name: 'r', request: { method: 'GET', url: 'https://api.test/x' }, event: [{ listen: 'test', script: { exec: [SCRIPT] } }] };
+    const explain = { failures: [{ name: 'f', error: 'bad' }], testScript: SCRIPT };
+    const response = { status: 200, headers: {}, body: '{}' };
+    const shape = await call('POST', '/preview', { item, response, explain, settings: { sendResponseBodies: false } });
+    assert.equal(shape.status, 200);
+    assert.ok(!shape.text.includes('marker-script-xyz'), 'script leaked into shape-only preview');
+    assert.ok(shape.json.sections.some(sec => sec.label === 'Test script' && /not sent/.test(sec.text)));
+    const full = await call('POST', '/preview', { item, response, explain, settings: { sendResponseBodies: true } });
+    assert.equal(full.json.sections.filter(sec => sec.text.includes('marker-script-xyz')).length, 1);
+    assert.equal(full.json.sections.filter(sec => sec.label === 'Test script').length, 1);
+  });
+});
