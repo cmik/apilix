@@ -347,3 +347,13 @@ test('every tool that returns outside content carries the "untrusted" marker in 
     for (const r of [lc, lr, gr, gl]) assert.equal(r.data.untrustedContent, true);
   } finally { await s.close(); }
 });
+
+test('--allow-host host: (empty port) exits 2; --unsafe-allow-write-and-run alone warns that it has no effect', async () => {
+  const bad = startServer(['--workspace', makeTmp(), '--allow-host', 'host:']);
+  assert.equal((await bad.close()).code, 2);
+  assert.match(bad.stderr, /invalid pattern/);
+  const alone = startServer(['--workspace', makeTmp(), '--unsafe-allow-write-and-run']);
+  await alone.initialize();
+  assert.equal((await alone.close()).code, 0);
+  assert.match(alone.stderr, /--unsafe-allow-write-and-run has no effect/);
+});

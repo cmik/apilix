@@ -64,3 +64,8 @@ test('--allow-write with the run tools is refused unless --unsafe-allow-write-an
   // the escape hatch alone enables nothing
   assert.equal(runEnabled(parseMcpArgs(['--unsafe-allow-write-and-run'])), false);
 });
+
+test('--allow-host with an empty or non-numeric port is refused (it would otherwise match every port)', () => {
+  for (const bad of ['host:', 'host:abc', '[::1]:', '[::1]:x', '*.a.com:']) assert.throws(() => parseMcpArgs(['--allow-host', bad]), /invalid pattern/, bad);
+  for (const ok of ['host', 'host:8080', '[::1]', '[::1]:9000', '*.a.com:443']) assert.doesNotThrow(() => parseMcpArgs(['--allow-host', ok]), ok);
+});

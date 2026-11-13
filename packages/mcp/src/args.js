@@ -129,6 +129,8 @@ function parseMcpArgs(argv, cwd = process.cwd()) {
       case '--allow-host': {
         const v = value(i).trim().toLowerCase();
         if (!/^(\*\.)?[a-z0-9._\-\[\]:]+$/.test(v) || v === '*' || v.includes('/')) throw new Error(`--allow-host: invalid pattern "${v}" (use host, *.domain or host:port; a bare "*" is not accepted)`);
+        const colons = (v.match(/:/g) || []).length;
+        if ((colons === 1 && !/:\d{1,5}$/.test(v)) || /\]:(?!\d{1,5}$)/.test(v) || /^\[[^\]]*$/.test(v)) throw new Error(`--allow-host: invalid pattern "${v}" (an empty or non-numeric port is refused: write host:port, or just host for every port)`);
         o.allowHosts.push(v);
         break;
       }
