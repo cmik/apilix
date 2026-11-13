@@ -4,15 +4,23 @@ import { aiPreview, toAiApiError, type AiPreviewResult } from '../api';
 import { IconSparkle } from './Icons';
 import { buildAllSecretValues } from '../utils/secretMask';
 
+export interface AiPreviewExplain {
+  failures: Array<{ name: string; error?: string | null }>;
+  testScript?: string;
+  variableNames?: string[];
+}
+
 interface Props {
   onClose: () => void;
+  /** "Explain with AI" only: extra evidence (failed assertions, test script, variable names) to preview. */
+  explain?: AiPreviewExplain;
 }
 
 /**
  * Shows exactly what an AI feature would send for the active request/response, after
  * redaction. Makes no call to the AI provider (only to the local Apilix server).
  */
-export default function AiPreviewDialog({ onClose }: Props) {
+export default function AiPreviewDialog({ onClose, explain }: Props) {
   const { state, dispatch } = useApp();
   const [result, setResult] = useState<AiPreviewResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -45,6 +53,7 @@ export default function AiPreviewDialog({ onClose }: Props) {
       item: activeRequest?.item,
       response: response ? { status: response.status, statusText: response.statusText, headers: response.headers, body: response.body } : undefined,
       variables,
+      ...(explain ? { explain } : {}),
       secretValues: Array.from(buildAllSecretValues(environments, globalVariables, globalVariableMeta)),
       settings: {
         maxContextTokens: ai.settings.maxContextTokens,

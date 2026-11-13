@@ -499,6 +499,8 @@ export interface AiPreviewPayload {
   /** Plaintext values of secret variables; the server scrubs them from every section. */
   secretValues?: string[];
   settings?: Partial<Pick<AiSettings, 'maxContextTokens' | 'redactSecrets' | 'sendResponseBodies'>>;
+  /** "Explain with AI": also preview the failure messages, test script and variable names. */
+  explain?: { failures: Array<{ name: string; error?: string | null }>; testScript?: string; variableNames?: string[] };
 }
 
 export interface AiPreviewResult {

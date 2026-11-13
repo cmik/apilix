@@ -3,7 +3,7 @@ import { neutralizeAiText } from '@apilix/core/docs';
 import type { AiExplainFailureResult } from '../utils/ai/aiTypes';
 import { maskSecrets } from '../utils/secretMask';
 import { IconSparkle } from './Icons';
-import AiPreviewDialog from './AiPreviewDialog';
+import AiPreviewDialog, { type AiPreviewExplain } from './AiPreviewDialog';
 
 export interface ExplainFailurePanelProps {
   /** Where the data would go ("Anthropic", a local URL...). */
@@ -14,6 +14,8 @@ export interface ExplainFailurePanelProps {
   secrets: Set<string>;
   /** Runs the model call (explicit user action only). */
   run: (signal: AbortSignal) => Promise<AiExplainFailureResult>;
+  /** What the preview should also show: failed assertions, test script, variable names. */
+  previewEvidence?: AiPreviewExplain;
 }
 
 const CONFIDENCE_TONE = { high: 'text-green-400', medium: 'text-slate-400', low: 'text-amber-400' } as const;
@@ -44,7 +46,7 @@ function CopyButton({ text }: { text: string }) {
  * "Explain with AI" for failed tests. Nothing is sent until the user clicks. The answer is text only:
  * it is never applied or executed, a snippet can only be copied.
  */
-export default function ExplainFailurePanel({ destination, shapeOnly, secrets, run }: ExplainFailurePanelProps) {
+export default function ExplainFailurePanel({ destination, shapeOnly, secrets, run, previewEvidence }: ExplainFailurePanelProps) {
   const [busy, setBusy] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -103,8 +105,8 @@ export default function ExplainFailurePanel({ destination, shapeOnly, secrets, r
       </div>
       <p className="text-[11px] text-slate-500">
         {shapeOnly
-          ? `Sends this request, the failed assertions, the test script and the structure of the response (types, no values) to ${destination}.`
-          : `Sends this request, the failed assertions, the test script and a truncated copy of the response to ${destination}.`}
+          ? `Sends this request, the names of the failed assertions (their messages with quoted values and numbers masked), the structure of the response (types, no values) and the variable names to ${destination}. The test script is not sent.`
+          : `Sends this request, the failed assertions with their messages, the test script, a truncated copy of the response and the variable names to ${destination}.`}
         {' '}Credentials and secret values are redacted first; variable values are never sent.{' '}
         <button type="button" className="underline hover:text-slate-300" onClick={() => setShowPreview(true)}>Preview what is sent</button>
       </p>
@@ -153,7 +155,7 @@ export default function ExplainFailurePanel({ destination, shapeOnly, secrets, r
           )}
         </div>
       )}
-      {showPreview && <AiPreviewDialog onClose={() => setShowPreview(false)} />}
+      {showPreview && <AiPreviewDialog onClose={() => setShowPreview(false)} explain={previewEvidence} />}
     </div>
   );
 }

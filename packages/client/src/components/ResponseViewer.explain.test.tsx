@@ -24,7 +24,14 @@ const item = {
 const collection = { _id: 'col-1', info: { name: 'C', schema: '' }, item: [item] };
 const failing = [{ name: 'Status is 200', passed: false, error: 'expected 401 to equal 200' }, { name: 'ok', passed: true, error: null }];
 
+let lastRender: ReturnType<typeof render> | null = null;
 function setup(settings: Partial<typeof DEFAULT_AI_SETTINGS>, testResults: unknown[] = failing, extraResponse: object = {}) {
+  const dispatch = mockApp(settings, testResults, extraResponse);
+  lastRender = render(<ResponseViewer />);
+  return dispatch;
+}
+
+function mockApp(settings: Partial<typeof DEFAULT_AI_SETTINGS>, testResults: unknown[] = failing, extraResponse: object = {}) {
   const dispatch = vi.fn();
   mockedUseApp.mockReturnValue({
     state: {
@@ -37,7 +44,6 @@ function setup(settings: Partial<typeof DEFAULT_AI_SETTINGS>, testResults: unkno
     },
     dispatch,
   });
-  render(<ResponseViewer />);
   return dispatch;
 }
 
@@ -101,5 +107,36 @@ describe('ResponseViewer "Explain with AI"', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(d2.mock.calls.map(c => c[0].type)).toContain('AI_REQUEST_DONE'));
     expect(d2.mock.calls.map(c => c[0].type)).not.toContain('AI_REQUEST_FAIL');
+  });
+
+  it('a new response clears the previous explanation and aborts a call in flight; the same response keeps its state', async () => {
+    aiExplainFailure.mockResolvedValueOnce({ summary: 'First answer', likelyCauses: [], suggestedFixes: [], truncated: false, shapeOnly: false });
+    setup(ready);
+    await openTests();
+    await userEvent.click(screen.getByRole('button', { name: /Explain with AI/ }));
+    expect(await screen.findByText('First answer')).toBeInTheDocument();
+    // Same response (new object, same identity): state is kept.
+    mockApp(ready);
+    lastRender!.rerender(<ResponseViewer />);
+    expect(screen.getByText('First answer')).toBeInTheDocument();
+    // New response (another run): the answer disappears.
+    mockApp(ready, [{ name: 'Status is 200', passed: false, error: 'expected 500 to equal 200' }], { status: 500, responseTime: 99 });
+    lastRender!.rerender(<ResponseViewer />);
+    expect(screen.queryByText('First answer')).toBeNull();
+    expect(screen.getByRole('button', { name: /Explain with AI/ })).toBeInTheDocument();
+  });
+
+  it('a call in flight is aborted when the response changes', async () => {
+    let signal!: AbortSignal;
+    aiExplainFailure.mockImplementation((_p: unknown, s: AbortSignal) => { signal = s; return new Promise(() => { /* pending */ }); });
+    setup(ready);
+    await openTests();
+    await userEvent.click(screen.getByRole('button', { name: /Explain with AI/ }));
+    await waitFor(() => expect(signal).toBeDefined());
+    expect(signal.aborted).toBe(false);
+    mockApp(ready, failing, { status: 403, responseTime: 7 });
+    lastRender!.rerender(<ResponseViewer />);
+    expect(signal.aborted).toBe(true);
+    expect(screen.getByRole('button', { name: /Explain with AI/ })).toBeEnabled();
   });
 });

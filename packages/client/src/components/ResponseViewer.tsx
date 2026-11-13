@@ -76,6 +76,13 @@ function DbResultTableView({
   );
 }
 
+/** Small non-cryptographic string hash (FNV-1a), only used to tell two responses apart. */
+function hashString(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return (h >>> 0).toString(36);
+}
+
 function StatusBadge({ status }: { status: number }) {
   const color =
     status === 2200 ? 'bg-green-700 text-green-100' :
@@ -882,6 +889,26 @@ export default function ResponseViewer() {
     () => (explainReady ? buildAllSecretValues(state.environments, state.globalVariables, state.globalVariableMeta) : new Set<string>()),
     [explainReady, state.environments, state.globalVariables, state.globalVariableMeta],
   );
+  // The response object has no id or timestamp, so its identity is the tab plus a cheap hash of what the
+  // explanation is about (status, timing, size, body length, failed test names and messages). A new run
+  // or another tab gives a new key, which remounts the panel (clearing its result and aborting a call in flight).
+  const explainKey = useMemo(() => {
+    if (!response) return 'none';
+    const failedSig = response.testResults.filter(t => t.passed === false).map(t => `${t.name}\u0000${t.error ?? ''}`).join('\u0001');
+    return `${activeTab?.id ?? ''}:${hashString(`${response.status}|${response.responseTime}|${response.size}|${response.body?.length ?? 0}|${failedSig}`)}`;
+  }, [response, activeTab?.id]);
+  const explainEvidence = useMemo(() => !explainReady ? undefined : ({
+    failures: (response?.testResults ?? []).filter(t => t.passed === false).map(t => ({ name: t.name, error: t.error })),
+    testScript: savedTestScript,
+    variableNames: collectVariableMeta({
+      environments: state.environments,
+      activeEnvironmentId: state.activeEnvironmentId,
+      globalVariables: state.globalVariables,
+      globalVariableMeta: state.globalVariableMeta,
+      collectionVariables: activeTab ? state.collectionVariables?.[activeTab.collectionId] : undefined,
+      collection: exampleCollection,
+    }).map(v => v.name),
+  }), [explainReady, response, savedTestScript, activeTab, exampleCollection, state.environments, state.activeEnvironmentId, state.globalVariables, state.globalVariableMeta, state.collectionVariables]);
   const runExplain = useCallback(async (signal: AbortSignal) => {
     if (!activeTab || !response) throw new Error('No response to explain');
     dispatch({ type: 'AI_REQUEST_START', payload: 'diagnose' });
@@ -1608,6 +1635,8 @@ export default function ResponseViewer() {
             {explainReady && failed > 0 && (
               <div className="mb-2">
                 <ExplainFailurePanel
+                  key={explainKey}
+                  previewEvidence={explainEvidence}
                   destination={aiSettings.baseUrl || (aiSettings.provider === 'anthropic' ? 'Anthropic' : AI_PROVIDER_DEFAULT_BASE[aiSettings.provider])}
                   shapeOnly={aiSettings.sendResponseBodies === false}
                   secrets={explainSecrets}
