@@ -42,7 +42,7 @@ const tools = [
   {
     name: 'import_collection',
     title: 'Write a Postman collection file into the workspace',
-    description: 'Save a Postman Collection v2.0/v2.1 JSON document as a file inside the workspace folder so it can be listed and run. WRITE tool: available only when the server was started with --allow-write. Never replaces an existing file unless overwrite is true, and then only a file that already is a recognised collection. The collection\'s scripts are not executed by this call, but they WILL run if the collection is later run with run_collection/run_request.',
+    description: 'Save a Postman Collection v2.0/v2.1 JSON document as a file inside the workspace folder so it can be listed and run. WRITE tool: available only when the server was started with --allow-write. Never replaces an existing file unless overwrite is true, and then only a file that already is a recognised collection. The collection\'s scripts are not executed by this call, but they WILL run if the collection is later run with run_collection/run_request: write + run is arbitrary code execution with the operator\'s rights (the script sandbox is not a security boundary), which is why the server refuses to start with both unless the operator passed --unsafe-allow-write-and-run.',
     enabled: (o) => o.allowWrite === true,
     disabledMessage: 'Writing is disabled on this server (read-only). The operator must start it with --allow-write.',
     inputSchema: {

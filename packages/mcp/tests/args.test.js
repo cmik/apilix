@@ -29,7 +29,7 @@ test('run tools need --allow-host or --allow-any-host; --no-run wins; the two ar
 });
 
 test('repeatable --workspace / --allow-host, relative paths resolved against cwd, = syntax', () => {
-  const o = parseMcpArgs(['--workspace', 'a', '--workspace=../b', '--allow-host', 'API.example.com', '--allow-host=*.x.io:8443', '--allow-write'], '/w/c');
+  const o = parseMcpArgs(['--workspace', 'a', '--workspace=../b', '--allow-host', 'API.example.com', '--allow-host=*.x.io:8443', '--allow-write', '--unsafe-allow-write-and-run'], '/w/c');
   assert.deepEqual(o.workspaces, [path.resolve('/w/c/a'), path.resolve('/w/b')]);
   assert.equal(o.workspaceExplicit, true);
   assert.deepEqual(o.allowHosts, ['api.example.com', '*.x.io:8443']);
@@ -49,7 +49,18 @@ test('invalid input is rejected', () => {
 
 test('help mentions every flag', () => {
   const h = helpText();
-  for (const f of ['--workspace', '--allow-write', '--no-run', '--allow-host', '--allow-any-host', '--include-credentials', '--run-timeout', '--max-requests', '--ssl-verification']) {
+  for (const f of ['--workspace', '--allow-write', '--no-run', '--allow-host', '--allow-any-host', '--unsafe-allow-write-and-run', '--include-credentials', '--run-timeout', '--max-requests', '--ssl-verification']) {
     assert.ok(h.includes(f), f);
   }
+});
+
+test('--allow-write with the run tools is refused unless --unsafe-allow-write-and-run is given', () => {
+  assert.throws(() => parseMcpArgs(['--allow-write', '--allow-host', 'a.com']), /arbitrary code execution/);
+  assert.throws(() => parseMcpArgs(['--allow-write', '--allow-any-host']), /--unsafe-allow-write-and-run/);
+  assert.equal(parseMcpArgs(['--allow-write', '--allow-host', 'a.com', '--unsafe-allow-write-and-run']).allowWrite, true);
+  // still valid: write without run (no run flag, or --no-run)
+  assert.equal(parseMcpArgs(['--allow-write']).allowWrite, true);
+  assert.equal(parseMcpArgs(['--allow-write', '--no-run']).allowWrite, true);
+  // the escape hatch alone enables nothing
+  assert.equal(runEnabled(parseMcpArgs(['--unsafe-allow-write-and-run'])), false);
 });

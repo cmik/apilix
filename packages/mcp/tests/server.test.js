@@ -46,7 +46,7 @@ test('initialize -> tools/list -> tools/call over a real stdio process', async (
 });
 
 test('every tool has a strict schema, a description and coherent annotations', async () => {
-  await withServer(['--allow-write', '--allow-host', '127.0.0.1'], async (s) => {
+  await withServer(['--allow-write', '--allow-host', '127.0.0.1', '--unsafe-allow-write-and-run'], async (s) => {
     const { result } = await s.request('tools/list', {});
     assert.deepEqual(result.tools.map((t) => t.name).sort(), ['export_docs', 'get_last_results', 'get_request', 'import_collection', 'list_collections', 'list_requests', 'run_collection', 'run_request']);
     for (const t of result.tools) {

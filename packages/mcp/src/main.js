@@ -67,6 +67,7 @@ async function runMcp(argv, io = {}, hooks = {}) {
   }[mode];
   log(`execution mode: ${execution}`);
   if (mode === 'any') log('WARNING: --allow-any-host: requests, and the secrets they carry (headers, tokens), can be sent to ANY host this machine can reach, and collection scripts run with your rights. Prefer --allow-host <pattern>.');
+  if (opts.allowWrite && runEnabled(opts)) log('WARNING: --unsafe-allow-write-and-run: the agent can WRITE a collection (import_collection) and then RUN it (run_*): that is arbitrary code execution with your rights. The script sandbox is not a security boundary.');
   log(`ready (workspaces: ${workspaces.labels.join(', ')}; write ${opts.allowWrite ? 'ENABLED' : 'disabled'}; run ${mode === 'disabled' || mode === 'off' ? 'disabled' : 'enabled'})`);
 
   let guard = null;

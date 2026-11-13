@@ -35,6 +35,12 @@ function helpText() {
     '  --no-run                 Disable run_request / run_collection explicitly (no network, no script execution).',
     '                           Takes priority; cannot be combined with --allow-host / --allow-any-host.',
     '  --allow-write            Enable import_collection (writes inside the workspace; no overwrite without overwrite:true).',
+    '                           Refused together with the run tools (write + run = arbitrary code execution with your',
+    '                           rights), unless --unsafe-allow-write-and-run is added.',
+    '  --unsafe-allow-write-and-run',
+    '                           Accept --allow-write together with the run tools. Collection scripts run in a Node "vm"',
+    '                           sandbox that is NOT a security boundary: an agent that can write a collection and run it',
+    '                           can execute arbitrary code as you. A warning is printed at every start.',
     '  --ssl-verification       Verify TLS certificates for outgoing requests (default: off, like the CLI)',
     '  --include-credentials    Do NOT redact credentials in what is returned to the agent (secret-flagged env values stay hidden)',
     '',
@@ -80,6 +86,7 @@ function parseMcpArgs(argv, cwd = process.cwd()) {
     workspaces: [],
     workspaceExplicit: false,
     allowWrite: false,
+    unsafeAllowWriteAndRun: false,
     noRun: false,
     allowAnyHost: false,
     allowHosts: [],
@@ -116,6 +123,7 @@ function parseMcpArgs(argv, cwd = process.cwd()) {
         break;
       }
       case '--allow-write': o.allowWrite = true; break;
+      case '--unsafe-allow-write-and-run': o.unsafeAllowWriteAndRun = true; break;
       case '--no-run': o.noRun = true; break;
       case '--allow-any-host': o.allowAnyHost = true; break;
       case '--allow-host': {
@@ -140,6 +148,9 @@ function parseMcpArgs(argv, cwd = process.cwd()) {
   if (o.noRun && o.allowHosts.length > 0) throw new Error('--allow-host has no effect with --no-run');
   if (o.noRun && o.allowAnyHost) throw new Error('--allow-any-host has no effect with --no-run');
   if (o.allowAnyHost && o.allowHosts.length > 0) throw new Error('--allow-any-host and --allow-host are mutually exclusive: either restrict the run tools to some hosts or explicitly allow every host');
+  if (o.allowWrite && runEnabled(o) && !o.unsafeAllowWriteAndRun) {
+    throw new Error('--allow-write together with the run tools (--allow-host / --allow-any-host) is refused: write + run = arbitrary code execution with your rights: an agent that can write a collection and run it controls what runs (the script sandbox is not a security boundary). Drop --allow-write, or drop the run flags (--allow-host / --allow-any-host), or add --unsafe-allow-write-and-run if you accept that risk.');
+  }
   if (o.workspaces.length === 0) o.workspaces.push(path.resolve(cwd));
   return o;
 }

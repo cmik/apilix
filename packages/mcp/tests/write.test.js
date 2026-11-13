@@ -149,3 +149,36 @@ test('several workspaces: the target workspace must be named', async () => {
   assert.ok(!fs.existsSync(path.join(a, 'x.json')));
   await s.close();
 });
+
+test('write + run: the server refuses to start (exit 2) without --unsafe-allow-write-and-run; with it, it warns at every start', async () => {
+  for (const runFlag of [['--allow-host', '127.0.0.1'], ['--allow-any-host']]) {
+    const refused = startServer(['--workspace', makeTmp(), '--allow-write', ...runFlag]);
+    assert.equal((await refused.close()).code, 2);
+    assert.match(refused.stderr, /arbitrary code execution/);
+    assert.match(refused.stderr, /--unsafe-allow-write-and-run/);
+  }
+  const ok = startServer(['--workspace', makeTmp(), '--allow-write', '--allow-host', '127.0.0.1', '--unsafe-allow-write-and-run']);
+  await ok.initialize();
+  const names = (await ok.request('tools/list', {})).result.tools.map((t) => t.name);
+  assert.ok(names.includes('import_collection') && names.includes('run_request'));
+  assert.match(ok.stderr, /WARNING: --unsafe-allow-write-and-run/);
+  await ok.close();
+  // write without run stays valid, with or without --no-run
+  for (const extra of [[], ['--no-run']]) {
+    const w = startServer(['--workspace', makeTmp(), '--allow-write', ...extra]);
+    await w.initialize();
+    assert.ok(!w.stderr.includes('WARNING: --unsafe'));
+    assert.equal((await w.close()).code, 0);
+  }
+});
+
+test('tool descriptions state that write + run is code execution and that workspace collections run their scripts', async () => {
+  const s = startServer(['--workspace', makeTmp(), '--allow-write', '--allow-host', '127.0.0.1', '--unsafe-allow-write-and-run']);
+  await s.initialize();
+  const tools = (await s.request('tools/list', {})).result.tools;
+  const byName = Object.fromEntries(tools.map((t) => [t.name, t.description]));
+  assert.match(byName.import_collection, /arbitrary code execution/);
+  assert.match(byName.run_request, /even one the operator never reviewed/);
+  assert.match(byName.run_collection, /executes its scripts/);
+  await s.close();
+});
