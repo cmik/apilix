@@ -14,7 +14,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const { AiError, httpStatusFor, buildPreviewContext, getPrompt, describeDocs, isValidLanguage, suggestAssertions, generateRequest } = require('@apilix/ai');
+const { AiError, httpStatusFor, buildPreviewContext, getPrompt, describeDocs, isValidLanguage, suggestAssertions, generateRequest, explainFailure, describeExplainEvidence } = require('@apilix/ai');
 const { buildDocModel } = require('@apilix/core/docs');
 
 const PROVIDERS = ['anthropic', 'openai-compat'];
@@ -293,6 +293,42 @@ function createAiRouter(deps = {}) {
     };
   }, { featureFlag: 'assertSuggest', rateLimited: true }));
 
+  // Explain failed assertions. Feature flag: `diagnose` ("Explain and diagnose failures" in the AI settings).
+  // The answer is text for display only: nothing is executed or applied.
+  // Not rate limited: no script dry-run runs here, the global lock allows one model call at a time, and the server is loopback-only.
+  router.post('/explain-failure', (req, res) => runAiCall(req, res, 'diagnose', async ({ provider, settings, signal }) => {
+    const { request, name, response, failures, testScript, variableNames, language, secretValues } = req.body || {};
+    if (!isObj(response) || !Number.isInteger(response.status) || response.status < 100 || response.status > 599) throw bad('response must be an object with an integer status');
+    if (response.body !== undefined && typeof response.body !== 'string') throw bad('response.body must be a string');
+    if ((response.body || '').length > MAX_SUGGEST_BODY_CHARS) throw bad('response.body is too large to analyse');
+    if (response.headers !== undefined && !isObj(response.headers)) throw bad('response.headers must be an object');
+    if (request !== undefined && !isObj(request)) throw bad('request must be an object');
+    if (name !== undefined && typeof name !== 'string') throw bad('name must be a string');
+    if (!Array.isArray(failures) || !failures.some(f => isObj(f) && typeof f.name === 'string')) throw bad('failures must list at least one failed assertion');
+    if (testScript !== undefined && typeof testScript !== 'string') throw bad('testScript must be a string');
+    if (variableNames !== undefined && !Array.isArray(variableNames)) throw bad('variableNames must be an array');
+    checkLanguage(language);
+    const r = await explainFailure({
+      provider,
+      request,
+      name,
+      response,
+      failures: failures.slice(0, 50),
+      testScript: (testScript || '').slice(0, 20000),
+      variableNames: (variableNames || []).slice(0, 500),
+      maxContextTokens: settings.maxContextTokens,
+      redactSecrets: settings.redactSecrets,
+      sendResponseBodies: settings.sendResponseBodies,
+      secretValues: secretList(secretValues),
+      language: language ? language.trim() : settings.outputLanguage,
+      signal,
+    });
+    return {
+      body: { summary: r.summary, likelyCauses: r.likelyCauses, suggestedFixes: r.suggestedFixes, truncated: r.truncated, shapeOnly: r.shapeOnly },
+      usage: r.usage, model: r.model, latencyMs: r.latencyMs,
+    };
+  }, { featureFlag: 'diagnose' }));
+
   router.post('/generate-request', (req, res) => runAiCall(req, res, 'nlGenerate', async ({ provider, settings, signal }) => {
     const { instruction, current, neighbors, variables, language, secretValues } = req.body || {};
     if (typeof instruction !== 'string' || !instruction.trim()) throw bad('instruction must be a non-empty string');
@@ -318,7 +354,7 @@ function createAiRouter(deps = {}) {
   }, { featureFlag: 'nlGenerate', rateLimited: true }));
 
   router.post('/preview', (req, res) => {
-    const { item, response, variables, secretValues, settings } = req.body || {};
+    const { item, response, variables, secretValues, settings, explain } = req.body || {};
     if ((item !== undefined && (typeof item !== 'object' || item === null))
       || (response !== undefined && (typeof response !== 'object' || response === null))) {
       return res.status(400).json({ error: 'item and response must be objects', code: 'BAD_REQUEST' });
@@ -338,7 +374,28 @@ function createAiRouter(deps = {}) {
       .map(v => ({ name: v.name.slice(0, 200), scope: typeof v.scope === 'string' ? v.scope.slice(0, 40) : undefined, secret: v.secret === true }));
     const secrets = (secretValues || []).slice(0, 1000).filter(s => typeof s === 'string');
     try {
-      return res.json(buildPreviewContext({ item, response, variablesMeta, secretValues: secrets, settings: merged }));
+      const preview = buildPreviewContext({ item, response, variablesMeta, secretValues: secrets, settings: merged });
+      if (explain && typeof explain === 'object' && Array.isArray(explain.failures)) {
+        // Explain failures: also show the failure messages, test script and variable names exactly as they would be sent.
+        const extra = describeExplainEvidence({
+          request: item && item.request,
+          name: item && typeof item.name === 'string' ? item.name : undefined,
+          response,
+          failures: explain.failures.slice(0, 50),
+          testScript: typeof explain.testScript === 'string' ? explain.testScript.slice(0, 20000) : '',
+          variableNames: Array.isArray(explain.variableNames) ? explain.variableNames.slice(0, 500) : [],
+          secretValues: secrets,
+          redactSecrets: merged.redactSecrets,
+          sendResponseBodies: merged.sendResponseBodies,
+        });
+        // The explain sections already show the request and the response status/headers as they are sent
+        // (shape-only reduces headers to names) and the test script (or that it is withheld), so the generic
+        // versions would be misleading or duplicate it.
+        const generic = new Set(['Request', 'Response (status and headers)', 'Test script']);
+        preview.sections = [...extra, ...preview.sections.filter(sec => !generic.has(sec.label))];
+        preview.estimatedTokens = preview.sections.reduce((n, sec) => n + Math.ceil(sec.text.length / 4), 0);
+      }
+      return res.json(preview);
     } catch (err) {
       logger.error('AI preview error:', err && err.name);
       return res.status(500).json({ error: 'Could not build the preview', code: 'INTERNAL' });

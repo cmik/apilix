@@ -224,4 +224,4 @@ async function suggestAssertions(input) {
   };
 }
 
-module.exports = { suggestAssertions, normalizeLatency, sanitizeSuggestions, buildData, fitPrompt, KINDS };
+module.exports = { suggestAssertions, normalizeLatency, clip, trimHeaders, trimRequest, sanitizeSuggestions, buildData, fitPrompt, KINDS };

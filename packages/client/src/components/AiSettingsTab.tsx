@@ -14,10 +14,10 @@ const PROVIDERS: { key: AiProviderKind; label: string }[] = [
   { key: 'openai-compat', label: 'OpenAI-compatible' },
 ];
 
-const FEATURES: { key: AiFeatureKey; label: string }[] = [
+const FEATURES: { key: AiFeatureKey; label: string; hint?: string }[] = [
   { key: 'nlGenerate', label: 'Generate requests and tests from a description' },
   { key: 'assertSuggest', label: 'Suggest assertions from a response' },
-  { key: 'diagnose', label: 'Explain and diagnose failures' },
+  { key: 'diagnose', label: 'Explain and diagnose failures', hint: 'When you click Explain with AI on a failed test, sends the failed test names, their messages and the test script (secrets masked; with Send response bodies off, values are masked in the messages and the script is not sent).' },
   { key: 'scriptAssist', label: 'Scripting assistant' },
   { key: 'docDescribe', label: 'Complete missing documentation descriptions' },
   { key: 'dataGen', label: 'Generate test data' },
@@ -211,9 +211,12 @@ export default function AiSettingsTab() {
 
       <Section title="Features">
         {FEATURES.map(f => (
-          <Row key={f.key} label={f.label}>
-            <Toggle checked={s.features[f.key]} onChange={v => update({ features: { [f.key]: v } })} />
-          </Row>
+          <div key={f.key}>
+            <Row label={f.label}>
+              <Toggle checked={s.features[f.key]} onChange={v => update({ features: { [f.key]: v } })} />
+            </Row>
+            {f.hint && <p className="text-[11px] text-slate-600 mt-0.5">{f.hint}</p>}
+          </div>
         ))}
         <p className="text-[11px] text-slate-600">Each switch takes effect as the matching feature becomes available.</p>
       </Section>

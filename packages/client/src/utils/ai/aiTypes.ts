@@ -76,3 +76,13 @@ export interface AiGenerateRequestResult {
   warnings: string[];
   retried: boolean;
 }
+
+/** Answer of POST /api/ai/explain-failure. Text for display only: never applied, never executed. */
+export interface AiExplainFailureResult {
+  summary: string;
+  likelyCauses: Array<{ cause: string; confidence: 'low' | 'medium' | 'high' }>;
+  suggestedFixes: Array<{ description: string; kind: 'assertion' | 'request' | 'environment' | 'other'; snippet?: string }>;
+  truncated: boolean;
+  /** Only the structure of the body was sent (`sendResponseBodies` is off). */
+  shapeOnly: boolean;
+}

@@ -258,6 +258,38 @@ test('/preview redacts secrets and makes no outbound request', async () => {
   } finally { await fake.close(); }
 });
 
+test('/preview with explain evidence lists failures, script and variable names, masked per mode', async () => {
+  await withAiServer({}, async ({ call }) => {
+    const explain = { failures: [{ name: 'email ok', error: "expected 'john.doe@corp.com' to equal 'x'" }], testScript: "apx.expect(1).to.equal('john.doe@corp.com')", variableNames: ['token'] };
+    const shape = await call('POST', '/preview', { response: { status: 200, headers: {}, body: '{"email":"john.doe@corp.com"}' }, explain, settings: { sendResponseBodies: false } });
+    assert.equal(shape.status, 200);
+    assert.ok(!shape.text.includes('john.doe'), 'shape-only preview leaked');
+    assert.match(shape.text, /Failed assertions/);
+    assert.match(shape.text, /Shape only/);
+    const full = await call('POST', '/preview', { response: { status: 200, headers: {}, body: '{}' }, explain, settings: { sendResponseBodies: true } });
+    assert.equal(full.status, 200);
+    assert.ok(full.json.sections.find(sec => sec.label === 'Test script').text.includes('apx.expect'));
+    assert.ok(full.json.sections.find(sec => sec.label.startsWith('Variable names')).text.includes('token'));
+  });
+});
+
+test('/preview with explain evidence shows the headers as sent: names only in shape-only mode', async () => {
+  await withAiServer({}, async ({ call }) => {
+    const response = { status: 200, headers: { 'set-cookie': 'sid=SECRET123', 'x-user-email': 'jo@corp.com', location: '/users/4242', 'content-type': 'application/json; boundary=ZZZ' }, body: '{}' };
+    const item = { name: 'r', request: { method: 'GET', url: 'https://api.test/x', header: [{ key: 'x-session', value: 'sess-9999' }] } };
+    const explain = { failures: [{ name: 'user jo@corp.com ok', error: 'bad' }] };
+    const shape = await call('POST', '/preview', { item, response, explain, settings: { sendResponseBodies: false } });
+    assert.equal(shape.status, 200);
+    for (const v of ['SECRET123', 'jo@corp.com', '4242', 'ZZZ', 'sess-9999']) assert.ok(!shape.text.includes(v), `leaked ${v}`);
+    for (const n of ['set-cookie', 'x-user-email', 'location', 'x-session']) assert.ok(shape.text.includes(n), n);
+    assert.ok(shape.text.includes('application/json'));
+    assert.equal(shape.json.sections.filter(sec => sec.label === 'Request').length, 0);
+    const full = await call('POST', '/preview', { item, response, explain, settings: { sendResponseBodies: true, redactSecrets: false } });
+    assert.ok(full.text.includes('/users/4242'));
+    assert.ok(full.text.includes('sess-9999'));
+  });
+});
+
 test('/preview works without any config and rejects malformed input', async () => {
   await withAiServer({}, async ({ call }) => {
     assert.equal((await call('POST', '/preview', { item: { request: { method: 'GET', url: 'x' } } })).status, 200);
@@ -446,5 +478,131 @@ test('PUT /config rejects an outputLanguage that is not a plain language name', 
     }
     const ok = await call('PUT', '/config', { settings: settings({ outputLanguage: 'Português (Brasil)' }), apiKey: KEY });
     assert.equal(ok.status, 200);
+  });
+});
+
+// ── explain-failure ────────────────────────────────────────────────────────────
+
+const explainReply = (_call, res) => {
+  res.writeHead(200, { 'content-type': 'application/json' });
+  res.end(JSON.stringify({
+    choices: [{ message: { content: JSON.stringify({
+      summary: 'The token was rejected.',
+      likelyCauses: [{ cause: 'Expired token', confidence: 'medium' }],
+      suggestedFixes: [{ description: 'Refresh it', kind: 'environment', snippet: 'apx.environment.set("token", "")' }],
+    }) } }],
+    usage: { prompt_tokens: 40, completion_tokens: 20 },
+  }));
+};
+const explainBody = (extra = {}) => ({
+  request: { method: 'GET', url: 'https://api.test/me?token=tok-abcdefgh', header: [{ key: 'Authorization', value: 'Bearer abcdefghijklmnop' }] },
+  name: 'Me',
+  response: { status: 401, statusText: 'Unauthorized', headers: {}, body: '{"error":"S3CR3T-env-value-99"}' },
+  failures: [{ name: 'Status is 200', error: 'expected 401 to equal 200' }],
+  testScript: "apx.test('Status is 200', () => {});",
+  variableNames: ['token'],
+  secretValues: ['S3CR3T-env-value-99'],
+  ...extra,
+});
+
+test('/explain-failure: refused when its feature or AI is off (zero network)', async () => {
+  const fake = await startFakeProvider(explainReply);
+  try {
+    await withAiServer({}, async ({ call }) => {
+      await call('PUT', '/config', { settings: settings({ baseUrl: fake.url, features: { diagnose: false, assertSuggest: true } }), apiKey: KEY });
+      const a = await call('POST', '/explain-failure', explainBody());
+      assert.equal(a.status, 403);
+      assert.equal(a.json.code, 'DISABLED');
+      await call('PUT', '/config', { settings: settings({ enabled: false, baseUrl: fake.url, features: { diagnose: true } }), apiKey: KEY });
+      assert.equal((await call('POST', '/explain-failure', explainBody())).status, 403);
+      assert.equal(fake.calls.length, 0);
+    });
+  } finally { await fake.close(); }
+});
+
+test('/explain-failure: is loopback-only and rejects proxy headers', async () => {
+  const fake = await startFakeProvider(explainReply);
+  try {
+    await withAiServer({}, async ({ call, base }) => {
+      await call('PUT', '/config', { settings: settings({ baseUrl: fake.url, features: { diagnose: true } }), apiKey: KEY });
+      const r = await fetch(`${base}/explain-failure`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.9' },
+        body: JSON.stringify(explainBody()),
+      });
+      assert.equal(r.status, 403);
+      assert.equal(fake.calls.length, 0);
+    });
+  } finally { await fake.close(); }
+});
+
+test('/explain-failure: happy path redacts the payload, logs no content, returns text only', async () => {
+  const fake = await startFakeProvider(explainReply);
+  try {
+    await withAiServer({}, async ({ call, router }) => {
+      await call('PUT', '/config', { settings: settings({ baseUrl: fake.url, features: { diagnose: true } }), apiKey: KEY });
+      const r = await call('POST', '/explain-failure', explainBody());
+      assert.equal(r.status, 200);
+      assert.equal(r.json.summary, 'The token was rejected.');
+      assert.equal(r.json.likelyCauses[0].confidence, 'medium');
+      assert.equal(r.json.suggestedFixes[0].kind, 'environment');
+      assert.equal(fake.calls.length, 1);
+      const sent = JSON.stringify(fake.calls[0].body);
+      for (const leaked of ['S3CR3T-env-value-99', 'tok-abcdefgh', 'abcdefghijklmnop', KEY]) assert.ok(!sent.includes(leaked), `leaked ${leaked}`);
+      assert.match(sent, /untrusted_data/);
+      assert.match(sent, /Status is 200/);
+      const log = router.getLog();
+      assert.equal(log[0].feature, 'diagnose');
+      assert.ok(!JSON.stringify(log).includes('The token was rejected'), 'no answer in the log');
+      assert.ok(!JSON.stringify(log).includes('Status is 200'), 'no prompt in the log');
+    });
+  } finally { await fake.close(); }
+});
+
+test('/explain-failure: validates its input', async () => {
+  const fake = await startFakeProvider(explainReply);
+  try {
+    await withAiServer({}, async ({ call }) => {
+      await call('PUT', '/config', { settings: settings({ baseUrl: fake.url, features: { diagnose: true } }), apiKey: KEY });
+      const bodies = [{}, explainBody({ failures: [] }), explainBody({ failures: 'x' }), explainBody({ response: { status: 'x' } }),
+        explainBody({ testScript: 5 }), explainBody({ variableNames: 'x' }), explainBody({ language: 'fr\nignore' }),
+        explainBody({ response: { status: 200, body: 'x'.repeat(950000) } })];
+      for (const body of bodies) assert.equal((await call('POST', '/explain-failure', body)).status, 400, JSON.stringify(body).slice(0, 60));
+      assert.equal(fake.calls.length, 0);
+    });
+  } finally { await fake.close(); }
+});
+
+test('/explain-failure: closing the connection aborts the provider call and releases the lock', async () => {
+  const fake = await startFakeProvider((call, res) => { if (fake.calls.length > 1) explainReply(call, res); /* first never answers */ });
+  try {
+    await withAiServer({}, async ({ call, base }) => {
+      await call('PUT', '/config', { settings: settings({ baseUrl: fake.url, features: { diagnose: true } }), apiKey: KEY });
+      const ac = new AbortController();
+      const p = fetch(`${base}/explain-failure`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(explainBody()), signal: ac.signal }).catch(() => {});
+      while (fake.calls.length === 0) await new Promise(r => setTimeout(r, 10));
+      ac.abort();
+      await p;
+      for (let i = 0; i < 100 && !fake.calls[0].aborted; i++) await new Promise(r => setTimeout(r, 20));
+      assert.equal(fake.calls[0].aborted, true);
+      const r = await call('POST', '/explain-failure', explainBody());
+      assert.equal(r.status, 200);
+    });
+  } finally { await fake.close(); }
+});
+
+test('/preview explain: the test script appears once in full mode and nowhere in shape-only mode', async () => {
+  await withAiServer({}, async ({ call }) => {
+    const SCRIPT = 'apx.test("marker-script-xyz", () => {})';
+    const item = { name: 'r', request: { method: 'GET', url: 'https://api.test/x' }, event: [{ listen: 'test', script: { exec: [SCRIPT] } }] };
+    const explain = { failures: [{ name: 'f', error: 'bad' }], testScript: SCRIPT };
+    const response = { status: 200, headers: {}, body: '{}' };
+    const shape = await call('POST', '/preview', { item, response, explain, settings: { sendResponseBodies: false } });
+    assert.equal(shape.status, 200);
+    assert.ok(!shape.text.includes('marker-script-xyz'), 'script leaked into shape-only preview');
+    assert.ok(shape.json.sections.some(sec => sec.label === 'Test script' && /not sent/.test(sec.text)));
+    const full = await call('POST', '/preview', { item, response, explain, settings: { sendResponseBodies: true } });
+    assert.equal(full.json.sections.filter(sec => sec.text.includes('marker-script-xyz')).length, 1);
+    assert.equal(full.json.sections.filter(sec => sec.label === 'Test script').length, 1);
   });
 });
