@@ -32,7 +32,11 @@ When you use an AI feature, Apilix builds a context from the active request and 
 - **Sent:** method, URL, headers, body, scripts, response status/headers/body, and the *names* of available variables.
 - **Always masked:** the values of variables marked **secret** (environment and global). They are removed from every part of the payload, including scripts and response bodies. This cannot be turned off.
 - **Masked by default:** values that look like credentials, based on their name (`token`, `password`, `api_key`, `Authorization`, cookies, …), literals assigned in scripts (`apx.environment.set('token', '…')`), and `Bearer …` literals. `{{variable}}` references are always kept as-is. Turn this off with **Mask credential-looking values**.
-- **Optional:** switch off **Send response bodies** to send only the structure (field names and types) of a response, never its values.
+- **Optional:** switch off **Send response bodies** (*shape only*) so that no response value leaves. What is sent then, per feature:
+  - **Suggest assertions** and **Explain with AI**: the body's structure only (field names and types), and **header names only** for both the response and the request, plus a small set of protocol values that carry no data: the media type of `content-type` plus `charset`, `content-length`, `content-encoding`, `cache-control`, and the scheme word of `www-authenticate`. Every other header value (cookies, `location`, custom headers) is withheld. Explain also masks values in failure messages and does not send the test script (see below).
+  - **Documentation descriptions**: a saved example response is sent as its structure (`bodyShape`), not its text.
+  - **Generate a request from a sentence**: no response is involved, so the setting does not change it. The request being modified and its neighbours are sent with their headers and bodies (credential values masked as usual), because the request is what you are asking the model to work on.
+  - **See what will be sent** applies the same reduction, so the preview shows exactly the headers and body structure that would leave.
 - **Size:** payloads are truncated to **Max context (tokens)** (default 8000; arrays and deep nesting are shortened first).
 
 Use **See what will be sent** in Settings → AI to see the exact, masked payload for your active request. The preview makes no call to the AI provider.
@@ -65,7 +69,7 @@ AI-written descriptions in exported docs carry a mark (HTML badge, Markdown note
 
 The **Suggest tests** panel always offers local, deterministic suggestions (status, headers, field types, formats). With the feature on, **Improve with AI** adds model suggestions: allowed values of enum-like fields, invariants between fields (a total equal to the sum of its items), volatile fields left out, readable titles.
 
-- Nothing is sent when the panel opens. The call happens only when you click the button, and the panel says where the request and response go. With **Send response bodies** off, only the structure of the body is sent.
+- Nothing is sent when the panel opens. The call happens only when you click the button, and the panel says where the request and response go. With **Send response bodies** off, only the structure of the body is sent, and header values are replaced by names (plus a few protocol values, see above).
 - **Where isolation is available, every suggestion is test-run before you see it.** The server runs each script, offline, in an isolated child process (see below), on the very response that inspired it. A suggestion that fails, does not parse, registers no test, or saves nothing (for captures) is dropped; the panel says how many were dropped. **Where isolation cannot be proven, nothing is run** ("parse-only" mode, see below): suggestions are only screened and syntax-checked, carry a **not executed** badge, may fail on this response, and are never pre-selected. Local suggestions stay as the fallback: if AI is off or the call fails, you still get them.
 - AI suggestions carry an **AI** badge. Suggestions that may change between runs are flagged and never pre-checked; nothing is added to your script until you click **Add**, and a test already in the script is never duplicated.
 

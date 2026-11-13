@@ -75,3 +75,16 @@ test('empty input yields no sections', () => {
   assert.deepEqual(r.sections, []);
   assert.equal(r.redactions, 0);
 });
+
+test('shape-only preview shows header names and allowlisted values only, like the payload', () => {
+  const input = {
+    item: { request: { method: 'GET', url: 'https://api.test/x', header: [{ key: 'x-session', value: 'sess-9999' }] } },
+    response: { status: 200, headers: { 'content-type': 'application/json', 'set-cookie': 'sid=SECRET123', location: '/users/4242' }, body: '{"email":"john.doe@corp.com"}' },
+  };
+  const shape = JSON.stringify(buildPreviewContext({ ...input, settings: { sendResponseBodies: false } }).sections);
+  for (const v of ['SECRET123', '4242', 'sess-9999', 'john.doe']) assert.ok(!shape.includes(v), `leaked ${v}`);
+  for (const n of ['set-cookie', 'location', 'x-session']) assert.ok(shape.includes(n), n);
+  assert.ok(shape.includes('application/json'));
+  const full = JSON.stringify(buildPreviewContext({ ...input, settings: { sendResponseBodies: true, redactSecrets: false } }).sections);
+  assert.ok(full.includes('/users/4242') && full.includes('sess-9999'));
+});

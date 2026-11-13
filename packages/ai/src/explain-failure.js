@@ -16,7 +16,8 @@ const { estimateTokens, truncateText, truncateJson } = require('./budget');
 const { redactRequest, redactResponse, redactScript, scrubSecretValues, scrubTokenPatterns } = require('./redact');
 const { buildShapeSchema } = require('./context');
 const { getPrompt } = require('./prompts');
-const { clip, trimHeaders, trimRequest, normalizeLatency } = require('./assert-suggest');
+const { normalizeLatency } = require('./assert-suggest');
+const { clip, prepareResponseHeaders, prepareRequest } = require('./shape');
 
 const CONFIDENCES = ['low', 'medium', 'high'];
 const FIX_KINDS = ['assertion', 'request', 'environment', 'other'];
@@ -80,60 +81,6 @@ function prepareFailures(failures, shapeOnly) {
     name: clip(shapeOnly ? maskLiterals(f.name) : f.name, MAX_FAILURE_NAME_CHARS),
     error: clip(shapeOnly ? maskLiterals(f.error) : f.error, MAX_FAILURE_ERROR_CHARS),
   }));
-}
-
-const MAX_SHAPE_HEADER_NAMES = 50;
-
-/**
- * Shape-only header values that are protocol metadata and safe to send. Each sanitizer returns the
- * value to send, or '' to send the name only (a value that does not look as expected is never sent).
- */
-const SAFE_HEADER_VALUES = {
-  'content-type': v => {
-    const [media, ...params] = v.split(';').map(x => x.trim());
-    if (!/^[\w.+-]+\/[\w.+-]+$/.test(media)) return '';
-    const charset = params.find(p => /^charset=[\w.-]+$/i.test(p));
-    return charset ? `${media}; ${charset}` : media;
-  },
-  'content-length': v => (/^\d{1,12}$/.test(v.trim()) ? v.trim() : ''),
-  'content-encoding': v => (/^[\w, -]{1,40}$/.test(v) ? v.trim() : ''),
-  'cache-control': v => (/^[\w=, -]{1,100}$/.test(v) ? v.trim() : ''),
-  'www-authenticate': v => {
-    const m = /^\s*([A-Za-z][\w-]{0,30})(?:\s|$)/.exec(v);
-    return m ? m[1] : '';
-  },
-};
-
-/** [name, value] pairs as they leave in shape-only mode: every name, values only for the allowlist. */
-function shapeHeaders(pairs) {
-  const names = [];
-  const values = {};
-  for (const [k, v] of pairs) {
-    if (typeof k !== 'string' || !k) continue;
-    if (names.length >= MAX_SHAPE_HEADER_NAMES) break;
-    const name = clip(k, 100);
-    names.push(name);
-    const sanitize = SAFE_HEADER_VALUES[name.toLowerCase()];
-    const raw = Array.isArray(v) ? v.join(', ') : v;
-    const safe = sanitize && typeof raw === 'string' ? sanitize(raw) : '';
-    if (safe) values[name] = safe;
-  }
-  return { names, values };
-}
-
-/** Response headers as they leave (already redacted): trimmed in full mode, names + allowlist in shape-only. */
-function prepareResponseHeaders(headers, shapeOnly) {
-  if (!shapeOnly) return trimHeaders(headers);
-  return shapeHeaders(Object.entries(headers && typeof headers === 'object' ? headers : {}));
-}
-
-/** The request as it leaves (already redacted); shape-only reduces its headers the same way. */
-function prepareRequest(redReq, name, shapeOnly) {
-  const out = trimRequest(redReq, name);
-  if (shapeOnly && Array.isArray(redReq.header)) {
-    out.headers = shapeHeaders(redReq.header.filter(h => h && h.key && !h.disabled).map(h => [h.key, h.value]));
-  }
-  return out;
 }
 
 /** The test script as it leaves, or undefined when it is not sent (never in shape-only mode). */

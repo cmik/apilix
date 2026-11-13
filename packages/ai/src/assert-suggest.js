@@ -14,6 +14,7 @@ const { AiError } = require('./errors');
 const { estimateTokens, truncateText, truncateJson } = require('./budget');
 const { redactRequest, redactResponse, redactScript, scrubSecretValues, scrubTokenPatterns } = require('./redact');
 const { buildShapeSchema } = require('./context');
+const { clip, trimHeaders, trimRequest, prepareResponseHeaders, prepareRequest } = require('./shape');
 const { getPrompt } = require('./prompts');
 const crypto = require('crypto');
 const { dryRunScript } = require('./dry-run');
@@ -26,18 +27,8 @@ const MAX_SCRIPT_CHARS = 4000;
 const MAX_DISCARDED_REPORTED = 10;
 const DRY_RUN_BUDGET_MS = 20000;
 const OUTPUT_RESERVE_TOKENS = 3000;
-const MAX_URL_CHARS = 300;
-const MAX_NAME_CHARS = 200;
-const MAX_HEADERS = 25;
-const MAX_HEADER_VALUE_CHARS = 150;
-const MAX_REQUEST_BODY_CHARS = 800;
 const MAX_EXISTING_TESTS_CHARS = 1500;
 const MIN_BODY_TOKENS = 50;
-
-function clip(v, max) {
-  const s = v === undefined || v === null ? '' : String(v);
-  return s.length > max ? `${s.slice(0, max)}…` : s;
-}
 
 const MAX_RESPONSE_TIME_MS = 600000;
 
@@ -51,36 +42,13 @@ function tryParse(text) {
   try { return { ok: true, value: JSON.parse(text) }; } catch { return { ok: false }; }
 }
 
-function trimHeaders(headers) {
-  const out = {};
-  let n = 0;
-  for (const [k, v] of Object.entries(headers && typeof headers === 'object' ? headers : {})) {
-    if (n++ >= MAX_HEADERS) break;
-    out[clip(k, 100)] = clip(Array.isArray(v) ? v.join(', ') : v, MAX_HEADER_VALUE_CHARS);
-  }
-  return out;
-}
-
-function trimRequest(redacted, name) {
-  const out = { name: clip(name, MAX_NAME_CHARS), method: redacted.method, url: clip(redacted.url, MAX_URL_CHARS) };
-  if (Array.isArray(redacted.header)) {
-    out.headers = redacted.header.filter(h => h && h.key && !h.disabled).slice(0, MAX_HEADERS).map(h => ({ key: clip(h.key, 100), value: clip(h.value, MAX_HEADER_VALUE_CHARS) }));
-  }
-  const b = redacted.body;
-  if (b && b.mode === 'raw' && typeof b.raw === 'string') out.body = clip(b.raw, MAX_REQUEST_BODY_CHARS);
-  else if (b && (b.mode === 'formdata' || b.mode === 'urlencoded')) {
-    out.body = (b[b.mode] || []).slice(0, 20).map(p => ({ key: clip(p.key, 100) }));
-  }
-  return out;
-}
-
 /** The text sent for one budget level. Returns the data object and whether the body was cut. */
 function buildData({ request, name, response, existingTests, secretValues, redactSecrets, sendResponseBodies, bodyTokens, includeExisting }) {
   const redReq = redactRequest(request || {}, { secretValues, redactSecrets });
   const redRes = redactResponse(response || {}, { secretValues, redactSecrets });
   const data = {
-    request: trimRequest(redReq, name),
-    response: { status: redRes.status, statusText: clip(redRes.statusText, 80), headers: trimHeaders(redRes.headers) },
+    request: prepareRequest(redReq, name, sendResponseBodies === false),
+    response: { status: redRes.status, statusText: clip(redRes.statusText, 80), headers: prepareResponseHeaders(redRes.headers, sendResponseBodies === false) },
   };
   // A bare number: it carries no secret, so it does not go through redaction.
   const latency = normalizeLatency(response && response.responseTime);

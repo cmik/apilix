@@ -245,6 +245,7 @@ function createAiRouter(deps = {}) {
       language: language ? language.trim() : settings.outputLanguage,
       maxContextTokens: settings.maxContextTokens,
       redactSecrets: settings.redactSecrets,
+      sendResponseBodies: settings.sendResponseBodies,
       secretValues: (secretValues || []).slice(0, 1000).filter(x => typeof x === 'string'),
       signal,
     });

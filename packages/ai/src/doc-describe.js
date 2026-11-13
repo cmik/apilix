@@ -10,6 +10,7 @@
 
 const { neutralizeAiText } = require('@apilix/core/docs');
 const { AiError } = require('./errors');
+const { buildShapeSchema } = require('./context');
 const { estimateTokens, truncateText } = require('./budget');
 const { scrubSecretValues, scrubTokenPatterns, REDACTED } = require('./redact');
 const { getPrompt } = require('./prompts');
@@ -41,8 +42,14 @@ function missing(list, skip) {
   return (Array.isArray(list) ? list : []).filter(e => e && e.key && !e.description && !(skip && skip(e)));
 }
 
+/** Structure of a saved example body: types for JSON, a length for anything else. */
+function exampleShape(body) {
+  const text = typeof body === 'string' ? body : JSON.stringify(body);
+  try { return buildShapeSchema(JSON.parse(text)); } catch { return { type: 'text', length: text.length }; }
+}
+
 /** Entries (collection, folders, requests) that lack a description or have undocumented parameters. */
-function collectEntries(model, warnings, stats) {
+function collectEntries(model, warnings, stats, { shapeOnly = false } = {}) {
   const entries = [];
   if (!model.description) entries.push({ id: COLLECTION_KEY, kind: 'collection', name: clip(model.title, MAX_NAME_CHARS) });
   const walk = (nodes, trail) => {
@@ -80,7 +87,12 @@ function collectEntries(model, warnings, stats) {
       };
       if (r.body && r.body.mode === 'raw' && r.body.raw) entry.body = truncateText(r.body.raw, 250).text;
       const ex = (r.examples || []).find(e => e.body);
-      if (ex) entry.exampleResponse = { status: ex.status || ex.code, body: truncateText(ex.body, 200).text };
+      if (ex) {
+        // Shape-only: a saved example response is response data, so only its structure leaves.
+        entry.exampleResponse = shapeOnly
+          ? { status: ex.status || ex.code, bodyShape: exampleShape(ex.body) }
+          : { status: ex.status || ex.code, body: truncateText(ex.body, 200).text };
+      }
       entries.push(entry);
     }
   }
@@ -174,15 +186,15 @@ function sanitizeAnswer(batch, items) {
 
 /**
  * @param {{ provider: { complete: Function }, model: object, language?: string,
- *   maxContextTokens?: number, secretValues?: string[], redactSecrets?: boolean, signal?: AbortSignal }} input
+ *   maxContextTokens?: number, secretValues?: string[], redactSecrets?: boolean, sendResponseBodies?: boolean, signal?: AbortSignal }} input
  * @returns {Promise<{ descriptions: Record<string, {description?: string, params?: Record<string,string>}>,
  *   warnings: string[], usage: {inputTokens:number, outputTokens:number}, requested: number,
  *   failedBatches: number, skipped: number }>}
  */
-async function describeDocs({ provider, model, language, maxContextTokens, secretValues, redactSecrets, signal }) {
+async function describeDocs({ provider, model, language, maxContextTokens, secretValues, redactSecrets, sendResponseBodies, signal }) {
   const warnings = [];
   const stats = { skipped: 0 };
-  const entries = collectEntries(model, warnings, stats);
+  const entries = collectEntries(model, warnings, stats, { shapeOnly: sendResponseBodies === false });
   const usage = { inputTokens: 0, outputTokens: 0 };
   if (!entries.length) return { descriptions: {}, warnings, usage, requested: 0, failedBatches: 0, skipped: stats.skipped };
 

@@ -2,6 +2,7 @@
 
 const { redactContext } = require('./redact');
 const { estimateTokens, truncateText, truncateJson } = require('./budget');
+const { prepareResponseHeaders, shapeRequestHeaderList } = require('./shape');
 
 const DEFAULT_MAX_CONTEXT_TOKENS = 8000;
 
@@ -32,6 +33,11 @@ function itemScripts(item) {
     if (text.trim()) scripts[ev.listen === 'test' ? 'test' : 'preRequest'] = text;
   }
   return scripts;
+}
+
+/** Full mode keeps the redacted headers as they are; shape-only shows what the payload sends. */
+function prepareResponseHeadersForPreview(headers, shapeOnly) {
+  return shapeOnly ? prepareResponseHeaders(headers, true) : headers;
 }
 
 function tryParse(text) {
@@ -67,7 +73,14 @@ function buildPreviewContext(input = {}) {
     push(label, t.text, t.truncated);
   };
 
-  if (value.request) pushText('Request', JSON.stringify(value.request, null, 2));
+  const shapeOnly = settings.sendResponseBodies === false;
+  if (value.request) {
+    // Shape-only: request header values are not sent either (names + protocol metadata only), same as the payload.
+    const req = shapeOnly && Array.isArray(value.request.header)
+      ? { ...value.request, header: shapeRequestHeaderList(value.request.header) }
+      : value.request;
+    pushText('Request', JSON.stringify(req, null, 2));
+  }
   if (value.scripts) {
     for (const [name, src] of Object.entries(value.scripts)) {
       pushText(name === 'test' ? 'Test script' : 'Pre-request script', src);
@@ -75,11 +88,11 @@ function buildPreviewContext(input = {}) {
   }
 
   if (value.response) {
-    const head = JSON.stringify({ status: value.response.status, statusText: value.response.statusText, headers: value.response.headers }, null, 2);
+    const head = JSON.stringify({ status: value.response.status, statusText: value.response.statusText, headers: prepareResponseHeadersForPreview(value.response.headers, shapeOnly) }, null, 2);
     pushText('Response (status and headers)', head);
     const body = typeof value.response.body === 'string' ? value.response.body : '';
     const parsed = tryParse(body);
-    if (settings.sendResponseBodies === false) {
+    if (shapeOnly) {
       const shape = parsed.ok ? buildShapeSchema(parsed.value) : { type: 'text', length: body.length };
       pushText('Response body (shape only)', JSON.stringify(shape, null, 2));
     } else if (parsed.ok) {
