@@ -67,6 +67,41 @@ const SCHEMAS = {
     required: ['suggestions'],
     additionalProperties: false,
   },
+  explainFailure: {
+    type: 'object',
+    properties: {
+      summary: { type: 'string', minLength: 1, maxLength: 600 },
+      likelyCauses: {
+        type: 'array',
+        maxItems: 4,
+        items: {
+          type: 'object',
+          properties: {
+            cause: { type: 'string', minLength: 1, maxLength: 400 },
+            confidence: { type: 'string', enum: ['low', 'medium', 'high'] },
+          },
+          required: ['cause', 'confidence'],
+          additionalProperties: false,
+        },
+      },
+      suggestedFixes: {
+        type: 'array',
+        maxItems: 4,
+        items: {
+          type: 'object',
+          properties: {
+            description: { type: 'string', minLength: 1, maxLength: 400 },
+            kind: { type: 'string', enum: ['assertion', 'request', 'environment', 'other'] },
+            snippet: { type: 'string', maxLength: 1500 },
+          },
+          required: ['description', 'kind'],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ['summary', 'likelyCauses', 'suggestedFixes'],
+    additionalProperties: false,
+  },
   requestDraft: {
     type: 'object',
     properties: {
