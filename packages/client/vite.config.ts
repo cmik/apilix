@@ -41,6 +41,12 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:3001',
         changeOrigin: true,
+        // Forward a client abort (Cancel on an AI call) to the API server so it can release its lock and stop the provider call.
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq, _req, res) => {
+            res.on('close', () => { if (!res.writableEnded) proxyReq.destroy(); });
+          });
+        },
       },
     },
   },
