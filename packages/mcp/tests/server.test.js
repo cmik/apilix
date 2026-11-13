@@ -357,3 +357,28 @@ test('--allow-host host: (empty port) exits 2; --unsafe-allow-write-and-run alon
   assert.equal((await alone.close()).code, 0);
   assert.match(alone.stderr, /--unsafe-allow-write-and-run has no effect/);
 });
+
+test('environments and resources are paginated beyond 200 entries; scan truncation is surfaced', async () => {
+  const dir = makeTmp();
+  writeJson(dir, 'demo.postman_collection.json', collectionFixture());
+  writeJson(dir, 'many.json', { environments: Array.from({ length: 250 }, (_, i) => ({ name: `Env${String(i).padStart(3, '0')}`, values: [] })) });
+  await withServer([], async (s) => {
+    const p1 = (await s.call('list_collections')).data;
+    assert.equal(p1.totalEnvironments, 250);
+    assert.equal(p1.environments.length, 200);
+    assert.equal(p1.nextEnvOffset, 200);
+    assert.equal(p1.scanTruncated, false);
+    const p2 = (await s.call('list_collections', { envOffset: 200 })).data;
+    assert.equal(p2.environments.length, 50);
+    assert.equal(p2.nextEnvOffset, null);
+    const ids = new Set([...p1.environments, ...p2.environments].map((e) => e.id));
+    assert.equal(ids.size, 250);
+    const r1 = await s.request('resources/list', {});
+    assert.equal(r1.result.resources.length, 200);
+    assert.equal(r1.result.nextCursor, '200');
+    const r2 = await s.request('resources/list', { cursor: r1.result.nextCursor });
+    assert.equal(r2.result.resources.length, 51);
+    assert.equal(r2.result.nextCursor, undefined);
+    assert.ok((await s.request('resources/list', { cursor: 'abc' })).error);
+  }, dir);
+});

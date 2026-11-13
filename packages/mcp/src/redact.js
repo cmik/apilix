@@ -124,8 +124,12 @@ function createRedactor({ includeCredentials = false } = {}) {
         for (const h of Array.isArray(req.header) ? req.header : []) {
           if (h && typeof h.value === 'string' && core.isSensitiveHeader(h.key)) {
             add(softSecrets, h.value);
-            const m = /^(?:bearer|basic|token)\s+(.+)$/i.exec(h.value);
-            if (m) add(softSecrets, m[1]);
+            const sp = h.value.search(/\s/); // linear: scheme, then the rest after the whitespace run
+            if (sp > 0 && /^(?:bearer|basic|token)$/i.test(h.value.slice(0, sp))) {
+              let k = sp;
+              while (k < h.value.length && /\s/.test(h.value[k])) k += 1;
+              if (k < h.value.length) add(softSecrets, h.value.slice(k));
+            }
           }
         }
       }

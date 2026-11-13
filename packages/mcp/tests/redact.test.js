@@ -126,3 +126,11 @@ test('JSON-escaped form of a secret is masked too (quotes, backslashes, newlines
   assert.ok(!out.includes(escaped), out);
   assert.ok(!r.scrub(JSON.stringify({ echo: secret })).includes(escaped));
 });
+
+test('header scheme parsing is linear on long whitespace runs', () => {
+  const r = createRedactor();
+  const t = Date.now();
+  r.addCollection({ item: [{ name: 'x', request: { method: 'GET', url: 'http://a', header: [{ key: 'Authorization', value: 'basic ' + ' '.repeat(200000) + '!' }, { key: 'Authorization', value: 'Bearer   tok-123456789' }] } }] });
+  assert.ok(Date.now() - t < 1000);
+  assert.ok(!r.scrub('x tok-123456789 y').includes('tok-123456789'));
+});

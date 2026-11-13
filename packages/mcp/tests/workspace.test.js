@@ -283,3 +283,34 @@ test('the scan cache forgets files that disappeared', async () => {
   assert.equal((await ws.index()).collections.length, before);
   assert.equal(ws.cacheSize(), n);
 });
+
+test('an in-root symlink cannot reach a hidden or skipped folder (exclusions apply to the resolved path)', { skip: IS_WIN }, async () => {
+  const dir = makeTmp();
+  writeJson(dir, '.private/secret.postman_collection.json', collectionFixture());
+  writeJson(dir, 'node_modules/pkg/c.json', collectionFixture());
+  fs.symlinkSync(path.join(dir, '.private'), path.join(dir, 'visible-link'));
+  fs.symlinkSync(path.join(dir, 'node_modules'), path.join(dir, 'nm-link'));
+  const ws = await createWorkspaces({ roots: [dir], maxFileBytes: 1024 * 1024 });
+  await assert.rejects(ws.loadCollection('visible-link/secret.postman_collection.json'), /not found/i);
+  await assert.rejects(ws.loadCollection('nm-link/pkg/c.json'), /not found/i);
+});
+
+test('an in-root symlink to a normal folder still resolves', { skip: IS_WIN }, async () => {
+  const dir = makeTmp();
+  writeJson(dir, 'real/a.postman_collection.json', collectionFixture());
+  fs.symlinkSync(path.join(dir, 'real'), path.join(dir, 'alias'));
+  const ws = await createWorkspaces({ roots: [dir], maxFileBytes: 1024 * 1024 });
+  const c = await ws.loadCollection('alias/a.postman_collection.json');
+  assert.ok(c.value.info);
+});
+
+test('index reports scanTruncated when the file cap is reached', async () => {
+  const dir = makeTmp();
+  for (let i = 0; i < 1005; i++) fs.writeFileSync(path.join(dir, `f${String(i).padStart(4, '0')}.json`), '{}');
+  const ws = await createWorkspaces({ roots: [dir], maxFileBytes: 1024 * 1024 });
+  assert.equal((await ws.index()).scanTruncated, true);
+  const small = makeTmp();
+  writeJson(small, 'a.json', collectionFixture());
+  const ws2 = await createWorkspaces({ roots: [small], maxFileBytes: 1024 * 1024 });
+  assert.equal((await ws2.index()).scanTruncated, false);
+});

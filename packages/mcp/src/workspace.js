@@ -175,6 +175,11 @@ async function createWorkspaces({ roots, maxFileBytes, explicit = true }) {
     let before;
     try { before = await fs.realpath(abs); } catch { throw new WorkspaceError(NOT_FOUND, 'ENOTFOUND'); }
     if (!isInside(root.real, before) || before === root.real) throw new WorkspaceError(NOT_FOUND, 'ENOTFOUND');
+    // An in-root symlink must not reach what the scan skips: apply the same exclusions to the RESOLVED path.
+    const resolvedSegs = path.relative(root.real, before).split(path.sep);
+    if (resolvedSegs.length - 1 > MAX_SCAN_DEPTH
+      || resolvedSegs.slice(0, -1).some((seg) => seg.startsWith('.') || SKIP_DIRS.has(seg))
+      || SKIP_FILES.test(resolvedSegs[resolvedSegs.length - 1])) throw new WorkspaceError(NOT_FOUND, 'ENOTFOUND');
     let fh;
     try {
       fh = await fs.open(before, fsc.O_RDONLY | (fsc.O_NOFOLLOW || 0));
@@ -213,13 +218,15 @@ async function createWorkspaces({ roots, maxFileBytes, explicit = true }) {
     let visited = 0;
     let skipped = 0;
     let scannedBytes = 0;
+    let truncated = false;
     async function walk(dir, relDir, depth) {
-      if (depth > MAX_SCAN_DEPTH || visited >= MAX_SCAN_FILES) return;
+      if (depth > MAX_SCAN_DEPTH) return;
+      if (visited >= MAX_SCAN_FILES) { truncated = true; return; }
       let entries;
       try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return; }
       entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
       for (const ent of entries) {
-        if (visited >= MAX_SCAN_FILES) return;
+        if (visited >= MAX_SCAN_FILES) { truncated = true; return; }
         if (ent.isSymbolicLink()) continue; // never traverse or list symlinks
         const rel = relDir ? `${relDir}/${ent.name}` : ent.name;
         if (ent.isDirectory()) {
@@ -233,7 +240,7 @@ async function createWorkspaces({ roots, maxFileBytes, explicit = true }) {
           try { st = await fs.stat(abs); } catch { continue; }
           if (st.size > maxFileBytes) { skipped += 1; continue; }
           scannedBytes += st.size;
-          if (scannedBytes > MAX_SCAN_BYTES) return;
+          if (scannedBytes > MAX_SCAN_BYTES) { truncated = true; return; }
           seen.add(abs);
           let cached = scanCache.get(abs);
           if (!cached || cached.mtimeMs !== st.mtimeMs || cached.size !== st.size) {
@@ -258,22 +265,25 @@ async function createWorkspaces({ roots, maxFileBytes, explicit = true }) {
     // forget files that disappeared (or became unreadable/oversized) so the cache cannot grow without bound
     const prefix = root.real.endsWith(path.sep) ? root.real : root.real + path.sep;
     for (const key of [...scanCache.keys()]) if (key.startsWith(prefix) && !seen.has(key)) scanCache.delete(key);
-    return { found, skipped };
+    return { found, skipped, truncated };
   }
 
   /** Index of every collection/environment reachable from the allow-listed roots. */
   async function index() {
     const entries = [];
     let skippedLarge = 0;
+    let scanTruncated = false;
     for (const root of resolved) {
       const r = await scanRoot(root);
       entries.push(...r.found);
       skippedLarge += r.skipped;
+      if (r.truncated) scanTruncated = true;
     }
     return {
       collections: entries.filter((e) => e.kind === 'collection'),
       environments: entries.filter((e) => e.kind === 'environment'),
       skippedLarge,
+      scanTruncated,
     };
   }
 

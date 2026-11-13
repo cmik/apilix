@@ -84,6 +84,8 @@ const tools = [
       properties: {
         offset: { type: 'integer', minimum: 0, maximum: 100000, description: 'Pagination offset (default 0).' },
         limit: { type: 'integer', minimum: 1, maximum: 200, description: 'Page size (default 100).' },
+        envOffset: { type: 'integer', minimum: 0, maximum: 100000, description: 'Pagination offset for environments (default 0).' },
+        envLimit: { type: 'integer', minimum: 1, maximum: 200, description: 'Environments page size (default 200).' },
       },
     },
     annotations: READ_ONLY,
@@ -101,7 +103,10 @@ const tools = [
           description: c.value.info.description ? ctx.redactor.text(String(c.value.info.description), 300) : undefined,
         };
       });
-      const envs = idx.environments.slice().sort((a, b) => (a.id < b.id ? -1 : 1)).slice(0, 200).map(envSummary);
+      const envOffset = Number.isInteger(args.envOffset) && args.envOffset >= 0 ? args.envOffset : 0;
+      const envLimit = Number.isInteger(args.envLimit) && args.envLimit >= 1 ? Math.min(args.envLimit, 200) : 200;
+      const allEnvs = idx.environments.slice().sort((a, b) => (a.id < b.id ? -1 : 1));
+      const envs = allEnvs.slice(envOffset, envOffset + envLimit).map(envSummary);
       return {
         untrustedContent: true,
         workspaces: ctx.workspaces.labels,
@@ -110,6 +115,8 @@ const tools = [
         nextOffset: offset + limit < cols.length ? offset + limit : null,
         environments: envs,
         totalEnvironments: idx.environments.length,
+        nextEnvOffset: envOffset + envLimit < allEnvs.length ? envOffset + envLimit : null,
+        scanTruncated: idx.scanTruncated,
         skippedOversizeFiles: idx.skippedLarge,
       };
     },

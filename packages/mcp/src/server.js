@@ -112,14 +112,22 @@ function createMcpServer(cfg) {
     },
     'tools/call': (params, extra) => callTool(params, extra),
     'resources/list': async (params) => {
-      if (params && params.cursor !== undefined && params.cursor !== '') throw new RpcError(CODES.INVALID_PARAMS, 'Invalid cursor');
+      let start = 0;
+      if (params && params.cursor !== undefined && params.cursor !== '') {
+        if (typeof params.cursor !== 'string' || !/^\d{1,6}$/.test(params.cursor)) throw new RpcError(CODES.INVALID_PARAMS, 'Invalid cursor');
+        start = Number(params.cursor);
+      }
       await refreshSecrets();
       const idx = await workspaces.index();
-      const resources = [
-        ...idx.collections.slice(0, 200).map((c) => ({ uri: `apilix://collection/${encodeURIComponent(c.id)}`, name: redactor.text(c.name, 200), mimeType: 'application/json', description: 'Redacted collection definition (read-only).' })),
-        ...idx.environments.slice(0, 200).map((e) => ({ uri: `apilix://environment/${encodeURIComponent(e.id)}`, name: redactor.text(`${e.name} (environment)`, 200), mimeType: 'application/json', description: 'Environment variables; secret values are never returned.' })),
+      const byId = (a, b) => (a.id < b.id ? -1 : 1);
+      const all = [
+        ...idx.collections.slice().sort(byId).map((c) => ({ uri: `apilix://collection/${encodeURIComponent(c.id)}`, name: redactor.text(c.name, 200), mimeType: 'application/json', description: 'Redacted collection definition (read-only).' })),
+        ...idx.environments.slice().sort(byId).map((e) => ({ uri: `apilix://environment/${encodeURIComponent(e.id)}`, name: redactor.text(`${e.name} (environment)`, 200), mimeType: 'application/json', description: 'Environment variables; secret values are never returned.' })),
       ];
-      return { resources };
+      const PAGE = 200;
+      const result = { resources: all.slice(start, start + PAGE) };
+      if (start + PAGE < all.length) result.nextCursor = String(start + PAGE);
+      return result;
     },
     'resources/templates/list': () => ({ resourceTemplates: [] }),
     'resources/read': async (params) => {
