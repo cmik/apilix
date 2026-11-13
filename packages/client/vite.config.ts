@@ -32,6 +32,8 @@ export default defineConfig({
   },
   optimizeDeps: {
     include: ['@apilix/core/variable-resolver', '@apilix/core/docs'],
+    // These workspace packages change with branch switches; a stale prebundle gives "x is not a function" at runtime.
+    force: true,
   },
   server: {
     port: 5173,
