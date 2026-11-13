@@ -112,3 +112,33 @@ test('a REAL request that never gets an answer keeps the run alive past the hard
   const next = await exec.runTree(ctx, job(api));
   assert.equal(next.results[0].status, 200);
 });
+
+test('M16: an exhausted run-time budget is a clean refusal and nothing is sent', async (t) => {
+  const api = await api4(t);
+  const session = exec.createSession();
+  session.msUsed = 20000;
+  const ctx = { opts: { maxRequests: 100, maxRunSeconds: 20, requestTimeoutMs: 1000, sslVerification: false }, session, log() {} };
+  await assert.rejects(exec.runTree(ctx, job(api)), (e) => e.expected === true && /run-time budget exhausted/.test(e.message));
+  assert.equal(api.hits['/ping'] || 0, 0);
+  session.msUsed = 19999; // one ms left: still allowed (the budget is not exhausted)
+  const out = await exec.runTree(ctx, job(api));
+  assert.equal(out.results.length, 1);
+});
+
+test('M17: the remaining run-time budget bounds the timeout handed to the engine', async (t) => {
+  const api = await api4(t);
+  const session = exec.createSession();
+  session.msUsed = 15000;
+  const ctx = { opts: { maxRequests: 100, maxRunSeconds: 20, requestTimeoutMs: 60000, sslVerification: false }, session, log() {} };
+  const seen = [];
+  const real = core.setExecutorConfig;
+  core.setExecutorConfig = (c) => { seen.push(c.requestTimeout); return real(c); };
+  t.after(() => { core.setExecutorConfig = real; });
+  await exec.runTree(ctx, job(api, { timeoutMs: 50000 }));
+  assert.deepEqual(seen, [5000], 'bounded to the 5 s that remain, not to the 50 s asked for');
+  // never below the 1 s floor, even with less than a second left (documented overshoot)
+  session.msUsed = 19500;
+  seen.length = 0;
+  await exec.runTree(ctx, job(api, { timeoutMs: 50000 }));
+  assert.deepEqual(seen, [1000]);
+});

@@ -26,6 +26,7 @@ async function setup(flags) {
     variable: [{ key: 'host', value: host }, { key: 'tokc', value: `${api.base}/token` }],
     item: [
       { name: 'PathId', id: 'pathid', request: { method: 'GET', url: '{{base}}/p/{{id}}', header: secretHeader } },
+      { name: 'Redirect', id: 'redirect', request: { method: 'GET', url: '{{base}}/redirect', header: secretHeader } },
       { name: 'Plain', id: 'plain', request: { method: 'GET', url: '{{base}}/echo', header: secretHeader } },
       { name: 'NoBase', id: 'nobase', request: { method: 'GET', url: 'http://{{nbhost}}/echo/{{id}}', header: secretHeader } },
       { name: 'NoBaseQ', id: 'nobaseq', request: { method: 'GET', url: 'http://{{nbhost}}/echo?k={{k}}', header: secretHeader } },
@@ -125,6 +126,21 @@ test('previous scenario still holds: a secret header with data.base pointing at 
       assert.equal(r.isError, true, `${request}: ${r.text}`);
     }
     assert.deepEqual(attacker.hits, {});
+  });
+});
+
+test('a redirect hop to a host outside --allow-host is blocked by the socket guard; with both hosts allowed it is followed', async (t) => {
+  await withSetup(t, ['--allow-host', '127.0.0.1'], async ({ s, col, env, api }) => {
+    const r = await s.call('run_request', { collection: col, request: 'Redirect', environment: env });
+    assert.equal(api.hits['/redirect'], 1);
+    assert.equal(api.hits['/landed'] || 0, 0, 'the redirect target was never contacted');
+    assert.ok(r.isError || (r.data && r.data.result && /Blocked|allow-host/i.test(String(r.data.result.error))), r.text);
+  });
+  // both hosts allowed: the engine follows the cross-origin redirect (headers go along: see the wiki, "Not guaranteed")
+  await withSetup(t, ['--allow-host', '127.0.0.1', '--allow-host', 'localhost'], async ({ s, col, env, api }) => {
+    const r = await s.call('run_request', { collection: col, request: 'Redirect', environment: env });
+    assert.equal(r.isError, false, r.text);
+    assert.equal(api.hits['/landed'], 1);
   });
 });
 
