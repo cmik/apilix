@@ -184,7 +184,7 @@ async function createWorkspaces({ roots, maxFileBytes, explicit = true }) {
     try {
       const st = await fh.stat();
       if (!st.isFile()) throw new WorkspaceError(NOT_FOUND, 'ENOTFOUND');
-      if (st.size > maxFileBytes) throw new WorkspaceError(`File is larger than the ${maxFileBytes}-byte limit`, 'ETOOLARGE');
+      if (st.size > maxFileBytes) throw new WorkspaceError(NOT_FOUND, 'ENOTFOUND'); // same answer as a missing file: nothing tells which files exist/are skipped
       let after;
       try { after = await fs.realpath(abs); } catch { throw new WorkspaceError('File changed while opening', 'ERACE'); }
       if (after !== before || !isInside(root.real, after)) throw new WorkspaceError(NOT_FOUND, 'ENOTFOUND');
@@ -200,7 +200,7 @@ async function createWorkspaces({ roots, maxFileBytes, explicit = true }) {
       let text = buf.subarray(0, off).toString('utf8');
       if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
       let doc;
-      try { doc = JSON.parse(text); } catch { throw new WorkspaceError('File is not valid JSON', 'EBADJSON'); }
+      try { doc = JSON.parse(text); } catch { throw new WorkspaceError(NOT_FOUND, 'ENOTFOUND'); }
       return { doc, stat: st, real: after };
     } finally {
       await fh.close();

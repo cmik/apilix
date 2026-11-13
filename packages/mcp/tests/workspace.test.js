@@ -92,7 +92,7 @@ test('files over the size limit are refused', async () => {
   const dir = makeTmp();
   writeJson(dir, 'big.json', JSON.stringify({ info: { name: 'b' }, item: [], pad: 'x'.repeat(5000) }));
   const ws = await createWorkspaces({ roots: [dir], maxFileBytes: 1000 });
-  await assert.rejects(ws.loadCollection('big.json'), /larger than/);
+  await assert.rejects(ws.loadCollection('big.json'), { message: 'File not found in workspace' }, 'same answer as a missing file');
   const idx = await ws.index();
   assert.equal(idx.collections.length, 0);
   assert.equal(idx.skippedLarge, 1);
@@ -103,7 +103,7 @@ test('invalid JSON and non-regular files are refused cleanly', async () => {
   writeJson(dir, 'broken.json', '{not json');
   fs.mkdirSync(path.join(dir, 'dir.json'));
   const ws = await createWorkspaces({ roots: [dir], maxFileBytes: 1000 });
-  await assert.rejects(ws.loadCollection('broken.json'), /not valid JSON/);
+  await assert.rejects(ws.loadCollection('broken.json'), { message: 'File not found in workspace' }, 'same answer as a missing file');
   await assert.rejects(ws.loadCollection('dir.json'), WorkspaceError);
   assert.deepEqual((await ws.index()).collections, []);
 });
