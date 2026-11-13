@@ -34,6 +34,9 @@ async function loadEnv(ctx, id) {
   return exec.valuesToMap(e.value.values);
 }
 
+/** What a collection's own request settings may never exceed (see buildRunTree). */
+const runLimits = (ctx) => ({ maxRequestTimeoutMs: ctx.opts.requestTimeoutMs, sslVerification: ctx.opts.sslVerification === true });
+
 function commonJob(ctx, args, extra) {
   return {
     timeoutMs: args.timeoutMs || ctx.opts.runTimeoutSec * 1000,
@@ -82,7 +85,7 @@ const tools = [
     async handler(args, ctx, extra) {
       const c = await ctx.loadCollection(args.collection);
       const entry = findNode(c.value, args.request, { type: 'request' });
-      const { collection, skippedNonHttp } = buildRunTree(c.value, entry.pos);
+      const { collection, skippedNonHttp } = buildRunTree(c.value, entry.pos, runLimits(ctx));
       if (skippedNonHttp.length) throw new exec.ExpectedError('Only HTTP requests can be run through MCP (database/MongoDB requests are not supported).');
       const environment = await loadEnv(ctx, args.environment);
       const started = new Date().toISOString();
@@ -108,6 +111,7 @@ const tools = [
         timedOut: run.timedOut || undefined,
         cancelled: run.cancelled || undefined,
         budgetExceeded: run.budgetExceeded || undefined,
+        degraded: ctx.session.degraded ? 'A previous run could not be stopped and may still be finishing in the background; results of this session may be incomplete or delayed.' : undefined,
         errors: run.errors.map((e) => ctx.redactor.text(e, 300)),
         budget: budget(ctx),
       };
@@ -148,7 +152,7 @@ const tools = [
       const c = await ctx.loadCollection(args.collection);
       let pos = null;
       if (args.folder) pos = findNode(c.value, args.folder, { type: 'folder' }).pos;
-      const { collection, skippedNonHttp } = buildRunTree(c.value, pos);
+      const { collection, skippedNonHttp } = buildRunTree(c.value, pos, runLimits(ctx));
       const environment = await loadEnv(ctx, args.environment);
       const dataRows = args.data ? args.data.map((r) => exec.stringMap(r)) : null;
       const iterations = dataRows ? dataRows.length : (args.iterations || 1);
@@ -182,6 +186,7 @@ const tools = [
         timedOut: run.timedOut || undefined,
         cancelled: run.cancelled || undefined,
         budgetExceeded: run.budgetExceeded || undefined,
+        degraded: ctx.session.degraded ? 'A previous run could not be stopped and may still be finishing in the background; results of this session may be incomplete or delayed.' : undefined,
         skippedNonHttpRequests: skippedNonHttp.length ? skippedNonHttp.slice(0, 20).map((n) => ctx.redactor.text(n, 200)) : undefined,
         errors: run.errors.slice(0, 20).map((e) => ctx.redactor.text(e, 300)),
         failures,

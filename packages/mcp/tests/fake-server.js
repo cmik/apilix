@@ -27,6 +27,8 @@ function startFakeApi() {
       } else if (url.pathname === '/slow') {
         const t = setTimeout(() => { res.writeHead(200); res.end('late'); }, 10000);
         req.on('close', () => clearTimeout(t));
+      } else if (url.pathname === '/hang') {
+        // never answers (the socket is destroyed by close())
       } else if (url.pathname === '/big') {
         res.writeHead(200, { 'content-type': 'text/plain' });
         res.end('B'.repeat(200000));

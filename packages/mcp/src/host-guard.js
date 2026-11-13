@@ -55,30 +55,83 @@ function extractTarget(args) {
 }
 
 /**
- * @param {string[]} hostPatterns "host", "*.domain" or "host:port"
- * @returns {{ uninstall: () => void, denied: string[] }}
+ * Several parties hook net.Socket.prototype.connect (the host guard for the whole session, a socket tracker
+ * for each run). They are kept in a registry behind one dispatcher, so they can be removed in ANY order and the
+ * original connect is restored only when the last one is gone.
  */
-function installHostGuard(hostPatterns, { onDeny } = {}) {
-  const patterns = hostPatterns.map(parsePattern);
-  const original = net.Socket.prototype.connect;
-  const denied = [];
-  net.Socket.prototype.connect = function guardedConnect(...args) {
-    const t = extractTarget(args);
-    if (t.ipc || !isAllowed(patterns, t.host, t.port)) {
-      const label = t.ipc ? 'local socket' : normalizeHost(t.host).slice(0, 120);
-      denied.push(label);
-      if (typeof onDeny === 'function') onDeny(label);
-      const err = new Error(`Blocked by --allow-host: connections to "${label}" are not allowed`);
-      err.code = 'EAPILIXHOSTDENIED';
+const hooks = []; // { fn(socket, args) -> Error|undefined }
+let originalConnect = null;
+
+function dispatcher(...args) {
+  for (const h of hooks.slice()) {
+    const err = h.fn(this, args);
+    if (err) {
       process.nextTick(() => this.destroy(err));
       return this;
     }
-    return original.apply(this, args);
-  };
-  return {
-    denied,
-    uninstall() { net.Socket.prototype.connect = original; },
+  }
+  return originalConnect.apply(this, args);
+}
+
+function addHook(fn) {
+  if (hooks.length === 0) {
+    originalConnect = net.Socket.prototype.connect;
+    net.Socket.prototype.connect = dispatcher;
+  }
+  const hook = { fn };
+  hooks.push(hook);
+  let removed = false;
+  return () => {
+    if (removed) return;
+    removed = true;
+    hooks.splice(hooks.indexOf(hook), 1);
+    if (hooks.length === 0) {
+      if (net.Socket.prototype.connect === dispatcher) net.Socket.prototype.connect = originalConnect;
+      originalConnect = null;
+    }
   };
 }
 
-module.exports = { installHostGuard, isAllowed, parsePattern, normalizeHost };
+const MAX_DENIED_KEPT = 100;
+
+/**
+ * @param {string[]} hostPatterns "host", "*.domain" or "host:port"
+ * @returns {{ uninstall: () => void, denied: string[] }} `denied` keeps the first 100 labels only
+ */
+function installHostGuard(hostPatterns, { onDeny } = {}) {
+  const patterns = hostPatterns.map(parsePattern);
+  const denied = [];
+  const remove = addHook((socket, args) => {
+    const t = extractTarget(args);
+    if (!t.ipc && isAllowed(patterns, t.host, t.port)) return undefined;
+    const label = t.ipc ? 'local socket' : normalizeHost(t.host).slice(0, 120);
+    if (denied.length < MAX_DENIED_KEPT) denied.push(label);
+    if (typeof onDeny === 'function') onDeny(label);
+    const err = new Error(`Blocked by --allow-host: connections to "${label}" are not allowed`);
+    err.code = 'EAPILIXHOSTDENIED';
+    return err;
+  });
+  return { denied, uninstall: remove };
+}
+
+/**
+ * Remember every socket opened while active so a stuck run can be torn down (destroyAll) without waiting
+ * for the remote side. Sockets are forgotten when they close.
+ */
+function trackSockets() {
+  const sockets = new Set();
+  const remove = addHook((socket) => {
+    if (!sockets.has(socket)) {
+      sockets.add(socket);
+      socket.once('close', () => sockets.delete(socket));
+    }
+    return undefined;
+  });
+  return {
+    get size() { return sockets.size; },
+    destroyAll() { for (const s of [...sockets]) { try { s.destroy(new Error('Run aborted')); } catch { /* already gone */ } } },
+    stop: remove,
+  };
+}
+
+module.exports = { installHostGuard, trackSockets, isAllowed, parsePattern, normalizeHost };

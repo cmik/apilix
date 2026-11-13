@@ -8,9 +8,11 @@
 
 const core = require('@apilix/core');
 const { findHostOverride } = require('./model');
+const { trackSockets } = require('./host-guard');
 
 const MAX_REQUESTS_PER_CALL = 200;
 const HARD_TIMEOUT_GRACE_MS = 2000;
+const HARD_ABORT_GRACE_MS = 2000;
 const MAX_RUN_HISTORY = 10;
 
 class ExpectedError extends Error {
@@ -22,6 +24,8 @@ function createSession() {
   return {
     requestsUsed: 0,
     msUsed: 0,
+    /** true once a run could not be stopped and was abandoned (it may still finish in the background) */
+    degraded: false,
     history: [],
     /** Serialize runs: the engine config is process-global. Released only when the run really settled. */
     lock(fn) {
@@ -121,76 +125,102 @@ async function runTree(ctx, job) {
   const timeoutMs = Math.min(job.timeoutMs, Math.max(1000, opts.maxRunSeconds * 1000 - session.msUsed));
 
   return session.lock(async () => {
-    core.setExecutorConfig({
-      followRedirects: true,
-      requestTimeout: Math.min(opts.requestTimeoutMs, timeoutMs),
-      sslVerification: opts.sslVerification === true,
-      proxyEnabled: false,
-      httpProxy: '',
-      httpsProxy: '',
-      noProxy: '',
-      customCAs: '',
-      clientCertificates: [],
-    });
-    const payload = {
-      collection: job.collection,
-      environment: job.environment,
-      collectionVariables: job.variables,
-      globals: {},
-      cookies: {},
-      delay: job.delayMs,
-      iterations: job.iterations,
-      executeChildRequests: false,
-      conditionalExecution: true,
-      bail: job.bail === true,
-      maxRetries: 0,
-      allCollectionItems: job.collection.item,
-      mockBase: null,
-      mongoConnections: {},
-      databases: [],
-      dbQueryFn: null,
-      dbMongoQueryFn: null,
-    };
-    const prepared = core.prepareCollectionRun(payload, { jsonRows: job.dataRows || undefined });
+    const tracker = trackSockets();
+    const state = { timedOut: false, budgetExceeded: false, cancelled: false };
     const runState = { paused: false, stopped: false };
     const results = [];
     const runErrors = [];
-    const state = { timedOut: false, budgetExceeded: false, cancelled: false };
     const started = Date.now();
-
-    const onEvent = (event, data) => {
-      if (event === 'result') {
-        results.push(data);
-        session.requestsUsed += 1 + (data.preChildRequests || []).length + (data.testChildRequests || []).length;
-        if (session.requestsUsed >= opts.maxRequests) { state.budgetExceeded = true; runState.stopped = true; }
-      } else if (event === 'error') {
-        runErrors.push(String(data && data.error));
-      }
-    };
-    if (job.signal) job.signal.addEventListener('abort', () => { state.cancelled = true; runState.stopped = true; });
-
-    const softTimer = setTimeout(() => { state.timedOut = true; runState.stopped = true; }, timeoutMs);
-    let hardTimer;
-    const hard = new Promise((resolve) => { hardTimer = setTimeout(() => resolve('hard'), timeoutMs + HARD_TIMEOUT_GRACE_MS); });
-    const real = core.executePreparedCollectionRun(prepared, { runState, onEvent, collectIterations: false });
-    const settled = real.then((r) => ({ run: r }), (e) => ({ failure: e }));
+    let abandoned = false;
     let outcome;
+    let prepared;
+    let onAbort;
     try {
-      outcome = await Promise.race([settled, hard]);
+      core.setExecutorConfig({
+        followRedirects: true,
+        requestTimeout: Math.min(opts.requestTimeoutMs, timeoutMs),
+        sslVerification: opts.sslVerification === true,
+        proxyEnabled: false,
+        httpProxy: '',
+        httpsProxy: '',
+        noProxy: '',
+        customCAs: '',
+        clientCertificates: [],
+      });
+      const payload = {
+        collection: job.collection,
+        environment: job.environment,
+        collectionVariables: job.variables,
+        globals: {},
+        cookies: {},
+        delay: job.delayMs,
+        iterations: job.iterations,
+        executeChildRequests: false,
+        conditionalExecution: true,
+        bail: job.bail === true,
+        maxRetries: 0,
+        allCollectionItems: job.collection.item,
+        mockBase: null,
+        mongoConnections: {},
+        databases: [],
+        dbQueryFn: null,
+        dbMongoQueryFn: null,
+      };
+      prepared = core.prepareCollectionRun(payload, { jsonRows: job.dataRows || undefined });
+
+      const onEvent = (event, data) => {
+        if (event === 'result') {
+          session.requestsUsed += 1 + (data.preChildRequests || []).length + (data.testChildRequests || []).length;
+          if (!abandoned) results.push(data);
+          if (session.requestsUsed >= opts.maxRequests) { state.budgetExceeded = true; runState.stopped = true; }
+        } else if (event === 'error' && !abandoned) {
+          runErrors.push(String(data && data.error));
+        }
+      };
+      onAbort = () => { state.cancelled = true; runState.stopped = true; tracker.destroyAll(); };
+      if (job.signal) job.signal.addEventListener('abort', onAbort);
+
+      const softTimer = setTimeout(() => { state.timedOut = true; runState.stopped = true; }, timeoutMs);
+      let hardTimer;
+      const hard = new Promise((resolve) => { hardTimer = setTimeout(() => resolve('hard'), timeoutMs + HARD_TIMEOUT_GRACE_MS); });
+      const real = core.executePreparedCollectionRun(prepared, { runState, onEvent, collectIterations: false });
+      const settled = Promise.resolve(real).then((r) => ({ run: r }), (e) => ({ failure: e }));
+      try {
+        outcome = await Promise.race([settled, hard]);
+      } finally {
+        clearTimeout(softTimer);
+        clearTimeout(hardTimer);
+      }
+      if (outcome === 'hard') {
+        // The run ignored the soft stop (a request or script is stuck). Tear its sockets down, give it a short
+        // grace period, then give up on it: the lock is released either way, the session is flagged as degraded.
+        state.timedOut = true;
+        runState.stopped = true;
+        tracker.destroyAll();
+        let graceTimer;
+        const grace = new Promise((resolve) => { graceTimer = setTimeout(() => resolve('late'), HARD_ABORT_GRACE_MS); });
+        try {
+          outcome = await Promise.race([settled, grace]);
+        } finally {
+          clearTimeout(graceTimer);
+        }
+        if (outcome === 'late') {
+          abandoned = true;
+          session.degraded = true;
+          runErrors.push(`The run did not stop after ${Math.round((timeoutMs + HARD_TIMEOUT_GRACE_MS + HARD_ABORT_GRACE_MS) / 1000)}s and was abandoned; its results are partial.`);
+          if (typeof ctx.log === 'function') ctx.log('a run could not be stopped and was abandoned: the session is flagged as degraded');
+          outcome = undefined;
+        }
+      }
     } finally {
-      clearTimeout(softTimer);
-      clearTimeout(hardTimer);
-    }
-    if (outcome === 'hard') {
-      state.timedOut = true;
-      // Keep the lock until the real run settles so two runs never overlap.
-      await settled;
+      if (onAbort && job.signal) job.signal.removeEventListener('abort', onAbort);
+      tracker.stop();
+      session.msUsed += Date.now() - started;
     }
     if (outcome && outcome.failure) throw outcome.failure;
-    session.msUsed += Date.now() - started;
     return {
-      results,
-      errors: runErrors,
+      results: results.slice(),
+      errors: runErrors.slice(),
       runId: prepared.runId,
       stopped: runState.stopped === true,
       durationMs: Date.now() - started,

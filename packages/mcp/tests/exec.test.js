@@ -22,6 +22,9 @@ function runFixture(api, { withHostile = true } = {}) {
       { ...get('Redirect', '/redirect') },
       { ...get('Slow', '/slow') },
       { ...get('Big', '/big') },
+      { ...get('HangNoTimeout', '/hang', { request: { requestSettings: { timeout: 0 } } }) },
+      { ...get('HangLongTimeout', '/hang', { request: { requestSettings: { timeout: 600000 } } }) },
+      { ...get('HangScript', '/ping'), event: [{ listen: 'test', script: { exec: [`apx.sendRequest("${api.base}/hang", function () {});`] } }] },
       { name: 'Mongo', request: { method: 'GET', url: 'x', requestType: 'mongodb', mongodb: {} } },
       { name: 'Many', id: 'folder-many', item: Array.from({ length: 11 }, (_, i) => get(`M${i}`, '/m')) },
       ...(withHostile ? [
@@ -365,5 +368,36 @@ test('--include-credentials shows credentials but never secret-flagged values; w
     assert.ok(r.text.includes(SECRET_TOKEN), 'non-flagged credentials are returned when asked');
     assert.ok(!r.text.includes(ENV_SECRET), 'secret-flagged environment values are never returned');
     assert.match(s.stderr, /--include-credentials is set/);
+  } finally { await done(); }
+});
+
+test('a request-level timeout of 0 (or a huge one) cannot lengthen the session timeout: the call returns in time and the next run works', async () => {
+  const { api, s, done, colId, envId } = await setup();
+  try {
+    for (const name of ['HangNoTimeout', 'HangLongTimeout']) {
+      const t0 = Date.now();
+      const r = await s.call('run_request', { collection: colId, request: name, environment: envId, timeoutMs: 1500 }, { timeoutMs: 9000 });
+      assert.ok(Date.now() - t0 < 6000, `${name}: returned within the call timeout (took ${Date.now() - t0} ms)`);
+      assert.equal(r.isError, false, r.text);
+      assert.ok(r.data.result.error, `${name}: the hanging request is reported as an error`);
+    }
+    const next = await s.call('run_request', { collection: colId, request: 'Basic/Ping', environment: envId });
+    assert.equal(next.data.result.status, 200);
+    assert.equal(api.hits['/ping'], 1);
+  } finally { await done(); }
+});
+
+test('a run stuck past the hard timeout (script request that never answers) is torn down: partial result, lock released, next run fine', async () => {
+  const { api, s, done, colId, envId } = await setup();
+  try {
+    const t0 = Date.now();
+    const r = await s.call('run_request', { collection: colId, request: 'HangScript', environment: envId, timeoutMs: 1000 }, { timeoutMs: 12000 });
+    assert.ok(Date.now() - t0 < 8000, `returned in bounded time (took ${Date.now() - t0} ms)`);
+    assert.equal(r.isError, false, r.text);
+    assert.equal(r.data.timedOut, true);
+    const next = await s.call('run_request', { collection: colId, request: 'Basic/Ping', environment: envId }, { timeoutMs: 8000 });
+    assert.equal(next.isError, false, next.text);
+    assert.equal(next.data.result.status, 200);
+    assert.equal(api.hits['/ping'], 2);
   } finally { await done(); }
 });

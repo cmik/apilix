@@ -54,3 +54,18 @@ test('socket guard blocks forbidden hosts and IPC, passes allowed ones, and unin
   }
   assert.equal(net.Socket.prototype.connect, original);
 });
+
+test('denied[] is bounded and out-of-order uninstalls restore the original connect', async () => {
+  const original = net.Socket.prototype.connect;
+  const g1 = installHostGuard(['a.invalid']);
+  const g2 = installHostGuard(['b.invalid']);
+  for (let i = 0; i < 250; i += 1) net.connect(9, `h${i}.invalid`).on('error', () => {});
+  await new Promise((r) => setTimeout(r, 50));
+  assert.ok(g1.denied.length <= 100, `kept ${g1.denied.length}`);
+  g1.uninstall(); // installed first, removed first: g2 must stay active
+  assert.notEqual(net.Socket.prototype.connect, original);
+  const e = await new Promise((resolve) => { net.connect(9, 'c.invalid').on('error', resolve); });
+  assert.equal(e.code, 'EAPILIXHOSTDENIED');
+  g2.uninstall();
+  assert.equal(net.Socket.prototype.connect, original);
+});

@@ -80,9 +80,13 @@ function countRequests(items, depth = 0) {
 /**
  * Clone the collection keeping only the chain of ancestors (their folder-level scripts are merged by
  * the runner) and the full subtree of `targetPos`. With targetPos == null the whole tree is kept.
- * Non-HTTP requests are dropped and reported; per-request proxy settings are stripped.
+ * Non-HTTP requests are dropped and reported. Per-request settings may only make a request STRICTER than the
+ * session: proxy settings are dropped; `timeout` is kept only when 0 < timeout <= the session per-request
+ * timeout (0 means "no timeout" for the engine and is dropped); `followRedirects` only when false;
+ * `sslVerification` only when true (a collection can never turn verification off or lengthen a timeout).
  */
-function buildRunTree(collection, targetPos) {
+function buildRunTree(collection, targetPos, limits = {}) {
+  const maxTimeoutMs = Number.isFinite(limits.maxRequestTimeoutMs) ? limits.maxRequestTimeoutMs : 30000;
   const skipped = [];
   const isPrefix = (a, b) => a.length <= b.length && a.every((v, i) => v === b[i]);
   function clone(items, pos, names, inTarget, depth) {
@@ -104,7 +108,11 @@ function buildRunTree(collection, targetPos) {
         if (isNonHttp(node)) { skipped.push(here.join('/')); return; }
         const copy = structuredClone(node);
         if (copy.request && copy.request.requestSettings && typeof copy.request.requestSettings === 'object') {
-          for (const k of ['proxyEnabled', 'httpProxy', 'httpsProxy', 'noProxy']) delete copy.request.requestSettings[k];
+          const rs = copy.request.requestSettings;
+          for (const k of ['proxyEnabled', 'httpProxy', 'httpsProxy', 'noProxy']) delete rs[k];
+          if (!(typeof rs.timeout === 'number' && rs.timeout > 0 && rs.timeout <= maxTimeoutMs)) delete rs.timeout;
+          if (rs.followRedirects !== false) delete rs.followRedirects;
+          if (rs.sslVerification !== true) delete rs.sslVerification;
         }
         out.push(copy);
       }
