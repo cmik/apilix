@@ -15,13 +15,21 @@ function job(api, extra = {}) {
   };
 }
 
-test('hard timeout: a run that ignores the stop is abandoned (partial result), the lock is released and the session flagged degraded', async () => {
+/** Start a fake API that is closed (sockets included) even when an assertion fails. */
+async function api4(t) {
   const api = await startFakeApi();
+  t.after(() => api.close());
+  return api;
+}
+
+test('hard timeout: a run that ignores the stop is abandoned (partial result), the lock is released and the session flagged degraded', async (t) => {
+  const api = await api4(t);
   const session = exec.createSession();
   const logs = [];
   const ctx = { opts: { maxRequests: 100, maxRunSeconds: 3600, requestTimeoutMs: 1000, sslVerification: false }, session, log: (m) => logs.push(m) };
   const real = core.executePreparedCollectionRun;
   core.executePreparedCollectionRun = () => new Promise(() => {}); // never settles, ignores runState
+  t.after(() => { core.executePreparedCollectionRun = real; });
   try {
     const t0 = Date.now();
     const out = await exec.runTree(ctx, job(api));
@@ -38,30 +46,30 @@ test('hard timeout: a run that ignores the stop is abandoned (partial result), t
   const next = await exec.runTree(ctx, job(api));
   assert.equal(next.results.length, 1);
   assert.equal(next.results[0].status, 200);
-  await api.close();
 });
 
-test('msUsed is accounted even when the run fails with an exception', async () => {
-  const api = await startFakeApi();
+test('msUsed is accounted even when the run fails with an exception', async (t) => {
+  const api = await api4(t);
   const session = exec.createSession();
   const ctx = { opts: { maxRequests: 100, maxRunSeconds: 3600, requestTimeoutMs: 1000, sslVerification: false }, session, log() {} };
   const real = core.executePreparedCollectionRun;
   core.executePreparedCollectionRun = async () => { await new Promise((r) => setTimeout(r, 120)); throw new Error('engine exploded'); };
+  t.after(() => { core.executePreparedCollectionRun = real; });
   try {
     await assert.rejects(exec.runTree(ctx, job(api)), /engine exploded/);
     assert.ok(session.msUsed >= 100, `msUsed=${session.msUsed}`);
   } finally { core.executePreparedCollectionRun = real; }
-  await api.close();
 });
 
-test('socket tracker destroys in-flight sockets and hooks can be removed in any order', async () => {
+test('socket tracker destroys in-flight sockets and hooks can be removed in any order', async (t) => {
   const { trackSockets, installHostGuard } = require('../src/host-guard');
   const original = net.Socket.prototype.connect;
-  const server = net.createServer(() => {});
+  const server = net.createServer((c) => { c.on('error', () => {}); });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const guard = installHostGuard(['127.0.0.1']);
   const tracker = trackSockets();
   const sock = net.connect(server.address().port, '127.0.0.1');
+  t.after(() => { sock.destroy(); tracker.stop(); guard.uninstall(); server.close(); });
   await new Promise((r) => sock.once('connect', r));
   assert.equal(tracker.size, 1);
   const closed = new Promise((r) => sock.once('close', r));
@@ -74,5 +82,33 @@ test('socket tracker destroys in-flight sockets and hooks can be removed in any 
   assert.equal(err, null, 'guard is gone: the connection is allowed');
   tracker.stop();
   assert.equal(net.Socket.prototype.connect, original, 'original restored once the last hook is removed');
-  server.close();
+});
+
+test('a REAL request that never gets an answer keeps the run alive past the hard timeout: it is abandoned, flagged degraded, the lock is released', async (t) => {
+  const api = await api4(t);
+  const session = exec.createSession();
+  const logs = [];
+  const ctx = { opts: { maxRequests: 100, maxRunSeconds: 3600, requestTimeoutMs: 1000, sslVerification: false }, session, log: (m) => logs.push(m) };
+  // a test script that keeps issuing requests to an endpoint that never answers: closing the sockets of the
+  // run once is not enough to make it finish (each new request opens a fresh, tracked-then-forgotten socket)
+  const script = `var t0 = Date.now(); function again() { if (Date.now() - t0 < 7000) apx.sendRequest("${api.base}/hang", again); } again();`;
+  const stuck = job(api, {
+    collection: { info: { name: 'T' }, item: [{ name: 'P', id: 'p', request: { method: 'GET', url: `${api.base}/ping` }, event: [{ listen: 'test', script: { exec: [script] } }] }] },
+  });
+  const real = core.executePreparedCollectionRun;
+  let underlying; // the real run (called through, not stubbed), awaited at the end so nothing outlives the test
+  core.executePreparedCollectionRun = (...a) => { underlying = real(...a); return underlying; };
+  t.after(async () => { core.executePreparedCollectionRun = real; if (underlying) await Promise.race([underlying.catch(() => {}), new Promise((r) => setTimeout(r, 20000))]); });
+  const t0 = Date.now();
+  const out = await exec.runTree(ctx, stuck);
+  assert.ok(Date.now() - t0 < 12000, `bounded (took ${Date.now() - t0} ms)`);
+  assert.ok(api.hits['/hang'] >= 1, 'the blocked request really reached the server');
+  assert.equal(out.timedOut, true);
+  assert.equal(session.degraded, true);
+  assert.ok(out.errors.some((e) => /abandoned/.test(e)), JSON.stringify(out.errors));
+  assert.ok(logs.some((l) => /degraded/.test(l)));
+  // the lock was released: the next run is not stuck behind the abandoned one
+  core.executePreparedCollectionRun = real;
+  const next = await exec.runTree(ctx, job(api));
+  assert.equal(next.results[0].status, 200);
 });
