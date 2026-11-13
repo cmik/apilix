@@ -47,6 +47,11 @@ function startServer(args = [], { cwd, env } = {}) {
       child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
     });
   }
+  /** Send a request without waiting: { id, promise } so the caller can cancel it by id. */
+  function start(method, params, opts) {
+    const id = nextId;
+    return { id, promise: request(method, params, opts) };
+  }
   const notify = (method, params) => child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method, params })}\n`);
   const raw = (s) => child.stdin.write(s);
 
@@ -72,7 +77,7 @@ function startServer(args = [], { cwd, env } = {}) {
     return r;
   }
 
-  return { child, request, notify, raw, initialize, call, close, exited, messages, badStdout, get stderr() { return stderr; } };
+  return { child, request, start, notify, raw, initialize, call, close, exited, messages, badStdout, get stderr() { return stderr; } };
 }
 
 module.exports = { startServer, BIN };

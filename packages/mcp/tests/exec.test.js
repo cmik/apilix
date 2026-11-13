@@ -22,6 +22,7 @@ function runFixture(api, { withHostile = true } = {}) {
       { ...get('Redirect', '/redirect') },
       { ...get('Slow', '/slow') },
       { ...get('Big', '/big') },
+      { name: 'SlowThenAfter', id: 'folder-sta', item: [get('Slow2', '/slow'), get('AfterSlow', '/after-slow')] },
       { ...get('HangNoTimeout', '/hang', { request: { requestSettings: { timeout: 0 } } }) },
       { ...get('HangLongTimeout', '/hang', { request: { requestSettings: { timeout: 600000 } } }) },
       { ...get('HangScript', '/ping'), event: [{ listen: 'test', script: { exec: [`apx.sendRequest("${api.base}/hang", function () {});`] } }] },
@@ -399,5 +400,41 @@ test('a run stuck past the hard timeout (script request that never answers) is t
     assert.equal(next.isError, false, next.text);
     assert.equal(next.data.result.status, 200);
     assert.equal(api.hits['/ping'], 2);
+  } finally { await done(); }
+});
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const toolCall = (name, args) => ({ method: 'tools/call', params: { name, arguments: args } });
+
+test('a call cancelled while queued behind another run never reaches the network', async () => {
+  const { api, s, done, colId, envId } = await setup();
+  try {
+    const first = s.start('tools/call', toolCall('run_request', { collection: colId, request: 'Slow', environment: envId, timeoutMs: 2000 }).params);
+    await sleep(400); // the first run owns the lock now
+    const queued = s.start('tools/call', toolCall('run_request', { collection: colId, request: 'Basic/Ping', environment: envId }).params);
+    await sleep(100);
+    s.notify('notifications/cancelled', { requestId: queued.id });
+    const r1 = await first.promise;
+    assert.ok(r1.result, 'the first run answered normally');
+    await sleep(800); // would be plenty for the queued run to start
+    assert.equal(api.hits['/ping'] || 0, 0, 'the cancelled queued call did not execute');
+    const follow = await s.call('run_request', { collection: colId, request: 'Basic/Ping', environment: envId });
+    assert.equal(follow.data.result.status, 200);
+    assert.equal(api.hits['/ping'], 1);
+  } finally { await done(); }
+});
+
+test('cancelling a call during a run stops it: in-flight request torn down, later requests never sent, lock released', async () => {
+  const { api, s, done, colId, envId } = await setup();
+  try {
+    const run = s.start('tools/call', toolCall('run_collection', { collection: colId, folder: 'SlowThenAfter', environment: envId, timeoutMs: 20000 }).params);
+    await sleep(600);
+    assert.equal(api.hits['/slow'], 1, 'the slow request is in flight');
+    const t0 = Date.now();
+    s.notify('notifications/cancelled', { requestId: run.id });
+    const follow = await s.call('run_request', { collection: colId, request: 'Basic/Ping', environment: envId }, { timeoutMs: 8000 });
+    assert.ok(Date.now() - t0 < 5000, `the next call ran promptly after the cancellation (took ${Date.now() - t0} ms)`);
+    assert.equal(follow.data.result.status, 200);
+    assert.equal(api.hits['/after-slow'] || 0, 0, 'the request after the cancelled one was never sent');
   } finally { await done(); }
 });

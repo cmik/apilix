@@ -107,6 +107,10 @@ function isFailure(r) {
  */
 async function runTree(ctx, job) {
   const { opts, session } = ctx;
+  // A request cancelled (notifications/cancelled) before it started, e.g. while queued behind another run,
+  // must not reach the network.
+  const cancelledBeforeStart = () => { if (job.signal && job.signal.aborted) throw new ExpectedError('Cancelled before it started'); };
+  cancelledBeforeStart();
   const requestsInTree = job.requestCount * job.iterations;
   if (requestsInTree === 0) throw new ExpectedError('Nothing to run: the selection contains no HTTP requests');
   if (requestsInTree > MAX_REQUESTS_PER_CALL) {
@@ -125,6 +129,7 @@ async function runTree(ctx, job) {
   const timeoutMs = Math.min(job.timeoutMs, Math.max(1000, opts.maxRunSeconds * 1000 - session.msUsed));
 
   return session.lock(async () => {
+    cancelledBeforeStart(); // it may have been cancelled while waiting for the lock
     const tracker = trackSockets();
     const state = { timedOut: false, budgetExceeded: false, cancelled: false };
     const runState = { paused: false, stopped: false };
