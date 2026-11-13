@@ -226,7 +226,12 @@ const SCHEMES = new Set(['http', 'https', 'ws', 'wss']);
  */
 function classifyUrl(resolved) {
   if (typeof resolved !== 'string') return { kind: 'invalid' };
-  const s = resolved.replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, '');
+  // linear trim of control characters and spaces (a regex with two anchored alternatives is quadratic on long runs)
+  let a = 0;
+  let b = resolved.length;
+  while (a < b && resolved.charCodeAt(a) <= 32) a++;
+  while (b > a && resolved.charCodeAt(b - 1) <= 32) b--;
+  const s = resolved.slice(a, b);
   if (s === '') return { kind: 'invalid' };
   const m = /^([^:/?#\\]*):([/\\]*)/.exec(s);
   if (!m) return UNRESOLVED_RE.test(s) ? { kind: 'unresolved', text: s } : { kind: 'invalid' };
@@ -270,7 +275,7 @@ function applyPathVariables(url, variables, vars) {
 }
 
 // dynamic tokens ({{$guid}}, ...) are random: replace them so baseline and effective strings stay comparable
-const neutralize = (raw) => (typeof raw === 'string' ? raw.replace(/\{\{\s*\$[^}]*\}\}/g, 'dyn') : raw);
+const neutralize = (raw) => (typeof raw === 'string' ? raw.replace(/\{\{\s*\$[^{}]*\}\}/g, 'dyn') : raw);
 
 /** (vars) => resolved URL string, exactly as the engine's resolveUrl builds it. null when there is no URL. */
 function requestUrlResolver(req) {
