@@ -291,7 +291,7 @@ claude mcp add apilix -- apilix mcp --workspace ./api --allow-host api.example.c
 claude mcp add apilix -- apilix mcp --workspace ./api --allow-any-host                 # run requests to ANY host (explicit opt-in)
 ```
 
-Tools: `list_collections`, `list_requests`, `get_request`, `export_docs`, `get_last_results`; `run_request` / `run_collection` only with `--allow-host` or `--allow-any-host`; `import_collection` only with `--allow-write`. Access is limited to the `--workspace` folder(s), credentials are redacted by default, outputs are bounded. **Running requests sends real HTTP requests and executes collection scripts**, so it is never on by default. The check that stops `variables`/`data` from redirecting a request is best effort: the real barrier is `--allow-host` with precise hosts. See the [MCP Server wiki page](wiki/MCP-Server.md) for the flags and the threat model.
+Tools: `list_collections`, `list_requests`, `get_request`, `export_docs`, `get_last_results`; `run_request` / `run_collection` only with `--allow-host` or `--allow-any-host`; `import_collection` only with `--allow-write`. Access is limited to the `--workspace` folder(s), credentials are redacted by default, outputs are bounded. **Running requests sends real HTTP requests and executes collection scripts**, so it is never on by default. The check that stops `variables`/`data` from redirecting a request is best effort: the real barrier is `--allow-host` with precise hosts, and cross-origin redirects forward headers (`Authorization` included) to the redirect host when it is allowed. See the [MCP Server wiki page](wiki/MCP-Server.md) for the flags and the threat model.
 
 ---
 
