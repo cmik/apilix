@@ -116,3 +116,13 @@ test('literal credentials found in request URLs, query rows, form and JSON bodie
   }
   assert.equal(r.scrub('plainValue bob fine'), 'plainValue bob fine');
 });
+
+test('JSON-escaped form of a secret is masked too (quotes, backslashes, newlines)', () => {
+  const r = createRedactor();
+  const secret = 'ab"cd\\ef\nGh12';
+  r.addEnvironment([{ key: 'k', value: secret, secret: true }]);
+  const escaped = JSON.stringify(secret).slice(1, -1);
+  const out = r.scrub(`{"echo":"${escaped}"}`);
+  assert.ok(!out.includes(escaped), out);
+  assert.ok(!r.scrub(JSON.stringify({ echo: secret })).includes(escaped));
+});

@@ -143,3 +143,15 @@ test('findHostOverride covers OAuth endpoints (request, folder, collection) and 
   const parts = { info: { name: 'G' }, variable: [{ key: 'h', value: 'a.test' }], item: [{ name: 'R', request: { method: 'GET', url: { protocol: 'http', host: ['{{h}}'], path: ['x'] } } }] };
   assert.ok(findHostOverride(parts, { dataRows: [{ h: 'b.test' }] }));
 });
+
+test('redactAuth: __proto__ / constructor keys become plain own properties and never touch prototypes', () => {
+  const red = createRedactor();
+  const { redactAuth } = require('../src/model');
+  const auth = { type: 'custom', custom: JSON.parse('{"__proto__":"x1","constructor":"y2","polluted":"z3"}') };
+  const out = redactAuth(auth, red);
+  assert.equal(Object.getPrototypeOf(out.fields), Object.prototype);
+  assert.ok(Object.prototype.hasOwnProperty.call(out.fields, '__proto__'), '__proto__ kept as data');
+  assert.equal({}.polluted, undefined);
+  const rows = redactAuth({ type: 'basic', basic: [{ key: '__proto__', value: 'a' }, { key: 'constructor', value: 'b' }] }, red);
+  assert.deepEqual(Object.keys(rows.fields).sort(), ['__proto__', 'constructor']);
+});

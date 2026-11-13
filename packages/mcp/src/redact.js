@@ -8,12 +8,12 @@
  *     (deny-by-default on credential-looking names; {{var}} references survive).
  *  2. Known-secret scrub: every secret VALUE we know about (env vars flagged secret, env vars whose
  *     name looks sensitive, literal auth credentials found in collections) is replaced wherever it
- *     appears, in raw, URL-encoded and base64 form, in every outgoing string (see scrubDeep).
+ *     appears, in raw, JSON-escaped, URL-encoded and base64 form, in every outgoing string (see scrubDeep).
  *
  * Scrubbing never touches the protocol or the JSON structure: only string LEAVES of tool/resource data are scrubbed
  * (keys, booleans, numbers, initialize/tools/list/resources/list are left alone), and short or "banal" values of
  * merely credential-NAMED variables are not treated as secrets (see MIN_* and isBanal). Trade-off: a secret
- * shorter than 8 characters, or a single common lowercase word, stored under a credential-looking name (not flagged
+ * shorter than 8 characters, or a value made only of 1 to 12 lowercase letters (isBanal: such words are protocol/data-model vocabulary), stored under a credential-looking name (not flagged
  * secret) is not masked; flag it as secret in the environment to get it masked from 4 characters up.
  *
  * Limits: a secret that is neither flagged, nor under a sensitive name, nor a literal auth value
@@ -149,7 +149,7 @@ function createRedactor({ includeCredentials = false } = {}) {
     const pairs = [];
     for (const s of activeSecrets()) {
       const min = hardSecrets.has(s) ? MIN_HARD_LENGTH : MIN_SOFT_LENGTH;
-      const forms = new Set([s, encodeURIComponent(s), Buffer.from(s, 'utf8').toString('base64')]);
+      const forms = new Set([s, JSON.stringify(s).slice(1, -1), encodeURIComponent(s), Buffer.from(s, 'utf8').toString('base64')]);
       const b64 = Buffer.from(s, 'utf8').toString('base64').replace(/=+$/, '');
       forms.add(b64);
       for (const f of forms) if (f.length >= min) pairs.push(f);

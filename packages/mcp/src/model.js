@@ -144,13 +144,14 @@ function redactAuth(auth, redactor) {
   if (!auth || typeof auth !== 'object') return undefined;
   const out = { type: String(auth.type || 'noauth') };
   const detail = auth[auth.type];
-  const fields = {};
+  const pairs = [];
   if (Array.isArray(detail)) {
-    for (const row of detail.slice(0, 30)) if (row && typeof row.key === 'string') fields[row.key] = redactor.value(row.value);
+    for (const row of detail.slice(0, 30)) if (row && typeof row.key === 'string') pairs.push([row.key, redactor.value(row.value)]);
   } else if (detail && typeof detail === 'object') {
-    for (const [k, v] of Object.entries(detail).slice(0, 30)) if (typeof v !== 'object') fields[k] = redactor.value(v);
+    for (const [k, v] of Object.entries(detail).slice(0, 30)) if (typeof v !== 'object') pairs.push([k, redactor.value(v)]);
   }
-  if (Object.keys(fields).length) out.fields = fields;
+  // fromEntries creates own data properties: a key such as "__proto__" cannot reach the prototype
+  if (pairs.length) out.fields = Object.fromEntries(pairs);
   return out;
 }
 
