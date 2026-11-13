@@ -7,6 +7,7 @@
  */
 
 const core = require('@apilix/core');
+const { findHostOverride } = require('./model');
 
 const MAX_REQUESTS_PER_CALL = 200;
 const HARD_TIMEOUT_GRACE_MS = 2000;
@@ -112,6 +113,10 @@ async function runTree(ctx, job) {
   }
   if (session.msUsed >= opts.maxRunSeconds * 1000) {
     throw new ExpectedError(`Session run-time budget exhausted (${opts.maxRunSeconds}s). Restart the server to reset it.`);
+  }
+  const moved = findHostOverride(job.collection, { environment: job.environment, variables: job.variables, dataRows: job.dataRows || [null] });
+  if (moved) {
+    throw new ExpectedError(`Refused: the variables/data you supplied would change the target host of "${moved.request}" from "${moved.from}" to "${moved.to}". Variables and data may not redirect a request to another host (the environment and the collection decide where requests go).`);
   }
   const timeoutMs = Math.min(job.timeoutMs, Math.max(1000, opts.maxRunSeconds * 1000 - session.msUsed));
 

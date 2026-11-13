@@ -25,11 +25,16 @@ function helpText() {
     '                           Default: the current directory (refused if it is the home dir or "/").',
     '  --max-file-size <bytes>  Largest JSON file read or written (default 8388608)',
     '',
-    'Permissions (read-only and network-restricted choices are opt-out/opt-in as shown):',
-    '  --allow-write            Enable import_collection (writes inside the workspace; no overwrite without overwrite:true)',
-    '  --no-run                 Disable run_request / run_collection (no network, no script execution)',
-    '  --allow-host <pattern>   Only allow outgoing requests to this host (repeatable; "example.com", "*.example.com", optional ":port").',
-    '                           Enforced at the socket layer, so redirects, scripts and OAuth calls are covered.',
+    'Permissions. Read-only browsing is the default; running requests and writing files are opt-in:',
+    '  --allow-host <pattern>   ENABLE run_request / run_collection, restricted to this host (repeatable; "example.com",',
+    '                           "*.example.com", optional ":port"). Enforced at the socket layer, so redirects, scripts',
+    '                           and OAuth calls are covered. Without --allow-host or --allow-any-host the run tools are',
+    '                           not available.',
+    '  --allow-any-host         ENABLE the run tools with NO host restriction: requests (and the secrets they carry) can',
+    '                           be sent to any host this machine can reach. Cannot be combined with --allow-host.',
+    '  --no-run                 Disable run_request / run_collection explicitly (no network, no script execution).',
+    '                           Takes priority; cannot be combined with --allow-host / --allow-any-host.',
+    '  --allow-write            Enable import_collection (writes inside the workspace; no overwrite without overwrite:true).',
     '  --ssl-verification       Verify TLS certificates for outgoing requests (default: off, like the CLI)',
     '  --include-credentials    Do NOT redact credentials in what is returned to the agent (secret-flagged env values stay hidden)',
     '',
@@ -43,6 +48,18 @@ function helpText() {
     '  -h, --help               Show this help',
     '  --version                Print the version',
   ].join('\n');
+}
+
+/** Run tools are available only when explicitly enabled: at least one --allow-host, or --allow-any-host; --no-run wins. */
+function runEnabled(o) {
+  return !o.noRun && ((Array.isArray(o.allowHosts) && o.allowHosts.length > 0) || o.allowAnyHost === true);
+}
+
+/** 'disabled' (--no-run), 'off' (not enabled), 'restricted' (--allow-host) or 'any' (--allow-any-host). */
+function runMode(o) {
+  if (o.noRun) return 'disabled';
+  if (!runEnabled(o)) return 'off';
+  return o.allowAnyHost ? 'any' : 'restricted';
 }
 
 function intFlag(name, value, { min, max }) {
@@ -64,6 +81,7 @@ function parseMcpArgs(argv, cwd = process.cwd()) {
     workspaceExplicit: false,
     allowWrite: false,
     noRun: false,
+    allowAnyHost: false,
     allowHosts: [],
     sslVerification: false,
     includeCredentials: false,
@@ -99,6 +117,7 @@ function parseMcpArgs(argv, cwd = process.cwd()) {
       }
       case '--allow-write': o.allowWrite = true; break;
       case '--no-run': o.noRun = true; break;
+      case '--allow-any-host': o.allowAnyHost = true; break;
       case '--allow-host': {
         const v = value(i).trim().toLowerCase();
         if (!/^(\*\.)?[a-z0-9._\-\[\]:]+$/.test(v) || v === '*' || v.includes('/')) throw new Error(`--allow-host: invalid pattern "${v}" (use host, *.domain or host:port; a bare "*" is not accepted)`);
@@ -119,8 +138,10 @@ function parseMcpArgs(argv, cwd = process.cwd()) {
     }
   }
   if (o.noRun && o.allowHosts.length > 0) throw new Error('--allow-host has no effect with --no-run');
+  if (o.noRun && o.allowAnyHost) throw new Error('--allow-any-host has no effect with --no-run');
+  if (o.allowAnyHost && o.allowHosts.length > 0) throw new Error('--allow-any-host and --allow-host are mutually exclusive: either restrict the run tools to some hosts or explicitly allow every host');
   if (o.workspaces.length === 0) o.workspaces.push(path.resolve(cwd));
   return o;
 }
 
-module.exports = { parseMcpArgs, helpText, DEFAULTS };
+module.exports = { parseMcpArgs, helpText, runEnabled, runMode, DEFAULTS };

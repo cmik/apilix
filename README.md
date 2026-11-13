@@ -286,12 +286,12 @@ Notes:
 `apilix mcp` starts a [Model Context Protocol](https://modelcontextprotocol.io) server on stdio so an external agent (Claude Code, Cursor, ...) can list collections, read requests, run them and generate docs. Apilix does not call any model itself.
 
 ```bash
-claude mcp add apilix -- apilix mcp --workspace ./api                 # read-only + runs allowed
-claude mcp add apilix -- apilix mcp --workspace ./api --no-run        # browsing only
-claude mcp add apilix -- apilix mcp --workspace ./api --allow-host api.example.com
+claude mcp add apilix -- apilix mcp --workspace ./api                                  # read-only browsing (default)
+claude mcp add apilix -- apilix mcp --workspace ./api --allow-host api.example.com     # also run requests, to that host only
+claude mcp add apilix -- apilix mcp --workspace ./api --allow-any-host                 # run requests to ANY host (explicit opt-in)
 ```
 
-Tools: `list_collections`, `list_requests`, `get_request`, `run_request`, `run_collection`, `get_last_results`, `export_docs`, `import_collection` (needs `--allow-write`). Access is limited to the `--workspace` folder(s), credentials are redacted by default, outputs are bounded. **Running requests sends real HTTP requests and executes collection scripts**: use `--allow-host` or `--no-run`. See the [MCP Server wiki page](wiki/MCP-Server.md) for the flags and the threat model.
+Tools: `list_collections`, `list_requests`, `get_request`, `export_docs`, `get_last_results`; `run_request` / `run_collection` only with `--allow-host` or `--allow-any-host`; `import_collection` only with `--allow-write`. Access is limited to the `--workspace` folder(s), credentials are redacted by default, outputs are bounded. **Running requests sends real HTTP requests and executes collection scripts**, so it is never on by default. See the [MCP Server wiki page](wiki/MCP-Server.md) for the flags and the threat model.
 
 ---
 

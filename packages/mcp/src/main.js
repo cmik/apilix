@@ -1,7 +1,7 @@
 'use strict';
 
 const path = require('node:path');
-const { parseMcpArgs, helpText } = require('./args');
+const { parseMcpArgs, helpText, runEnabled, runMode } = require('./args');
 const { createWorkspaces } = require('./workspace');
 const { createMcpServer } = require('./server');
 const { installHostGuard } = require('./host-guard');
@@ -58,11 +58,19 @@ async function runMcp(argv, io = {}, hooks = {}) {
   }
 
   if (opts.includeCredentials) log('warning: --include-credentials is set: credentials are NOT redacted in what is returned to the agent (secret-flagged environment values stay hidden).');
-  if (!opts.noRun && opts.allowHosts.length === 0) log('warning: run tools can reach ANY host this machine can reach; use --allow-host <pattern> to restrict, or --no-run to disable them.');
-  log(`ready (workspaces: ${workspaces.labels.join(', ')}; write ${opts.allowWrite ? 'ENABLED' : 'disabled'}; run ${opts.noRun ? 'disabled' : 'enabled'}${opts.noRun ? '' : `; hosts ${opts.allowHosts.length ? opts.allowHosts.join(',') : 'unrestricted'}`})`);
+  const mode = runMode(opts);
+  const execution = {
+    disabled: 'run tools DISABLED (--no-run)',
+    off: 'run tools NOT ENABLED (no --allow-host / --allow-any-host): browsing only, nothing is sent and no script runs',
+    restricted: `run tools ENABLED, limited to hosts: ${opts.allowHosts.join(', ')}`,
+    any: 'run tools ENABLED FOR ALL HOSTS (--allow-any-host)',
+  }[mode];
+  log(`execution mode: ${execution}`);
+  if (mode === 'any') log('WARNING: --allow-any-host: requests, and the secrets they carry (headers, tokens), can be sent to ANY host this machine can reach, and collection scripts run with your rights. Prefer --allow-host <pattern>.');
+  log(`ready (workspaces: ${workspaces.labels.join(', ')}; write ${opts.allowWrite ? 'ENABLED' : 'disabled'}; run ${mode === 'disabled' || mode === 'off' ? 'disabled' : 'enabled'})`);
 
   let guard = null;
-  if (!opts.noRun && opts.allowHosts.length > 0) {
+  if (runEnabled(opts) && opts.allowHosts.length > 0) {
     guard = installHostGuard(opts.allowHosts, { onDeny: (h) => log(`blocked outgoing connection to "${h}" (not in --allow-host)`) });
   }
   try {

@@ -32,7 +32,10 @@ function runFixture(api, { withHostile = true } = {}) {
   };
 }
 
-async function setup(extraArgs = [], { hostile = true } = {}) {
+const RUN_FLAGS = ['--allow-host', '--allow-any-host', '--no-run'];
+
+/** The run tools are opt-in: unless a test chooses its own run flag, allow the local fake API host only. */
+async function setup(extraArgs = [], { hostile = true, runFlags = true } = {}) {
   const api = await startFakeApi();
   const dir = makeTmp();
   writeJson(dir, 'run.postman_collection.json', runFixture(api, { withHostile: hostile }));
@@ -46,7 +49,8 @@ async function setup(extraArgs = [], { hostile = true } = {}) {
       { key: 'hidden', value: ENV_SECRET, enabled: true, secret: true },
     ],
   });
-  const s = startServer(['--workspace', dir, ...extraArgs]);
+  const defaults = runFlags && !extraArgs.some((a) => RUN_FLAGS.includes(a)) ? ['--allow-host', '127.0.0.1'] : [];
+  const s = startServer(['--workspace', dir, ...defaults, ...extraArgs]);
   await s.initialize();
   const done = async () => { await s.close(); await api.close(); assert.equal(s.badStdout.length, 0); };
   return { api, dir, s, done, colId: 'run.postman_collection.json', envId: 'env.json' };
@@ -195,7 +199,7 @@ test('--no-run: run tools are not listed, calls are refused, nothing is sent', a
       assert.match(r.text, /--no-run/);
     }
     assert.equal(Object.keys(api.hits).length, 0);
-    assert.ok(!s.stderr.includes('ANY host'), 'no network warning when run is disabled');
+    assert.ok(!s.stderr.includes('WARNING: --allow-any-host'), 'no network warning when run is disabled');
   } finally { await done(); }
 });
 
@@ -227,14 +231,78 @@ test('--allow-host: allowed host works; other hosts (resolved variable, redirect
   } finally { await done(); }
 });
 
-test('without --allow-host the same requests go through (control) and a warning is printed', async () => {
-  const { api, s, done, colId, envId } = await setup();
+test('--allow-any-host: the same requests go through (control) and a loud warning is printed', async () => {
+  const { api, s, done, colId, envId } = await setup(['--allow-any-host']);
   try {
     const hostile = await s.call('run_request', { collection: colId, request: 'Hostile', environment: envId });
     assert.equal(hostile.data.result.status, 200);
     assert.equal(api.hits['/hostile'], 1);
-    assert.match(s.stderr, /run tools can reach ANY host/);
+    assert.match(s.stderr, /execution mode: run tools ENABLED FOR ALL HOSTS/);
+    assert.match(s.stderr, /WARNING: --allow-any-host/);
   } finally { await done(); }
+});
+
+test('run tools are OFF by default: not listed, calls refused with the way to enable them, nothing sent', async () => {
+  const { api, s, done, colId, envId } = await setup([], { runFlags: false });
+  try {
+    const names = (await s.request('tools/list', {})).result.tools.map((t) => t.name);
+    assert.ok(!names.includes('run_request') && !names.includes('run_collection'));
+    assert.ok(names.includes('get_last_results'));
+    for (const name of ['run_request', 'run_collection']) {
+      const r = await s.call(name, { collection: colId, request: 'Basic/Ping', environment: envId });
+      assert.equal(r.isError, true);
+      assert.match(r.text, /--allow-host/);
+      assert.match(r.text, /--allow-any-host/);
+    }
+    assert.equal(Object.keys(api.hits).length, 0);
+    assert.match(s.stderr, /execution mode: run tools NOT ENABLED/);
+  } finally { await done(); }
+});
+
+test('startup states the execution mode on stderr: restricted hosts, all hosts, disabled', async () => {
+  const a = await setup(['--allow-host', '127.0.0.1', '--allow-host', '*.example.com']);
+  try { assert.match(a.s.stderr, /execution mode: run tools ENABLED, limited to hosts: 127\.0\.0\.1, \*\.example\.com/); } finally { await a.done(); }
+  const b = await setup(['--no-run']);
+  try { assert.match(b.s.stderr, /execution mode: run tools DISABLED \(--no-run\)/); } finally { await b.done(); }
+});
+
+test('--allow-any-host together with --allow-host, or with --no-run, refuses to start (exit 2)', async () => {
+  for (const args of [['--allow-any-host', '--allow-host', 'a.com'], ['--no-run', '--allow-any-host']]) {
+    const s = startServer(['--workspace', makeTmp(), ...args]);
+    assert.equal((await s.close()).code, 2, args.join(' '));
+    assert.match(s.stderr, /mutually exclusive|no effect/);
+  }
+});
+
+test('agent data/variables cannot redirect a request (carrying a secret header) to another host', async () => {
+  for (const flags of [[], ['--allow-host', '127.0.0.1'], ['--allow-any-host']]) {
+    const attacker = await startFakeApi();
+    const { api, s, done, colId, envId } = await setup(flags, { runFlags: flags.length > 0 });
+    try {
+      const r = await s.call('run_request', { collection: colId, request: 'Echo', environment: envId, data: { base: attacker.base } });
+      assert.equal(r.isError, true, `flags=${flags.join(' ')}: ${r.text}`);
+      assert.deepEqual(attacker.hits, {}, `flags=${flags.join(' ')}: the attacker server received a request`);
+      assert.ok(!r.text.includes(ENV_SECRET));
+      if (flags.length) {
+        assert.match(r.text, /would change the target host/);
+        // agent variables rank below the environment: they cannot move the request either
+        const v = await s.call('run_request', { collection: colId, request: 'Echo', environment: envId, variables: { base: attacker.base } });
+        assert.equal(v.data.result.status, 200);
+        assert.deepEqual(attacker.hits, {});
+        assert.equal(api.hits['/echo'], 1, 'the request still went to the environment host');
+      }
+    } finally { await done(); await attacker.close(); }
+  }
+});
+
+test('without an environment baseline the --allow-host list stays the authority for a host chosen by the agent', async () => {
+  const attacker = await startFakeApi();
+  const { s, done, colId } = await setup(['--allow-host', '127.0.0.1']);
+  try {
+    const r = await s.call('run_request', { collection: colId, request: 'Echo', data: { base: `http://localhost:${new URL(attacker.base).port}`, apiToken: 'x', hidden: 'y' } });
+    assert.ok(r.data.result.error, 'blocked at the socket layer');
+    assert.deepEqual(attacker.hits, {});
+  } finally { await done(); await attacker.close(); }
 });
 
 test('timeouts: a slow endpoint is cut at timeoutMs and the call returns with an error', async () => {

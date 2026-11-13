@@ -5,6 +5,8 @@
  * Pure functions (no I/O).
  */
 
+const { resolveVariables } = require('@apilix/core/variable-resolver');
+
 const MAX_DEPTH = 30;
 const NON_HTTP_METHODS = new Set(['MONGO', 'MYSQL', 'POSTGRESQL', 'SQLITE', 'CASSANDRA', 'ORACLE', 'MSSQL', 'REDIS', 'DYNAMODB']);
 
@@ -200,4 +202,61 @@ function describeRequest(entry, redactor) {
   return out;
 }
 
-module.exports = { listNodes, findNode, countRequests, buildRunTree, describeRequest, isNonHttp, isFolder, urlRaw, redactAuth };
+/** "host:port" (lower-case, no userinfo) of a URL string, or null when it is not yet a concrete URL. */
+function authorityOf(url) {
+  if (typeof url !== 'string' || url === '' || url.includes('{{')) return null;
+  const m = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i.exec(url.trim());
+  if (!m) return null;
+  const auth = m[1].slice(m[1].lastIndexOf('@') + 1).toLowerCase();
+  return auth || null;
+}
+
+function rawUrlOf(req) {
+  const u = req && req.url;
+  if (typeof u === 'string') return u;
+  if (u && typeof u.raw === 'string' && u.raw) return u.raw;
+  if (u && Array.isArray(u.host)) return `${u.protocol ? `${u.protocol}://` : ''}${u.host.join('.')}${u.port ? `:${u.port}` : ''}`;
+  return '';
+}
+
+const enabledVars = (rows) => {
+  const out = {};
+  for (const v of Array.isArray(rows) ? rows : []) if (v && typeof v.key === 'string' && v.key && !v.disabled) out[v.key] = v.value == null ? '' : String(v.value);
+  return out;
+};
+
+/**
+ * Agent-supplied `variables` / `data` must not redirect a request to another host.
+ * For every request, the host (host:port) obtained with the agent's values is compared with the host obtained
+ * WITHOUT them (collection variables + environment). A literal URL host cannot change at all. When the
+ * baseline itself is not a concrete URL (the host variable is defined nowhere but in the agent's values) there
+ * is nothing to compare with: the --allow-host list (socket layer) stays the only authority there.
+ * Precedence mirrors the engine: collection vars < agent variables < environment < data row.
+ * @returns {{request:string, from:string, to:string}|null} the first violation
+ */
+function findHostOverride(collection, { environment = {}, variables = {}, dataRows = [null] } = {}) {
+  const collVars = enabledVars(collection && collection.variable);
+  const base = { ...collVars, ...environment };
+  let hit = null;
+  (function walk(items, names, depth) {
+    if (hit || !Array.isArray(items) || depth > MAX_DEPTH) return;
+    for (const node of items) {
+      if (hit) return;
+      if (!node || typeof node !== 'object') continue;
+      const here = names.concat(typeof node.name === 'string' ? node.name : '(unnamed)');
+      if (isFolder(node)) { walk(node.item, here, depth + 1); continue; }
+      const raw = rawUrlOf(node.request);
+      if (!raw) continue;
+      const baseline = authorityOf(resolveVariables(raw, base));
+      if (baseline === null) continue;
+      for (const row of dataRows) {
+        const full = { ...collVars, ...variables, ...environment, ...(row || {}) };
+        const effective = authorityOf(resolveVariables(raw, full));
+        if (effective !== baseline) { hit = { request: here.join('/'), from: baseline, to: effective || '(unresolved)' }; return; }
+      }
+    }
+  }(collection && collection.item, [], 0));
+  return hit;
+}
+
+module.exports = { findHostOverride, authorityOf, listNodes, findNode, countRequests, buildRunTree, describeRequest, isNonHttp, isFolder, urlRaw, redactAuth };

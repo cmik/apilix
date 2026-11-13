@@ -10,10 +10,14 @@ const { findNode, buildRunTree, countRequests } = require('./model');
 const { UNTRUSTED, REF, COLLECTION_ID, ENV_ID } = require('./tools');
 const { WorkspaceError } = require('./workspace');
 const exec = require('./exec');
+const { runEnabled } = require('./args');
 
-const RUN_WARNING = ' This tool SENDS REAL HTTP REQUESTS from the machine running the server (to any host it can reach unless the operator restricted hosts with --allow-host) and EXECUTES the collection\'s pre-request/test scripts; requests can have side effects.';
+const RUN_WARNING = ' This tool SENDS REAL HTTP REQUESTS from the machine running the server (only to the hosts the operator allowed with --allow-host, or to ANY host when started with --allow-any-host) and EXECUTES the collection\'s pre-request/test scripts; requests can have side effects. Variables/data you provide cannot change the host a request is sent to.';
 const RUN_ANNOTATIONS = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true };
-const DISABLED = 'Running requests is disabled on this server (started with --no-run).';
+/** Why the run tools are unavailable, and how the operator can enable them. */
+const disabledMessage = (o) => (o.noRun
+  ? 'Running requests is disabled on this server (started with --no-run).'
+  : 'Running requests is not enabled on this server. The operator must restart it with --allow-host <pattern> (recommended: only those hosts are reachable) or --allow-any-host (no host restriction).');
 
 const VARIABLES = {
   type: 'object',
@@ -59,8 +63,8 @@ const tools = [
     name: 'run_request',
     title: 'Run one request',
     description: 'Run a single request of a collection (with its collection/folder scripts) and return the redacted response: status, timing, headers, body (truncated), test results and errors.' + RUN_WARNING + UNTRUSTED,
-    enabled: (o) => !o.noRun,
-    disabledMessage: DISABLED,
+    enabled: runEnabled,
+    disabledMessage,
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['collection', 'request'],
       properties: {
@@ -118,8 +122,8 @@ const tools = [
     name: 'run_collection',
     title: 'Run a collection or folder',
     description: 'Run a whole collection (or one folder) like `apilix run`: returns a summary, the failing requests/tests, and per-request results (bounded). Optional environment, variable overrides, iterations or data rows, delay between requests, and bail-on-first-failure. Response bodies are omitted unless requested.' + RUN_WARNING + UNTRUSTED,
-    enabled: (o) => !o.noRun,
-    disabledMessage: DISABLED,
+    enabled: runEnabled,
+    disabledMessage,
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['collection'],
       properties: {
