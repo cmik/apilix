@@ -45,7 +45,7 @@ function isPlainObject(v) {
  * @param {object} [opts.capabilities] advertised in `initialize`
  * @param {Record<string, (params:any, ctx:{signal:AbortSignal, id:string|number}) => Promise<any>|any>} opts.methods request handlers
  * @param {number} [opts.maxLineBytes]
- * @param {(value:any) => any} [opts.scrub] applied to every outgoing result/error payload (never to the id)
+ * @param {(value:any, method?:string) => any} [opts.scrub] applied to every outgoing result (with its method) / error payload (never to the id)
  * @param {(msg:string) => void} [opts.log] diagnostics, must write to stderr only
  */
 function createRpcServer(opts) {
@@ -67,8 +67,8 @@ function createRpcServer(opts) {
     out.write(`${JSON.stringify(message)}\n`);
   }
 
-  function respond(id, result) {
-    send({ jsonrpc: '2.0', id, result: scrub(result) });
+  function respond(id, result, method) {
+    send({ jsonrpc: '2.0', id, result: scrub(result, method) });
   }
 
   function respondError(id, code, message, data) {
@@ -114,7 +114,7 @@ function createRpcServer(opts) {
         result = await handler(params, { signal: controller.signal, shutdown: shutdownCtl.signal, id });
       }
       if (controller.signal.aborted) return; // cancelled: the spec says no response
-      respond(id, result === undefined ? {} : result);
+      respond(id, result === undefined ? {} : result, method);
     } catch (err) {
       if (controller.signal.aborted) return;
       if (err instanceof RpcError) {

@@ -33,11 +33,48 @@ test('variable references are never treated as secrets', () => {
   assert.equal(r.secretCount(), 0);
 });
 
-test('scrubDeep reaches nested strings and keys but leaves numbers/booleans', () => {
+test('scrubDeep scrubs string leaves only: keys, numbers, booleans and null are never touched', () => {
   const r = make();
   const out = r.scrubDeep({ [ENV_SECRET]: [1, true, null, { a: `v=${ENV_SECRET}` }] });
-  assert.ok(!JSON.stringify(out).includes(ENV_SECRET));
+  assert.deepEqual(Object.keys(out), [ENV_SECRET], 'keys are structure, not content');
   assert.deepEqual(Object.values(out)[0].slice(0, 3), [1, true, null]);
+  assert.ok(!JSON.stringify(Object.values(out)).includes(ENV_SECRET), 'leaf strings are scrubbed');
+});
+
+test('short or banal values of credential-NAMED variables are not secrets; flagged secrets keep a 4-char floor', () => {
+  const r = createRedactor();
+  r.addEnvironment([
+    { key: 'auth_token_type', value: 'object' },
+    { key: 'secret_flag', value: 'true' },
+    { key: 'api_key_kind', value: 'undefined' },
+    { key: 'password', value: 'hunter2' }, // 7 chars: below the floor for name-only detection
+    { key: 'token_mode', value: 'bearer' },
+    { key: 'client_secret_name', value: 'someword' }, // a single lower-case word
+  ]);
+  assert.equal(r.secretCount(), 0);
+  const json = '{"type":"object","ok":true,"n":200,"x":"undefined","t":"bearer"}';
+  assert.equal(r.scrub(json), json);
+  r.addEnvironment([{ key: 'pin', value: 'ab12', secret: true }, { key: 'flag', value: 'true', secret: true }, { key: 'api_token', value: 'Zk9-Qw81x' }]);
+  assert.ok(!r.scrub('x ab12 y').includes('ab12'), 'flagged secret of 4 chars is masked');
+  assert.equal(r.scrub('true'), 'true', 'a banal flagged value is still not masked (it would corrupt JSON)');
+  assert.ok(!r.scrub('t Zk9-Qw81x').includes('Zk9-Qw81x'), 'a random-looking 8+ char token under a sensitive name is masked');
+});
+
+test('scrubJsonText keeps serialized JSON valid while masking leaves', () => {
+  const r = make();
+  const out = r.scrubJsonText(JSON.stringify({ type: 'object', ok: true, leak: `a ${ENV_SECRET} b`, n: 1 }));
+  const parsed = JSON.parse(out);
+  assert.equal(parsed.type, 'object');
+  assert.equal(parsed.ok, true);
+  assert.ok(!out.includes(ENV_SECRET));
+  assert.equal(r.scrubJsonText(`plain ${ENV_SECRET}`).includes(ENV_SECRET), false);
+});
+
+test('collection variables of type "secret" are hard secrets: hidden even with --include-credentials', () => {
+  const r = createRedactor({ includeCredentials: true });
+  r.addCollection({ info: { name: 'x' }, item: [], variable: [{ key: 'plain', value: 'visibleValue1' }, { key: 'k', value: 'collSecret_Abc123', type: 'secret' }, { key: 'api_token', value: 'softToken_Xyz789' }] });
+  assert.ok(!r.scrub('x collSecret_Abc123').includes('collSecret_Abc123'));
+  assert.ok(r.scrub('x softToken_Xyz789').includes('softToken_Xyz789'), 'name-only secrets are visible when credentials are included');
 });
 
 test('structural redaction: URL userinfo/query, headers, JSON bodies', () => {

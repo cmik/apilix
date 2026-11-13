@@ -83,7 +83,7 @@ function createMcpServer(cfg) {
     try {
       await refreshSecrets();
       const data = await tool.handler(args, ctx, extra);
-      return okResult(data, limits.maxOutputChars);
+      return okResult(redactor.scrubDeep(data), limits.maxOutputChars);
     } catch (err) {
       if (!(err instanceof WorkspaceError) && !(err && err.code === 'EBADARG') && !(err && err.expected)) log(`tool ${tool.name} failed: ${redactor.scrub(err && err.message)}`);
       return failResult(describeError(err));
@@ -140,13 +140,30 @@ function createMcpServer(cfg) {
     },
   };
 
+  /**
+   * Last safety net on everything sent to the client. It must never break the protocol: initialize,
+   * tools/list, resources/list... pass through untouched; only the text of tool results / resource contents is
+   * scrubbed (JSON-aware, string leaves only); errors are scrubbed as text.
+   */
+  function scrubOutgoing(value, method) {
+    if (typeof value === 'string') return redactor.scrub(value);
+    if (method === 'tools/call' && value && Array.isArray(value.content)) {
+      return { ...value, content: value.content.map((c) => (c && c.type === 'text' ? { ...c, text: redactor.scrubJsonText(c.text) } : c)) };
+    }
+    if (method === 'resources/read' && value && Array.isArray(value.contents)) {
+      return { ...value, contents: value.contents.map((c) => (c && typeof c.text === 'string' ? { ...c, text: redactor.scrubJsonText(c.text) } : c)) };
+    }
+    if (method === undefined) return redactor.scrubDeep(value); // error.data
+    return value;
+  }
+
   const rpc = createRpcServer({
     serverInfo: { name: 'apilix', version },
     instructions: INSTRUCTIONS,
     capabilities: { tools: { listChanged: false }, resources: { subscribe: false, listChanged: false } },
     methods,
     maxLineBytes: opts.maxLineBytes,
-    scrub: (v) => redactor.scrubDeep(v),
+    scrub: scrubOutgoing,
     log: (m) => log(redactor.scrub(m)),
   });
 

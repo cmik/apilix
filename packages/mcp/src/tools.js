@@ -50,6 +50,8 @@ function describeEnvironment(entry, redactor) {
   };
 }
 
+const isSecretVar = (v) => !!v && (v.type === 'secret' || v.secret === true);
+
 /** Whole collection, redacted, as a nested tree (used by the collection resource). */
 function describeCollection(collection, redactor) {
   const toTree = (items, names, pos, depth) => (Array.isArray(items) ? items : []).map((node, i) => {
@@ -65,7 +67,8 @@ function describeCollection(collection, redactor) {
     info: { name: redactor.text(String(collection.info.name || ''), 200), description: redactor.text(String(collection.info.description || ''), 2000) },
     variables: (Array.isArray(collection.variable) ? collection.variable : []).slice(0, 200).map((v) => ({
       key: redactor.text(String((v && v.key) || ''), 200),
-      value: redactor.includeCredentials || !(v && (v.type === 'secret' || redactor.isSensitiveName(v.key))) ? redactor.clip(redactor.scrub(String(v && v.value != null ? v.value : '')), 500) : '<redacted>',
+      // type "secret" is never returned (like secret-flagged environment values), even with --include-credentials
+      value: isSecretVar(v) || (!redactor.includeCredentials && v && redactor.isSensitiveName(v.key)) ? '<redacted>' : redactor.clip(redactor.scrub(String(v && v.value != null ? v.value : '')), 500),
     })),
     items: toTree(collection.item, [], [], 0),
   };

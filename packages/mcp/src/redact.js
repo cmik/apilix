@@ -10,6 +10,12 @@
  *     name looks sensitive, literal auth credentials found in collections) is replaced wherever it
  *     appears, in raw, URL-encoded and base64 form, in every outgoing string (see scrubDeep).
  *
+ * Scrubbing never touches the protocol or the JSON structure: only string LEAVES of tool/resource data are scrubbed
+ * (keys, booleans, numbers, initialize/tools/list/resources/list are left alone), and short or "banal" values of
+ * merely credential-NAMED variables are not treated as secrets (see MIN_* and isBanal). Trade-off: a secret
+ * shorter than 8 characters, or a single common lowercase word, stored under a credential-looking name (not flagged
+ * secret) is not masked; flag it as secret in the environment to get it masked from 4 characters up.
+ *
  * Limits: a secret that is neither flagged, nor under a sensitive name, nor a literal auth value
  * (for instance a token printed in a free-text response field) cannot be recognised.
  */
@@ -17,8 +23,16 @@
 const core = require('@apilix/core/redact');
 
 const REDACTED = core.REDACTED;
-const MIN_SECRET_LENGTH = 4;
+const MIN_HARD_LENGTH = 4; // values explicitly flagged secret (secret:true / type "secret")
+const MIN_SOFT_LENGTH = 8; // values only recognised by the credential-looking name of their variable
 const MAX_SECRETS = 2000;
+const BANAL = new Set(['true', 'false', 'null', 'undefined', 'nan', 'none', 'object', 'string', 'number', 'boolean', 'integer', 'array', 'bearer', 'basic', 'digest', 'default', 'enabled', 'disabled', 'required', 'optional', 'application/json', 'text/plain', 'application/xml']);
+
+/** Values that are words/literals of the protocol and data model, not credentials: scrubbing them would corrupt output. */
+function isBanal(v) {
+  const t = v.trim().toLowerCase();
+  return t === '' || BANAL.has(t) || /^[a-z]{1,12}$/.test(t);
+}
 
 function decodeSafe(s) {
   try { return decodeURIComponent(s); } catch { return s; }
@@ -31,10 +45,14 @@ function createRedactor({ includeCredentials = false } = {}) {
   const softSecrets = new Set();
   let variants = null; // cache: array of [needle, replacement]
 
+  let overflow = false;
   function add(set, value) {
-    if (typeof value !== 'string' || value.length < MIN_SECRET_LENGTH) return;
+    const hard = set === hardSecrets;
+    if (typeof value !== 'string' || value.length < (hard ? MIN_HARD_LENGTH : MIN_SOFT_LENGTH)) return;
     if (/^\{\{[^{}]+\}\}$/.test(value.trim())) return; // a variable reference, not a literal
-    if (hardSecrets.size + softSecrets.size >= MAX_SECRETS) return;
+    if (hard ? BANAL.has(value.trim().toLowerCase()) : isBanal(value)) return;
+    if (set.has(value)) return;
+    if (hardSecrets.size + softSecrets.size >= MAX_SECRETS) { overflow = true; return; }
     set.add(value);
     variants = null;
   }
@@ -113,7 +131,10 @@ function createRedactor({ includeCredentials = false } = {}) {
       }
       if (req && typeof req === 'object') visitRequestLiterals(req);
       for (const v of Array.isArray(node.variable) ? node.variable : []) {
-        if (v && typeof v.key === 'string' && (v.type === 'secret' || core.isSensitiveName(v.key))) add(softSecrets, v.value == null ? '' : String(v.value));
+        if (!v || typeof v.key !== 'string') continue;
+        const val = v.value == null ? '' : String(v.value);
+        if (v.type === 'secret' || v.secret === true) add(hardSecrets, val); // flagged secret: never returned, even with --include-credentials
+        else if (core.isSensitiveName(v.key)) add(softSecrets, val);
       }
       if (Array.isArray(node.item)) for (const child of node.item) visit(child, depth + 1);
     };
@@ -127,10 +148,11 @@ function createRedactor({ includeCredentials = false } = {}) {
   function buildVariants() {
     const pairs = [];
     for (const s of activeSecrets()) {
+      const min = hardSecrets.has(s) ? MIN_HARD_LENGTH : MIN_SOFT_LENGTH;
       const forms = new Set([s, encodeURIComponent(s), Buffer.from(s, 'utf8').toString('base64')]);
       const b64 = Buffer.from(s, 'utf8').toString('base64').replace(/=+$/, '');
-      if (b64.length >= MIN_SECRET_LENGTH) forms.add(b64);
-      for (const f of forms) if (f.length >= MIN_SECRET_LENGTH) pairs.push(f);
+      forms.add(b64);
+      for (const f of forms) if (f.length >= min) pairs.push(f);
     }
     pairs.sort((a, b) => b.length - a.length);
     return pairs;
@@ -147,14 +169,24 @@ function createRedactor({ includeCredentials = false } = {}) {
     return out;
   }
 
-  /** Deep-scrub every string (values and keys) of a JSON-compatible structure. */
+  /** Scrub the string LEAVES of a JSON-compatible structure. Keys, numbers, booleans and null are never touched. */
   function scrubDeep(value, depth = 0) {
     if (typeof value === 'string') return scrub(value);
     if (depth > 60 || value === null || typeof value !== 'object') return value;
     if (Array.isArray(value)) return value.map((v) => scrubDeep(v, depth + 1));
     const out = {};
-    for (const [k, v] of Object.entries(value)) out[scrub(k)] = scrubDeep(v, depth + 1);
+    for (const [k, v] of Object.entries(value)) out[k] = scrubDeep(v, depth + 1);
     return out;
+  }
+
+  /** Scrub a text that is usually serialized JSON without breaking it: parse, scrub the leaves, serialize again. */
+  function scrubJsonText(text) {
+    if (typeof text !== 'string' || text === '') return text;
+    const t = text.trimStart();
+    if (t.startsWith('{') || t.startsWith('[')) {
+      try { return JSON.stringify(scrubDeep(JSON.parse(text))); } catch { /* not JSON: plain text below */ }
+    }
+    return scrub(text);
   }
 
   const clip = (s, max) => (typeof s === 'string' && s.length > max ? `${s.slice(0, max)}...[truncated ${s.length - max} chars]` : s);
@@ -166,6 +198,8 @@ function createRedactor({ includeCredentials = false } = {}) {
     addSecret: (v) => add(hardSecrets, v),
     scrub,
     scrubDeep,
+    scrubJsonText,
+    overflowed: () => overflow,
     clip,
     /** Free text (log lines, errors, test names): known secrets + Bearer/Basic + URL credentials. */
     text: (s, max = 2000) => (typeof s === 'string' ? clip(scrub(core.redactUrlsInText(s, includeCredentials)), max) : s),

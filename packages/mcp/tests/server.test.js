@@ -251,3 +251,65 @@ test('startup refuses a missing folder and the home directory when implicit; --h
   const unknown = startServer(['--wat']);
   assert.equal((await unknown.close()).code, 2);
 });
+
+test('redaction never corrupts the protocol or the JSON: credential-named variables holding "object"/"true" change nothing', async () => {
+  const clean = workspaceDir();
+  const noisy = workspaceDir();
+  writeJson(noisy, 'envs/noise.json', { name: 'Noise', values: [
+    { key: 'auth_token_type', value: 'object', enabled: true },
+    { key: 'secret_flag', value: 'true', enabled: true },
+    { key: 'api_key_kind', value: 'string', enabled: true },
+    { key: 'password_required', value: 'boolean', enabled: true },
+    { key: 'token', value: 'false', enabled: true },
+  ] });
+  const answers = [];
+  for (const dir of [clean, noisy]) {
+    const s = startServer(['--workspace', dir]);
+    const init = await s.initialize();
+    const list = await s.request('tools/list', {});
+    const rl = await s.request('resources/list', {});
+    const lr = await s.call('list_requests', { collection: 'demo.postman_collection.json' });
+    const gr = await s.call('get_request', { collection: 'demo.postman_collection.json', request: 'req-list' });
+    answers.push({ init: init.result, tools: list.result, resources: rl.result.resources.filter((r) => !r.uri.includes('noise')), lr: lr.data, gr: gr.data });
+    assert.equal(lr.isError, false);
+    assert.equal(JSON.parse(lr.text).untrustedContent, true);
+    assert.ok(list.result.tools.every((t) => t.inputSchema.type === 'object'), 'schemas keep "type":"object"');
+    await s.close();
+  }
+  assert.deepEqual(answers[1], answers[0], 'initialize / tools/list / resources/list / results are identical with and without the noisy variables');
+});
+
+test('the global safety net masks a known secret echoed back in an error message', async () => {
+  await withServer([], async (s) => {
+    const r = await s.call('get_request', { collection: 'demo.postman_collection.json', request: `x${ENV_SECRET}x` });
+    assert.equal(r.isError, true);
+    assert.ok(r.text.includes('No request matches'), r.text);
+    assert.ok(!r.text.includes(ENV_SECRET), 'the secret typed by the caller is masked in the error');
+  });
+});
+
+test('collection variables of type "secret" are never returned, even with --include-credentials (tools, resources, run request headers)', async () => {
+  const { startFakeApi } = require('./fake-server');
+  const api = await startFakeApi();
+  const SECRET_VAR = 'collVarSecret_Q1w2E3r4';
+  const dir = makeTmp();
+  writeJson(dir, 'c.postman_collection.json', {
+    info: { name: 'C' },
+    variable: [{ key: 'base', value: api.base }, { key: 'plainVar', value: 'visible-plain' }, { key: 'hiddenCollVar', value: SECRET_VAR, type: 'secret' }],
+    item: [{ name: 'Echo', id: 'echo', request: { method: 'GET', url: '{{base}}/echo?k={{hiddenCollVar}}', header: [{ key: 'X-Env-Secret', value: '{{hiddenCollVar}}' }, { key: 'X-Visible', value: '{{plainVar}}' }] } }],
+  });
+  const s = startServer(['--workspace', dir, '--include-credentials', '--allow-host', '127.0.0.1']);
+  try {
+    await s.initialize();
+    const res = await s.request('resources/read', { uri: `apilix://collection/${encodeURIComponent('c.postman_collection.json')}` });
+    const body = res.result.contents[0].text;
+    assert.ok(!body.includes(SECRET_VAR), 'collection resource');
+    assert.ok(body.includes('visible-plain'), 'non-secret collection variables are still shown');
+    const run = await s.call('run_request', { collection: 'c.postman_collection.json', request: 'Echo' });
+    assert.equal(run.isError, false, run.text);
+    assert.equal(run.data.result.status, 200);
+    assert.ok(!run.text.includes(SECRET_VAR), 'requestHeaders / url / body of the run');
+    assert.ok(run.text.includes('visible-plain'));
+    assert.ok(!(await s.call('get_request', { collection: 'c.postman_collection.json', request: 'echo' })).text.includes(SECRET_VAR));
+  } finally { await s.close(); await api.close(); }
+});
