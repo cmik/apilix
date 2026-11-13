@@ -207,6 +207,25 @@ test('closing the client connection aborts the provider request', async () => {
   } finally { await fake.close(); }
 });
 
+test('after an aborted request the busy lock is released and the next call succeeds', async () => {
+  const fake = await startFakeProvider((call, res) => { if (fake.calls.length > 1) okReply(res); /* first never answers */ });
+  try {
+    await withAiServer({}, async ({ call, base }) => {
+      await call('PUT', '/config', { settings: settings({ baseUrl: fake.url }), apiKey: KEY });
+      const ac = new AbortController();
+      const p = fetch(`${base}/test`, { method: 'POST', signal: ac.signal }).catch(() => {});
+      while (fake.calls.length === 0) await new Promise(r => setTimeout(r, 10));
+      ac.abort();
+      await p;
+      for (let i = 0; i < 100 && !fake.calls[0].aborted; i++) await new Promise(r => setTimeout(r, 20));
+      assert.equal(fake.calls[0].aborted, true);
+      const r = await call('POST', '/test');
+      assert.notEqual(r.status, 429);
+      assert.equal(r.status, 200);
+    });
+  } finally { await fake.close(); }
+});
+
 test('/preview redacts secrets and makes no outbound request', async () => {
   const fake = await startFakeProvider(okReply);
   try {
