@@ -378,7 +378,8 @@ test('a request-level timeout of 0 (or a huge one) cannot lengthen the session t
     for (const name of ['HangNoTimeout', 'HangLongTimeout']) {
       const t0 = Date.now();
       const r = await s.call('run_request', { collection: colId, request: name, environment: envId, timeoutMs: 1500 }, { timeoutMs: 9000 });
-      assert.ok(Date.now() - t0 < 6000, `${name}: returned within the call timeout (took ${Date.now() - t0} ms)`);
+      // timeoutMs 1500: the request itself must time out at 1.5 s; the hard-timeout backstop would only answer after 3.5 s
+      assert.ok(Date.now() - t0 < 3000, `${name}: the request-level timeout did not lengthen the call (took ${Date.now() - t0} ms)`);
       assert.equal(r.isError, false, r.text);
       assert.ok(r.data.result.error, `${name}: the hanging request is reported as an error`);
     }
