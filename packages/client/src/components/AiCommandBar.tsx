@@ -42,6 +42,7 @@ export default function AiCommandBar({ collectionId, folderId, targetLabel, curr
   const [result, setResult] = useState<AiGenerateRequestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState<{ instruction: string; mode: 'create' | 'modify' } | null>(null);
+  const [elapsed, setElapsed] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const destination = ai.baseUrl || (ai.provider === 'anthropic' ? 'Anthropic' : AI_PROVIDER_DEFAULT_BASE[ai.provider]);
@@ -49,11 +50,30 @@ export default function AiCommandBar({ collectionId, folderId, targetLabel, curr
   useEffect(() => { inputRef.current?.focus(); }, []);
   useEffect(() => () => abortRef.current?.abort(), []);
   useEffect(() => {
+    if (phase !== 'loading') { setElapsed(0); return; }
+    const started = Date.now();
+    setElapsed(0);
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [phase]);
+  useEffect(() => {
     if (phase === 'proposal') return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { abortRef.current?.abort(); onClose(); } };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (phase === 'loading') { cancelGeneration(); return; }
+      abortRef.current?.abort();
+      onClose();
+    };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [phase, onClose]);
+  });
+
+  /** Abort the in-flight generation and go back to the input, keeping the user's text. No error is shown. */
+  function cancelGeneration() {
+    abortRef.current?.abort();
+    setPhase('input');
+    setError(null);
+  }
 
   const collection = state.collections.find(c => c._id === collectionId);
 
@@ -82,7 +102,7 @@ export default function AiCommandBar({ collectionId, folderId, targetLabel, curr
         }),
         secretValues: Array.from(buildAllSecretValues(state.environments, state.globalVariables, state.globalVariableMeta)),
       }, ac.signal);
-      if (ac.signal.aborted) return;
+      if (ac.signal.aborted) { dispatch({ type: 'AI_REQUEST_DONE', payload: 'nlGenerate' }); return; }
       dispatch({ type: 'AI_REQUEST_DONE', payload: 'nlGenerate' });
       setResult(r);
       setPhase('proposal');
@@ -179,13 +199,16 @@ export default function AiCommandBar({ collectionId, folderId, targetLabel, curr
               <p className="text-[11px] text-slate-500">
                 Sends your description, the names (not values) of your variables and a few neighbouring requests to {destination}. Credentials and secret values are redacted first. Nothing is added until you review and apply it.
               </p>
+              {loading && elapsed >= 30 && (
+                <p role="status" className="text-[11px] text-slate-500">Large or slow models can take a minute; you can cancel.</p>
+              )}
               {error && <p role="alert" className="text-xs text-red-400">{error}</p>}
             </>
           )}
         </div>
 
         <div className="px-4 py-3 border-t border-slate-700 flex items-center justify-end gap-2">
-          <button type="button" onClick={() => { abortRef.current?.abort(); onClose(); }} className="px-3 py-1.5 text-xs rounded bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 font-medium transition-colors">
+          <button type="button" onClick={() => { if (loading) { cancelGeneration(); } else { abortRef.current?.abort(); onClose(); } }} className="px-3 py-1.5 text-xs rounded bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 font-medium transition-colors">
             Cancel
           </button>
           {ready && (
@@ -195,7 +218,7 @@ export default function AiCommandBar({ collectionId, folderId, targetLabel, curr
               disabled={loading || !instruction.trim()}
               className="px-3 py-1.5 text-xs rounded bg-orange-600 hover:bg-orange-500 text-white font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             >
-              {loading ? 'Generating…' : 'Generate'}
+              {loading ? `Generating… ${elapsed}s` : 'Generate'}
             </button>
           )}
         </div>

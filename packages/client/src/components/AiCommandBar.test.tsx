@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { DEFAULT_AI_SETTINGS } from '../utils/aiDefaults';
 import type { AiState, CollectionItem } from '../types';
@@ -170,5 +170,53 @@ describe('AiCommandBar', () => {
     render(<AiCommandBar collectionId="c1" folderId={null} onApply={vi.fn()} onClose={onClose} />);
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).toHaveBeenCalled();
+  });
+
+  describe('cancel while generating', () => {
+    let signal: AbortSignal;
+    const start = (onClose = vi.fn()) => {
+      aiGenerateRequest.mockImplementation((_b: unknown, sig: AbortSignal) => {
+        signal = sig;
+        return new Promise((_res, rej) => sig.addEventListener('abort', () => rej(new Error('aborted'))));
+      });
+      render(<AiCommandBar collectionId="c1" folderId={null} onApply={vi.fn()} onClose={onClose} />);
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: 'my text' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Generate' }));
+      return onClose;
+    };
+    const expectCancelled = async (onClose: ReturnType<typeof vi.fn>) => {
+      expect(signal.aborted).toBe(true);
+      expect(await screen.findByRole('button', { name: 'Generate' })).toBeInTheDocument();
+      expect(screen.getByRole('textbox')).toHaveValue('my text');
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(dispatch).toHaveBeenCalledWith({ type: 'AI_REQUEST_DONE', payload: 'nlGenerate' });
+      expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'AI_REQUEST_FAIL' }));
+      expect(onClose).not.toHaveBeenCalled();
+    };
+
+    it('counts elapsed seconds and shows the slow hint after 30s', () => {
+      vi.useFakeTimers();
+      try {
+        start();
+        expect(screen.getByRole('button', { name: 'Generating… 0s' })).toBeDisabled();
+        act(() => { vi.advanceTimersByTime(12000); });
+        expect(screen.getByRole('button', { name: 'Generating… 12s' })).toBeInTheDocument();
+        expect(screen.queryByRole('status')).toBeNull();
+        act(() => { vi.advanceTimersByTime(18000); });
+        expect(screen.getByRole('status')).toHaveTextContent('you can cancel');
+      } finally { vi.useRealTimers(); }
+    });
+
+    it('Cancel aborts, keeps the text and shows no error', async () => {
+      const onClose = start();
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      await expectCancelled(onClose);
+    });
+
+    it('Escape cancels the generation instead of closing', async () => {
+      const onClose = start();
+      fireEvent.keyDown(document, { key: 'Escape' });
+      await expectCancelled(onClose);
+    });
   });
 });
