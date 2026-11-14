@@ -500,7 +500,7 @@ export interface AiPreviewPayload {
   secretValues?: string[];
   settings?: Partial<Pick<AiSettings, 'maxContextTokens' | 'redactSecrets' | 'sendResponseBodies'>>;
   /** "Explain with AI": also preview the failure messages, test script and variable names. */
-  explain?: { failures: Array<{ name: string; error?: string | null }>; testScript?: string; variableNames?: string[] };
+  explain?: { failures: Array<{ name: string; error?: string | null }>; testScript?: string; variableNames?: string[]; localDiagnosis?: string[] };
 }
 
 export interface AiPreviewResult {
@@ -606,6 +606,8 @@ export interface AiExplainFailurePayload {
   testScript?: string;
   /** Variable NAMES only. */
   variableNames?: string[];
+  /** Rule ids from diagnoseLocal (ids only: the server maps them to its own fixed wording). */
+  localDiagnosis?: string[];
   /** Plaintext values of secret variables from every environment; the server scrubs them. */
   secretValues?: string[];
   language?: string;

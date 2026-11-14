@@ -8,6 +8,8 @@ export interface AiPreviewExplain {
   failures: Array<{ name: string; error?: string | null }>;
   testScript?: string;
   variableNames?: string[];
+  /** Rule ids from diagnoseLocal (the server shows the fixed sentences it would send). */
+  localDiagnosis?: string[];
 }
 
 interface Props {

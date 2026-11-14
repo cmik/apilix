@@ -298,8 +298,10 @@ function createAiRouter(deps = {}) {
   // The answer is text for display only: nothing is executed or applied.
   // Not rate limited: no script dry-run runs here, the global lock allows one model call at a time, and the server is loopback-only.
   router.post('/explain-failure', (req, res) => runAiCall(req, res, 'diagnose', async ({ provider, settings, signal }) => {
-    const { request, name, response, failures, testScript, variableNames, language, secretValues } = req.body || {};
-    if (!isObj(response) || !Number.isInteger(response.status) || response.status < 100 || response.status > 599) throw bad('response must be an object with an integer status');
+    const { request, name, response, failures, testScript, variableNames, localDiagnosis, language, secretValues } = req.body || {};
+    // Status 0 = the request never got an answer (connection refused, DNS, TLS...).
+    if (!isObj(response) || !Number.isInteger(response.status) || response.status < 0 || response.status > 599 || (response.status > 0 && response.status < 100)) throw bad('response must be an object with an integer status');
+    if (localDiagnosis !== undefined && !Array.isArray(localDiagnosis)) throw bad('localDiagnosis must be an array');
     if (response.body !== undefined && typeof response.body !== 'string') throw bad('response.body must be a string');
     if ((response.body || '').length > MAX_SUGGEST_BODY_CHARS) throw bad('response.body is too large to analyse');
     if (response.headers !== undefined && !isObj(response.headers)) throw bad('response.headers must be an object');
@@ -317,6 +319,7 @@ function createAiRouter(deps = {}) {
       failures: failures.slice(0, 50),
       testScript: (testScript || '').slice(0, 20000),
       variableNames: (variableNames || []).slice(0, 500),
+      localDiagnosis: (localDiagnosis || []).slice(0, 20),
       maxContextTokens: settings.maxContextTokens,
       redactSecrets: settings.redactSecrets,
       sendResponseBodies: settings.sendResponseBodies,
@@ -385,6 +388,7 @@ function createAiRouter(deps = {}) {
           failures: explain.failures.slice(0, 50),
           testScript: typeof explain.testScript === 'string' ? explain.testScript.slice(0, 20000) : '',
           variableNames: Array.isArray(explain.variableNames) ? explain.variableNames.slice(0, 500) : [],
+          localDiagnosis: Array.isArray(explain.localDiagnosis) ? explain.localDiagnosis.slice(0, 20) : undefined,
           secretValues: secrets,
           redactSecrets: merged.redactSecrets,
           sendResponseBodies: merged.sendResponseBodies,
