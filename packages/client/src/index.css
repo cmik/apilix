@@ -273,6 +273,10 @@ html.light .tab-scroll-fade-right {
   background-image: linear-gradient(to left, #f1f5f9 0%, rgb(241 245 249 / 0.8) 65%, transparent 100%);
 }
 
+/* Disabled scroll button chevron: fainter than enabled (text-slate-700 is not remapped) */
+html.light .tab-scroll-fade-left:disabled,
+html.light .tab-scroll-fade-right:disabled { color: #cbd5e1; }
+
 /* ─── Light mode: Runner panel ───────────────────────────────────────────── */
 
 /* Collection Runner block title */
