@@ -55,3 +55,30 @@ test('the scripting prompt carries the reference, the mode task and wraps the da
   assert.match(getPrompt('scriptAssist', { mode: 'generate', data: '{}', instruction: 'add a test' }).user, /Instruction: add a test/);
   assert.ok(!/Instruction:/.test(getPrompt('scriptAssist', { mode: 'fix', data: '{}', instruction: 'x' }).user));
 });
+
+test('every member listed as testable exists in the validation sandbox, and every member listed as untestable really is missing there', async (t) => {
+  const { resolveDryRunMode } = require('../src/dry-run-mode');
+  if (await resolveDryRunMode() !== 'isolated') return t.skip('no isolated dry-run in this environment');
+  const { dryRunScript } = require('../src/dry-run');
+  const { UNVALIDATED } = require('../../../scripts/gen-apx-reference');
+  const { isRefusedName } = require('../src/apx-surface');
+  const response = { status: 200, statusText: '', headers: {}, body: '{}', responseTime: 1 };
+  const present = async (expr) => (await dryRunScript(`apx.test('p', () => { if (typeof ${expr} === 'undefined') { throw new Error('missing'); } });`, { response, mode: 'strict' })).ok;
+  const expectHas = async (name) => (await dryRunScript(`apx.test('p', () => { if (!('${name}' in apx.expect(1))) { throw new Error('missing'); } });`, { response, mode: 'strict' })).ok;
+  const paths = [];
+  (function walk(node, prefix) {
+    for (const [name, child] of Object.entries(node.children || {})) {
+      if (isRefusedName(name) || (prefix === 'apx' && (name === 'db' || name === 'execution'))) continue;
+      paths.push(`${prefix}.${name}`);
+      walk(child, `${prefix}.${name}`);
+    }
+  }(getApxSurface().tree, 'apx'));
+  const untestable = (p) => UNVALIDATED.paths.some(u => p === u || p.startsWith(`${u}.`));
+  const disagree = [];
+  for (const p of paths) if ((await present(p)) === untestable(p)) disagree.push(p);
+  assert.deepEqual(disagree, [], 'reference and sandbox disagree: update UNVALIDATED in scripts/gen-apx-reference.js');
+  const { expect } = getApxSurface();
+  for (const m of [...expect.props, ...expect.methods.map(x => x.name)]) {
+    assert.equal(await expectHas(m), !UNVALIDATED.expectMethods.includes(m), `expect.${m}`);
+  }
+});

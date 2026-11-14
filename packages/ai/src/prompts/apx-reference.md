@@ -9,8 +9,6 @@ Use only the members listed here. Anything else does not exist and makes the scr
 - `apx.test(name, fn)`
 - `apx.test.skip(name)`
 - `apx.expect(value)`
-- `apx.softExpect(value)`
-- `apx.assertAll(label)`
 
 ## apx.environment
 
@@ -75,9 +73,6 @@ Use only the members listed here. Anything else does not exist and makes the scr
 - `apx.response.responseTime` (number)
 - `apx.response.json()`
 - `apx.response.text()`
-- `apx.response.xml()`
-- `apx.response.xmlPath(expr)`
-- `apx.response.xmlPathAll(expr)`
 - `apx.response.headers.get(name)`
 - `apx.response.headers.has(name)`
 - `apx.response.headers.toObject()`
@@ -88,13 +83,7 @@ Use only the members listed here. Anything else does not exist and makes the scr
 - `apx.response.to.be.ok()`
 - `apx.response.size` (number)
 
-## apx.request
-
-- `apx.request.headers.upsert({ key, value })`
-- `apx.request.url` (string)
-- `apx.request.method` (string)
-
-## Assertions: apx.expect(value) and apx.softExpect(value)
+## Assertions: apx.expect(value)
 
 Chainable words (no effect): `to`, `be`, `been`, `is`, `that`, `which`, `and`, `has`, `have`, `with`, `at`, `of`, `same`, `does`, `still`, `also`.
 Negation: `not`.
@@ -139,11 +128,24 @@ Assertion methods:
 - `.everyItem(fn)`
 - `.someItem(fn)`
 - `.subset(expected)`
-- `.deepProperty(path, val)`
 - `.satisfy(fn)`
 - `.satisfies(fn)`
-- `.matchSchema(schema)`
 
 After `deep` (for example `.to.deep.equal(x)`): `equal`.
+
+## Real but not testable here
+
+These exist in Apilix but the validation sandbox cannot run them: a script that uses one is shown to the user as "not validated". Use them only when the task needs them (for example `apx.request.headers.upsert` to set a header in a pre-request script).
+
+- `apx.softExpect(value)`
+- `apx.assertAll(label)`
+- `apx.response.xml()`
+- `apx.response.xmlPath(expr)`
+- `apx.response.xmlPathAll(expr)`
+- `apx.request.headers.upsert({ key, value })`
+- `apx.request.url` (string)
+- `apx.request.method` (string)
+- `apx.expect(value).deepProperty(path, val)`
+- `apx.expect(value).matchSchema(schema)`
 
 Example: `apx.test("status is 200", () => { apx.expect(apx.response.code).to.equal(200); });`
