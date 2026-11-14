@@ -14,7 +14,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const { AiError, httpStatusFor, buildPreviewContext, getPrompt, describeDocs, isValidLanguage, suggestAssertions, generateRequest, explainFailure, describeExplainEvidence } = require('@apilix/ai');
+const { AiError, httpStatusFor, buildPreviewContext, getPrompt, describeDocs, isValidLanguage, suggestAssertions, generateRequest, explainFailure, describeExplainEvidence, scriptAssist, describeScriptAssist } = require('@apilix/ai');
 const { buildDocModel } = require('@apilix/core/docs');
 
 const PROVIDERS = ['anthropic', 'openai-compat'];
@@ -333,6 +333,32 @@ function createAiRouter(deps = {}) {
     };
   }, { featureFlag: 'diagnose' }));
 
+  // Scripting assistant: generate | explain | fix | convert. Feature flag `scriptAssist`. Rate limited: a proposed
+  // script is screened and dry-run in a child process. Nothing is applied or run for the caller.
+  router.post('/script-assist', (req, res) => runAiCall(req, res, 'scriptAssist', async ({ provider, settings, signal }) => {
+    const { mode, kind, script, instruction, error, variableNames, language, secretValues } = req.body || {};
+    if (variableNames !== undefined && !Array.isArray(variableNames)) throw bad('variableNames must be an array');
+    checkLanguage(language);
+    const started = Date.now();
+    const r = await scriptAssist({
+      provider, mode, kind, script, instruction, error,
+      variableNames: (variableNames || []).slice(0, 500),
+      maxContextTokens: settings.maxContextTokens,
+      redactSecrets: settings.redactSecrets,
+      sendResponseBodies: settings.sendResponseBodies,
+      secretValues: secretList(secretValues),
+      language: language ? language.trim() : settings.outputLanguage,
+      signal,
+    });
+    return {
+      body: {
+        mode: r.mode, explanation: r.explanation, script: r.script, deterministic: r.deterministic, usedModel: r.usedModel,
+        converted: r.converted, validation: r.validation, warnings: r.warnings, retried: r.retried,
+      },
+      usage: r.usage, latencyMs: Date.now() - started,
+    };
+  }, { featureFlag: 'scriptAssist', rateLimited: true }));
+
   router.post('/generate-request', (req, res) => runAiCall(req, res, 'nlGenerate', async ({ provider, settings, signal }) => {
     const { instruction, current, neighbors, variables, language, secretValues } = req.body || {};
     if (typeof instruction !== 'string' || !instruction.trim()) throw bad('instruction must be a non-empty string');
@@ -377,6 +403,25 @@ function createAiRouter(deps = {}) {
       .filter(v => v && typeof v.name === 'string')
       .map(v => ({ name: v.name.slice(0, 200), scope: typeof v.scope === 'string' ? v.scope.slice(0, 40) : undefined, secret: v.secret === true }));
     const secrets = (secretValues || []).slice(0, 1000).filter(s => typeof s === 'string');
+    if (req.body && req.body.scriptAssist !== undefined) {
+      // Scripting assistant: the sections come from the same code that builds the real payload.
+      const sa = req.body.scriptAssist;
+      if (!isObj(sa)) return res.status(400).json({ error: 'scriptAssist must be an object', code: 'BAD_REQUEST' });
+      try {
+        const d = describeScriptAssist({
+          mode: sa.mode, kind: sa.kind, script: sa.script, instruction: sa.instruction, error: sa.error,
+          variableNames: Array.isArray(sa.variableNames) ? sa.variableNames.slice(0, 500) : [],
+          secretValues: secrets,
+          redactSecrets: merged.redactSecrets !== false,
+          sendResponseBodies: merged.sendResponseBodies,
+        });
+        return res.json({ sections: d.sections, estimatedTokens: d.sections.reduce((n, sec) => n + Math.ceil(sec.text.length / 4), 0), redactions: 0 });
+      } catch (err) {
+        if (err && err.code === 'BAD_REQUEST') return res.status(400).json({ error: err.message, code: 'BAD_REQUEST' });
+        logger.error('AI preview error:', err && err.name);
+        return res.status(500).json({ error: 'Could not build the preview', code: 'INTERNAL' });
+      }
+    }
     try {
       const preview = buildPreviewContext({ item, response, variablesMeta, secretValues: secrets, settings: merged });
       if (explain && typeof explain === 'object' && Array.isArray(explain.failures)) {

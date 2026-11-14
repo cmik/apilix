@@ -102,6 +102,15 @@ const SCHEMAS = {
     required: ['summary', 'likelyCauses', 'suggestedFixes'],
     additionalProperties: false,
   },
+  scriptAssist: {
+    type: 'object',
+    properties: {
+      explanation: { type: 'string', minLength: 1, maxLength: 1500 },
+      script: { type: 'string', maxLength: 12000 },
+    },
+    required: ['explanation'],
+    additionalProperties: false,
+  },
   requestDraft: {
     type: 'object',
     properties: {

@@ -18,6 +18,8 @@
     "./nl-generate": { "require": "./src/nl-generate.js", "default": "./src/nl-generate.js" },
     "./dry-run-mode": { "require": "./src/dry-run-mode.js", "default": "./src/dry-run-mode.js" },
     "./dry-run": { "require": "./src/dry-run.js", "default": "./src/dry-run.js" },
+    "./script-assist": { "require": "./src/script-assist.js", "default": "./src/script-assist.js" },
+    "./script-convert": { "require": "./src/script-convert.js", "default": "./src/script-convert.js" },
     "./script-screen": { "require": "./src/script-screen.js", "default": "./src/script-screen.js" }
   },
   "files": ["src"],
