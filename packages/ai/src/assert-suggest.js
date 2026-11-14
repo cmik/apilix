@@ -13,8 +13,7 @@ const { neutralizeAiText } = require('@apilix/core/docs');
 const { AiError } = require('./errors');
 const { estimateTokens, truncateText, truncateJson } = require('./budget');
 const { redactRequest, redactResponse, redactScript, scrubSecretValues, scrubTokenPatterns } = require('./redact');
-const { buildShapeSchema } = require('./context');
-const { clip, trimHeaders, trimRequest, prepareResponseHeaders, prepareRequest } = require('./shape');
+const { clip, trimHeaders, trimRequest, prepareRequest, prepareResponseHead, prepareExistingTests, shapeOfText, normalizeLatency } = require('./shape');
 const { getPrompt } = require('./prompts');
 const crypto = require('crypto');
 const { dryRunScript } = require('./dry-run');
@@ -30,14 +29,6 @@ const OUTPUT_RESERVE_TOKENS = 3000;
 const MAX_EXISTING_TESTS_CHARS = 1500;
 const MIN_BODY_TOKENS = 50;
 
-const MAX_RESPONSE_TIME_MS = 600000;
-
-/** Observed latency in ms: a finite number in [0, 600000], rounded. Anything else is ignored (undefined). */
-function normalizeLatency(v) {
-  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > MAX_RESPONSE_TIME_MS) return undefined;
-  return Math.round(v);
-}
-
 function tryParse(text) {
   try { return { ok: true, value: JSON.parse(text) }; } catch { return { ok: false }; }
 }
@@ -46,18 +37,17 @@ function tryParse(text) {
 function buildData({ request, name, response, existingTests, secretValues, redactSecrets, sendResponseBodies, bodyTokens, includeExisting }) {
   const redReq = redactRequest(request || {}, { secretValues, redactSecrets });
   const redRes = redactResponse(response || {}, { secretValues, redactSecrets });
+  const shapeOnly = sendResponseBodies === false;
+  // A bare latency number carries no secret, so it does not go through redaction.
   const data = {
-    request: prepareRequest(redReq, name, sendResponseBodies === false),
-    response: { status: redRes.status, statusText: clip(redRes.statusText, 80), headers: prepareResponseHeaders(redRes.headers, sendResponseBodies === false) },
+    request: prepareRequest(redReq, name, shapeOnly),
+    response: prepareResponseHead(redRes, response, shapeOnly),
   };
-  // A bare number: it carries no secret, so it does not go through redaction.
-  const latency = normalizeLatency(response && response.responseTime);
-  if (latency !== undefined) data.response.responseTimeMs = latency;
   let truncated = false;
   const body = typeof redRes.body === 'string' ? redRes.body : '';
   const parsed = tryParse(body);
   if (sendResponseBodies === false) {
-    data.response.bodyShape = parsed.ok ? buildShapeSchema(parsed.value) : { type: 'text', length: body.length };
+    data.response.bodyShape = shapeOfText(body);
     data.response.bodyNote = 'Shape only: types, no values. Assert types and structure, never values.';
   } else if (parsed.ok) {
     const tj = truncateJson(parsed.value, { maxTokens: bodyTokens });
@@ -72,7 +62,7 @@ function buildData({ request, name, response, existingTests, secretValues, redac
   }
   if (includeExisting && existingTests) {
     const redacted = redactSecrets !== false ? redactScript(existingTests) : existingTests;
-    data.existingTests = clip(redacted, MAX_EXISTING_TESTS_CHARS);
+    Object.assign(data, prepareExistingTests(redacted, shapeOnly, MAX_EXISTING_TESTS_CHARS));
   }
   let text = JSON.stringify(data, null, 1);
   if (redactSecrets !== false) text = scrubTokenPatterns(text);

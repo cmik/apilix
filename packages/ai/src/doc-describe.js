@@ -10,7 +10,7 @@
 
 const { neutralizeAiText } = require('@apilix/core/docs');
 const { AiError } = require('./errors');
-const { buildShapeSchema } = require('./context');
+const { shapeOfText, shapeUrl } = require('./shape');
 const { estimateTokens, truncateText } = require('./budget');
 const { scrubSecretValues, scrubTokenPatterns, REDACTED } = require('./redact');
 const { getPrompt } = require('./prompts');
@@ -44,8 +44,13 @@ function missing(list, skip) {
 
 /** Structure of a saved example body: types for JSON, a length for anything else. */
 function exampleShape(body) {
-  const text = typeof body === 'string' ? body : JSON.stringify(body);
-  try { return buildShapeSchema(JSON.parse(text)); } catch { return { type: 'text', length: text.length }; }
+  try {
+    const text = typeof body === 'string' ? body : JSON.stringify(body);
+    return shapeOfText(typeof text === 'string' ? text : '');
+  } catch {
+    // Circular or otherwise unserialisable input: nothing about it is sent but the fact that it is not JSON.
+    return { type: 'text', length: 0 };
+  }
 }
 
 /** Entries (collection, folders, requests) that lack a description or have undocumented parameters. */
@@ -64,7 +69,7 @@ function collectEntries(model, warnings, stats, { shapeOnly = false } = {}) {
   for (const r of model.requests) {
     const params = [];
     const add = (list, where, skip) => {
-      for (const p of missing(list, skip)) params.push({ name: clip(p.key, MAX_NAME_CHARS), in: where, ...(p.value && p.value !== REDACTED ? { example: clip(p.value, MAX_EXAMPLE_CHARS) } : {}) });
+      for (const p of missing(list, skip)) params.push({ name: clip(p.key, MAX_NAME_CHARS), in: where, ...(!shapeOnly && p.value && p.value !== REDACTED ? { example: clip(p.value, MAX_EXAMPLE_CHARS) } : {}) });
     };
     add(r.pathVariables, 'path');
     add(r.query, 'query');
@@ -80,12 +85,13 @@ function collectEntries(model, warnings, stats, { shapeOnly = false } = {}) {
         kind: 'request',
         name: clip(r.name, MAX_NAME_CHARS),
         method: r.method,
-        url: clip(r.fullUrl, MAX_URL_CHARS),
+        url: clip(shapeOnly ? shapeUrl(r.fullUrl) : r.fullUrl, MAX_URL_CHARS),
         ...(r.folderPath.length ? { folder: clip(r.folderPath.join(' / '), MAX_FOLDER_CHARS) } : {}),
         ...(r.description ? { hasDescription: true } : {}),
         ...(params.length ? { params } : {}),
       };
-      if (r.body && r.body.mode === 'raw' && r.body.raw) entry.body = truncateText(r.body.raw, 250).text;
+      // Shape-only: the request body is sent as its structure, never its text.
+      if (r.body && r.body.mode === 'raw' && r.body.raw) entry.body = shapeOnly ? shapeOfText(String(r.body.raw)) : truncateText(r.body.raw, 250).text;
       const ex = (r.examples || []).find(e => e.body);
       if (ex) {
         // Shape-only: a saved example response is response data, so only its structure leaves.

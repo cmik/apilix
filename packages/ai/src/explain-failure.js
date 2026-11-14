@@ -14,10 +14,8 @@ const { neutralizeAiText } = require('@apilix/core/docs');
 const { AiError } = require('./errors');
 const { estimateTokens, truncateText, truncateJson } = require('./budget');
 const { redactRequest, redactResponse, redactScript, scrubSecretValues, scrubTokenPatterns } = require('./redact');
-const { buildShapeSchema } = require('./context');
 const { getPrompt } = require('./prompts');
-const { normalizeLatency } = require('./assert-suggest');
-const { clip, prepareResponseHeaders, prepareRequest } = require('./shape');
+const { clip, prepareRequest, prepareResponseHead, shapeOfText, maskLiterals } = require('./shape');
 
 const CONFIDENCES = ['low', 'medium', 'high'];
 const FIX_KINDS = ['assertion', 'request', 'environment', 'other'];
@@ -34,45 +32,9 @@ const MAX_VARIABLE_NAMES = 100;
 const MAX_VARIABLE_NAME_CHARS = 100;
 const OUTPUT_RESERVE_TOKENS = 1500;
 const MIN_BODY_TOKENS = 50;
-const MAX_MASK_INPUT_CHARS = 4000;
 
 function tryParse(text) {
   try { return { ok: true, value: JSON.parse(text) }; } catch { return { ok: false }; }
-}
-
-/**
- * Shape-only mode: an assertion error can carry real response values (`expected 'a@b.c' to equal 'x'`).
- * Quoted strings and numbers become placeholders; the assertion kind stays readable. A quote that is
- * never closed hides everything after it, so a stray apostrophe cannot let a value through.
- */
-function maskLiterals(text) {
-  if (typeof text !== 'string') return '';
-  // Single linear pass over a bounded input: no regex backtracking on attacker-shaped text.
-  const src = text.length > MAX_MASK_INPUT_CHARS ? text.slice(0, MAX_MASK_INPUT_CHARS) : text;
-  let out = '';
-  let i = 0;
-  while (i < src.length) {
-    const ch = src[i];
-    if (ch !== "'" && ch !== '"' && ch !== '`') { out += ch; i++; continue; }
-    let j = i + 1;
-    let closed = false;
-    while (j < src.length) {
-      if (src[j] === '\\') { j += 2; continue; }
-      if (src[j] === ch) { closed = true; break; }
-      j++;
-    }
-    out += '<string>';
-    if (!closed) break; // unclosed quote: everything after it is hidden
-    i = j + 1;
-  }
-  // Emails: a whitespace-delimited token with an '@' that has a character on both sides.
-  out = out.split(/(\s+)/).map(tok => {
-    const at = tok.indexOf('@', 1);
-    return at !== -1 && at < tok.length - 1 && !/^\s/.test(tok) ? '<string>' : tok;
-  }).join('');
-  return out
-    .replace(/https?:\/\/\S+/gi, '<string>')
-    .replace(/-?\b\d+(?:\.\d+)?\b/g, '<number>');
 }
 
 /** Failure names and messages as they leave: clipped, and value-masked in shape-only mode. */
@@ -111,12 +73,10 @@ function describeExplainEvidence({ request, name, response, failures, testScript
   const redRes = redactResponse(response || {}, { secretValues, redactSecrets });
   const sections = [
     section('Mode', shapeOnly
-      ? 'Shape only: the response body is sent as types without values; response and request headers are sent as names only (plus content-type, content-length, content-encoding, cache-control and the www-authenticate scheme); quoted values and numbers in failure names and messages are replaced by placeholders; the test script is not sent.'
+      ? 'Shape only: the response body is sent as types without values; the request URL keeps its path and query parameter names but no query values, and id-like path segments become :id; the request body is sent as structure only; response and request headers are sent as names only (plus content-type, content-length, content-encoding, cache-control and the www-authenticate scheme); quoted values and numbers in failure names and messages are replaced by placeholders; the test script is not sent.'
       : 'Full: a truncated copy of the response body, the failure messages and the test script are sent.'),
     section('Request (as sent)', JSON.stringify(prepareRequest(redReq, name, shapeOnly), null, 2)),
-    section('Response status and headers (as sent)', JSON.stringify({
-      status: redRes.status, statusText: clip(redRes.statusText, 80), headers: prepareResponseHeaders(redRes.headers, shapeOnly),
-    }, null, 2)),
+    section('Response status and headers (as sent)', JSON.stringify(prepareResponseHead(redRes, response, shapeOnly), null, 2)),
     section('Failed assertions', JSON.stringify(list, null, 2)),
     section('Test script', script !== undefined ? script : (shapeOnly ? '(not sent in shape-only mode)' : '(none)')),
     section('Variable names (never values)', names.length ? names.join(', ') : '(none)'),
@@ -129,16 +89,14 @@ function buildData({ request, name, response, failures, testScript, variableName
   const redRes = redactResponse(response || {}, { secretValues, redactSecrets });
   const data = {
     request: prepareRequest(redReq, name, sendResponseBodies === false),
-    response: { status: redRes.status, statusText: clip(redRes.statusText, 80), headers: prepareResponseHeaders(redRes.headers, sendResponseBodies === false) },
+    response: prepareResponseHead(redRes, response, sendResponseBodies === false),
     failedAssertions: prepareFailures(failures, sendResponseBodies === false),
   };
-  const latency = normalizeLatency(response && response.responseTime);
-  if (latency !== undefined) data.response.responseTimeMs = latency;
   let truncated = false;
   const body = typeof redRes.body === 'string' ? redRes.body : '';
   const parsed = tryParse(body);
   if (sendResponseBodies === false) {
-    data.response.bodyShape = parsed.ok ? buildShapeSchema(parsed.value) : { type: 'text', length: body.length };
+    data.response.bodyShape = shapeOfText(body);
     data.response.bodyNote = 'Shape only: types, no values.';
   } else if (parsed.ok) {
     const tj = truncateJson(parsed.value, { maxTokens: bodyTokens });

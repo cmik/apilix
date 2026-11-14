@@ -1,26 +1,12 @@
 'use strict';
 
-const { redactContext } = require('./redact');
 const { estimateTokens, truncateText, truncateJson } = require('./budget');
-const { prepareResponseHeaders, shapeRequestHeaderList } = require('./shape');
+const { buildShapeSchema, shapeOfText, prepareRequest, prepareResponseHead, prepareExistingTests } = require('./shape');
+const { redactContext, scrubSecretValues, scrubTokenPatterns } = require('./redact');
+
+const MAX_EXISTING_TESTS_CHARS = 1500;
 
 const DEFAULT_MAX_CONTEXT_TOKENS = 8000;
-
-/** Describe the structure of a JSON value: types only, never values. */
-function buildShapeSchema(value, depth = 0) {
-  if (value === null) return 'null';
-  if (Array.isArray(value)) {
-    if (depth >= 6) return ['…'];
-    return value.length ? [buildShapeSchema(value[0], depth + 1)] : [];
-  }
-  if (typeof value === 'object') {
-    if (depth >= 6) return '{…}';
-    const out = {};
-    for (const [k, v] of Object.entries(value)) out[k] = buildShapeSchema(v, depth + 1);
-    return out;
-  }
-  return typeof value;
-}
 
 function execToText(exec) {
   return Array.isArray(exec) ? exec.join('\n') : typeof exec === 'string' ? exec : '';
@@ -33,11 +19,6 @@ function itemScripts(item) {
     if (text.trim()) scripts[ev.listen === 'test' ? 'test' : 'preRequest'] = text;
   }
   return scripts;
-}
-
-/** Full mode keeps the redacted headers as they are; shape-only shows what the payload sends. */
-function prepareResponseHeadersForPreview(headers, shapeOnly) {
-  return shapeOnly ? prepareResponseHeaders(headers, true) : headers;
 }
 
 function tryParse(text) {
@@ -74,27 +55,27 @@ function buildPreviewContext(input = {}) {
   };
 
   const shapeOnly = settings.sendResponseBodies === false;
+  // The same helpers as the assert-suggest payload, then the same final scrub: what is shown is what is sent.
+  const finalize = (text) => {
+    const t = settings.redactSecrets !== false ? scrubTokenPatterns(text) : text;
+    return scrubSecretValues(t, secretValues);
+  };
   if (value.request) {
-    // Shape-only: request header values are not sent either (names + protocol metadata only), same as the payload.
-    const req = shapeOnly && Array.isArray(value.request.header)
-      ? { ...value.request, header: shapeRequestHeaderList(value.request.header) }
-      : value.request;
-    pushText('Request', JSON.stringify(req, null, 2));
+    pushText('Request', finalize(JSON.stringify(prepareRequest(value.request, item && item.name, shapeOnly), null, 2)));
   }
-  if (value.scripts) {
-    for (const [name, src] of Object.entries(value.scripts)) {
-      pushText(name === 'test' ? 'Test script' : 'Pre-request script', src);
-    }
+  const testScript = value.scripts && value.scripts.test;
+  if (testScript) {
+    const sent = prepareExistingTests(testScript, shapeOnly, MAX_EXISTING_TESTS_CHARS);
+    pushText(shapeOnly ? 'Existing tests (titles only)' : 'Test script', finalize(shapeOnly ? JSON.stringify(sent.existingTestTitles, null, 2) : sent.existingTests));
   }
 
   if (value.response) {
-    const head = JSON.stringify({ status: value.response.status, statusText: value.response.statusText, headers: prepareResponseHeadersForPreview(value.response.headers, shapeOnly) }, null, 2);
-    pushText('Response (status and headers)', head);
+    const head = JSON.stringify(prepareResponseHead(value.response, response, shapeOnly), null, 2);
+    pushText('Response (status and headers)', finalize(head));
     const body = typeof value.response.body === 'string' ? value.response.body : '';
     const parsed = tryParse(body);
     if (shapeOnly) {
-      const shape = parsed.ok ? buildShapeSchema(parsed.value) : { type: 'text', length: body.length };
-      pushText('Response body (shape only)', JSON.stringify(shape, null, 2));
+      pushText('Response body (shape only)', JSON.stringify(shapeOfText(body), null, 2));
     } else if (parsed.ok) {
       const tj = truncateJson(parsed.value, { maxTokens: Math.max(remaining, 50) });
       push('Response body', typeof tj.value === 'string' ? tj.value : JSON.stringify(tj.value, null, 2), tj.truncated);

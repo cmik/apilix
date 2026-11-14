@@ -188,7 +188,7 @@ export default function AiSettingsTab() {
         <Row label="Send response bodies">
           <Toggle checked={s.sendResponseBodies} onChange={v => update({ sendResponseBodies: v })} />
         </Row>
-        <p className="text-[11px] text-slate-600 -mt-1">When off, only the structure (field names and types) of a response body is sent, never its values. Response and request headers are sent as names only, plus a few protocol values (content-type media type, content-length, content-encoding, cache-control, www-authenticate scheme). Saved example responses used for documentation are sent as structure too.</p>
+        <p className="text-[11px] text-slate-600 -mt-1">When off, only the structure (field names and types) of a response body is sent, never its values. Response and request headers are sent as names only, plus a few protocol values (content-type media type, content-length, content-encoding, cache-control, www-authenticate scheme). The request is reduced too: its URL is sent without query values (and with ids replaced), its body as structure only, and existing tests as their titles only. Saved example responses, parameter examples and request bodies used for documentation are sent as structure too.</p>
         <Row label="Mask credential-looking values">
           <Toggle checked={s.redactSecrets} onChange={v => update({ redactSecrets: v })} />
         </Row>
