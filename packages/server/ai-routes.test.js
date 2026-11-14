@@ -290,6 +290,20 @@ test('/preview with explain evidence shows the headers as sent: names only in sh
   });
 });
 
+test('/preview in shape-only mode shows names and allowlisted values only, for the generic (assert-suggest) preview', async () => {
+  await withAiServer({}, async ({ call }) => {
+    const response = { status: 200, headers: { 'set-cookie': 'sid=SECRET123', 'x-user-email': 'jo@corp.com', location: '/users/4242', 'content-type': 'application/json; charset=utf-8' }, body: '{"email":"john.doe@corp.com"}' };
+    const item = { name: 'r', request: { method: 'GET', url: 'https://api.test/x', header: [{ key: 'x-session', value: 'sess-9999' }] } };
+    const shape = await call('POST', '/preview', { item, response, settings: { sendResponseBodies: false } });
+    assert.equal(shape.status, 200);
+    for (const v of ['SECRET123', 'jo@corp.com', '4242', 'john.doe', 'sess-9999']) assert.ok(!shape.text.includes(v), `leaked ${v}`);
+    for (const n of ['set-cookie', 'x-user-email', 'location', 'x-session']) assert.ok(shape.text.includes(n), n);
+    assert.ok(shape.text.includes('application/json; charset=utf-8'));
+    const full = await call('POST', '/preview', { item, response, settings: { sendResponseBodies: true, redactSecrets: false } });
+    assert.ok(full.text.includes('/users/4242') && full.text.includes('sess-9999'));
+  });
+});
+
 test('/preview works without any config and rejects malformed input', async () => {
   await withAiServer({}, async ({ call }) => {
     assert.equal((await call('POST', '/preview', { item: { request: { method: 'GET', url: 'x' } } })).status, 200);
@@ -424,6 +438,22 @@ test('/describe-docs returns descriptions and never sends credentials to the pro
       const sent = JSON.stringify(fake.calls[0].body);
       assert.ok(!sent.includes('abc123'), 'api_key value must not be sent');
       assert.match(sent, /untrusted_data/);
+    });
+  } finally { await fake.close(); }
+});
+
+test('/describe-docs in shape-only mode sends saved example responses as a shape only', async () => {
+  const fake = await startFakeProvider(docReply([]));
+  try {
+    await withAiServer({}, async ({ call }) => {
+      await call('PUT', '/config', { settings: settings({ baseUrl: fake.url, sendResponseBodies: false, features: { docDescribe: true } }), apiKey: KEY });
+      const col = docCollection();
+      col.item[0].response = [{ name: 'ok', code: 200, status: 'OK', body: '{"email":"john.doe@corp.com"}' }];
+      const r = await call('POST', '/describe-docs', { collection: col, secretValues: [] });
+      assert.equal(r.status, 200);
+      const sent = JSON.stringify(fake.calls[0].body);
+      assert.ok(!sent.includes('john.doe'), 'example response value leaked');
+      assert.match(sent, /bodyShape/);
     });
   } finally { await fake.close(); }
 });

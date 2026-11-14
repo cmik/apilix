@@ -311,3 +311,52 @@ test('/suggest-assertions forwards a valid latency to the model and ignores an i
     });
   } finally { await fake.close(); }
 });
+
+test('/suggest-assertions in shape-only mode: request URL query values, body, name and existing tests do not leave; preview matches', async () => {
+  const fake = await startFakeProvider(chatReply({ suggestions: [] }));
+  try {
+    await withAiServer(async ({ call }) => {
+      await call('PUT', '/config', { settings: settings({ baseUrl: fake.url, sendResponseBodies: false, features: { assertSuggest: true } }), apiKey: KEY });
+      const request = {
+        method: 'POST',
+        url: 'https://user:pw@h.com/users/12345/orders?email=alice@example.com&q=hello%20world',
+        header: [{ key: 'content-type', value: 'application/json' }],
+        body: { mode: 'raw', raw: '{"email":"alice@example.com","ssn":"123-45-6789"}' },
+      };
+      const existingTests = 'apx.test("Get alice@example.com", () => { expect(json.email).to.equal("jo@corp.com"); });';
+      const body = suggestBody({ request, name: 'Get alice@example.com', existingTests, response: { status: 200, headers: {}, body: '{}' } });
+      const r = await call('POST', '/suggest-assertions', body);
+      assert.equal(r.status, 200);
+      const sent = JSON.stringify(fake.calls[0].body);
+      const event = [{ listen: 'test', script: { exec: [existingTests] } }];
+      const preview = await call('POST', '/preview', { item: { name: body.name, request, event }, response: body.response });
+      for (const [label, text] of [['payload', sent], ['preview', preview.text]]) {
+        for (const v of ['alice', '12345', 'hello', '123-45-6789', 'user:pw', 'jo@corp.com']) assert.ok(!text.includes(v), `${label} leaked ${v}`);
+        assert.ok(text.includes('email'), `${label} keeps query parameter and field names`);
+      }
+      assert.ok(preview.text.includes(':id') && sent.includes(':id'));
+    });
+  } finally { await fake.close(); }
+});
+
+test('/suggest-assertions in shape-only mode: payload and preview carry no header or body values, only names', async () => {
+  const fake = await startFakeProvider(chatReply({ suggestions: [] }));
+  try {
+    await withAiServer(async ({ call }) => {
+      await call('PUT', '/config', { settings: settings({ baseUrl: fake.url, sendResponseBodies: false, features: { assertSuggest: true } }), apiKey: KEY });
+      const body = suggestBody({
+        request: { method: 'GET', url: 'https://api.test/me', header: [{ key: 'x-session', value: 'sess-9999' }] },
+        response: { status: 200, headers: { 'content-type': 'application/json; charset=utf-8', 'set-cookie': 'sid=SECRET123', 'x-user-email': 'jo@corp.com', location: '/users/4242' }, body: '{"email":"john.doe@corp.com"}' },
+      });
+      const r = await call('POST', '/suggest-assertions', body);
+      assert.equal(r.status, 200);
+      const sent = JSON.stringify(fake.calls[0].body);
+      const preview = await call('POST', '/preview', { item: { name: body.name, request: body.request }, response: body.response });
+      for (const [label, text] of [['payload', sent], ['preview', preview.text]]) {
+        for (const v of ['SECRET123', 'jo@corp.com', '4242', 'john.doe', 'sess-9999']) assert.ok(!text.includes(v), `${label} leaked ${v}`);
+        for (const n of ['set-cookie', 'x-user-email', 'location', 'x-session']) assert.ok(text.includes(n), `${label} missing ${n}`);
+        assert.ok(text.includes('application/json; charset=utf-8'), label);
+      }
+    });
+  } finally { await fake.close(); }
+});

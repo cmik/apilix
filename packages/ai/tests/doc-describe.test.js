@@ -215,3 +215,15 @@ test('entries sharing an id count as skipped', async () => {
   const r = await describeDocs({ provider: fakeProvider({ items: [] }), model: buildDocModel(col, {}) });
   assert.ok(r.skipped >= 2);
 });
+
+test('shape-only: a saved example response is sent as a shape, never its values', () => {
+  const col = collection();
+  col.item[0].item[0].response = [{ name: 'ok', code: 200, status: 'OK', body: '{"email":"john.doe@corp.com","n":1}' }];
+  const m = buildDocModel(col, { includeExamples: true });
+  const full = JSON.stringify(collectEntries(m, [], { skipped: 0 }, { shapeOnly: false }));
+  assert.ok(full.includes('john.doe@corp.com'));
+  const shape = JSON.stringify(collectEntries(m, [], { skipped: 0 }, { shapeOnly: true }));
+  assert.ok(!shape.includes('john.doe'));
+  assert.match(shape, /bodyShape/);
+  assert.match(shape, /"email":"string"/);
+});

@@ -181,7 +181,7 @@ export default function AssertionSuggestPanel({ response, tabId, existingScript,
               </div>
               <p className="text-[11px] text-slate-500">
                 {aiAssist.shapeOnly
-                  ? `Sends this request and the structure of the response (types, no values) to ${aiAssist.destination}.`
+                  ? `Sends this request without its values (URL without query values, body as structure only) and the structure of the response (types, no values), header names only (plus a few protocol values such as content-type) and the titles of your existing tests to ${aiAssist.destination}.`
                   : `Sends this request and a truncated copy of the response to ${aiAssist.destination}.`}
                 {' '}Credentials and secret values are redacted first. Suggestions are test-run on this response and the ones that fail are dropped; when this build cannot run them in isolation they are only syntax-checked and marked "not executed".
               </p>

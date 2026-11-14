@@ -143,7 +143,7 @@ function redactPairs(list, st) {
 
 function redactHeaders(headers, st) {
   if (Array.isArray(headers)) {
-    return headers.map(h => ({
+    return headers.filter(h => h && typeof h === 'object').map(h => ({
       key: h.key,
       value: apply(st, h.value, v => core.redactHeaderValue(h.key, v, st.include)),
       ...(h.disabled ? { disabled: true } : {}),
@@ -151,8 +151,9 @@ function redactHeaders(headers, st) {
   }
   if (headers && typeof headers === 'object') {
     const out = {};
-    for (const [k, v] of Object.entries(headers)) {
-      out[k] = apply(st, String(v), x => core.redactHeaderValue(k, x, st.include));
+    for (const k of Object.keys(headers)) {
+      // defineProperty, not assignment: a header called `__proto__` must stay plain data.
+      Object.defineProperty(out, k, { value: apply(st, String(headers[k]), x => core.redactHeaderValue(k, x, st.include)), enumerable: true, writable: true, configurable: true });
     }
     return out;
   }
@@ -163,8 +164,9 @@ function redactDeepByName(node, st) {
   if (Array.isArray(node)) return node.map(n => redactDeepByName(n, st));
   if (node && typeof node === 'object') {
     const out = {};
-    for (const [k, v] of Object.entries(node)) {
-      out[k] = v && typeof v === 'object' ? redactDeepByName(v, st) : apply(st, v, x => core.redactByName(k, x, st.include));
+    for (const k of Object.keys(node)) {
+      const v = node[k];
+      Object.defineProperty(out, k, { value: v && typeof v === 'object' ? redactDeepByName(v, st) : apply(st, v, x => core.redactByName(k, x, st.include)), enumerable: true, writable: true, configurable: true });
     }
     return out;
   }

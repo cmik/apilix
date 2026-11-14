@@ -245,6 +245,7 @@ function createAiRouter(deps = {}) {
       language: language ? language.trim() : settings.outputLanguage,
       maxContextTokens: settings.maxContextTokens,
       redactSecrets: settings.redactSecrets,
+      sendResponseBodies: settings.sendResponseBodies,
       secretValues: (secretValues || []).slice(0, 1000).filter(x => typeof x === 'string'),
       signal,
     });
@@ -391,7 +392,7 @@ function createAiRouter(deps = {}) {
         // The explain sections already show the request and the response status/headers as they are sent
         // (shape-only reduces headers to names) and the test script (or that it is withheld), so the generic
         // versions would be misleading or duplicate it.
-        const generic = new Set(['Request', 'Response (status and headers)', 'Test script']);
+        const generic = new Set(['Request', 'Response (status and headers)', 'Test script', 'Existing tests (titles only)']);
         preview.sections = [...extra, ...preview.sections.filter(sec => !generic.has(sec.label))];
         preview.estimatedTokens = preview.sections.reduce((n, sec) => n + Math.ceil(sec.text.length / 4), 0);
       }

@@ -199,3 +199,30 @@ test('the response passed by the caller is not mutated', async () => {
   await suggestAssertions({ provider: fake(timingAnswer), request, response: input });
   assert.equal(input.responseTime, -1);
 });
+
+// ── shape-only: header values never leave ─────────────────────────────────────
+const LEAK_RESPONSE = {
+  status: 200,
+  statusText: 'OK',
+  headers: { 'content-type': 'application/json; charset=utf-8', 'set-cookie': 'sid=SECRET123', 'x-user-email': 'jo@corp.com', location: '/users/4242' },
+  body: JSON.stringify({ email: 'john.doe@corp.com' }),
+};
+const LEAK_REQUEST = { method: 'GET', url: 'https://api.test/me', header: [{ key: 'x-session', value: 'sess-9999' }, { key: 'Accept', value: 'application/json' }] };
+const LEAK_VALUES = ['SECRET123', 'jo@corp.com', '4242', 'john.doe', 'sess-9999'];
+
+test('shape-only: no header or body value reaches the provider, names and the media type do', async () => {
+  const calls = [];
+  await suggestAssertions({ provider: fake({ suggestions: [] }, calls), request: LEAK_REQUEST, response: LEAK_RESPONSE, sendResponseBodies: false });
+  const sent = JSON.stringify(calls[0]);
+  for (const v of LEAK_VALUES) assert.ok(!sent.includes(v), `leaked ${v}`);
+  for (const n of ['set-cookie', 'x-user-email', 'location', 'x-session', 'Accept']) assert.ok(sent.includes(n), `missing name ${n}`);
+  assert.ok(sent.includes('application/json; charset=utf-8'));
+});
+
+test('normal mode still sends redacted header values', async () => {
+  const calls = [];
+  await suggestAssertions({ provider: fake({ suggestions: [] }, calls), request: LEAK_REQUEST, response: LEAK_RESPONSE, redactSecrets: false });
+  const sent = JSON.stringify(calls[0]);
+  assert.ok(sent.includes('/users/4242'));
+  assert.ok(sent.includes('sess-9999'));
+});
