@@ -102,6 +102,28 @@ const SCHEMAS = {
     required: ['summary', 'likelyCauses', 'suggestedFixes'],
     additionalProperties: false,
   },
+  runSummary: {
+    type: 'object',
+    properties: {
+      summary: { type: 'string', minLength: 1, maxLength: 1000 },
+      groups: {
+        type: 'array',
+        maxItems: 30,
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', maxLength: 10 },
+            cause: { type: 'string', minLength: 1, maxLength: 500 },
+            nextStep: { type: 'string', maxLength: 500 },
+          },
+          required: ['id', 'cause'],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ['summary', 'groups'],
+    additionalProperties: false,
+  },
   scriptAssist: {
     type: 'object',
     properties: {

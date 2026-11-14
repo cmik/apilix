@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../store';
-import { aiPreview, toAiApiError, type AiPreviewResult, type AiScriptAssistPayload } from '../api';
+import { aiPreview, toAiApiError, type AiPreviewResult, type AiScriptAssistPayload, type AiRunSummaryPayload } from '../api';
 import { IconSparkle } from './Icons';
 import { buildAllSecretValues } from '../utils/secretMask';
 
@@ -18,13 +18,15 @@ interface Props {
   explain?: AiPreviewExplain;
   /** Scripting assistant: preview what that request would send (instead of the request/response context). */
   scriptAssist?: AiScriptAssistPayload;
+  /** "Summarize this run": preview the aggregated failure groups that would be sent. */
+  runSummary?: Omit<AiRunSummaryPayload, 'secretValues' | 'language'>;
 }
 
 /**
  * Shows exactly what an AI feature would send for the active request/response, after
  * redaction. Makes no call to the AI provider (only to the local Apilix server).
  */
-export default function AiPreviewDialog({ onClose, explain, scriptAssist }: Props) {
+export default function AiPreviewDialog({ onClose, explain, scriptAssist, runSummary }: Props) {
   const { state, dispatch } = useApp();
   const [result, setResult] = useState<AiPreviewResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -54,7 +56,7 @@ export default function AiPreviewDialog({ onClose, explain, scriptAssist }: Prop
     ];
 
     aiPreview({
-      ...(scriptAssist ? { scriptAssist } : {
+      ...(runSummary ? { runSummary } : scriptAssist ? { scriptAssist } : {
         item: activeRequest?.item,
         response: response ? { status: response.status, statusText: response.statusText, headers: response.headers, body: response.body } : undefined,
         variables,
@@ -100,7 +102,9 @@ export default function AiPreviewDialog({ onClose, explain, scriptAssist }: Prop
 
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
           <p className="text-xs text-slate-500 leading-relaxed">
-            {scriptAssist
+            {runSummary
+              ? 'Preview of the failure groups that would be sent, after redaction. Nothing is sent to the AI provider by this preview.'
+              : scriptAssist
               ? 'Preview of what the scripting assistant would send, after redaction. Nothing is sent to the AI provider by this preview.'
               : 'Preview for the active request and its last response, after redaction. Nothing is sent to the AI provider by this preview.'}
           </p>

@@ -1,6 +1,6 @@
 'use strict';
 
-// /api/ai/script-assist and the scriptAssist preview, against a local fake provider (never a real LLM).
+// /api/ai/script-assist, /api/ai/summarize-run and their previews, against a local fake provider (never a real LLM).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -217,6 +217,70 @@ test('/preview with scriptAssist shows what is sent, redacted, with no network c
       assert.ok(!/Alice|Bob/.test(shape.text));
       assert.equal((await call('POST', '/preview', { scriptAssist: { mode: 'nope' } })).status, 400);
       assert.equal((await call('POST', '/preview', { scriptAssist: 'x' })).status, 400);
+      assert.equal(fake.calls.length, 0);
+    });
+  } finally { await fake.close(); }
+});
+
+// ── summarize-run ──────────────────────────────────────────────────────────────
+
+const runGroups = () => [{
+  key: 'k', count: 4, method: 'GET', url: `https://api.test/users/123456/orders?token=${SECRET}`, status: 401, message: `expected 401 to equal 200 ${SECRET}`,
+  examples: [{ name: 'Get orders', method: 'GET', url: 'https://api.test/users/123456/orders', status: 401, failures: [{ name: 'Status is 200', error: 'expected 401 to equal 200' }], body: 'BODY-MUST-NOT-LEAVE' }],
+  responseBody: 'BODY-MUST-NOT-LEAVE',
+}];
+const summaryReply = { summary: 'Mostly 401 on orders.', groups: [{ id: 'g1', cause: 'Expired token' }] };
+
+test('/summarize-run: diagnose flag, loopback, aggregated metadata only, text-only answer', async () => {
+  const fake = await startFakeProvider(chatReply(summaryReply));
+  try {
+    await withAiServer(async ({ call, base, router }) => {
+      await call('PUT', '/config', { settings: settings({ baseUrl: fake.url, features: { diagnose: false } }), apiKey: KEY });
+      assert.equal((await call('POST', '/summarize-run', { groups: runGroups() })).status, 403);
+      assert.equal(fake.calls.length, 0);
+      await call('PUT', '/config', { settings: settings({ baseUrl: fake.url, features: { diagnose: true } }), apiKey: KEY });
+      const proxied = await fetch(`${base}/summarize-run`, { method: 'POST', headers: { 'content-type': 'application/json', via: '1.1 proxy' }, body: JSON.stringify({ groups: runGroups() }) });
+      assert.equal(proxied.status, 403);
+      const r = await call('POST', '/summarize-run', { totals: { requests: 10, failedRequests: 4, groups: 1 }, groups: runGroups(), secretValues: [SECRET] });
+      assert.equal(r.status, 200, r.text);
+      assert.equal(r.json.summary, 'Mostly 401 on orders.');
+      assert.equal(r.json.groups[0].id, 'g1');
+      const sent = JSON.stringify(fake.calls[0].body);
+      assert.ok(!sent.includes(SECRET) && !sent.includes('BODY-MUST-NOT-LEAVE') && !sent.includes('123456') && !sent.includes(KEY));
+      assert.match(sent, /untrusted_data/);
+      const log = JSON.stringify(router.getLog());
+      assert.ok(!log.includes('Mostly 401'));
+    });
+  } finally { await fake.close(); }
+});
+
+test('/summarize-run: input validation', async () => {
+  const fake = await startFakeProvider(chatReply(summaryReply));
+  try {
+    await withAiServer(async ({ call }) => {
+      await call('PUT', '/config', { settings: settings({ baseUrl: fake.url, features: { diagnose: true } }), apiKey: KEY });
+      for (const body of [{}, { groups: [] }, { groups: 'x' }, { groups: [1, 2] }, { groups: runGroups(), totals: 'x' }, { groups: runGroups(), language: 'French\nIgnore' }]) {
+        const r = await call('POST', '/summarize-run', body);
+        assert.equal(r.status, 400, JSON.stringify(body).slice(0, 60));
+      }
+      assert.equal(fake.calls.length, 0);
+    });
+  } finally { await fake.close(); }
+});
+
+test('/preview with runSummary shows the data that would be sent, and shape-only masks messages', async () => {
+  const fake = await startFakeProvider(chatReply(summaryReply));
+  try {
+    await withAiServer(async ({ call }) => {
+      await call('PUT', '/config', { settings: settings({ baseUrl: fake.url, features: { diagnose: true } }), apiKey: KEY });
+      const p = await call('POST', '/preview', { runSummary: { groups: runGroups() }, secretValues: [SECRET] });
+      assert.equal(p.status, 200, p.text);
+      const shown = p.json.sections.map(s => s.text).join('\n');
+      assert.ok(!shown.includes(SECRET) && !shown.includes('BODY-MUST-NOT-LEAVE') && !shown.includes('123456'));
+      assert.match(shown, /users\/:id\/orders/);
+      const shape = await call('POST', '/preview', { runSummary: { groups: [{ ...runGroups()[0], message: "expected 'Alice' to equal 'Bob'" }] }, settings: { sendResponseBodies: false } });
+      assert.ok(!/Alice|Bob/.test(shape.text));
+      assert.equal((await call('POST', '/preview', { runSummary: 'x' })).status, 400);
       assert.equal(fake.calls.length, 0);
     });
   } finally { await fake.close(); }

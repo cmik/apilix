@@ -14,7 +14,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const { AiError, httpStatusFor, buildPreviewContext, getPrompt, describeDocs, isValidLanguage, suggestAssertions, generateRequest, explainFailure, describeExplainEvidence, scriptAssist, describeScriptAssist } = require('@apilix/ai');
+const { AiError, httpStatusFor, buildPreviewContext, getPrompt, describeDocs, isValidLanguage, suggestAssertions, generateRequest, explainFailure, describeExplainEvidence, scriptAssist, describeScriptAssist, summarizeRun, describeRunSummary } = require('@apilix/ai');
 const { buildDocModel } = require('@apilix/core/docs');
 
 const PROVIDERS = ['anthropic', 'openai-compat'];
@@ -333,6 +333,29 @@ function createAiRouter(deps = {}) {
     };
   }, { featureFlag: 'diagnose' }));
 
+  // "Summarize this run": aggregated failure groups only (counts, URL templates, statuses, messages, <= 3 examples
+  // per group). Feature flag `diagnose`. Text for display only.
+  router.post('/summarize-run', (req, res) => runAiCall(req, res, 'diagnose', async ({ provider, settings, signal }) => {
+    const { totals, groups, language, secretValues } = req.body || {};
+    if (!Array.isArray(groups) || !groups.some(isObj)) throw bad('groups must list at least one failure group');
+    if (totals !== undefined && !isObj(totals)) throw bad('totals must be an object');
+    checkLanguage(language);
+    const r = await summarizeRun({
+      provider, totals,
+      groups: groups.slice(0, 200),
+      maxContextTokens: settings.maxContextTokens,
+      redactSecrets: settings.redactSecrets,
+      sendResponseBodies: settings.sendResponseBodies,
+      secretValues: secretList(secretValues),
+      language: language ? language.trim() : settings.outputLanguage,
+      signal,
+    });
+    return {
+      body: { summary: r.summary, groups: r.groups, sentGroups: r.sentGroups, omittedGroups: r.omittedGroups, shapeOnly: r.shapeOnly },
+      usage: r.usage, model: r.model, latencyMs: r.latencyMs,
+    };
+  }, { featureFlag: 'diagnose' }));
+
   // Scripting assistant: generate | explain | fix | convert. Feature flag `scriptAssist`. Rate limited: a proposed
   // script is screened and dry-run in a child process. Nothing is applied or run for the caller.
   router.post('/script-assist', (req, res) => runAiCall(req, res, 'scriptAssist', async ({ provider, settings, signal }) => {
@@ -403,6 +426,15 @@ function createAiRouter(deps = {}) {
       .filter(v => v && typeof v.name === 'string')
       .map(v => ({ name: v.name.slice(0, 200), scope: typeof v.scope === 'string' ? v.scope.slice(0, 40) : undefined, secret: v.secret === true }));
     const secrets = (secretValues || []).slice(0, 1000).filter(s => typeof s === 'string');
+    if (req.body && req.body.runSummary !== undefined) {
+      const rs = req.body.runSummary;
+      if (!isObj(rs) || !Array.isArray(rs.groups)) return res.status(400).json({ error: 'runSummary must be an object with groups[]', code: 'BAD_REQUEST' });
+      const sections = describeRunSummary({
+        totals: rs.totals, groups: rs.groups.slice(0, 200), secretValues: secrets,
+        redactSecrets: merged.redactSecrets !== false, sendResponseBodies: merged.sendResponseBodies,
+      });
+      return res.json({ sections, estimatedTokens: sections.reduce((n, sec) => n + Math.ceil(sec.text.length / 4), 0), redactions: 0 });
+    }
     if (req.body && req.body.scriptAssist !== undefined) {
       // Scripting assistant: the sections come from the same code that builds the real payload.
       const sa = req.body.scriptAssist;

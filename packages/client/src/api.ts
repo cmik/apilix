@@ -503,6 +503,8 @@ export interface AiPreviewPayload {
   explain?: { failures: Array<{ name: string; error?: string | null }>; testScript?: string; variableNames?: string[]; localDiagnosis?: string[] };
   /** Scripting assistant: preview exactly what the request would send (the request/response context is then ignored). */
   scriptAssist?: AiScriptAssistPayload;
+  /** "Summarize this run": preview exactly the aggregated groups that would be sent. */
+  runSummary?: AiRunSummaryPayload;
 }
 
 export interface AiPreviewResult {
@@ -619,6 +621,36 @@ export interface AiExplainFailurePayload {
 export async function aiExplainFailure(payload: AiExplainFailurePayload, signal?: AbortSignal): Promise<AiExplainFailureResult> {
   try {
     const res = await api.post<AiExplainFailureResult>('/ai/explain-failure', payload, { timeout: 120000, signal });
+    return res.data;
+  } catch (err) {
+    throw toAiApiError(err);
+  }
+}
+
+export interface AiRunSummaryPayload {
+  totals: { requests: number; failedRequests: number; groups: number };
+  groups: Array<{
+    key: string; count: number; method: string; url: string; status: number; message: string;
+    examples: Array<{ name: string; method: string; url: string; status: number; failures: Array<{ name: string; error: string }> }>;
+  }>;
+  /** Plaintext values of secret variables from every environment; the server scrubs them. */
+  secretValues?: string[];
+  language?: string;
+}
+
+export interface AiRunSummaryResult {
+  summary: string;
+  /** Notes keyed `g1`, `g2`... in the order the groups were sent. */
+  groups: Array<{ id: string; cause: string; nextStep?: string }>;
+  sentGroups: number;
+  omittedGroups: number;
+  shapeOnly: boolean;
+}
+
+/** Ask the model to summarise the failure groups of a run. Aggregated metadata only; the answer is text. */
+export async function aiSummarizeRun(payload: AiRunSummaryPayload, signal?: AbortSignal): Promise<AiRunSummaryResult> {
+  try {
+    const res = await api.post<AiRunSummaryResult>('/ai/summarize-run', payload, { timeout: 120000, signal });
     return res.data;
   } catch (err) {
     throw toAiApiError(err);
