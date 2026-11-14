@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { AiSuggestAssertionsResult, AiGenerateRequestResult, AiExplainFailureResult } from './utils/ai/aiTypes';
+import type { AiSuggestAssertionsResult, AiGenerateRequestResult, AiExplainFailureResult, AiScriptAssistResult, AiScriptMode, AiScriptKind } from './utils/ai/aiTypes';
 import type { CollectionItem, BaseCollection, RequestResponse, RunnerIteration, RunnerIterationResult, ScriptLog, CookieJar, RequestSettings, AiSettings, DocAiDescription } from './types';
 import type { DatabaseConnection } from './types';
 import { normalizeBaseUrl } from './utils/aiDefaults';
@@ -501,6 +501,8 @@ export interface AiPreviewPayload {
   settings?: Partial<Pick<AiSettings, 'maxContextTokens' | 'redactSecrets' | 'sendResponseBodies'>>;
   /** "Explain with AI": also preview the failure messages, test script and variable names. */
   explain?: { failures: Array<{ name: string; error?: string | null }>; testScript?: string; variableNames?: string[]; localDiagnosis?: string[] };
+  /** Scripting assistant: preview exactly what the request would send (the request/response context is then ignored). */
+  scriptAssist?: AiScriptAssistPayload;
 }
 
 export interface AiPreviewResult {
@@ -617,6 +619,32 @@ export interface AiExplainFailurePayload {
 export async function aiExplainFailure(payload: AiExplainFailurePayload, signal?: AbortSignal): Promise<AiExplainFailureResult> {
   try {
     const res = await api.post<AiExplainFailureResult>('/ai/explain-failure', payload, { timeout: 120000, signal });
+    return res.data;
+  } catch (err) {
+    throw toAiApiError(err);
+  }
+}
+
+export interface AiScriptAssistPayload {
+  mode: AiScriptMode;
+  kind?: AiScriptKind;
+  /** The script being worked on (current editor content). */
+  script?: string;
+  /** `generate`: what the script should do. */
+  instruction?: string;
+  /** `fix`: the console / test error. */
+  error?: string;
+  /** Variable NAMES only. */
+  variableNames?: string[];
+  /** Plaintext values of secret variables from every environment; the server scrubs them. */
+  secretValues?: string[];
+  language?: string;
+}
+
+/** Ask the scripting assistant. The proposal is text: it is never run or applied by this call. */
+export async function aiScriptAssist(payload: AiScriptAssistPayload, signal?: AbortSignal): Promise<AiScriptAssistResult> {
+  try {
+    const res = await api.post<AiScriptAssistResult>('/ai/script-assist', payload, { timeout: 180000, signal });
     return res.data;
   } catch (err) {
     throw toAiApiError(err);

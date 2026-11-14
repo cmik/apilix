@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useApp } from '../store';
 import type { ConsoleEntry } from '../types';
 import { maskSecrets } from '../utils/secretMask';
+import { aiFeatureReady } from '../utils/ai/nlContext';
+import { AI_FIX_SCRIPT, type AiFixScriptDetail } from '../utils/appEvents';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -106,13 +108,14 @@ const LOG_LEVEL_COLOR: Record<string, string> = {
   error: 'text-red-400',
 };
 
-function EntryDetail({
+export function EntryDetail({
   entry,
   mask,
   detailMode,
   onToggleDetailMode,
   detailMaxHeight,
   bodyMaxHeight,
+  aiFixReady,
 }: {
   entry: ConsoleEntry;
   mask: (v: string) => string;
@@ -120,6 +123,8 @@ function EntryDetail({
   onToggleDetailMode: () => void;
   detailMaxHeight: number;
   bodyMaxHeight: number;
+  /** The scripting assistant is on: a script error gets a "Fix with AI" button (it only opens the panel). */
+  aiFixReady?: boolean;
 }) {
   const logCount = entry.scriptLogs?.length ?? 0;
   const testResults = entry.response?.testResults ?? [];
@@ -127,6 +132,17 @@ function EntryDetail({
   const testCount = testResults.length - skippedCount;
   const failCount = testResults.filter(t => t.passed === false).length;
   const [tab, setTab] = useState<'response' | 'request' | 'tests' | 'logs'>('response');
+  // A script error: the engine reports a failing test script as a `__ScriptError__` test; scripts may also console.error.
+  const testScriptError = testResults.find(t => t.name === '__ScriptError__' && t.error)?.error ?? null;
+  const logError = entry.scriptLogs?.find(l => l.level === 'error')?.args.join(' ') ?? null;
+  const fixError = testScriptError ?? logError;
+  const canFix = !!(aiFixReady && entry.tabId && fixError);
+  function fixWithAi() {
+    if (!entry.tabId || !fixError) return;
+    document.dispatchEvent(new CustomEvent<AiFixScriptDetail>(AI_FIX_SCRIPT, {
+      detail: { tabId: entry.tabId, error: mask(fixError).slice(0, 800), kind: testScriptError ? 'test' : 'auto' },
+    }));
+  }
 
   return (
     <div className="bg-slate-900 border-t-2 border-orange-500/40 text-xs">
@@ -181,7 +197,16 @@ function EntryDetail({
           )}
         </button>
 
-        <div className="ml-auto flex items-center pr-2">
+        <div className="ml-auto flex items-center gap-1 pr-2">
+          {canFix && (
+            <button
+              onClick={e => { e.stopPropagation(); fixWithAi(); }}
+              className="text-[11px] text-orange-300 hover:text-orange-200 px-2 py-1 rounded border border-orange-500/40 hover:bg-orange-500/10 transition-colors"
+              title="Open the AI scripting assistant on this request's script with this error (nothing is sent until you confirm there)"
+            >
+              Fix with AI
+            </button>
+          )}
           <button
             onClick={e => {
               e.stopPropagation();
@@ -1232,6 +1257,7 @@ export default function ConsolePanel({ height, onHeightChange, onClose, theme, m
                   onToggleDetailMode={toggleDetailMode}
                   detailMaxHeight={detailMaxHeight}
                   bodyMaxHeight={bodyMaxHeight}
+                  aiFixReady={!!state.ai?.settings && aiFeatureReady(state.ai.settings, 'scriptAssist')}
                 />
               )}
             </div>

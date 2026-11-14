@@ -28,6 +28,7 @@ import { buildAllVariableSuggestions, DYNAMIC_VARIABLE_SUGGESTIONS, type Variabl
 import VarInput from './VarInput';
 import { buildBodyPreview, highlightUnresolved } from '../utils/bodyPreview';
 import { INJECT_TEST_SNIPPET } from '../utils/appEvents';
+import { resolveFixScriptTab, useAiFixScriptListener } from '../utils/ai/fixScript';
 import { mergeTestSnippet } from '../utils/testSnippetUtils';
 import type { InjectTestSnippetDetail } from '../utils/appEvents';
 import { handleAiShortcut } from '../utils/ai/aiShortcut';
@@ -980,6 +981,20 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
   // Editor state before the last applied AI change, so it can be undone (the change is never saved automatically).
   const [aiUndo, setAiUndo] = useState<{ tabId: string; prev: ReturnType<typeof itemToEditState>; prevDirty: boolean } | null>(null);
   const _aiOpenRef = useRef<() => boolean>(() => false);
+  // "Fix with AI" from the console: opens the AI panel of the script (it sends nothing by itself).
+  const [aiFix, setAiFix] = useState<{ tabId: string; error: string; nonce: number } | null>(null);
+  const fixNonce = useRef(0);
+  useAiFixScriptListener(({ tabId, error, kind }) => {
+    if (!state.tabs.some(t => t.id === tabId)) return;
+    const cached = cacheRef.current.get(tabId);
+    const scriptTab: Tab = resolveFixScriptTab(kind, cached?.edit.testScript);
+    if (cached) cacheRef.current.set(tabId, { ...cached, activeRequestTab: scriptTab });
+    fixNonce.current += 1;
+    setAiFix({ tabId, error, nonce: fixNonce.current });
+    dispatch({ type: 'SET_VIEW', payload: 'request' });
+    if (state.activeTabId === tabId) setActiveRequestTab(scriptTab);
+    else dispatch({ type: 'SET_ACTIVE_TAB', payload: tabId });
+  });
 
   // Swap edit state when active tab changes
   useEffect(() => {
@@ -1541,6 +1556,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             : edit.headers.map(h => ({ ...h, value: resolveVariables(h.value, allVars) })),
           requestBody: result.requestBody ?? (edit.bodyMode === 'raw' ? resolveVariables(edit.bodyRaw, allVars) : undefined),
           scriptLogs: result.scriptLogs ?? [],
+          tabId,
           response: result,
         },
       });
@@ -1609,6 +1625,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
           url: resolveVariables(edit.url, allVars),
           requestHeaders: edit.headers.map(h => ({ ...h, value: resolveVariables(h.value, allVars) })),
           requestBody: edit.bodyMode === 'raw' ? resolveVariables(edit.bodyRaw, allVars) : undefined,
+          tabId,
           response: errPayload,
         },
       });
@@ -1742,6 +1759,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             : edit.headers.map(h => ({ ...h, value: resolveVariables(h.value, allVars) })),
           requestBody: result.requestBody ?? (edit.bodyMode === 'raw' ? resolveVariables(edit.bodyRaw, allVars) : undefined),
           scriptLogs: result.scriptLogs ?? [],
+          tabId,
           response: result,
         },
       });
@@ -1780,6 +1798,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
           url: mockBase,
           requestHeaders: edit.headers.map(h => ({ ...h, value: resolveVariables(h.value, allVars) })),
           requestBody: edit.bodyMode === 'raw' ? resolveVariables(edit.bodyRaw, allVars) : undefined,
+          tabId,
           response: errPayload,
         },
       });
@@ -2879,6 +2898,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             target="prerequest"
             requestNames={flattenRequestNames(col?.item ?? [])}
             requestItems={flattenRequestItems(col?.item ?? [])}
+            aiFixRequest={aiFix && aiFix.tabId === activeTab?.id ? aiFix : null}
           />
         )}
 
@@ -2892,6 +2912,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             target="test"
             requestNames={flattenRequestNames(col?.item ?? [])}
             requestItems={flattenRequestItems(col?.item ?? [])}
+            aiFixRequest={aiFix && aiFix.tabId === activeTab?.id ? aiFix : null}
           />
         )}
 
