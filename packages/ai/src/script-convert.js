@@ -177,17 +177,25 @@ function findUnsupported(code, mask) {
 const IDENT_RE = /[A-Za-z_$][\w$]*/g;
 const LEGACY_GLOBALS = ['responseBody', 'responseCode', 'responseHeaders', 'responseTime', 'tests', 'postman'];
 
-/** Names the script declares itself (variables, functions, classes, parameters, destructured names, catch bindings). */
+/**
+ * Names the script declares itself (variables, functions, classes, parameters, destructured names, catch bindings).
+ * `all` is every such name; `local` is the subset declared where it does not cover the whole script (a parameter, a
+ * catch binding, a loop variable, or a declaration inside a block): a reference elsewhere may still be the Postman global.
+ */
 function declaredNames(mask) {
-  const out = new Set();
-  const add = (text) => { for (const m of text.matchAll(IDENT_RE)) out.add(m[0]); };
-  for (const m of mask.matchAll(/\b(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/g)) out.add(m[1]);
-  for (const m of mask.matchAll(/\b(?:const|let|var)\s*[[{]([^\]}]*)[\]}]/g)) add(m[1]);
-  for (const m of mask.matchAll(/\bfunction\s*[\w$]*\s*\(([^()]*)\)/g)) add(m[1]);
-  for (const m of mask.matchAll(/\(([^()]*)\)\s*=>/g)) add(m[1]);
-  for (const m of mask.matchAll(/([A-Za-z_$][\w$]*)\s*=>/g)) out.add(m[1]);
-  for (const m of mask.matchAll(/\bcatch\s*\(\s*([A-Za-z_$][\w$]*)/g)) out.add(m[1]);
-  return out;
+  const all = new Set();
+  const local = new Set();
+  const depth = new Int32Array(mask.length + 1);
+  for (let i = 0; i < mask.length; i++) depth[i + 1] = depth[i] + (mask[i] === '{' ? 1 : mask[i] === '}' ? -1 : 0);
+  const add = (text, isLocal, at) => { for (const m of text.matchAll(IDENT_RE)) { all.add(m[0]); if (isLocal || depth[at] > 0) local.add(m[0]); } };
+  const inLoopHead = (at) => /\bfor\s*(?:await\s*)?\(\s*$/.test(mask.slice(Math.max(0, at - 24), at));
+  for (const m of mask.matchAll(/\b(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/g)) add(m[1], inLoopHead(m.index), m.index);
+  for (const m of mask.matchAll(/\b(?:const|let|var)\s*[[{]([^\]}]*)[\]}]/g)) add(m[1], inLoopHead(m.index), m.index);
+  for (const m of mask.matchAll(/\bfunction\s*[\w$]*\s*\(([^()]*)\)/g)) add(m[1], true, m.index);
+  for (const m of mask.matchAll(/\(([^()]*)\)\s*=>/g)) add(m[1], true, m.index);
+  for (const m of mask.matchAll(/([A-Za-z_$][\w$]*)\s*=>/g)) add(m[1], true, m.index);
+  for (const m of mask.matchAll(/\bcatch\s*\(\s*([A-Za-z_$][\w$]*)/g)) add(m[1], true, m.index);
+  return { all, local };
 }
 
 const prevSig = (mask, i) => { let k = i - 1; while (k >= 0 && /\s/.test(mask[k])) k--; return k >= 0 ? mask[k] : ''; };
@@ -242,7 +250,7 @@ function convertTestsLine(line, maskLine) {
  */
 function convertPmToApx(code) {
   const src = typeof code === 'string' ? code : '';
-  const declared = declaredNames(maskNonCode(src));
+  const { all: declared, local: declaredLocal } = declaredNames(maskNonCode(src));
   if (declared.has('pm') || declared.has('apx')) {
     return { script: src, changed: false, renamed: 0, legacy: 0, remaining: [{ path: 'pm', line: 1, reason: 'the script declares its own pm or apx variable: nothing was rewritten' }] };
   }
@@ -290,6 +298,24 @@ function convertPmToApx(code) {
   mask = maskNonCode(text);
   const remaining = findUnsupported(text, mask);
   const note = (p, index, why) => { if (!remaining.some(x => x.path === p)) remaining.push({ path: p, line: lineNo(text, index), reason: why }); };
+  // A legacy global the script also declares inside a function, block or parameter list: the references were NOT rewritten
+  // (one of them may be the global), so every one is reported and the script is never called fully converted.
+  const shadowedRefs = {
+    responseBody: /(?<![\w$.])responseBody(?![\w$])/g,
+    responseCode: /(?<![\w$.])responseCode\s*\.\s*code(?![\w$])/g,
+    responseHeaders: /(?<![\w$.])responseHeaders(?![\w$])/g,
+    responseTime: /(?<![\w$.])responseTime(?![\w$])/g,
+    tests: /(?<![\w$.])tests\s*\[/g,
+    postman: /(?<![\w$.])postman\s*\.\s*[A-Za-z]+\s*\(/g,
+  };
+  for (const g of own) {
+    if (!declaredLocal.has(g)) continue;
+    for (const m of mask.matchAll(shadowedRefs[g])) {
+      if (positionOf(mask, m.index, m.index + m[0].length) === 'key') continue;
+      const line = lineNo(text, m.index);
+      if (!remaining.some(x => x.path === g && x.line === line)) remaining.push({ path: g, line, reason: `shadowed locally: "${g}" is also declared in a function, block or parameter list, so this reference was not converted` });
+    }
+  }
   if (!own.has('tests')) {
     for (const m of mask.matchAll(/(?<![\w$.])tests\s*\[/g)) note('tests[...]', m.index, 'legacy tests[...] assignment that could not be converted automatically (not a single complete statement on one line)');
   }

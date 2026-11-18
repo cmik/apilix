@@ -122,22 +122,36 @@ test('hostile input does not hang the converter (linear scan)', () => {
   assert.ok(Date.now() - t < 2000);
 });
 
-test('declared names are never rewritten: responseBody, responseCode, tests, parameters and destructured names', () => {
+test('declared names are never rewritten; a name declared only locally (parameter, catch, block) is reported at every reference', () => {
+  // [input, expected script, number of lines reported as shadowed]
   const cases = [
-    ["const responseBody = 'x';\ntests['a'] = responseBody;", "const responseBody = 'x';\napx.test(\"a\", function () { apx.expect(responseBody).to.be.ok; });", 'responseBody'],
-    ["const tests = []; tests.push(1); pm.test('a', () => {});", "const tests = []; tests.push(1); apx.test('a', () => {});", 'tests'],
-    ['function f(responseCode) { return responseCode.code; }', 'function f(responseCode) { return responseCode.code; }', undefined],
-    ['const f = (responseBody) => responseBody.length;', 'const f = (responseBody) => responseBody.length;', undefined],
-    ['const g = responseBody => responseBody.length;', 'const g = responseBody => responseBody.length;', undefined],
-    ['const { responseBody, other } = ctx; use(responseBody);', 'const { responseBody, other } = ctx; use(responseBody);', undefined],
-    ["try { f(); } catch (responseCode) { log(responseCode.code); }", "try { f(); } catch (responseCode) { log(responseCode.code); }", undefined],
-    ["function postman() {} postman.setEnvironmentVariable('a', 1);", "function postman() {} postman.setEnvironmentVariable('a', 1);", undefined],
+    ["const responseBody = 'x';\ntests['a'] = responseBody;", "const responseBody = 'x';\napx.test(\"a\", function () { apx.expect(responseBody).to.be.ok; });", 0],
+    ["const tests = []; tests.push(1); pm.test('a', () => {});", "const tests = []; tests.push(1); apx.test('a', () => {});", 0],
+    ['const { responseBody, other } = ctx; use(responseBody);', 'const { responseBody, other } = ctx; use(responseBody);', 0],
+    ["function postman() {} postman.setEnvironmentVariable('a', 1);", "function postman() {} postman.setEnvironmentVariable('a', 1);", 0],
+    ['function f(responseCode) { return responseCode.code; }', 'function f(responseCode) { return responseCode.code; }', 1],
+    ['const f = (responseBody) => responseBody.length;', 'const f = (responseBody) => responseBody.length;', 1],
+    ['const g = responseBody => responseBody.length;', 'const g = responseBody => responseBody.length;', 1],
+    ["try { f(); } catch (responseCode) { log(responseCode.code); }", "try { f(); } catch (responseCode) { log(responseCode.code); }", 1],
+    ['if (x) { const responseBody = 1; }\nJSON.parse(responseBody);', 'if (x) { const responseBody = 1; }\nJSON.parse(responseBody);', 2],
   ];
-  for (const [input, expected] of cases) {
+  for (const [input, expected, shadowed] of cases) {
     const r = convertPmToApx(input);
     assert.equal(r.script, expected, input);
-    assert.deepEqual(r.remaining, [], `${input}: a name the script declares is its own, not something to convert`);
+    assert.equal(r.remaining.filter(x => /shadowed locally/.test(x.reason)).length, shadowed, `${input}: ${JSON.stringify(r.remaining)}`);
+    if (shadowed === 0) assert.deepEqual(r.remaining, [], input);
   }
+});
+
+test('a legacy global shadowed in one function is still reported where the top level uses the global (never "converted automatically")', () => {
+  const input = 'function chk(responseBody) { return responseBody.length; }\nconst j = JSON.parse(responseBody);';
+  const r = convertPmToApx(input);
+  assert.equal(r.script, input, 'nothing is guessed');
+  assert.deepEqual(r.remaining.map(x => [x.path, x.line]).sort(), [['responseBody', 1], ['responseBody', 2]]);
+  const input2 = 'items.forEach(tests => tests.x);\ntests["a"] = responseCode.code === 200;';
+  const r2 = convertPmToApx(input2);
+  assert.equal(r2.script, input2.replace('responseCode.code', 'apx.response.code'));
+  assert.ok(r2.remaining.some(x => x.path === 'tests' && x.line === 2 && /shadowed locally/.test(x.reason)));
 });
 
 test('object keys and shorthand properties are not rewritten; a shorthand is reported instead of broken', () => {
