@@ -188,3 +188,25 @@ test('base64 padded, unpadded and url-safe forms of a secret are scrubbed', () =
     }
   }
 });
+
+test('redactScript is linear on an unclosed quote followed by many escapes (no catastrophic backtracking)', () => {
+  const esc = '\\n'.repeat(5000); // 5000 backslash+n pairs
+  const hostile = [
+    `apx.environment.set('token', 'abc${esc}`,
+    `x = { "authorization": "abc${esc}`,
+    `password = 'abc${esc}`,
+    `apx.environment.set("a", "b${esc}\nnext`,
+  ];
+  const t = Date.now();
+  for (const h of hostile) redactScript(h);
+  assert.ok(Date.now() - t < 1000, `took ${Date.now() - t} ms`);
+});
+
+test('redactScript still masks literals that contain escapes and keeps ordinary code', () => {
+  assert.equal(redactScript("apx.environment.set('token', 'a\\'b\\\\c')"), `apx.environment.set('token', '${REDACTED}')`);
+  assert.equal(redactScript('headers = { "Authorization": "Basic x\\ny" }'), `headers = { "Authorization": "${REDACTED}" }`);
+  assert.equal(redactScript("const password = 'p\\u0041ss';"), `const password = '${REDACTED}';`);
+  assert.equal(redactScript("apx.environment.set('page', '2')"), "apx.environment.set('page', '2')");
+  // a literal broken by a real line break is not one string literal
+  assert.equal(redactScript("password = 'abc\ndef'"), "password = 'abc\ndef'");
+});

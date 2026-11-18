@@ -53,7 +53,7 @@ export function urlTemplate(raw: string): string {
 /** Quoted strings and numbers become placeholders so that messages differing only by a value group together. */
 export function messageTemplate(msg: string): string {
   return msg
-    .replace(/(["'`])(?:\\.|(?!\1).)*\1/g, '<string>')
+    .replace(/(["'`])(?:\\.|(?!\1)[^\\\n\r\u2028\u2029])*\1/g, '<string>')
     .replace(/-?\b\d+(?:\.\d+)?\b/g, '<number>')
     .replace(/\s+/g, ' ')
     .trim()

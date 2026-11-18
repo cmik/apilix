@@ -89,3 +89,17 @@ describe('buildRunSummary', () => {
     expect(s.local).toContain('and 997 more groups.');
   });
 });
+
+describe('messageTemplate is linear', () => {
+  it('an unclosed quote followed by thousands of escapes does not blow up', () => {
+    const t = Date.now();
+    messageTemplate(`expected 'abc${'\\n'.repeat(5000)}`);
+    messageTemplate(`expected "abc${'\\"'.repeat(5000)}`);
+    expect(Date.now() - t).toBeLessThan(1000);
+  });
+
+  it('still masks escaped quotes inside a string, and leaves a line-broken quote alone', () => {
+    expect(messageTemplate("expected 'it\\'s' to equal 'x'")).toBe('expected <string> to equal <string>');
+    expect(messageTemplate("a 'b\nc' d")).toBe("a 'b c' d");
+  });
+});
