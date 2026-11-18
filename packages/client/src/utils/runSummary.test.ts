@@ -103,6 +103,29 @@ describe('buildRunSummary', () => {
   });
 });
 
+describe('messageTemplate masks quotes before URLs and e-mails (no value leaks past a quoted URL or e-mail)', () => {
+  const cases: Array<[string, string, string]> = [
+    ['expected "http://a.com/x" to equal "hunter2secret"', 'hunter2secret', 'expected <string> to equal <string>'],
+    ["expected 'Bob a@b.com' to equal 'SECRETVAL'", 'SECRETVAL', 'expected <string> to equal <string>'],
+    ["got 'https://a.b/c?t=1', got 'LEAKME'", 'LEAKME', 'got <string>, got <string>'],
+    ['user "a@b.com" not "SECRET2"', 'SECRET2', 'user <string> not <string>'],
+    ["`https://x.y/z` vs `TOPSECRET`", 'TOPSECRET', '<string> vs <string>'],
+  ];
+  for (const [input, secret, expected] of cases) {
+    it(input, () => {
+      const out = messageTemplate(input);
+      expect(out).not.toContain(secret);
+      expect(out).toBe(expected);
+    });
+  }
+
+  it('example failures built from such messages carry no value', () => {
+    const s = buildRunSummary([iter([res({ status: 400, testResults: fail('expected "http://a.com/x" to equal "hunter2secret"', 'Name is \'Bob a@b.com\' or \'SECRETVAL\'') })])]);
+    const json = JSON.stringify(s);
+    for (const leaked of ['hunter2secret', 'SECRETVAL', 'a@b.com', 'a.com']) expect(json).not.toContain(leaked);
+  });
+});
+
 describe('messageTemplate is linear', () => {
   it('an unclosed quote followed by thousands of escapes does not blow up', () => {
     const t = Date.now();
@@ -111,8 +134,9 @@ describe('messageTemplate is linear', () => {
     expect(Date.now() - t).toBeLessThan(1000);
   });
 
-  it('still masks escaped quotes inside a string, and leaves a line-broken quote alone', () => {
+  it('masks escaped quotes inside a string, and a quoted value that spans lines', () => {
     expect(messageTemplate("expected 'it\\'s' to equal 'x'")).toBe('expected <string> to equal <string>');
-    expect(messageTemplate("a 'b\nc' d")).toBe("a 'b c' d");
+    // A quoted value is masked even when it spans lines (the server's maskLiterals does the same).
+    expect(messageTemplate("a 'b\nc' d")).toBe('a <string> d');
   });
 });

@@ -51,15 +51,39 @@ export function urlTemplate(raw: string): string {
   return s.slice(0, 300);
 }
 
-/** Quoted strings and numbers become placeholders so that messages differing only by a value group together. */
+const MAX_MASK_INPUT_CHARS = 4000;
+
+/**
+ * Quoted strings, emails, URLs and numbers become placeholders so that messages differing only by a value group
+ * together and no value is carried. SAME ORDER AS THE SERVER's maskLiterals (packages/ai/src/shape.js), and it must
+ * stay so: quotes first (a quoted value may itself hold a URL or an e-mail, and a URL or e-mail pass run first would
+ * swallow a closing quote and let the next quoted value through), then e-mails, URLs, numbers. A quote that is
+ * never closed hides everything after it. One linear pass, bounded input.
+ */
 export function messageTemplate(msg: string): string {
-  return msg
-    .replace(/https?:\/\/\S+/gi, '<string>')
-    // Emails, token by token: a `\S+@\S+` regex rescans a long unbroken run from every start (quadratic).
+  const src = msg.length > MAX_MASK_INPUT_CHARS ? msg.slice(0, MAX_MASK_INPUT_CHARS) : msg;
+  let out = '';
+  let i = 0;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch !== "'" && ch !== '"' && ch !== '`') { out += ch; i++; continue; }
+    let j = i + 1;
+    let closed = false;
+    while (j < src.length) {
+      if (src[j] === '\\') { j += 2; continue; }
+      if (src[j] === ch) { closed = true; break; }
+      j++;
+    }
+    out += '<string>';
+    if (!closed) break;
+    i = j + 1;
+  }
+  return out
+    // E-mails, token by token (a `\S+@\S+` regex rescans a long unbroken run from every start: quadratic).
     .split(/(\s+)/)
     .map(tok => { const at = tok.indexOf('@', 1); return at !== -1 && at < tok.length - 1 && !/^\s/.test(tok) ? '<string>' : tok; })
     .join('')
-    .replace(/(["'`])(?:\\.|(?!\1)[^\\\n\r\u2028\u2029])*\1/g, '<string>')
+    .replace(/https?:\/\/\S+/gi, '<string>')
     .replace(/-?\b\d+(?:\.\d+)?\b/g, '<number>')
     .replace(/\s+/g, ' ')
     .trim()
