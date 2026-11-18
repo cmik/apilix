@@ -275,3 +275,23 @@ test('convert: a script that declares its own responseBody keeps it and still co
   assert.equal(r.deterministic, true);
   assert.equal(r.script, "const responseBody = 'x';\napx.test('a', () => { apx.expect(responseBody).to.equal('x'); });");
 });
+
+test('retry prompt: only the clipped, neutralised dry-run reason is added; in shape-only mode no literal of the user script or error is in any message', async () => {
+  const hostile = reply("apx.test('x', () => { throw new Error('see [click](http://evil.test) <b>x</b> ' + 'a'.repeat(500)); });");
+  const provider = fake([hostile, reply(GOOD)]);
+  const r = await scriptAssist({
+    provider, mode: 'fix', sendResponseBodies: false,
+    script: "apx.expect(apx.response.json().email).to.equal('alice@corp.com'); // customer 98765",
+    error: "expected 'alice@corp.com' to equal 'bob' (id 98765)",
+  });
+  assert.equal(r.retried, true);
+  assert.equal(provider.calls.length, 2);
+  const messages = provider.calls[1].messages;
+  assert.equal(messages.length, 3);
+  const retry = messages[2].content;
+  assert.match(retry, /failed validation/);
+  assert.ok(retry.length < 420, `retry message is bounded (${retry.length})`);
+  assert.ok(!/evil\.test|<b>/.test(retry), 'links and HTML are neutralised');
+  const everything = JSON.stringify(provider.calls[1]);
+  for (const leaked of ['alice@corp.com', '98765', 'bob']) assert.ok(!everything.includes(leaked), `leaked ${leaked} in the retry request`);
+});
