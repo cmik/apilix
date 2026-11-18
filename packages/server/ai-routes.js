@@ -14,7 +14,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const { AiError, httpStatusFor, buildPreviewContext, getPrompt, describeDocs, isValidLanguage, suggestAssertions, generateRequest, explainFailure, describeExplainEvidence } = require('@apilix/ai');
+const { AiError, httpStatusFor, buildPreviewContext, getPrompt, describeDocs, isValidLanguage, suggestAssertions, generateRequest, explainFailure, describeExplainEvidence, scriptAssist, describeScriptAssist, summarizeRun, describeRunSummary } = require('@apilix/ai');
 const { buildDocModel } = require('@apilix/core/docs');
 
 const PROVIDERS = ['anthropic', 'openai-compat'];
@@ -298,8 +298,10 @@ function createAiRouter(deps = {}) {
   // The answer is text for display only: nothing is executed or applied.
   // Not rate limited: no script dry-run runs here, the global lock allows one model call at a time, and the server is loopback-only.
   router.post('/explain-failure', (req, res) => runAiCall(req, res, 'diagnose', async ({ provider, settings, signal }) => {
-    const { request, name, response, failures, testScript, variableNames, language, secretValues } = req.body || {};
-    if (!isObj(response) || !Number.isInteger(response.status) || response.status < 100 || response.status > 599) throw bad('response must be an object with an integer status');
+    const { request, name, response, failures, testScript, variableNames, localDiagnosis, language, secretValues } = req.body || {};
+    // Status 0 = the request never got an answer (connection refused, DNS, TLS...).
+    if (!isObj(response) || !Number.isInteger(response.status) || response.status < 0 || response.status > 599 || (response.status > 0 && response.status < 100)) throw bad('response must be an object with an integer status');
+    if (localDiagnosis !== undefined && !Array.isArray(localDiagnosis)) throw bad('localDiagnosis must be an array');
     if (response.body !== undefined && typeof response.body !== 'string') throw bad('response.body must be a string');
     if ((response.body || '').length > MAX_SUGGEST_BODY_CHARS) throw bad('response.body is too large to analyse');
     if (response.headers !== undefined && !isObj(response.headers)) throw bad('response.headers must be an object');
@@ -317,6 +319,7 @@ function createAiRouter(deps = {}) {
       failures: failures.slice(0, 50),
       testScript: (testScript || '').slice(0, 20000),
       variableNames: (variableNames || []).slice(0, 500),
+      localDiagnosis: (localDiagnosis || []).slice(0, 20),
       maxContextTokens: settings.maxContextTokens,
       redactSecrets: settings.redactSecrets,
       sendResponseBodies: settings.sendResponseBodies,
@@ -329,6 +332,55 @@ function createAiRouter(deps = {}) {
       usage: r.usage, model: r.model, latencyMs: r.latencyMs,
     };
   }, { featureFlag: 'diagnose' }));
+
+  // "Summarize this run": aggregated failure groups only (counts, URL templates, statuses, messages, <= 3 examples
+  // per group). Feature flag `diagnose`. Text for display only.
+  router.post('/summarize-run', (req, res) => runAiCall(req, res, 'diagnose', async ({ provider, settings, signal }) => {
+    const { totals, groups, language, secretValues } = req.body || {};
+    if (!Array.isArray(groups) || !groups.some(isObj)) throw bad('groups must list at least one failure group');
+    if (totals !== undefined && !isObj(totals)) throw bad('totals must be an object');
+    checkLanguage(language);
+    const r = await summarizeRun({
+      provider, totals,
+      groups: groups.slice(0, 200),
+      maxContextTokens: settings.maxContextTokens,
+      redactSecrets: settings.redactSecrets,
+      sendResponseBodies: settings.sendResponseBodies,
+      secretValues: secretList(secretValues),
+      language: language ? language.trim() : settings.outputLanguage,
+      signal,
+    });
+    return {
+      body: { summary: r.summary, groups: r.groups, sentGroups: r.sentGroups, omittedGroups: r.omittedGroups, shapeOnly: r.shapeOnly },
+      usage: r.usage, model: r.model, latencyMs: r.latencyMs,
+    };
+  }, { featureFlag: 'diagnose' }));
+
+  // Scripting assistant: generate | explain | fix | convert. Feature flag `scriptAssist`. Rate limited: a proposed
+  // script is screened and dry-run in a child process. Nothing is applied or run for the caller.
+  router.post('/script-assist', (req, res) => runAiCall(req, res, 'scriptAssist', async ({ provider, settings, signal }) => {
+    const { mode, kind, script, instruction, error, variableNames, language, secretValues } = req.body || {};
+    if (variableNames !== undefined && !Array.isArray(variableNames)) throw bad('variableNames must be an array');
+    checkLanguage(language);
+    const started = Date.now();
+    const r = await scriptAssist({
+      provider, mode, kind, script, instruction, error,
+      variableNames: (variableNames || []).slice(0, 500),
+      maxContextTokens: settings.maxContextTokens,
+      redactSecrets: settings.redactSecrets,
+      sendResponseBodies: settings.sendResponseBodies,
+      secretValues: secretList(secretValues),
+      language: language ? language.trim() : settings.outputLanguage,
+      signal,
+    });
+    return {
+      body: {
+        mode: r.mode, explanation: r.explanation, script: r.script, deterministic: r.deterministic, usedModel: r.usedModel,
+        converted: r.converted, validation: r.validation, maskedInput: r.maskedInput === true, warnings: r.warnings, retried: r.retried,
+      },
+      usage: r.usage, latencyMs: Date.now() - started,
+    };
+  }, { featureFlag: 'scriptAssist', rateLimited: true }));
 
   router.post('/generate-request', (req, res) => runAiCall(req, res, 'nlGenerate', async ({ provider, settings, signal }) => {
     const { instruction, current, neighbors, variables, language, secretValues } = req.body || {};
@@ -374,6 +426,34 @@ function createAiRouter(deps = {}) {
       .filter(v => v && typeof v.name === 'string')
       .map(v => ({ name: v.name.slice(0, 200), scope: typeof v.scope === 'string' ? v.scope.slice(0, 40) : undefined, secret: v.secret === true }));
     const secrets = (secretValues || []).slice(0, 1000).filter(s => typeof s === 'string');
+    if (req.body && req.body.runSummary !== undefined) {
+      const rs = req.body.runSummary;
+      if (!isObj(rs) || !Array.isArray(rs.groups)) return res.status(400).json({ error: 'runSummary must be an object with groups[]', code: 'BAD_REQUEST' });
+      const sections = describeRunSummary({
+        totals: rs.totals, groups: rs.groups.slice(0, 200), secretValues: secrets,
+        redactSecrets: merged.redactSecrets !== false, sendResponseBodies: merged.sendResponseBodies,
+      });
+      return res.json({ sections, estimatedTokens: sections.reduce((n, sec) => n + Math.ceil(sec.text.length / 4), 0), redactions: 0 });
+    }
+    if (req.body && req.body.scriptAssist !== undefined) {
+      // Scripting assistant: the sections come from the same code that builds the real payload.
+      const sa = req.body.scriptAssist;
+      if (!isObj(sa)) return res.status(400).json({ error: 'scriptAssist must be an object', code: 'BAD_REQUEST' });
+      try {
+        const d = describeScriptAssist({
+          mode: sa.mode, kind: sa.kind, script: sa.script, instruction: sa.instruction, error: sa.error,
+          variableNames: Array.isArray(sa.variableNames) ? sa.variableNames.slice(0, 500) : [],
+          secretValues: secrets,
+          redactSecrets: merged.redactSecrets !== false,
+          sendResponseBodies: merged.sendResponseBodies,
+        });
+        return res.json({ sections: d.sections, estimatedTokens: d.sections.reduce((n, sec) => n + Math.ceil(sec.text.length / 4), 0), redactions: 0 });
+      } catch (err) {
+        if (err && err.code === 'BAD_REQUEST') return res.status(400).json({ error: err.message, code: 'BAD_REQUEST' });
+        logger.error('AI preview error:', err && err.name);
+        return res.status(500).json({ error: 'Could not build the preview', code: 'INTERNAL' });
+      }
+    }
     try {
       const preview = buildPreviewContext({ item, response, variablesMeta, secretValues: secrets, settings: merged });
       if (explain && typeof explain === 'object' && Array.isArray(explain.failures)) {
@@ -385,6 +465,7 @@ function createAiRouter(deps = {}) {
           failures: explain.failures.slice(0, 50),
           testScript: typeof explain.testScript === 'string' ? explain.testScript.slice(0, 20000) : '',
           variableNames: Array.isArray(explain.variableNames) ? explain.variableNames.slice(0, 500) : [],
+          localDiagnosis: Array.isArray(explain.localDiagnosis) ? explain.localDiagnosis.slice(0, 20) : undefined,
           secretValues: secrets,
           redactSecrets: merged.redactSecrets,
           sendResponseBodies: merged.sendResponseBodies,

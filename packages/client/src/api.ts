@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { AiSuggestAssertionsResult, AiGenerateRequestResult, AiExplainFailureResult } from './utils/ai/aiTypes';
+import type { AiSuggestAssertionsResult, AiGenerateRequestResult, AiExplainFailureResult, AiScriptAssistResult, AiScriptMode, AiScriptKind } from './utils/ai/aiTypes';
 import type { CollectionItem, BaseCollection, RequestResponse, RunnerIteration, RunnerIterationResult, ScriptLog, CookieJar, RequestSettings, AiSettings, DocAiDescription } from './types';
 import type { DatabaseConnection } from './types';
 import { normalizeBaseUrl } from './utils/aiDefaults';
@@ -500,7 +500,11 @@ export interface AiPreviewPayload {
   secretValues?: string[];
   settings?: Partial<Pick<AiSettings, 'maxContextTokens' | 'redactSecrets' | 'sendResponseBodies'>>;
   /** "Explain with AI": also preview the failure messages, test script and variable names. */
-  explain?: { failures: Array<{ name: string; error?: string | null }>; testScript?: string; variableNames?: string[] };
+  explain?: { failures: Array<{ name: string; error?: string | null }>; testScript?: string; variableNames?: string[]; localDiagnosis?: string[] };
+  /** Scripting assistant: preview exactly what the request would send (the request/response context is then ignored). */
+  scriptAssist?: AiScriptAssistPayload;
+  /** "Summarize this run": preview exactly the aggregated groups that would be sent. */
+  runSummary?: AiRunSummaryPayload;
 }
 
 export interface AiPreviewResult {
@@ -606,6 +610,8 @@ export interface AiExplainFailurePayload {
   testScript?: string;
   /** Variable NAMES only. */
   variableNames?: string[];
+  /** Rule ids from diagnoseLocal (ids only: the server maps them to its own fixed wording). */
+  localDiagnosis?: string[];
   /** Plaintext values of secret variables from every environment; the server scrubs them. */
   secretValues?: string[];
   language?: string;
@@ -615,6 +621,62 @@ export interface AiExplainFailurePayload {
 export async function aiExplainFailure(payload: AiExplainFailurePayload, signal?: AbortSignal): Promise<AiExplainFailureResult> {
   try {
     const res = await api.post<AiExplainFailureResult>('/ai/explain-failure', payload, { timeout: 120000, signal });
+    return res.data;
+  } catch (err) {
+    throw toAiApiError(err);
+  }
+}
+
+export interface AiRunSummaryPayload {
+  totals: { requests: number; failedRequests: number; groups: number };
+  groups: Array<{
+    key: string; count: number; method: string; url: string; status: number; message: string;
+    examples: Array<{ name: string; method: string; url: string; status: number; failures: Array<{ name: string; error: string }> }>;
+  }>;
+  /** Plaintext values of secret variables from every environment; the server scrubs them. */
+  secretValues?: string[];
+  language?: string;
+}
+
+export interface AiRunSummaryResult {
+  summary: string;
+  /** Notes keyed `g1`, `g2`... in the order the groups were sent. */
+  groups: Array<{ id: string; cause: string; nextStep?: string }>;
+  sentGroups: number;
+  omittedGroups: number;
+  shapeOnly: boolean;
+}
+
+/** Ask the model to summarise the failure groups of a run. Aggregated metadata only; the answer is text. */
+export async function aiSummarizeRun(payload: AiRunSummaryPayload, signal?: AbortSignal): Promise<AiRunSummaryResult> {
+  try {
+    const res = await api.post<AiRunSummaryResult>('/ai/summarize-run', payload, { timeout: 120000, signal });
+    return res.data;
+  } catch (err) {
+    throw toAiApiError(err);
+  }
+}
+
+export interface AiScriptAssistPayload {
+  mode: AiScriptMode;
+  kind?: AiScriptKind;
+  /** The script being worked on (current editor content). */
+  script?: string;
+  /** `generate`: what the script should do. */
+  instruction?: string;
+  /** `fix`: the console / test error. */
+  error?: string;
+  /** Variable NAMES only. */
+  variableNames?: string[];
+  /** Plaintext values of secret variables from every environment; the server scrubs them. */
+  secretValues?: string[];
+  language?: string;
+}
+
+/** Ask the scripting assistant. The proposal is text: it is never run or applied by this call. */
+export async function aiScriptAssist(payload: AiScriptAssistPayload, signal?: AbortSignal): Promise<AiScriptAssistResult> {
+  try {
+    const res = await api.post<AiScriptAssistResult>('/ai/script-assist', payload, { timeout: 180000, signal });
     return res.data;
   } catch (err) {
     throw toAiApiError(err);

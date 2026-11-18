@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { CUSTOM_SNIPPETS_CHANGED, loadCustomSnippets, removeCustomSnippet } from '../utils/customSnippets';
 
 export interface Snippet {
   id: string;
@@ -1365,6 +1366,15 @@ export default function ScriptSnippetsLibrary({ target, onInsert }: ScriptSnippe
   const [open, setOpen] = useState(false);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [previewSnippet, setPreviewSnippet] = useState<string | null>(null);
+  // "My snippets": saved by the user (for example from the AI scripting assistant). Not available for mock scripts.
+  const [mine, setMine] = useState<Snippet[]>(() => (target === 'mock' ? [] : loadCustomSnippets(target)));
+  useEffect(() => {
+    if (target === 'mock') return;
+    const refresh = () => setMine(loadCustomSnippets(target));
+    refresh();
+    document.addEventListener(CUSTOM_SNIPPETS_CHANGED, refresh);
+    return () => document.removeEventListener(CUSTOM_SNIPPETS_CHANGED, refresh);
+  }, [target]);
 
   const categories = [...(
     target === 'prerequest'
@@ -1374,6 +1384,7 @@ export default function ScriptSnippetsLibrary({ target, onInsert }: ScriptSnippe
         : MOCK_CATEGORIES
   )]
     .sort((a, b) => a.label.localeCompare(b.label));
+  if (mine.length > 0) categories.unshift({ label: 'My snippets', snippets: mine });
 
   function toggleCategory(label: string) {
     setExpandedCategories(prev => {
@@ -1475,6 +1486,19 @@ export default function ScriptSnippetsLibrary({ target, onInsert }: ScriptSnippe
                                 <path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd" />
                               </svg>
                             </button>
+                            {cat.label === 'My snippets' && (
+                              <button
+                                type="button"
+                                onClick={() => removeCustomSnippet(target as 'prerequest' | 'test', snippet.id)}
+                                className="p-1 text-slate-500 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
+                                title="Delete this snippet"
+                                aria-label={`Delete snippet ${snippet.name}`}
+                              >
+                                <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                                  <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 112 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" />
+                                </svg>
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => handleInsert(snippet)}

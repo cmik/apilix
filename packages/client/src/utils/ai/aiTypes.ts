@@ -86,3 +86,32 @@ export interface AiExplainFailureResult {
   /** Only the structure of the body was sent (`sendResponseBodies` is off). */
   shapeOnly: boolean;
 }
+
+export type AiScriptMode = 'generate' | 'explain' | 'fix' | 'convert';
+export type AiScriptKind = 'test' | 'prerequest';
+
+/** Answer of POST /api/ai/script-assist. A proposed script is never run by the client and never applied without a click. */
+export interface AiScriptAssistResult {
+  mode: AiScriptMode;
+  explanation: string;
+  /** Absent for `explain`, and when the security screen refused what the model wrote. */
+  script?: string;
+  /** true = converted by the built-in rules only (no model call). */
+  deterministic: boolean;
+  usedModel: boolean;
+  converted?: { renamed: number; legacy: number; remaining: Array<{ path: string; line: number; reason: string }> };
+  validation?: {
+    /** true = screened, then run in the isolated dry-run without a structural error. */
+    validated: boolean;
+    /** false = screened and syntax-checked only (no isolated runner in this build). */
+    executed: boolean;
+    errors: Array<{ reason: string }>;
+    /** Set when the security screen refused the script (require, eval, process...). */
+    refused?: string;
+    flags: string[];
+  };
+  warnings: string[];
+  retried: boolean;
+  /** Shape-only mode: the model only saw a copy of the script with its literal values replaced by placeholders. */
+  maskedInput?: boolean;
+}

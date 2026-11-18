@@ -5,6 +5,7 @@ import type { RunnerIteration, RunnerIterationResult, CollectionItem, Conditiona
 import { applyInheritedAuth, getAllRequestIds, exportWorkflowCollection } from '../utils/treeHelpers';
 import { useToast } from './Toast';
 import { IconFile } from './Icons';
+import RunSummaryPanel from './RunSummaryPanel';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -1741,6 +1742,10 @@ export default function RunnerPanel() {
                 </div>
               ))}
             </div>
+          )}
+
+          {!isRunning && results.length > 0 && (
+            <RunSummaryPanel results={results} />
           )}
 
           {!isRunning && results.length > 0 && (
