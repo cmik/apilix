@@ -25,6 +25,7 @@ const { clip, maskLiterals } = require('./shape');
 const { dryRunScript } = require('./dry-run');
 const { MAX_SCRIPT_CHARS: MAX_SCREENED_CHARS } = require('./script-screen');
 const { convertPmToApx } = require('./script-convert');
+const { maskScriptLiterals } = require('./script-mask');
 
 const KINDS = ['test', 'prerequest'];
 const MAX_INPUT_SCRIPT_CHARS = 20000;
@@ -51,9 +52,13 @@ function cleanVariableNames(list) {
   return (Array.isArray(list) ? list : []).filter(n => typeof n === 'string' && n).slice(0, MAX_VARIABLES).map(n => clip(n, MAX_VARIABLE_NAME_CHARS));
 }
 
-/** The script as it leaves (secrets redacted unless the user turned redaction off, which never applies to secret values). */
-function prepareScript(script, { redactSecrets, secretValues }) {
+/**
+ * The script as it leaves: in shape-only mode its string and number literals are replaced first (it is CONTEXT only,
+ * never offered back); then secrets are redacted (unless the user turned redaction off, which never applies to secret values).
+ */
+function prepareScript(script, { redactSecrets, secretValues, shapeOnly }) {
   let s = typeof script === 'string' ? script : '';
+  if (shapeOnly) s = maskScriptLiterals(s);
   if (redactSecrets) s = redactScript(s);
   return scrubSecretValues(s, secretValues);
 }
@@ -116,7 +121,7 @@ function describeScriptAssist(input) {
   const section = (label, text) => ({ label, text, truncated: false });
   const sections = [
     section('Mode', `${n.mode} (${n.kind === 'prerequest' ? 'pre-request' : 'test'} script). ${shapeOnly
-      ? 'Shape only: values quoted in the console error are replaced by placeholders. The script is sent as written (secrets redacted).'
+      ? 'Shape only: string and number values in the script (and quoted values in the console error) are replaced by placeholders; comments are dropped. Names, calls and structure are sent. Secrets are redacted.'
       : 'The script and the console error are sent as written (secrets redacted).'}`),
   ];
   if (deterministic) {
@@ -160,6 +165,7 @@ function flagsOf(code) {
  * @returns {Promise<{ mode: string, explanation: string, script?: string, deterministic: boolean, usedModel: boolean,
  *   converted?: { renamed: number, legacy: number, remaining: Array<{path:string,line:number,reason:string}> },
  *   validation?: { validated: boolean, executed: boolean, errors: Array<{reason:string}>, refused?: string, flags: string[] },
+ *   maskedInput?: boolean,
  *   warnings: string[], retried: boolean, usage: { inputTokens: number, outputTokens: number } }>}
  */
 async function scriptAssist(input) {
@@ -270,12 +276,22 @@ async function scriptAssist(input) {
   } else if (!verdict.ok) {
     warnings.push('The script could not be validated: review it carefully before applying it.');
   }
+  // Shape-only: the model rewrote a masked copy. Its answer is diffed against the real script by the UI and says so;
+  // a placeholder left in it means a value was lost, so it can never count as validated.
+  const maskedInput = shapeOnly && workScript.trim().length > 0 && maskScriptLiterals(workScript) !== workScript;
+  if (script && maskedInput) {
+    warnings.push('Shape-only mode: the model only saw your script with string and number values replaced by placeholders. Compare the diff carefully: values it could not see may be lost or invented.');
+    if (/<(?:string|number|regex)>/.test(script)) {
+      warnings.push('The proposal contains placeholders (<string>, <number>, <regex>) where your values were: fill them in before using it.');
+      validation.validated = false;
+    }
+  }
   if (script && scrubTokenPatterns(script) !== script) warnings.push('The script contains something that looks like a credential: replace it with a variable.');
 
   return {
     mode: n.mode, deterministic: false, usedModel: true, explanation: out.explanation,
     ...(script ? { script } : {}), ...(converted ? { converted } : {}),
-    validation, warnings: [...new Set(warnings)].slice(0, 10), retried, usage,
+    validation, maskedInput, warnings: [...new Set(warnings)].slice(0, 10), retried, usage,
   };
 }
 

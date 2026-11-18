@@ -213,8 +213,11 @@ test('/preview with scriptAssist shows what is sent, redacted, with no network c
       assert.ok(!shown.includes(SECRET) && !shown.includes('abcdefghijklmnop1234'));
       assert.match(shown, /token/);
       assert.match(shown, /Alice/);
-      const shape = await call('POST', '/preview', { scriptAssist: { mode: 'fix', script: 'x', error: "expected 'Alice' to equal 'Bob'" }, settings: { sendResponseBodies: false } });
-      assert.ok(!/Alice|Bob/.test(shape.text));
+      const shape = await call('POST', '/preview', { scriptAssist: { mode: 'fix', script: "apx.expect(apx.response.json().name).to.equal('Carol Danvers'); // 4321", error: "expected 'Alice' to equal 'Bob'" }, settings: { sendResponseBodies: false } });
+      assert.ok(!/Alice|Bob|Carol|4321/.test(shape.text));
+      assert.match(shape.text, /apx\.response\.json\(\)\.name/);
+      const normal = await call('POST', '/preview', { scriptAssist: { mode: 'fix', script: "apx.expect(1).to.equal('Carol Danvers');", error: 'x' } });
+      assert.match(normal.text, /Carol Danvers/);
       assert.equal((await call('POST', '/preview', { scriptAssist: { mode: 'nope' } })).status, 400);
       assert.equal((await call('POST', '/preview', { scriptAssist: 'x' })).status, 400);
       assert.equal(fake.calls.length, 0);

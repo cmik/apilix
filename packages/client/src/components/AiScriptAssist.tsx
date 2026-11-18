@@ -214,7 +214,7 @@ export default function AiScriptAssist({ target, value, onApply, fixRequest }: A
               : 'Sends '}
             {mode === 'convert'
               ? `${destination}.`
-              : `${mode === 'generate' ? 'your instruction and ' : ''}the current script${mode === 'fix' ? ', the error' : ''} and the variable names (never values) to ${destination}. ${shapeOnly ? 'Values quoted in the error are replaced by placeholders; the script is sent as written.' : ''}`}
+              : `${mode === 'generate' ? 'your instruction and ' : ''}the current script${mode === 'fix' ? ', the error' : ''} and the variable names (never values) to ${destination}. ${shapeOnly ? 'Shape only: string and number values in the script and quoted values in the error are replaced by placeholders, and comments are dropped.' : ''}`}
             {' '}Credentials and secret values are redacted first.{' '}
             <button type="button" className="underline hover:text-slate-300" onClick={() => setShowPreview(true)}>Preview what is sent</button>
           </p>

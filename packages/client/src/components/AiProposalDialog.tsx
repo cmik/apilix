@@ -267,7 +267,7 @@ export function AiScriptProposalDialog({ result, current, kind, secrets, busy, o
   const script = result.script;
   const diff = useMemo(() => (script === undefined ? [] : diffLines(current, script)), [current, script]);
   const v = result.validation;
-  const validated = !!v && v.validated;
+  const validated = !!v && v.validated && !result.maskedInput;
   const unchanged = script !== undefined && script === current;
   const remaining = result.converted?.remaining ?? [];
 
@@ -314,6 +314,11 @@ export function AiScriptProposalDialog({ result, current, kind, secrets, busy, o
                 <ul className="list-disc ml-4">{v.errors.map((e, i) => <li key={i}>{safe(e.reason)}</li>)}</ul>
               </div>
             )
+          )}
+          {result.maskedInput && script !== undefined && (
+            <p role="alert" className="text-xs text-amber-300 border border-amber-500/30 bg-amber-500/5 rounded px-2 py-1.5">
+              Shape-only mode: the model worked from a copy of your script with its string and number values replaced by placeholders. The diff below is against your real script: check that no value was lost or invented.
+            </p>
           )}
           {result.warnings.map((w, i) => <p key={i} role="note" className="text-xs text-amber-400">{safe(w)}</p>)}
 

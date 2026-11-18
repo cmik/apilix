@@ -112,4 +112,6 @@ export interface AiScriptAssistResult {
   };
   warnings: string[];
   retried: boolean;
+  /** Shape-only mode: the model only saw a copy of the script with its literal values replaced by placeholders. */
+  maskedInput?: boolean;
 }

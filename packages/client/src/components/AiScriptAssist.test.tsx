@@ -249,3 +249,32 @@ describe('AiScriptAssist', () => {
     expect(screen.getByText('This script is empty.')).toBeInTheDocument();
   });
 });
+
+describe('AiScriptAssist shape-only', () => {
+  beforeEach(() => { mockedUseApp.mockReset(); aiScriptAssist.mockReset(); localStorage.clear(); });
+  afterEach(() => cleanup());
+
+  it('the disclosure says literals are replaced; a masked-input proposal is flagged and never "Replace script"', async () => {
+    aiScriptAssist.mockResolvedValue(result({ maskedInput: true }));
+    const { onApply } = setup({ ...ready, sendResponseBodies: false });
+    await openPanel();
+    expect(screen.getByText(/string and number values in the script and quoted values in the error are replaced by placeholders/)).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText('Instruction'), 'x');
+    await userEvent.click(screen.getByRole('button', { name: 'Generate' }));
+    expect(await screen.findByText(/worked from a copy of your script with its string and number values replaced/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Replace script' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Replace anyway' }));
+    expect(onApply).toHaveBeenCalledWith(GOOD);
+  });
+
+  it('without shape-only there is no masked-input banner', async () => {
+    aiScriptAssist.mockResolvedValue(result());
+    setup();
+    await openPanel();
+    await userEvent.type(screen.getByLabelText('Instruction'), 'x');
+    await userEvent.click(screen.getByRole('button', { name: 'Generate' }));
+    await screen.findByRole('dialog', { name: 'AI script proposal' });
+    expect(screen.queryByText(/worked from a copy of your script/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Replace script' })).toBeInTheDocument();
+  });
+});

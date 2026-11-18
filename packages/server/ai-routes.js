@@ -376,7 +376,7 @@ function createAiRouter(deps = {}) {
     return {
       body: {
         mode: r.mode, explanation: r.explanation, script: r.script, deterministic: r.deterministic, usedModel: r.usedModel,
-        converted: r.converted, validation: r.validation, warnings: r.warnings, retried: r.retried,
+        converted: r.converted, validation: r.validation, maskedInput: r.maskedInput === true, warnings: r.warnings, retried: r.retried,
       },
       usage: r.usage, latencyMs: Date.now() - started,
     };
