@@ -26,6 +26,8 @@ export interface AiScriptAssistProps {
   onApply: (script: string) => void;
   /** Opens the panel in "fix" mode with this error; nothing is sent until the user clicks Run. */
   fixRequest?: AiScriptFixRequest | null;
+  /** Called once the fix request has been taken into the panel, so its owner can forget it (a remount must not reopen it). */
+  onFixConsumed?: (nonce: number) => void;
 }
 
 const MODES: Array<{ mode: AiScriptMode; label: string }> = [
@@ -45,7 +47,7 @@ function snippetName(instruction: string, script: string): string {
  * clicked (after the preview of what will be sent is available); the answer opens in a diff dialog and
  * nothing replaces the script without an explicit click. A proposed script is never run by the client.
  */
-export default function AiScriptAssist({ target, value, onApply, fixRequest }: AiScriptAssistProps) {
+export default function AiScriptAssist({ target, value, onApply, fixRequest, onFixConsumed }: AiScriptAssistProps) {
   const { state, dispatch } = useApp();
   const settings = state.ai?.settings;
   const ready = !!settings && aiFeatureReady(settings, 'scriptAssist');
@@ -90,7 +92,8 @@ export default function AiScriptAssist({ target, value, onApply, fixRequest }: A
     setError(fixRequest.error);
     setNotice(null);
     setFailure(null);
-  }, [fixRequest]);
+    onFixConsumed?.(fixRequest.nonce);
+  }, [fixRequest]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const secrets = useMemo(
     () => (ready ? buildAllSecretValues(state.environments, state.globalVariables, state.globalVariableMeta) : new Set<string>()),

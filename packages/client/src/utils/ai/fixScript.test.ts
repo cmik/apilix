@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from 'vitest';
 import { renderHook } from '@testing-library/react';
-import { resolveFixScriptTab, useAiFixScriptListener } from './fixScript';
+import { resolveFixScriptTab, useAiFixScriptListener, clearConsumedFix } from './fixScript';
 import { AI_FIX_SCRIPT } from '../appEvents';
 
 describe('resolveFixScriptTab', () => {
@@ -36,5 +36,13 @@ describe('useAiFixScriptListener', () => {
     unmount();
     fire({ tabId: 't3', error: 'late', kind: 'test' });
     expect(second).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('clearConsumedFix', () => {
+  it('forgets the consumed request, keeps a newer one, tolerates null', () => {
+    expect(clearConsumedFix({ nonce: 1, error: 'a' }, 1)).toBeNull();
+    expect(clearConsumedFix({ nonce: 2, error: 'b' }, 1)).toEqual({ nonce: 2, error: 'b' });
+    expect(clearConsumedFix(null, 1)).toBeNull();
   });
 });

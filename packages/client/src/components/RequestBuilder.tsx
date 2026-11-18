@@ -28,7 +28,7 @@ import { buildAllVariableSuggestions, DYNAMIC_VARIABLE_SUGGESTIONS, type Variabl
 import VarInput from './VarInput';
 import { buildBodyPreview, highlightUnresolved } from '../utils/bodyPreview';
 import { INJECT_TEST_SNIPPET } from '../utils/appEvents';
-import { resolveFixScriptTab, useAiFixScriptListener } from '../utils/ai/fixScript';
+import { resolveFixScriptTab, useAiFixScriptListener, clearConsumedFix } from '../utils/ai/fixScript';
 import { mergeTestSnippet } from '../utils/testSnippetUtils';
 import type { InjectTestSnippetDetail } from '../utils/appEvents';
 import { handleAiShortcut } from '../utils/ai/aiShortcut';
@@ -984,6 +984,8 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
   // "Fix with AI" from the console: opens the AI panel of the script (it sends nothing by itself).
   const [aiFix, setAiFix] = useState<{ tabId: string; error: string; nonce: number } | null>(null);
   const fixNonce = useRef(0);
+  // Once the panel has taken the request it is forgotten: switching tabs back and forth must not reopen it.
+  const onAiFixConsumed = (nonce: number) => setAiFix(cur => clearConsumedFix(cur, nonce));
   useAiFixScriptListener(({ tabId, error, kind }) => {
     if (!state.tabs.some(t => t.id === tabId)) return;
     const cached = cacheRef.current.get(tabId);
@@ -2899,6 +2901,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             requestNames={flattenRequestNames(col?.item ?? [])}
             requestItems={flattenRequestItems(col?.item ?? [])}
             aiFixRequest={aiFix && aiFix.tabId === activeTab?.id ? aiFix : null}
+            onAiFixConsumed={onAiFixConsumed}
           />
         )}
 
@@ -2913,6 +2916,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             requestNames={flattenRequestNames(col?.item ?? [])}
             requestItems={flattenRequestItems(col?.item ?? [])}
             aiFixRequest={aiFix && aiFix.tabId === activeTab?.id ? aiFix : null}
+            onAiFixConsumed={onAiFixConsumed}
           />
         )}
 

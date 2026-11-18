@@ -25,3 +25,8 @@ export function useAiFixScriptListener(handler: (detail: AiFixScriptDetail) => v
     return () => document.removeEventListener(AI_FIX_SCRIPT, onFix);
   }, []);
 }
+
+/** The pending fix request after the AI panel consumed `nonce`: forgotten, unless a newer one has arrived meanwhile. */
+export function clearConsumedFix<T extends { nonce: number }>(current: T | null, nonce: number): T | null {
+  return current && current.nonce === nonce ? null : current;
+}

@@ -359,3 +359,24 @@ describe('AiScriptAssist and request tabs', () => {
     expect(onApply).toHaveBeenCalledWith(GOOD);
   });
 });
+
+describe('AiScriptAssist fix request consumption', () => {
+  beforeEach(() => { mockedUseApp.mockReset(); aiScriptAssist.mockReset(); localStorage.clear(); });
+  afterEach(() => cleanup());
+
+  it('reports the request as consumed once, and a remount without it does not reopen the panel', async () => {
+    const onFixConsumed = vi.fn();
+    const { rerender, onApply, unmount } = setup(ready, { value: 'apx.broken()', fixRequest: { nonce: 3, error: 'boom' }, onFixConsumed });
+    expect(await screen.findByLabelText('Error to fix')).toHaveValue('boom');
+    expect(onFixConsumed).toHaveBeenCalledTimes(1);
+    expect(onFixConsumed).toHaveBeenCalledWith(3);
+    rerender(<AiScriptAssist target="test" value="apx.broken()" onApply={onApply} fixRequest={null} onFixConsumed={onFixConsumed} />);
+    expect(onFixConsumed).toHaveBeenCalledTimes(1);
+    unmount();
+    // The owner forgot the request (null): the new instance stays closed.
+    mockApp(ready);
+    render(<AiScriptAssist target="test" value="apx.broken()" onApply={onApply} fixRequest={null} onFixConsumed={onFixConsumed} />);
+    expect(screen.queryByLabelText('Error to fix')).toBeNull();
+    expect(onFixConsumed).toHaveBeenCalledTimes(1);
+  });
+});
