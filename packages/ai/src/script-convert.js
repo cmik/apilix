@@ -17,6 +17,8 @@
 
 const { getApxSurface } = require('./apx-surface');
 
+// A regular expression literal longer than this is read as a division: an unclosed `/[` run would otherwise be rescanned from every `/`.
+const MAX_REGEX_LITERAL = 2000;
 const REGEX_PRECEDING_WORDS = new Set(['return', 'typeof', 'case', 'in', 'of', 'delete', 'void', 'throw', 'new', 'else', 'do', 'instanceof']);
 
 /**
@@ -78,7 +80,7 @@ function maskNonCode(code) {
       if (regexOk) {
         let j = i + 1;
         let inClass = false;
-        while (j < n && code[j] !== '\n' && (code[j] !== '/' || inClass)) { if (code[j] === '\\') j++; else if (code[j] === '[') inClass = true; else if (code[j] === ']') inClass = false; j++; }
+        while (j < n && j - i < MAX_REGEX_LITERAL && code[j] !== '\n' && (code[j] !== '/' || inClass)) { if (code[j] === '\\') j++; else if (code[j] === '[') inClass = true; else if (code[j] === ']') inClass = false; j++; }
         if (code[j] === '/') { j++; while (j < n && /[a-z]/i.test(code[j])) j++; blank(i, j); i = j; lastSig = '/'; lastWord = ''; continue; }
       }
       i++; lastSig = c; lastWord = ''; continue;

@@ -58,7 +58,9 @@ const HEADER_LITERAL = new RegExp(
   'gi',
 );
 // key: 'literal' / key = 'literal' with a sensitive key
-const ASSIGN_LITERAL = new RegExp(String.raw`(['"]?)([A-Za-z_][\w-]*)\1(\s*[:=]\s*)(['"\`])((?:\\.|(?!\4)[^\\\n\r\u2028\u2029])*)\4`, 'g');
+// The key is only tried at the START of an identifier run (or right after leading hyphens: `--token='x'`), so a long run is scanned
+// once, not from every position (quadratic).
+const ASSIGN_LITERAL = new RegExp(String.raw`(?:(?<![\w-])|(?<=(?<![\w-])-{1,4}))(['"]?)([A-Za-z_\d][\w-]*)\1(\s*[:=]\s*)(['"\`])((?:\\.|(?!\4)[^\\\n\r\u2028\u2029])*)\4`, 'g');
 const AUTH_SCHEME_LITERAL = /\b(Bearer|Basic|Token|Digest)\s+(?!\{\{)[A-Za-z0-9._~+/=-]{8,}/g;
 
 /** Mask credential literals in a pre-request / test script. */

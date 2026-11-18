@@ -210,3 +210,30 @@ test('redactScript still masks literals that contain escapes and keeps ordinary 
   // a literal broken by a real line break is not one string literal
   assert.equal(redactScript("password = 'abc\ndef'"), "password = 'abc\ndef'");
 });
+
+test('redactScript is linear on a long identifier run (keys are tried once per run, not from every position)', () => {
+  const N = 20000;
+  const a = 'a'.repeat(N);
+  const hostile = [a, `${a}=`, `k=${a}`, `Bearer ${a}`, `Bearer${a}`, `eyJ${a}`, `eyJ${a}.${a}`, 'a-'.repeat(N / 2), `${'-'.repeat(N)}`, `ghp_${a}`, `sk-${a}`, `Basic ${a}`, `http://${a}@${a}`, 'a:'.repeat(N / 2)];
+  for (const h of hostile) {
+    const t = Date.now();
+    redactScript(h);
+    const ms = Date.now() - t;
+    assert.ok(ms < 300, `${h.slice(0, 12)}… took ${ms} ms`);
+  }
+});
+
+test('redactScript still masks every key spelling it masked before the linear-time change', () => {
+  const cases = [
+    ["password = 'x1'", `password = '${REDACTED}'`],
+    ['{ "api_key": "x1" }', `{ "api_key": "${REDACTED}" }`],
+    ["x-api-key='x1'", `x-api-key='${REDACTED}'`],
+    ["--token='x1'", `--token='${REDACTED}'`],
+    ['-password1_token="x1"', `-password1_token="${REDACTED}"`],
+    ["9password='x1'", `9password='${REDACTED}'`],
+    ["1_token = 'x1'", `1_token = '${REDACTED}'`],
+    ['a.b.client_secret: "x1"', `a.b.client_secret: "${REDACTED}"`],
+    ["page = 'x1'", "page = 'x1'"],
+  ];
+  for (const [input, expected] of cases) assert.equal(redactScript(input), expected, input);
+});

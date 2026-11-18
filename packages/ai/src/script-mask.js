@@ -7,6 +7,8 @@
  * and must never be offered back as the user's script. Single linear pass, no regex backtracking.
  */
 
+// A regular expression literal longer than this is read as a division: an unclosed `/[` run would otherwise be rescanned from every `/`.
+const MAX_REGEX_LITERAL = 2000;
 const REGEX_PRECEDING_WORDS = new Set(['return', 'typeof', 'case', 'in', 'of', 'delete', 'void', 'throw', 'new', 'else', 'do', 'instanceof']);
 const STRING = '"<string>"';
 const NUMBER = '<number>';
@@ -55,7 +57,7 @@ function maskScriptLiterals(code) {
       if (regexOk) {
         let j = i + 1;
         let inClass = false;
-        while (j < n && src[j] !== '\n' && (src[j] !== '/' || inClass)) { if (src[j] === '\\') j++; else if (src[j] === '[') inClass = true; else if (src[j] === ']') inClass = false; j++; }
+        while (j < n && j - i < MAX_REGEX_LITERAL && src[j] !== '\n' && (src[j] !== '/' || inClass)) { if (src[j] === '\\') j++; else if (src[j] === '[') inClass = true; else if (src[j] === ']') inClass = false; j++; }
         if (src[j] === '/') { j++; while (j < n && /[a-z]/i.test(src[j])) j++; out += REGEX; i = j; lastSig = '/'; lastWord = ''; continue; }
       }
       out += c; i++; lastSig = c; lastWord = ''; continue;

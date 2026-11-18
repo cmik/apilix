@@ -85,3 +85,11 @@ test('shape-only convert: a refused model rewrite falls back to the real convert
   assert.match(r.script, /Alice/);
   assert.ok(!/<string>/.test(r.script));
 });
+
+test('the regex-literal scan is bounded: an unclosed /[ run is not rescanned from every slash', () => {
+  const hostile = '=/['.repeat(20000);
+  const t = Date.now();
+  maskScriptLiterals(hostile);
+  assert.ok(Date.now() - t < 500, `took ${Date.now() - t} ms`);
+  assert.equal(maskScriptLiterals('x = /ab+c/g.test(s);'), 'x = /<regex>/.test(s);');
+});
