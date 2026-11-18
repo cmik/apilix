@@ -141,8 +141,9 @@ export default function AiScriptAssist({ target, value, onApply, fixRequest, onF
     const started = liveRef.current;
     try {
       const r = await aiScriptAssist({ ...payload, secretValues: Array.from(secrets) }, ac.signal);
-      if (ac.signal.aborted) return;
+      // Aborted but resolved anyway: the call is over, so it is no longer in flight (the result itself is dropped).
       dispatch({ type: 'AI_REQUEST_DONE', payload: 'scriptAssist' });
+      if (ac.signal.aborted) return;
       const now = liveRef.current;
       if (now.tabId !== started.tabId || now.target !== started.target) return; // another request tab: drop the result
       if (now.value !== started.value && r.script !== undefined) {

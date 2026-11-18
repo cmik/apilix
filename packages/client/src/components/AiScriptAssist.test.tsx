@@ -441,3 +441,35 @@ describe('AiScriptAssist preview tab reuse', () => {
     expect(screen.getByLabelText('Instruction')).toHaveValue('keep me');
   });
 });
+
+describe('AiScriptAssist in-flight bookkeeping', () => {
+  beforeEach(() => { mockedUseApp.mockReset(); aiScriptAssist.mockReset(); localStorage.clear(); });
+  afterEach(() => cleanup());
+
+  it('a call aborted by a tab switch that resolves anyway still ends the in-flight state, and shows nothing', async () => {
+    let resolve!: (r: unknown) => void;
+    aiScriptAssist.mockReturnValue(new Promise(r => { resolve = r; }));
+    const dispatch = vi.fn();
+    const mount = (tab: string) => mockedUseApp.mockReturnValue({
+      state: {
+        ai: { settings: { ...DEFAULT_AI_SETTINGS, ...ready, features: { ...DEFAULT_AI_SETTINGS.features, ...ready.features } } },
+        activeTabId: tab, activeEnvironmentId: null, activeRequest: { collectionId: 'c1' },
+        environments: [], globalVariables: {}, globalVariableMeta: {}, collectionVariables: {},
+      },
+      dispatch,
+    });
+    mount('t1');
+    const ui = () => <AiScriptAssist target="test" value="apx.test('x', () => {});" onApply={vi.fn()} />;
+    const { rerender } = render(ui());
+    await openPanel();
+    await userEvent.type(screen.getByLabelText('Instruction'), 'x');
+    await userEvent.click(screen.getByRole('button', { name: 'Generate' }));
+    await waitFor(() => expect(aiScriptAssist).toHaveBeenCalledTimes(1));
+    mount('t2');
+    rerender(ui());
+    expect(dispatch.mock.calls.filter(c => c[0].type === 'AI_REQUEST_DONE')).toHaveLength(0);
+    resolve(result());
+    await waitFor(() => expect(dispatch.mock.calls.filter(c => c[0].type === 'AI_REQUEST_DONE')).toHaveLength(1));
+    expect(screen.queryByRole('dialog', { name: 'AI script proposal' })).toBeNull();
+  });
+});
