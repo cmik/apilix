@@ -61,8 +61,27 @@ export default function AiScriptAssist({ target, value, onApply, fixRequest }: A
   const [notice, setNotice] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const seenFix = useRef<number | null>(null);
+  // Which request tab and which script text a call was made for: a result is only ever applied to that very script.
+  const activeTabId = state.activeTabId ?? null;
+  const liveRef = useRef({ tabId: activeTabId, value, target });
+  liveRef.current = { tabId: activeTabId, value, target };
+  const resultTab = useRef<string | null>(null);
 
   useEffect(() => () => abortRef.current?.abort(), []);
+  // Switching to another request tab abandons everything in flight or on screen: this component stays mounted
+  // across tabs, and a proposal written for one script must never land in another.
+  const lastTab = useRef(activeTabId);
+  useEffect(() => {
+    if (lastTab.current === activeTabId) return;
+    lastTab.current = activeTabId;
+    abortRef.current?.abort();
+    setBusy(false);
+    setResult(null);
+    setOpen(false);
+    setShowPreview(false);
+    setNotice(null);
+    setFailure(null);
+  }, [activeTabId]);
   useEffect(() => {
     if (!fixRequest || seenFix.current === fixRequest.nonce) return;
     seenFix.current = fixRequest.nonce;
@@ -112,10 +131,18 @@ export default function AiScriptAssist({ target, value, onApply, fixRequest }: A
     setNotice(null);
     setLastPayload(payload);
     dispatch({ type: 'AI_REQUEST_START', payload: 'scriptAssist' });
+    const started = liveRef.current;
     try {
       const r = await aiScriptAssist({ ...payload, secretValues: Array.from(secrets) }, ac.signal);
       if (ac.signal.aborted) return;
       dispatch({ type: 'AI_REQUEST_DONE', payload: 'scriptAssist' });
+      const now = liveRef.current;
+      if (now.tabId !== started.tabId || now.target !== started.target) return; // another request tab: drop the result
+      if (now.value !== started.value && r.script !== undefined) {
+        setFailure('The script changed while the model was working: the proposal was discarded. Run it again.');
+        return;
+      }
+      resultTab.current = started.tabId;
       setResult(r);
     } catch (err) {
       if (ac.signal.aborted) { dispatch({ type: 'AI_REQUEST_DONE', payload: 'scriptAssist' }); return; }
@@ -237,7 +264,12 @@ export default function AiScriptAssist({ target, value, onApply, fixRequest }: A
           kind={kind}
           secrets={secrets}
           busy={busy}
-          onApply={(script) => { onApply(script); setResult(null); setOpen(false); }}
+          onApply={(script) => {
+            // Defence in depth: never apply a proposal that was written for another request tab.
+            if (resultTab.current === liveRef.current.tabId) onApply(script);
+            setResult(null);
+            setOpen(false);
+          }}
           onSaveSnippet={saveSnippet}
           onDiscard={() => setResult(null)}
           onRegenerate={result.usedModel && lastPayload ? () => run(lastPayload) : undefined}

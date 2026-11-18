@@ -278,3 +278,84 @@ describe('AiScriptAssist shape-only', () => {
     expect(screen.getByRole('button', { name: 'Replace script' })).toBeInTheDocument();
   });
 });
+
+describe('AiScriptAssist and request tabs', () => {
+  beforeEach(() => { mockedUseApp.mockReset(); aiScriptAssist.mockReset(); localStorage.clear(); });
+  afterEach(() => cleanup());
+
+  const withTab = (tabId: string) => {
+    const dispatch = vi.fn();
+    mockedUseApp.mockReturnValue({
+      state: {
+        ai: { settings: { ...DEFAULT_AI_SETTINGS, ...ready, features: { ...DEFAULT_AI_SETTINGS.features, ...ready.features } } },
+        activeTabId: tabId, activeEnvironmentId: null, activeRequest: { collectionId: 'c1' },
+        environments: [], globalVariables: {}, globalVariableMeta: {}, collectionVariables: {},
+      },
+      dispatch,
+    });
+  };
+  const ui = (value: string, onApply: () => void) => <AiScriptAssist target="test" value={value} onApply={onApply} />;
+
+  it('a result that lands after the user switched request tab is dropped, never shown or applied', async () => {
+    let resolve!: (r: unknown) => void;
+    aiScriptAssist.mockReturnValue(new Promise(r => { resolve = r; }));
+    withTab('tab-1');
+    const onApply = vi.fn();
+    const { rerender } = render(ui('apx.test("one", () => {});', onApply));
+    await openPanel();
+    await userEvent.type(screen.getByLabelText('Instruction'), 'x');
+    await userEvent.click(screen.getByRole('button', { name: 'Generate' }));
+    await waitFor(() => expect(aiScriptAssist).toHaveBeenCalledTimes(1));
+    withTab('tab-2');
+    rerender(ui('apx.test("two", () => {});', onApply));
+    resolve(result());
+    await new Promise(r => setTimeout(r, 20));
+    expect(screen.queryByRole('dialog', { name: 'AI script proposal' })).toBeNull();
+    expect(onApply).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Instruction')).toBeNull(); // the panel closed with the tab switch
+  });
+
+  it('a proposal already on screen is closed when the tab changes, so Replace cannot hit another tab', async () => {
+    aiScriptAssist.mockResolvedValue(result());
+    withTab('tab-1');
+    const onApply = vi.fn();
+    const { rerender } = render(ui('apx.test("one", () => {});', onApply));
+    await openPanel();
+    await userEvent.type(screen.getByLabelText('Instruction'), 'x');
+    await userEvent.click(screen.getByRole('button', { name: 'Generate' }));
+    await screen.findByRole('dialog', { name: 'AI script proposal' });
+    withTab('tab-2');
+    rerender(ui('apx.test("two", () => {});', onApply));
+    expect(screen.queryByRole('dialog', { name: 'AI script proposal' })).toBeNull();
+    expect(onApply).not.toHaveBeenCalled();
+  });
+
+  it('a result for a script the user edited while waiting is discarded with a message', async () => {
+    let resolve!: (r: unknown) => void;
+    aiScriptAssist.mockReturnValue(new Promise(r => { resolve = r; }));
+    withTab('tab-1');
+    const onApply = vi.fn();
+    const { rerender } = render(ui('v1', onApply));
+    await openPanel();
+    await userEvent.type(screen.getByLabelText('Instruction'), 'x');
+    await userEvent.click(screen.getByRole('button', { name: 'Generate' }));
+    await waitFor(() => expect(aiScriptAssist).toHaveBeenCalledTimes(1));
+    rerender(ui('v1 edited', onApply));
+    resolve(result());
+    expect(await screen.findByRole('alert')).toHaveTextContent('The script changed while the model was working');
+    expect(screen.queryByRole('dialog', { name: 'AI script proposal' })).toBeNull();
+    expect(onApply).not.toHaveBeenCalled();
+  });
+
+  it('on the same tab and the same script the proposal is shown and Replace applies it', async () => {
+    aiScriptAssist.mockResolvedValue(result());
+    withTab('tab-1');
+    const onApply = vi.fn();
+    render(ui('apx.test("one", () => {});', onApply));
+    await openPanel();
+    await userEvent.type(screen.getByLabelText('Instruction'), 'x');
+    await userEvent.click(screen.getByRole('button', { name: 'Generate' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Replace script' }));
+    expect(onApply).toHaveBeenCalledWith(GOOD);
+  });
+});
