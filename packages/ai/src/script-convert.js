@@ -17,8 +17,6 @@
 
 const { getApxSurface } = require('./apx-surface');
 
-// A regular expression literal longer than this is read as a division: an unclosed `/[` run would otherwise be rescanned from every `/`.
-const MAX_REGEX_LITERAL = 2000;
 const REGEX_PRECEDING_WORDS = new Set(['return', 'typeof', 'case', 'in', 'of', 'delete', 'void', 'throw', 'new', 'else', 'do', 'instanceof']);
 
 /**
@@ -27,6 +25,7 @@ const REGEX_PRECEDING_WORDS = new Set(['return', 'typeof', 'case', 'in', 'of', '
  */
 function maskNonCode(code) {
   const n = code.length;
+  const failedScan = new Uint8Array(n + 2); // regex-literal scans known to fail, per position and class state
   const out = code.split('');
   const blank = (from, to) => { for (let k = from; k < to && k < n; k++) if (code[k] !== '\n' && code[k] !== '\r') out[k] = ' '; };
   const stack = []; // template nesting: brace depth inside each `${`
@@ -80,8 +79,18 @@ function maskNonCode(code) {
       if (regexOk) {
         let j = i + 1;
         let inClass = false;
-        while (j < n && j - i < MAX_REGEX_LITERAL && code[j] !== '\n' && (code[j] !== '/' || inClass)) { if (code[j] === '\\') j++; else if (code[j] === '[') inClass = true; else if (code[j] === ']') inClass = false; j++; }
-        if (code[j] === '/') { j++; while (j < n && /[a-z]/i.test(code[j])) j++; blank(i, j); i = j; lastSig = '/'; lastWord = ''; continue; }
+        const trail = [];
+        let dead = false;
+        while (j < n && code[j] !== '\n' && (code[j] !== '/' || inClass)) {
+          // (position, class state) pairs already known to end without a closing slash: this scan would fail the same way.
+          const bit = inClass ? 2 : 1;
+          if (failedScan[j] & bit) { dead = true; break; }
+          trail.push(j * 2 + (inClass ? 1 : 0));
+          if (code[j] === '\\') j++; else if (code[j] === '[') inClass = true; else if (code[j] === ']') inClass = false;
+          j++;
+        }
+        if (!dead && code[j] === '/') { j++; while (j < n && /[a-z]/i.test(code[j])) j++; blank(i, j); i = j; lastSig = '/'; lastWord = ''; continue; }
+        for (const t of trail) failedScan[t >> 1] |= (t & 1) ? 2 : 1; // read once, however many `/` start inside it
       }
       i++; lastSig = c; lastWord = ''; continue;
     }

@@ -7,8 +7,6 @@
  * and must never be offered back as the user's script. Single linear pass, no regex backtracking.
  */
 
-// A regular expression literal longer than this is read as a division: an unclosed `/[` run would otherwise be rescanned from every `/`.
-const MAX_REGEX_LITERAL = 2000;
 const REGEX_PRECEDING_WORDS = new Set(['return', 'typeof', 'case', 'in', 'of', 'delete', 'void', 'throw', 'new', 'else', 'do', 'instanceof']);
 const STRING = '"<string>"';
 const NUMBER = '<number>';
@@ -17,6 +15,7 @@ const REGEX = '/<regex>/';
 function maskScriptLiterals(code) {
   const src = typeof code === 'string' ? code : '';
   const n = src.length;
+  const failedScan = new Uint8Array(n + 2); // regex-literal scans known to fail, per position and class state
   let out = '';
   let i = 0;
   let lastSig = '';
@@ -57,8 +56,18 @@ function maskScriptLiterals(code) {
       if (regexOk) {
         let j = i + 1;
         let inClass = false;
-        while (j < n && j - i < MAX_REGEX_LITERAL && src[j] !== '\n' && (src[j] !== '/' || inClass)) { if (src[j] === '\\') j++; else if (src[j] === '[') inClass = true; else if (src[j] === ']') inClass = false; j++; }
-        if (src[j] === '/') { j++; while (j < n && /[a-z]/i.test(src[j])) j++; out += REGEX; i = j; lastSig = '/'; lastWord = ''; continue; }
+        const trail = [];
+        let dead = false;
+        while (j < n && src[j] !== '\n' && (src[j] !== '/' || inClass)) {
+          // (position, class state) pairs already known to end without a closing slash: this scan would fail the same way.
+          const bit = inClass ? 2 : 1;
+          if (failedScan[j] & bit) { dead = true; break; }
+          trail.push(j * 2 + (inClass ? 1 : 0));
+          if (src[j] === '\\') j++; else if (src[j] === '[') inClass = true; else if (src[j] === ']') inClass = false;
+          j++;
+        }
+        if (!dead && src[j] === '/') { j++; while (j < n && /[a-z]/i.test(src[j])) j++; out += REGEX; i = j; lastSig = '/'; lastWord = ''; continue; }
+        for (const t of trail) failedScan[t >> 1] |= (t & 1) ? 2 : 1; // read once, however many `/` start inside it
       }
       out += c; i++; lastSig = c; lastWord = ''; continue;
     }

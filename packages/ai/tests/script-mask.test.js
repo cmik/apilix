@@ -87,9 +87,12 @@ test('shape-only convert: a refused model rewrite falls back to the real convert
 });
 
 test('the regex-literal scan is bounded: an unclosed /[ run is not rescanned from every slash', () => {
-  const hostile = '=/['.repeat(20000);
-  const t = Date.now();
-  maskScriptLiterals(hostile);
-  assert.ok(Date.now() - t < 500, `took ${Date.now() - t} ms`);
+  // Measured well under 0.3 s at this size; without the failed-scan memo it is quadratic (many seconds). The bound is generous (a loaded CI machine must not trip it).
+  const { maskNonCode } = require('../src/script-convert');
+  for (const [f, hostile] of [[maskScriptLiterals, '=/['.repeat(100000)], [maskScriptLiterals, '(/[x\\'.repeat(60000)], [maskNonCode, '=/(['.repeat(60000)], [maskNonCode, '=/['.repeat(100000)]]) {
+    const t = Date.now();
+    f(hostile);
+    assert.ok(Date.now() - t < 2000, `took ${Date.now() - t} ms`);
+  }
   assert.equal(maskScriptLiterals('x = /ab+c/g.test(s);'), 'x = /<regex>/.test(s);');
 });
