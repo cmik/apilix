@@ -216,8 +216,10 @@ function positionOf(mask, start, end) {
 const lineNo = (text, index) => text.slice(0, index).split('\n').length;
 
 /** `tests["name"] = expr;` on ONE line (a trailing comment is kept). null when the line is not that, or not safely convertible. */
-function convertTestsLine(line, maskLine) {
+function convertTestsLine(line, maskLine, nextLine) {
   if (!/^\s*tests\s*\[/.test(maskLine)) return null;
+  // The statement goes on at the start of the next line (`tests["a"] = x\n  && y;`, `foo\n(1)`): not one complete line.
+  if (nextLine && /^[.(\[+\-*/%&|^?:,<>=`]/.test(nextLine)) return null;
   const codeEnd = maskLine.trimEnd().length;
   const code = line.slice(0, codeEnd);
   const tail = line.slice(codeEnd);
@@ -284,7 +286,9 @@ function convertPmToApx(code) {
     const lines = text.split('\n');
     const maskLines = mask.split('\n');
     for (let li = 0; li < lines.length; li++) {
-      const converted = convertTestsLine(lines[li], maskLines[li]);
+      let k = li + 1;
+      while (k < lines.length && (lines[k].trim() === '' || lines[k].trim().startsWith('//'))) k++;
+      const converted = convertTestsLine(lines[li], maskLines[li], k < lines.length ? lines[k].trim() : '');
       if (converted !== null) { lines[li] = converted; legacy++; }
     }
     text = lines.join('\n');

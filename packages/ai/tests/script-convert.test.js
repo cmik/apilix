@@ -143,6 +143,13 @@ test('declared names are never rewritten; a name declared only locally (paramete
   }
 });
 
+test('a loop variable named like a legacy global is local to the loop: references are reported', () => {
+  const input = 'for (const responseBody of xs) { use(responseBody); }\nJSON.parse(responseBody);';
+  const r = convertPmToApx(input);
+  assert.equal(r.script, input);
+  assert.deepEqual(r.remaining.map(x => x.line).sort(), [1, 2]);
+});
+
 test('a legacy global shadowed in one function is still reported where the top level uses the global (never "converted automatically")', () => {
   const input = 'function chk(responseBody) { return responseBody.length; }\nconst j = JSON.parse(responseBody);';
   const r = convertPmToApx(input);
@@ -152,6 +159,29 @@ test('a legacy global shadowed in one function is still reported where the top l
   const r2 = convertPmToApx(input2);
   assert.equal(r2.script, input2.replace('responseCode.code', 'apx.response.code'));
   assert.ok(r2.remaining.some(x => x.path === 'tests' && x.line === 2 && /shadowed locally/.test(x.reason)));
+});
+
+test('a tests[...] statement that continues on the next line is not converted, and is reported', () => {
+  const cases = [
+    'tests["a"] = x\n && y;',
+    'tests["a"] = foo\n(1)',
+    'tests["a"] = foo\n  .bar;',
+    'tests["a"] = x\n  ? 1 : 2;',
+    'tests["a"] = x\n\n  + 1;',
+    'tests["a"] = x\n// note\n  + 1;',
+    'tests["a"] = x\n`tpl`',
+    'tests["a"] = x\n[0]',
+  ];
+  for (const input of cases) {
+    const r = convertPmToApx(input);
+    assert.equal(r.script, input, JSON.stringify(input));
+    assert.ok(r.remaining.some(x => x.path === 'tests[...]'), `${JSON.stringify(input)} reported`);
+  }
+  // a following statement is not a continuation
+  assert.equal(convertPmToApx('tests["a"] = x;\nfoo();').legacy, 1);
+  assert.equal(convertPmToApx('tests["a"] = x\nfoo();').legacy, 1);
+  assert.equal(convertPmToApx('tests["a"] = x;\ntests["b"] = y;').legacy, 2);
+  assert.equal(convertPmToApx('tests["a"] = x;\n// a note, not a continuation\nfoo();').legacy, 1);
 });
 
 test('object keys and shorthand properties are not rewritten; a shorthand is reported instead of broken', () => {
