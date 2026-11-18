@@ -121,3 +121,74 @@ test('hostile input does not hang the converter (linear scan)', () => {
   conv('pm.'.repeat(20000) + '`${'.repeat(2000) + "'".repeat(5000));
   assert.ok(Date.now() - t < 2000);
 });
+
+test('declared names are never rewritten: responseBody, responseCode, tests, parameters and destructured names', () => {
+  const cases = [
+    ["const responseBody = 'x';\ntests['a'] = responseBody;", "const responseBody = 'x';\napx.test(\"a\", function () { apx.expect(responseBody).to.be.ok; });", 'responseBody'],
+    ["const tests = []; tests.push(1); pm.test('a', () => {});", "const tests = []; tests.push(1); apx.test('a', () => {});", 'tests'],
+    ['function f(responseCode) { return responseCode.code; }', 'function f(responseCode) { return responseCode.code; }', undefined],
+    ['const f = (responseBody) => responseBody.length;', 'const f = (responseBody) => responseBody.length;', undefined],
+    ['const g = responseBody => responseBody.length;', 'const g = responseBody => responseBody.length;', undefined],
+    ['const { responseBody, other } = ctx; use(responseBody);', 'const { responseBody, other } = ctx; use(responseBody);', undefined],
+    ["try { f(); } catch (responseCode) { log(responseCode.code); }", "try { f(); } catch (responseCode) { log(responseCode.code); }", undefined],
+    ["function postman() {} postman.setEnvironmentVariable('a', 1);", "function postman() {} postman.setEnvironmentVariable('a', 1);", undefined],
+  ];
+  for (const [input, expected] of cases) {
+    const r = convertPmToApx(input);
+    assert.equal(r.script, expected, input);
+    assert.deepEqual(r.remaining, [], `${input}: a name the script declares is its own, not something to convert`);
+  }
+});
+
+test('object keys and shorthand properties are not rewritten; a shorthand is reported instead of broken', () => {
+  const keys = "const o = { responseBody: 1, tests: 2, pm: 3, responseCode: 4 }; pm.test('a', () => {});";
+  const rk = convertPmToApx(keys);
+  assert.equal(rk.script, "const o = { responseBody: 1, tests: 2, pm: 3, responseCode: 4 }; apx.test('a', () => {});");
+  assert.deepEqual(rk.remaining, []);
+  const short = convertPmToApx('const o = { a, responseBody };');
+  assert.equal(short.script, 'const o = { a, responseBody };');
+  assert.ok(short.remaining.some(x => x.path === 'responseBody'));
+  const shortPm = convertPmToApx('const o = { pm };');
+  assert.equal(shortPm.script, 'const o = { pm };');
+  assert.ok(shortPm.remaining.some(x => x.path === 'pm'), 'a shorthand pm is reported');
+  // a ternary is not an object key
+  assert.equal(convertPmToApx('const v = c ? pm.response.code : pm.response.status;').script, 'const v = c ? apx.response.code : apx.response.status;');
+  assert.equal(convertPmToApx('f(a, responseBody);').script, 'f(a, apx.response.text());');
+});
+
+test('tests[...] lines: a trailing comment is kept; whatever cannot be converted safely is reported, never silently left', () => {
+  const ok = convertPmToApx('tests["Status is 200"] = responseCode.code === 200; // keep this note');
+  assert.equal(ok.script, 'apx.test("Status is 200", function () { apx.expect(apx.response.code === 200).to.be.ok; }); // keep this note');
+  assert.deepEqual(ok.remaining, []);
+  assert.equal(convertPmToApx('tests["a"] = x > 1 /* why */;').script, 'apx.test("a", function () { apx.expect(x > 1).to.be.ok; }); /* why */');
+  const bad = [
+    'tests["a"] = x &&\n  y;',
+    'tests["a"] = (x\n  && y);',
+    'tests[name] = x;',
+    'tests["a"] = f(); g();',
+    'tests["a"] = x ? 1 :\n 2;',
+    'tests["a"] = {\n a: 1 };',
+  ];
+  for (const input of bad) {
+    const r = convertPmToApx(input);
+    assert.equal(r.script, input, input);
+    assert.ok(r.remaining.some(x => x.path === 'tests[...]'), `${input}: reported`);
+    assert.equal(r.legacy, 0);
+  }
+  const t = Date.now();
+  convertPmToApx(`tests["a"] = x${' '.repeat(20000)}\ntests["b"] = ${'y '.repeat(5000)}`);
+  assert.ok(Date.now() - t < 1000);
+});
+
+test('legacy Postman APIs without an apx equivalent are reported', () => {
+  const r = convertPmToApx("const h = postman.getResponseHeader('X'); const t = responseTime; const hs = responseHeaders['A'];");
+  assert.deepEqual(r.remaining.map(x => x.path).sort(), ['postman.getResponseHeader', 'responseHeaders', 'responseTime']);
+});
+
+test('a script that declares its own tests array keeps its tests[...] assignments', () => {
+  const input = 'const tests = {};\ntests["a"] = 1;';
+  const r = convertPmToApx(input);
+  assert.equal(r.script, input);
+  assert.equal(r.legacy, 0);
+  assert.deepEqual(r.remaining, []);
+});

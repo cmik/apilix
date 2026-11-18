@@ -172,6 +172,67 @@ function findUnsupported(code, mask) {
   return [...found.values()];
 }
 
+const IDENT_RE = /[A-Za-z_$][\w$]*/g;
+const LEGACY_GLOBALS = ['responseBody', 'responseCode', 'responseHeaders', 'responseTime', 'tests', 'postman'];
+
+/** Names the script declares itself (variables, functions, classes, parameters, destructured names, catch bindings). */
+function declaredNames(mask) {
+  const out = new Set();
+  const add = (text) => { for (const m of text.matchAll(IDENT_RE)) out.add(m[0]); };
+  for (const m of mask.matchAll(/\b(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/g)) out.add(m[1]);
+  for (const m of mask.matchAll(/\b(?:const|let|var)\s*[[{]([^\]}]*)[\]}]/g)) add(m[1]);
+  for (const m of mask.matchAll(/\bfunction\s*[\w$]*\s*\(([^()]*)\)/g)) add(m[1]);
+  for (const m of mask.matchAll(/\(([^()]*)\)\s*=>/g)) add(m[1]);
+  for (const m of mask.matchAll(/([A-Za-z_$][\w$]*)\s*=>/g)) out.add(m[1]);
+  for (const m of mask.matchAll(/\bcatch\s*\(\s*([A-Za-z_$][\w$]*)/g)) out.add(m[1]);
+  return out;
+}
+
+const prevSig = (mask, i) => { let k = i - 1; while (k >= 0 && /\s/.test(mask[k])) k--; return k >= 0 ? mask[k] : ''; };
+const nextSig = (mask, i) => { let k = i; while (k < mask.length && /\s/.test(mask[k])) k++; return k < mask.length ? mask[k] : ''; };
+
+/**
+ * Where an identifier sits: 'key' (`{ pm: 1 }`, never a reference), 'shorthand' (`{ pm }`, `{ a, responseBody }`: rewriting
+ * it would break the code, so it is left alone and reported, even when it is really an array element) or '' (a reference).
+ */
+function positionOf(mask, start, end) {
+  const before = prevSig(mask, start);
+  const after = nextSig(mask, end);
+  if (before !== '{' && before !== ',') return '';
+  if (after === ':') return 'key';
+  return after === ',' || after === '}' ? 'shorthand' : '';
+}
+
+const lineNo = (text, index) => text.slice(0, index).split('\n').length;
+
+/** `tests["name"] = expr;` on ONE line (a trailing comment is kept). null when the line is not that, or not safely convertible. */
+function convertTestsLine(line, maskLine) {
+  if (!/^\s*tests\s*\[/.test(maskLine)) return null;
+  const codeEnd = maskLine.trimEnd().length;
+  const code = line.slice(0, codeEnd);
+  const tail = line.slice(codeEnd);
+  const head = /^(\s*)tests\s*\[\s*(?:"([^"\\]*)"|'([^'\\]*)')\s*\]\s*=\s*/.exec(code);
+  if (!head) return null;
+  const rawBody = code.slice(head[0].length).trimEnd();
+  let bodyMask = maskLine.slice(head[0].length, codeEnd).trimEnd();
+  if (bodyMask.endsWith(';')) bodyMask = bodyMask.slice(0, -1).trimEnd();
+  const body = rawBody.slice(0, bodyMask.length);
+  // A comment between the expression and its `;` moves behind the statement.
+  const moved = rawBody.slice(bodyMask.length).replace(/;\s*$/, '').trim();
+  // One complete expression only (checked on the masked text, so comments and strings do not count): no `;` left,
+  // balanced brackets, not ending on an operator (it would continue on the next line).
+  if (!bodyMask || bodyMask.includes(';') || /[=+\-*/%&|^?:,<>!(\[{]$/.test(bodyMask)) return null;
+  let depth = 0;
+  for (const c of bodyMask) {
+    if ('([{'.includes(c)) depth++;
+    else if (')]}'.includes(c)) depth--;
+    if (depth < 0) return null;
+  }
+  if (depth !== 0) return null;
+  const name = head[2] !== undefined ? head[2] : head[3];
+  return `${head[1]}apx.test(${JSON.stringify(name)}, function () { apx.expect(${body}).to.be.ok; });${moved ? ` ${moved}` : ''}${tail}`;
+}
+
 /**
  * @param {string} code
  * @returns {{ script: string, changed: boolean, renamed: number, legacy: number,
@@ -179,46 +240,70 @@ function findUnsupported(code, mask) {
  */
 function convertPmToApx(code) {
   const src = typeof code === 'string' ? code : '';
-  if (/\b(?:const|let|var|function)\s+(?:pm|apx)\b/.test(maskNonCode(src))) {
+  const declared = declaredNames(maskNonCode(src));
+  if (declared.has('pm') || declared.has('apx')) {
     return { script: src, changed: false, renamed: 0, legacy: 0, remaining: [{ path: 'pm', line: 1, reason: 'the script declares its own pm or apx variable: nothing was rewritten' }] };
   }
+  const own = new Set(LEGACY_GLOBALS.filter(g => declared.has(g)));
   let text = src;
   let legacy = 0;
   let renamed = 0;
+  let mask = maskNonCode(text);
+
+  /** Rewrite `re` matches in code, except those that are keys / shorthand properties. */
+  const rewrite = (re, fn) => {
+    const r = replaceInCode(text, mask, re, (m) => {
+      if (positionOf(mask, m.index, m.index + m[0].length)) return m[0];
+      return fn(m);
+    });
+    text = r.text;
+    mask = maskNonCode(text);
+  };
 
   // 1. legacy postman.* / responseBody / responseCode.code / tests["name"] = expr;
-  let mask = maskNonCode(text);
-  let r = replaceInCode(text, mask, /(?<![\w$.])postman\s*\.\s*([A-Za-z]+)(?=\s*\()/g, (m) => {
-    if (!LEGACY_CALLS[m[1]]) return m[0];
-    legacy++;
-    return LEGACY_CALLS[m[1]];
-  });
-  text = r.text;
-  mask = maskNonCode(text);
-  r = replaceInCode(text, mask, /(?<![\w$.])responseCode\s*\.\s*code(?![\w$])/g, () => 'apx.response.code');
-  legacy += r.count; text = r.text; mask = maskNonCode(text);
-  r = replaceInCode(text, mask, /(?<![\w$.])responseBody(?![\w$])/g, () => 'apx.response.text()');
-  legacy += r.count; text = r.text; mask = maskNonCode(text);
-  const lines = text.split('\n');
-  const maskLines = mask.split('\n');
-  for (let li = 0; li < lines.length; li++) {
-    if (!/^\s*tests\s*\[/.test(maskLines[li])) continue;
-    const m = /^(\s*)tests\s*\[\s*(?:"([^"\\]*)"|'([^'\\]*)')\s*\]\s*=\s*([^;]+?)[ \t]*;?[ \t]*(\r?)$/.exec(lines[li]);
-    if (!m) continue;
-    const name = m[2] !== undefined ? m[2] : m[3];
-    lines[li] = `${m[1]}apx.test(${JSON.stringify(name)}, function () { apx.expect(${m[4]}).to.be.ok; });${m[5]}`;
-    legacy++;
+  if (!own.has('postman')) {
+    rewrite(/(?<![\w$.])postman\s*\.\s*([A-Za-z]+)(?=\s*\()/g, (m) => {
+      if (!LEGACY_CALLS[m[1]]) return m[0];
+      legacy++;
+      return LEGACY_CALLS[m[1]];
+    });
   }
-  text = lines.join('\n');
+  if (!own.has('responseCode')) rewrite(/(?<![\w$.])responseCode\s*\.\s*code(?![\w$])/g, () => { legacy++; return 'apx.response.code'; });
+  if (!own.has('responseBody')) rewrite(/(?<![\w$.])responseBody(?![\w$])/g, () => { legacy++; return 'apx.response.text()'; });
+  if (!own.has('tests')) {
+    const lines = text.split('\n');
+    const maskLines = mask.split('\n');
+    for (let li = 0; li < lines.length; li++) {
+      const converted = convertTestsLine(lines[li], maskLines[li]);
+      if (converted !== null) { lines[li] = converted; legacy++; }
+    }
+    text = lines.join('\n');
+    mask = maskNonCode(text);
+  }
 
-  // 2. pm -> apx (identifier in code, not a property name or an object key)
+  // 2. pm -> apx (identifier in code, not a property name, an object key or a shorthand property)
+  rewrite(/(?<![\w$.])pm(?![\w$])/g, () => { renamed++; return 'apx'; });
+
+  // 3. what apx does not have, and what could not be converted safely
   mask = maskNonCode(text);
-  r = replaceInCode(text, mask, /(?<![\w$.])pm(?![\w$])(?!\s*:)/g, () => 'apx');
-  renamed = r.count;
-  text = r.text;
-
-  // 3. what apx does not have
-  const remaining = findUnsupported(text, maskNonCode(text));
+  const remaining = findUnsupported(text, mask);
+  const note = (p, index, why) => { if (!remaining.some(x => x.path === p)) remaining.push({ path: p, line: lineNo(text, index), reason: why }); };
+  if (!own.has('tests')) {
+    for (const m of mask.matchAll(/(?<![\w$.])tests\s*\[/g)) note('tests[...]', m.index, 'legacy tests[...] assignment that could not be converted automatically (not a single complete statement on one line)');
+  }
+  if (!own.has('postman')) {
+    for (const m of mask.matchAll(/(?<![\w$.])postman\s*\.\s*([A-Za-z]+)/g)) note(`postman.${m[1]}`, m.index, 'legacy Postman API with no apx equivalent');
+  }
+  for (const g of ['responseBody', 'responseCode', 'responseHeaders', 'responseTime']) {
+    if (own.has(g)) continue;
+    for (const m of mask.matchAll(new RegExp(String.raw`(?<![\w$.])${g}(?![\w$])`, 'g'))) {
+      if (positionOf(mask, m.index, m.index + g.length) === 'key') continue;
+      note(g, m.index, 'legacy Postman global that could not be converted automatically');
+    }
+  }
+  for (const m of mask.matchAll(/(?<![\w$.])pm(?![\w$])/g)) {
+    if (positionOf(mask, m.index, m.index + 2) !== 'key') note('pm', m.index, 'a shorthand property could not be renamed safely');
+  }
   return { script: text, changed: text !== src, renamed, legacy, remaining };
 }
 

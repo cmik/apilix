@@ -256,3 +256,22 @@ test('describeScriptAssist shows exactly what is sent, and says nothing is sent 
   const shape = describeScriptAssist({ mode: 'fix', script: 'x', error: "expected 'Alice' to equal 'Bob'", sendResponseBodies: false });
   assert.ok(!/Alice|Bob/.test(shape.sections.map(s => s.text).join('\n')));
 });
+
+test('convert: an unconverted legacy tests[...] line is never reported as "Converted automatically"; it goes to the model', async () => {
+  const provider = fake([reply("apx.test('a', () => { apx.expect(1).to.equal(1); });", 'Rewrote the multi-line legacy assertion.')]);
+  const r = await scriptAssist({ provider, mode: 'convert', script: 'pm.test("ok", () => {});\ntests["a"] = x &&\n  y;' });
+  assert.equal(provider.calls.length, 1);
+  assert.equal(r.deterministic, false);
+  assert.equal(r.usedModel, true);
+  assert.ok(r.converted.remaining.some(x => x.path === 'tests[...]'));
+  assert.ok(!/Converted automatically/.test(r.explanation));
+  assert.match(provider.calls[0].messages[0].content, /tests\[\.\.\.\]/);
+});
+
+test('convert: a script that declares its own responseBody keeps it and still converts fully without a model call', async () => {
+  const provider = fake([reply(GOOD)]);
+  const r = await scriptAssist({ provider, mode: 'convert', script: "const responseBody = 'x';\npm.test('a', () => { pm.expect(responseBody).to.equal('x'); });" });
+  assert.equal(provider.calls.length, 0);
+  assert.equal(r.deterministic, true);
+  assert.equal(r.script, "const responseBody = 'x';\napx.test('a', () => { apx.expect(responseBody).to.equal('x'); });");
+});
