@@ -55,7 +55,10 @@ export function urlTemplate(raw: string): string {
 export function messageTemplate(msg: string): string {
   return msg
     .replace(/https?:\/\/\S+/gi, '<string>')
-    .replace(/\S+@\S+/g, '<string>')
+    // Emails, token by token: a `\S+@\S+` regex rescans a long unbroken run from every start (quadratic).
+    .split(/(\s+)/)
+    .map(tok => { const at = tok.indexOf('@', 1); return at !== -1 && at < tok.length - 1 && !/^\s/.test(tok) ? '<string>' : tok; })
+    .join('')
     .replace(/(["'`])(?:\\.|(?!\1)[^\\\n\r\u2028\u2029])*\1/g, '<string>')
     .replace(/-?\b\d+(?:\.\d+)?\b/g, '<number>')
     .replace(/\s+/g, ' ')
