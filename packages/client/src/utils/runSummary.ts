@@ -3,7 +3,8 @@ import type { RunnerIteration } from '../types';
 /**
  * Deterministic grouping of a run's failures by root cause (same URL template, same status, same message),
  * and the local one-paragraph summary. No AI, no network. The groups are also what "Summarize with AI"
- * sends: aggregated metadata and at most MAX_EXAMPLES examples per group, never a body or a header.
+ * sends: aggregated metadata and at most MAX_EXAMPLES examples per group, never a body or a header; every free text
+ * (message, example name, failure name and error) goes through messageTemplate, so no response value is carried.
  */
 
 export const MAX_EXAMPLES = 3;
@@ -53,6 +54,8 @@ export function urlTemplate(raw: string): string {
 /** Quoted strings and numbers become placeholders so that messages differing only by a value group together. */
 export function messageTemplate(msg: string): string {
   return msg
+    .replace(/https?:\/\/\S+/gi, '<string>')
+    .replace(/\S+@\S+/g, '<string>')
     .replace(/(["'`])(?:\\.|(?!\1)[^\\\n\r\u2028\u2029])*\1/g, '<string>')
     .replace(/-?\b\d+(?:\.\d+)?\b/g, '<number>')
     .replace(/\s+/g, ' ')
@@ -80,7 +83,14 @@ export function buildRunSummary(results: RunnerIteration[]): RunSummaryData {
       if (!g) { g = { key, count: 0, method: r.method, url, status: r.status, message, examples: [] }; byKey.set(key, g); }
       g.count++;
       if (g.examples.length < MAX_EXAMPLES) {
-        g.examples.push({ name: r.name, method: r.method, url, status: r.status, failures: failures.slice(0, MAX_FAILURES_PER_EXAMPLE) });
+        g.examples.push({
+          name: messageTemplate(r.name),
+          method: r.method,
+          url,
+          status: r.status,
+          // Same masking as the group message: an assertion error quotes values taken from the response.
+          failures: failures.slice(0, MAX_FAILURES_PER_EXAMPLE).map(f => ({ name: messageTemplate(f.name), error: messageTemplate(f.error) })),
+        });
       }
     }
   }

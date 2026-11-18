@@ -94,9 +94,12 @@ describe('RunSummaryPanel', () => {
     expect(dispatch.mock.calls.find(c => c[0].type === 'AI_REQUEST_FAIL')![0].payload).toMatchObject({ feature: 'diagnose', code: 'TOO_LARGE' });
   });
 
-  it('shape-only mode says so in the disclosure', () => {
-    mockApp({ ...ready, sendResponseBodies: false });
-    render(<RunSummaryPanel results={results([r()])} />);
-    expect(screen.getByText(/quoted values and numbers masked/)).toBeInTheDocument();
+  it('the disclosure says free text is masked, in every mode', () => {
+    for (const sendResponseBodies of [true, false]) {
+      mockApp({ ...ready, sendResponseBodies });
+      const { unmount } = render(<RunSummaryPanel results={results([r()])} />);
+      expect(screen.getByText(/quoted values, emails and numbers masked/)).toBeInTheDocument();
+      unmount();
+    }
   });
 });

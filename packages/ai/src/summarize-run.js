@@ -6,7 +6,8 @@
  * The client already grouped the failures deterministically (same base URL, same status, same message). What
  * is sent is aggregated metadata only: per group a count, the method, the URL TEMPLATE (id-like segments
  * replaced, query values dropped, userinfo dropped), the status, the failure message and at most 3 examples
- * (request name, status and failed assertion names/messages). Never a request or response body, never a
+ * (request name, status and failed assertion names/messages). Every free text is value-masked (quoted strings,
+ * emails, URLs and numbers become placeholders) in every mode. Never a request or response body, never a
  * header, never a variable value. Everything is re-sanitised here: the client is not trusted.
  *
  * What comes back is untrusted text (schema-checked, bounded, neutralised, scrubbed of secret values) shown
@@ -47,7 +48,9 @@ function text(v, max, { shapeOnly, redactSecrets, secretValues }) {
  * @returns {{ totals: { requests: number, failedRequests: number, groups: number }, groups: object[], omittedGroups: number }}
  */
 function prepareRunData(input) {
-  const opts = { shapeOnly: input.sendResponseBodies === false, redactSecrets: input.redactSecrets !== false, secretValues: input.secretValues };
+  // Free text (names, messages, failure texts) is ALWAYS value-masked, whatever sendResponseBodies says: an assertion
+  // message quotes values taken from a response, and a run summary has no need of them.
+  const opts = { shapeOnly: true, redactSecrets: input.redactSecrets !== false, secretValues: input.secretValues };
   const t = isObj(input.totals) ? input.totals : {};
   const rawGroups = (Array.isArray(input.groups) ? input.groups : []).filter(isObj);
   const groups = rawGroups.slice(0, MAX_GROUPS).map((g, i) => ({
@@ -78,9 +81,8 @@ function prepareRunData(input) {
 /** Sections for the preview dialog, built from the very same data. */
 function describeRunSummary(input) {
   const data = prepareRunData(input);
-  const shapeOnly = input.sendResponseBodies === false;
   return [
-    { label: 'Mode', text: `${shapeOnly ? 'Shape only: quoted values and numbers in messages are replaced by placeholders. ' : ''}Only aggregated metadata is sent: counts, URL templates (ids and query values removed), statuses, failure messages and at most ${MAX_EXAMPLES} examples per group. No body, header or variable value is sent.`, truncated: false },
+    { label: 'Mode', text: `Only aggregated metadata is sent: counts, URL templates (ids and query values removed), statuses, and failure messages and names with every quoted string, email, URL and number replaced by placeholders, for at most ${MAX_EXAMPLES} examples per group. No body, header or variable value is sent.`, truncated: false },
     { label: 'Run groups (as sent)', text: JSON.stringify(data, null, 1), truncated: data.omittedGroups > 0 },
   ];
 }

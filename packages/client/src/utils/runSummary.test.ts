@@ -20,6 +20,10 @@ describe('urlTemplate', () => {
 });
 
 describe('messageTemplate', () => {
+  it('masks unquoted emails and URLs', () => {
+    expect(messageTemplate('user bob@corp.com not found at https://h.test/x')).toBe('user <string> not found at <string>');
+  });
+
   it('replaces quoted values and numbers, collapses whitespace', () => {
     expect(messageTemplate("expected 401 to equal 200 for 'bob'  and \"x\"")).toBe('expected <number> to equal <number> for <string> and <string>');
   });
@@ -60,7 +64,9 @@ describe('buildRunSummary', () => {
   it('a transport error counts as a failure, with status 0 and no response wording', () => {
     const s = buildRunSummary([iter([res({ status: 0, error: 'connect ECONNREFUSED 127.0.0.1:3000' })])]);
     expect(s.groups[0]).toMatchObject({ status: 0, count: 1 });
-    expect(s.groups[0].examples[0].failures[0]).toEqual({ name: 'Request error', error: 'connect ECONNREFUSED 127.0.0.1:3000' });
+    expect(s.groups[0].examples[0].failures[0].name).toBe('Request error');
+    expect(s.groups[0].examples[0].failures[0].error).toContain('ECONNREFUSED');
+    expect(s.groups[0].examples[0].failures[0].error).not.toContain('3000');
     expect(s.local).toContain('got no response');
   });
 
@@ -70,6 +76,13 @@ describe('buildRunSummary', () => {
       iter([res({ status: 401, testResults: fail('a') }), res({ status: 403, testResults: fail('a') }), res({ status: 401, testResults: fail('b') })], 2),
     ]);
     expect(s.groups.map(g => g.count)).toEqual([2, 1, 1]);
+  });
+
+  it('example names and failure texts are masked like the group message', () => {
+    const s = buildRunSummary([iter([res({ name: 'Get user 4242', status: 401, testResults: [{ name: "Name is 'Alice'", passed: false, error: "expected 'alice@corp.com' to equal 'x' at https://h.test/a?b=c id 98765" }] })])]);
+    const json = JSON.stringify(s.groups);
+    for (const leaked of ['Alice', 'alice@corp.com', '4242', '98765', 'h.test']) expect(json).not.toContain(leaked);
+    expect(s.groups[0].examples[0].failures[0].error).toBe('expected <string> to equal <string> at <string> id <number>');
   });
 
   it('carries no body, header or query value into a group', () => {

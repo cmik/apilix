@@ -90,7 +90,7 @@ export default function RunSummaryPanel({ results }: { results: RunnerIteration[
       <p className="text-xs text-slate-300 whitespace-pre-line">{summary.local}</p>
       {ready && (
         <p className="text-[11px] text-slate-500">
-          Sends only the grouped failures (counts, URL templates without ids or query values, statuses, messages{state.ai.settings.sendResponseBodies === false ? ' with quoted values and numbers masked' : ''}, and up to 3 examples per group) to {destination}. No body, header or variable value is sent.{' '}
+          Sends only the grouped failures (counts, URL templates without ids or query values, statuses, messages and names with quoted values, emails and numbers masked, and up to 3 examples per group) to {destination}. No body, header or variable value is sent.{' '}
           <button type="button" className="underline hover:text-slate-300" onClick={() => setShowPreview(true)}>Preview what is sent</button>
         </p>
       )}

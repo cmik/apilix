@@ -43,16 +43,23 @@ test('only aggregated metadata leaves: at most 3 examples and 3 failures each, U
   assert.equal(data.totals.failedRequests, 12);
 });
 
-test('shape-only masks quoted values and numbers in messages; full mode keeps them (scrubbed)', async () => {
-  const shape = fake(good);
-  await summarizeRun({ provider: shape, groups: [group(1)], sendResponseBodies: false, secretValues: [SECRET] });
-  const s = shape.calls[0].messages[0].content;
-  assert.ok(!/alice@example\.com/.test(s));
-  assert.match(s, /<string>/);
-  const full = fake(good);
-  await summarizeRun({ provider: full, groups: [group(1)], secretValues: [SECRET] });
-  assert.match(full.calls[0].messages[0].content, /alice@example\.com/);
-  assert.ok(!full.calls[0].messages[0].content.includes(SECRET));
+test('values quoted in messages, example names and example failures never leave, in either mode', async () => {
+  const g = group(1, {
+    message: "expected 'alice@corp.com' to equal 'x'",
+    examples: [{ name: 'Get user 4242', method: 'GET', url: 'https://api.test/u/1', status: 401,
+      failures: [{ name: "Name is 'Alice Martin'", error: "expected 'alice@corp.com' to equal 'x' (id 98765, https://h.test/a?b=c)" }] }],
+  });
+  for (const mode of [true, false]) {
+    const provider = fake(good);
+    const input = { groups: [g], secretValues: [SECRET], sendResponseBodies: mode };
+    await summarizeRun({ provider, ...input });
+    const sent = provider.calls[0].messages[0].content;
+    for (const leaked of ['alice@corp.com', 'Alice Martin', '4242', '98765', 'h.test']) assert.ok(!sent.includes(leaked), `leaked ${leaked} (sendResponseBodies=${mode})`);
+    assert.match(sent, /expected <string> to equal <string>/);
+    const shown = describeRunSummary(input).map(s => s.text).join('\n');
+    for (const leaked of ['alice@corp.com', 'Alice Martin', '4242', '98765']) assert.ok(!shown.includes(leaked), `preview leaked ${leaked}`);
+    assert.ok(provider.calls[0].messages[0].content.includes(describeRunSummary(input).find(s => /as sent/.test(s.label)).text), 'preview == payload');
+  }
 });
 
 test('a run of 1000 failing requests is bounded: at most 30 groups, 3 examples each, within the context limit', async () => {
