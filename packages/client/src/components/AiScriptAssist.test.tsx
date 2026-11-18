@@ -380,3 +380,64 @@ describe('AiScriptAssist fix request consumption', () => {
     expect(onFixConsumed).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('AiScriptAssist preview tab reuse', () => {
+  beforeEach(() => { mockedUseApp.mockReset(); aiScriptAssist.mockReset(); localStorage.clear(); });
+  afterEach(() => cleanup());
+
+  // PREVIEW_TAB keeps the tab id and swaps the request in it.
+  const withItem = (tabId: string, itemId: string) => {
+    mockedUseApp.mockReturnValue({
+      state: {
+        ai: { settings: { ...DEFAULT_AI_SETTINGS, ...ready, features: { ...DEFAULT_AI_SETTINGS.features, ...ready.features } } },
+        activeTabId: tabId, activeEnvironmentId: null, activeRequest: { collectionId: 'c1', item: { id: itemId, name: itemId } },
+        environments: [], globalVariables: {}, globalVariableMeta: {}, collectionVariables: {},
+      },
+      dispatch: vi.fn(),
+    });
+  };
+  const ui = (onApply: () => void) => <AiScriptAssist target="test" value={'apx.test("same", () => {});'} onApply={onApply} />;
+
+  it('a result for request A never lands in request B when the preview tab (same tab id, same script text) is reused', async () => {
+    let resolve!: (r: unknown) => void;
+    aiScriptAssist.mockReturnValue(new Promise(r => { resolve = r; }));
+    withItem('preview-tab', 'req-A');
+    const onApply = vi.fn();
+    const { rerender } = render(ui(onApply));
+    await openPanel();
+    await userEvent.type(screen.getByLabelText('Instruction'), 'check A');
+    await userEvent.click(screen.getByRole('button', { name: 'Generate' }));
+    await waitFor(() => expect(aiScriptAssist).toHaveBeenCalledTimes(1));
+    withItem('preview-tab', 'req-B');
+    rerender(ui(onApply));
+    resolve(result());
+    await new Promise(r => setTimeout(r, 20));
+    expect(screen.queryByRole('dialog', { name: 'AI script proposal' })).toBeNull();
+    expect(onApply).not.toHaveBeenCalled();
+  });
+
+  it('swapping the request in the same tab resets the panel: instruction and error are cleared', async () => {
+    withItem('preview-tab', 'req-A');
+    const { rerender, onApply } = { ...render(ui(vi.fn())), onApply: vi.fn() };
+    await openPanel();
+    await userEvent.type(screen.getByLabelText('Instruction'), 'check A');
+    await userEvent.click(screen.getByRole('tab', { name: 'Fix' }));
+    await userEvent.type(screen.getByLabelText('Error to fix'), 'boom A');
+    withItem('preview-tab', 'req-B');
+    rerender(ui(onApply));
+    await openPanel();
+    expect(screen.getByLabelText('Error to fix')).toHaveValue('');
+    await userEvent.click(screen.getByRole('tab', { name: 'Generate' }));
+    expect(screen.getByLabelText('Instruction')).toHaveValue('');
+  });
+
+  it('the same request keeps its state across renders', async () => {
+    withItem('preview-tab', 'req-A');
+    const { rerender } = render(ui(vi.fn()));
+    await openPanel();
+    await userEvent.type(screen.getByLabelText('Instruction'), 'keep me');
+    withItem('preview-tab', 'req-A');
+    rerender(ui(vi.fn()));
+    expect(screen.getByLabelText('Instruction')).toHaveValue('keep me');
+  });
+});

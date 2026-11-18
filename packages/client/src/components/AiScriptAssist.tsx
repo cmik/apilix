@@ -64,7 +64,9 @@ export default function AiScriptAssist({ target, value, onApply, fixRequest, onF
   const abortRef = useRef<AbortController | null>(null);
   const seenFix = useRef<number | null>(null);
   // Which request tab and which script text a call was made for: a result is only ever applied to that very script.
-  const activeTabId = state.activeTabId ?? null;
+  // The identity of the script being edited is the tab AND the request in it: the preview tab keeps its id while it is
+  // reused for another request (PREVIEW_TAB), so the tab id alone would let a result cross over.
+  const activeTabId = `${state.activeTabId ?? ''}|${state.activeRequest?.item?.id ?? state.activeRequest?.item?.name ?? ''}`;
   const liveRef = useRef({ tabId: activeTabId, value, target });
   liveRef.current = { tabId: activeTabId, value, target };
   const resultTab = useRef<string | null>(null);
@@ -83,6 +85,8 @@ export default function AiScriptAssist({ target, value, onApply, fixRequest, onF
     setShowPreview(false);
     setNotice(null);
     setFailure(null);
+    setInstruction('');
+    setError('');
   }, [activeTabId]);
   useEffect(() => {
     if (!fixRequest || seenFix.current === fixRequest.nonce) return;
