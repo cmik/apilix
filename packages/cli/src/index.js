@@ -18,9 +18,12 @@ const {
   resolveVariables,
   generateDocs,
   buildDocModel,
+  setSchemaValidationTimeoutMs,
+  getSchemaTimeoutWarning,
 } = require('@apilix/core');
 const { CLI_SNIPPET_LANGUAGES } = require('./docs-curl');
 
+let schemaTimeoutWarningShown = false;
 const DEFAULT_REQUEST_TIMEOUT = 30000;
 const MAX_REQUEST_NAME_WIDTH = 72;
 const SUPPORTED_DATABASE_TYPES = new Set([
@@ -62,6 +65,8 @@ function usage() {
     '  --https-proxy <url>          HTTPS proxy URL (e.g., http://proxy.example.com:8080)',
     '  --proxy-bypass <hosts>       Comma-separated hosts to bypass proxy (e.g., localhost,127.0.0.1)',
     '  --bail                       Stop execution on first test failure or request error',
+    '  --schema-mode <off|warn|strict>  Run-level ceiling for response-schema checks (default: warn). off disables all; warn downgrades strict links to warn; strict lets each link\'s own mode apply (a link set to off stays off)',
+    '  --schema-timeout <ms>        Time limit for one schema validation, 100-10000 (default: 2000; env APILIX_SCHEMA_TIMEOUT_MS)',
     '  --retry <n>                  Max retries per request on failure (0–10, default 0)',
     '  --retry-delay <ms>           Base delay between retries in ms (default 1000)',
     '  --retry-backoff <fixed|exponential>  Backoff strategy (default: fixed)',
@@ -528,6 +533,8 @@ function createProgram(io) {
     httpsProxy: '',
     proxyBypass: '',
     bail: false,
+    schemaMode: 'warn',
+    schemaTimeout: undefined,
     caCertPath: null,
     clientCertPath: null,
     clientKeyPath: null,
@@ -571,6 +578,8 @@ function createProgram(io) {
     .option('--proxy-bypass <hosts>', 'Comma-separated hosts to bypass proxy (e.g., localhost,127.0.0.1)')
     .option('--bail', 'Stop execution on first test failure or request error')
     .option('--data <file>', 'JSON data file (array of objects) for per-row iterations')
+    .option('--schema-mode <off|warn|strict>', 'Run-level ceiling for schema checks: off disables all, warn (default) downgrades strict links, strict applies each link\'s own mode', 'warn')
+    .option('--schema-timeout <ms>', 'Time limit for one schema validation in ms (100-10000, default 2000; env APILIX_SCHEMA_TIMEOUT_MS)')
     .option('--retry <n>', 'Max retries per request on failure (0–10)', '0')
     .option('--retry-delay <ms>', 'Base delay between retries in ms', '1000')
     .option('--retry-backoff <fixed|exponential>', 'Backoff strategy (fixed or exponential)', 'fixed')
@@ -611,6 +620,8 @@ function createProgram(io) {
       parsed.httpsProxy = opts.httpsProxy || '';
       parsed.proxyBypass = opts.proxyBypass || '';
       parsed.bail = opts.bail === true;
+      parsed.schemaMode = opts.schemaMode;
+      parsed.schemaTimeout = opts.schemaTimeout;
       parsed.followRedirects = opts.followRedirects !== false;
       parsed.conditionalExecution = opts.conditionalExecution !== false;
       parsed.executeChildRequests = opts.executeChildRequests === true;
@@ -1042,6 +1053,32 @@ async function runCli(argv, ioOverrides = {}) {
       throw new Error('The collection path is required');
     }
 
+    if (!['off', 'warn', 'strict'].includes(args.schemaMode || 'warn')) {
+      throw new Error(`Invalid --schema-mode "${args.schemaMode}": expected off, warn or strict`);
+    }
+
+    const rawSchemaTimeout = args.schemaTimeout !== undefined ? args.schemaTimeout : (io.env || {}).APILIX_SCHEMA_TIMEOUT_MS;
+    if (rawSchemaTimeout !== undefined && rawSchemaTimeout !== '') {
+      if (!/^\d+$/.test(String(rawSchemaTimeout).trim())) {
+        throw new Error(`Invalid schema timeout "${rawSchemaTimeout}": expected a number of milliseconds`);
+      }
+      const n = Number(rawSchemaTimeout);
+      if (n < 100 || n > 10000) {
+        throw new Error(`Invalid schema timeout "${rawSchemaTimeout}": expected between 100 and 10000 ms`);
+      }
+      setSchemaValidationTimeoutMs(n);
+    } else {
+      setSchemaValidationTimeoutMs(undefined); // default; also resets a value left by an earlier in-process run
+    }
+
+    if ((args.schemaMode || 'warn') !== 'off' && !schemaTimeoutWarningShown) {
+      const timeoutWarning = getSchemaTimeoutWarning();
+      if (timeoutWarning) {
+        schemaTimeoutWarningShown = true;
+        io.stderr.write(`Warning: ${timeoutWarning}\n`);
+      }
+    }
+
     const reporter = ensureReporter(args.reporter);
     if (reporter === 'both' && !args.outDir) {
       throw new Error('The --out-dir option is required when --reporter both is used');
@@ -1154,6 +1191,7 @@ async function runCli(argv, ioOverrides = {}) {
       executeChildRequests: args.executeChildRequests === true,
       conditionalExecution: args.conditionalExecution !== false,
       bail: args.bail === true,
+      schemaMode: args.schemaMode || 'warn',
       maxRetries: Math.max(0, Math.min(10, parseInt(args.maxRetries, 10) || 0)),
       retryDelay: (() => { const d = parseInt(args.retryDelay, 10); return Math.max(0, Number.isNaN(d) ? 1000 : d); })(),
       retryBackoff: args.retryBackoff === 'exponential' ? 'exponential' : 'fixed',
@@ -1241,6 +1279,7 @@ async function runCli(argv, ioOverrides = {}) {
         delay: payload.delay,
         executeChildRequests: payload.executeChildRequests,
         conditionalExecution: payload.conditionalExecution,
+        schemaMode: payload.schemaMode,
         timeout,
         followRedirects: args.followRedirects !== false,
         sslVerification: args.sslVerification === true,
@@ -1280,7 +1319,7 @@ async function runCli(argv, ioOverrides = {}) {
     }
 
     io.stderr.write(
-      `Run complete: ${summary.requests} requests, ${summary.passed} passed, ${summary.failed} failed, ${summary.errors} request errors${run.errors.length ? `, ${run.errors.length} run errors` : ''}.\n`
+      `Run complete: ${summary.requests} requests, ${summary.passed} passed, ${summary.failed} failed, ${summary.errors} request errors${run.errors.length ? `, ${run.errors.length} run errors` : ''}${summary.schemaWarnings ? `, ${summary.schemaWarnings} schema warning${summary.schemaWarnings === 1 ? '' : 's'}` : ''}.\n`
     );
 
     return buildExitCode(summary, run.errors);

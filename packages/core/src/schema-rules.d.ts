@@ -1,0 +1,13 @@
+export const UUID_RE: RegExp;
+export const ISO_DATE_RE: RegExp;
+export const EMAIL_RE: RegExp;
+export const URL_RE: RegExp;
+export const FORMATS: { name: string; re: RegExp; source: string; label: string }[];
+export const VOLATILE_SNAKE_RE: RegExp;
+export const VOLATILE_CAMEL_RE: RegExp;
+export const STABLE_ENUM_KEYS: Set<string>;
+export const CAPTURE_KEY_RE: RegExp;
+export const SECRET_KEY_RE: RegExp;
+export function isVolatileKey(key: string): boolean;
+export function isSecretKey(key: string): boolean;
+export function detectFormatName(s: string): string | null;

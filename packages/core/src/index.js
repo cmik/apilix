@@ -15,6 +15,9 @@ const tlsUtils = require('./tls-utils');
 const runnerReporters = require('./runner-reporters');
 const variableResolver = require('./variable-resolver');
 const docs = require('./docs');
+const schemaInference = require('./schema-inference');
+const schemaValidator = require('./schema-validator');
+const schemaGuard = require('./schema-guard');
 
 module.exports = {
   // request engine
@@ -58,6 +61,17 @@ module.exports = {
 
   // variable resolver — single canonical export
   resolveVariables: variableResolver.resolveVariables,
+
+  // response schemas
+  inferSchema: schemaInference.inferSchema,
+  inferFromSamples: schemaInference.inferFromSamples,
+  mergeSchemas: schemaInference.mergeSchemas,
+  validateAgainstSchema: schemaValidator.validateAgainstSchema,
+  createSchemaValidator: schemaValidator.createSchemaValidator,
+  validateWithTimeout: schemaGuard.validateWithTimeout,
+  setSchemaValidationTimeoutMs: schemaGuard.setSchemaValidationTimeoutMs,
+  getSchemaTimeoutWarning: schemaGuard.getTimeoutWarning,
+  getSchemaValidationTimeoutMs: schemaGuard.getSchemaValidationTimeoutMs,
 
   // API documentation export
   generateDocs: docs.generateDocs,

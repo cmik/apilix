@@ -6,12 +6,19 @@ function summarizeRun(iterations) {
   let failed = 0;
   let errors = 0;
   let skipped = 0;
+  let schemaWarnings = 0;
+  let synthetic = 0;
+  const tally = (test) => {
+    if (test.synthetic) synthetic++;
+    if (test.schemaSeverity === 'warn' && test.error) schemaWarnings++;
+  };
 
   for (const iteration of iterations || []) {
     for (const result of iteration.results || []) {
       requests++;
       if (result.error) errors++;
       for (const test of result.testResults || []) {
+        tally(test);
         if (test.skipped) skipped++;
         else if (test.passed === true) passed++;
         else if (test.passed === false) failed++;
@@ -21,6 +28,7 @@ function summarizeRun(iterations) {
         requests++;
         if (child.result.error) errors++;
         for (const test of child.result.testResults || []) {
+          tally(test);
           if (test.skipped) skipped++;
           else if (test.passed === true) passed++;
           else if (test.passed === false) failed++;
@@ -29,7 +37,7 @@ function summarizeRun(iterations) {
     }
   }
 
-  return { requests, passed, failed, errors, skipped };
+  return { requests, passed, failed, errors, skipped, schemaWarnings, synthetic };
 }
 
 function buildJsonReport({
@@ -89,6 +97,10 @@ function buildCaseXml(testCase) {
     lines.push(`  <error message="${xmlEscape(testCase.errorMessage)}">${xmlEscape(testCase.errorBody || testCase.errorMessage)}</error>`);
   }
 
+  if (testCase.systemOut) {
+    lines.push(`  <system-out>${xmlEscape(testCase.systemOut)}</system-out>`);
+  }
+
   lines.push('</testcase>');
   return lines.join('\n');
 }
@@ -118,6 +130,7 @@ function buildJUnitReport({ collectionName, iterations, errors }) {
           skipped: test.skipped === true,
           failureMessage: test.passed === false ? (test.error || 'Assertion failed') : '',
           failureBody: test.error || '',
+          systemOut: test.schemaSeverity === 'warn' && test.error ? `[schema warning] ${test.error}` : '',
         });
       }
 

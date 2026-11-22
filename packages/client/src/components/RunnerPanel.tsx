@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useApp, generateId } from '../store';
+import { saveSchemaRunMode } from '../utils/responseSchemas';
+import type { SchemaRunMode } from '../types';
 import { runCollectionStream, pauseRun, resumeRun, stopRun } from '../api';
 import type { RunnerIteration, RunnerIterationResult, CollectionItem, ConditionalFlowRecord, SavedRunnerRun, RunnerRunSummary, RunnerRunConfig } from '../types';
 import { applyInheritedAuth, getAllRequestIds, exportWorkflowCollection } from '../utils/treeHelpers';
@@ -348,10 +350,14 @@ function ResultRow({ result }: { result: RunnerIterationResult }) {
             <div className="px-4 pb-2 flex flex-col gap-1 bg-slate-800/30">
               {result.testResults.map((t, i) => (
                 <div key={i} className="flex items-start gap-2 text-xs py-0.5">
-                  <span className={t.skipped ? 'text-slate-500' : t.passed ? 'text-green-400' : 'text-red-400'}>
-                    {t.skipped ? '~' : t.passed ? '✓' : '✗'}
+                  <span className={t.skipped ? 'text-slate-500' : t.schemaSeverity === 'warn' && t.error ? 'text-amber-400' : t.passed ? 'text-green-400' : 'text-red-400'}>
+                    {t.skipped ? '~' : t.schemaSeverity === 'warn' && t.error ? '!' : t.passed ? '✓' : '✗'}
                   </span>
-                  <span className={t.skipped ? 'text-slate-500 italic' : t.passed ? 'text-slate-300' : 'text-red-300'}>{t.name}</span>
+                  <span className={t.skipped ? 'text-slate-500 italic' : t.schemaSeverity === 'warn' && t.error ? 'text-amber-300' : t.passed ? 'text-slate-300' : 'text-red-300'}>{t.name}</span>
+                  {t.synthetic && <span className="text-[10px] px-1 rounded bg-slate-700 text-slate-400 border border-slate-600">schema</span>}
+                  {t.schemaSeverity === 'warn' && t.error && (
+                    <span className="text-amber-500 font-mono ml-2">{t.error}</span>
+                  )}
                   {t.passed === false && t.error && (
                     <span className="text-red-500 font-mono ml-2">{t.error}</span>
                   )}
@@ -688,12 +694,13 @@ function parseCSVLine(line: string): string[] {
 }
 
 function buildRunSummary(iterations: RunnerIteration[]): RunnerRunSummary {
-  let requests = 0, passed = 0, failed = 0, errors = 0;
+  let requests = 0, passed = 0, failed = 0, errors = 0, schemaWarnings = 0;
   for (const iter of iterations) {
     for (const r of iter.results) {
       requests++;
       if (r.error) errors++;
       for (const t of r.testResults) {
+        if (t.schemaSeverity === 'warn' && t.error) schemaWarnings++;
         if (t.passed === true) passed++;
         else if (t.passed === false) failed++;
       }
@@ -707,7 +714,7 @@ function buildRunSummary(iterations: RunnerIteration[]): RunnerRunSummary {
       }
     }
   }
-  return { requests, passed, failed, errors };
+  return schemaWarnings > 0 ? { requests, passed, failed, errors, schemaWarnings } : { requests, passed, failed, errors };
 }
 
 export default function RunnerPanel() {
@@ -1024,6 +1031,8 @@ export default function RunnerPanel() {
           retryDelay: maxRetries > 0 ? retryDelay : undefined,
           retryBackoff: maxRetries > 0 ? retryBackoff : undefined,
           retryOn: maxRetries > 0 ? retryOn : undefined,
+          schemaMode: state.schemaRunMode,
+          schemas: state.responseSchemas,
           ...(useMockServer && state.mockServerRunning
             ? { mockBase: `http://localhost:${state.mockPort}` }
             : {}),
@@ -1498,6 +1507,26 @@ export default function RunnerPanel() {
             )}
           </div>
 
+          {/* Response schema checks */}
+          <div className="flex items-center gap-2">
+            <label htmlFor="schemaRunMode" className="text-xs text-slate-400">Response schemas (limit)</label>
+            <select
+              id="schemaRunMode"
+              value={state.schemaRunMode}
+              onChange={e => {
+                const mode = e.target.value as SchemaRunMode;
+                saveSchemaRunMode(mode);
+                dispatch({ type: 'SET_SCHEMA_RUN_MODE', payload: mode });
+              }}
+              title="Run-level ceiling. off: no schema checks. warn: every violation is shown but never fails the run (strict links are downgraded). strict: each link keeps its own mode (a link set to off stays off)."
+              className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs text-slate-100 focus:outline-none focus:border-orange-500"
+            >
+              <option value="off">Off</option>
+              <option value="warn">Warn</option>
+              <option value="strict">Strict</option>
+            </select>
+          </div>
+
           {/* Execute child requests toggle */}
           <div className="flex items-center gap-2">
             <input
@@ -1728,12 +1757,13 @@ export default function RunnerPanel() {
 
           {/* Summary */}
           {summary && (
-            <div className="grid grid-cols-4 gap-2 shrink-0">
+            <div className={`grid ${summary.schemaWarnings ? 'grid-cols-5' : 'grid-cols-4'} gap-2 shrink-0`}>
               {[
                 { label: 'Requests', value: summary.requests, color: 'text-slate-200' },
                 { label: 'Tests Passed', value: summary.passed, color: 'text-green-400' },
                 { label: 'Tests Failed', value: summary.failed, color: summary.failed > 0 ? 'text-red-400' : 'text-slate-400' },
                 { label: 'Errors', value: summary.errors, color: summary.errors > 0 ? 'text-red-400' : 'text-slate-400' },
+                ...(summary.schemaWarnings ? [{ label: 'Schema warnings', value: summary.schemaWarnings, color: 'text-amber-400' }] : []),
               ].map(s => (
                 <div key={s.label} className="bg-slate-800 border border-slate-700 rounded p-3 text-center">
                   <div className={`text-2xl font-bold ${s.color}`}>{s.value}</div>

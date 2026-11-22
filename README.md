@@ -29,6 +29,7 @@ A lightweight, open-source alternative API testing tool — available as a **des
 - **Status bar** — quick access to the console toggle with an unread count badge and last response summary
 - **Workspace sync** — back up and share workspaces via Git, S3 / S3-compatible (MinIO, Backblaze B2, Cloudflare R2, etc.), HTTP Endpoint, or a self-hosted Team Server
 - **Advanced workspace sync conflicts** — three-way merge UI at request/code level, stale-version recovery, and recent sync activity telemetry
+- **Response schemas** — keep named JSON Schemas in a workspace library, infer one from a response, link it to a request per status (`200`, `4xx`, `default`), and check responses in the app, in the Collection Runner, in the CLI (`--schema-mode off|warn|strict`) and with `apx.expect(...).to.matchSchema("Name")`. See the [Response Schemas](wiki/Response-Schemas.md) page
 
 ---
 
@@ -195,6 +196,8 @@ Useful flags:
 - `--ssl-verification` to enforce TLS verification in CI
 - `--no-follow-redirects` to surface redirect responses instead of following them automatically
 - `--no-color` to output plain text without ANSI color sequences
+- `--schema-mode off|warn|strict` (default `warn`) to set the run-level ceiling for [response schema](wiki/Response-Schemas.md) checks: `warn` reports violations without failing, `strict` lets links set to `strict` fail the run, `off` skips all checks
+- `--schema-timeout 2000` (100-10000 ms, also `APILIX_SCHEMA_TIMEOUT_MS`) to limit one schema validation; the standalone binary cannot enforce it and rejects risky regular expressions instead
 
 Database file shape for `--databases`:
 
@@ -269,8 +272,8 @@ Database request IDs in collections map to these entries as follows:
 Exit codes:
 
 - `0` successful run with no failed assertions or request errors
-- `1` failed assertions, request errors, or runner flow errors
-- `2` invalid CLI usage or unreadable/invalid input files
+- `1` failed assertions (including `strict` response schema violations), request errors, or runner flow errors
+- `2` invalid CLI usage or unreadable/invalid input files (including an invalid `--schema-mode` or `--schema-timeout`)
 
 Notes:
 
@@ -278,6 +281,7 @@ Notes:
 - `json` and `junit` reporters write to standard output unless you pass `--out` or `--out-dir`.
 - `--reporter both` always requires `--out-dir`.
 - Malformed CSV input fails fast with exit code `2` instead of silently falling back to iteration-only execution.
+- Response schemas are read from the collection file itself (`apilix.schemas` and each request's `apilix.schemaLinks`, written by Postman JSON export). A schema violation in `warn` mode does not change the exit code; it is counted as `schemaWarnings` in the summary.
 
 ---
 

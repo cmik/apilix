@@ -442,6 +442,25 @@ apx.test("Response matches schema", () => {
 The first schema violation is reported in the failure message with the instance path, e.g.:  
 `Expected value to match schema: /email must match format "email"`
 
+Instead of an inline object you can pass the **name** of a schema from the workspace [schema library](Response-Schemas), and negate the check with `.not`:
+
+```js
+apx.test("Body matches the User schema", () => {
+  apx.expect(apx.response.json()).to.matchSchema("User");
+});
+
+apx.test("Error body is not a User", () => {
+  apx.expect(apx.response.json()).to.not.matchSchema("User");
+});
+```
+
+- Named schemas can `$ref` each other by name (`{ "$ref": "Address" }`). Names are case-sensitive.
+- An unknown name throws `matchSchema: unknown schema "Name". Available schemas: ...` (inside `apx.test()` this fails the test).
+- A schema that cannot be compiled, or a validation that exceeds the [validation time limit](Response-Schemas#validation-time-limit), throws an error starting with `matchSchema:`.
+- Named schemas are not available to requests run with `apx.executeRequest()`; inline schema objects still work there.
+
+See [Response Schemas](Response-Schemas) for linking schemas to requests so the Runner and CLI check responses without a script.
+
 ### Custom Predicate
 
 `.satisfy(fn)` / `.satisfies(fn)` — calls `fn(value)` and asserts the return value is truthy.
@@ -1084,5 +1103,6 @@ See [MongoDB Requests](MongoDB-Requests#scripting-for-mongodb-requests) for the 
 - [Variables & Environments](Variables-and-Environments) — variable stores and scope hierarchy
 - [Authentication](Authentication) — `apx.sendRequest()` for scripted token flows
 - [Collection Runner](Collection-Runner) — `apx.execution.setNextRequest()` and CSV iteration data
+- [Response Schemas](Response-Schemas) — schema library, per-status links, and `matchSchema("Name")`
 - [Collections & Requests](Collections-and-Requests) — where scripts are attached (collection, folder, request)
 - [MongoDB Requests](MongoDB-Requests#scripting-for-mongodb-requests) — scripting patterns for MongoDB operations

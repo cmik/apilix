@@ -31,7 +31,7 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    include: ['@apilix/core/variable-resolver', '@apilix/core/docs'],
+    include: ['@apilix/core/variable-resolver', '@apilix/core/schema-rules', '@apilix/core/docs'],
     // These workspace packages change with branch switches; a stale prebundle gives "x is not a function" at runtime.
     force: true,
   },

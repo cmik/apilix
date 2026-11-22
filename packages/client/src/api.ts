@@ -1,6 +1,6 @@
 import axios from 'axios';
 import type { AiSuggestAssertionsResult, AiGenerateRequestResult, AiExplainFailureResult } from './utils/ai/aiTypes';
-import type { CollectionItem, BaseCollection, RequestResponse, RunnerIteration, RunnerIterationResult, ScriptLog, CookieJar, RequestSettings, AiSettings, DocAiDescription } from './types';
+import type { ResponseSchema, SchemaInferenceOptions, SchemaRunMode, SchemaValidationResult, CollectionItem, BaseCollection, RequestResponse, RunnerIteration, RunnerIterationResult, ScriptLog, CookieJar, RequestSettings, AiSettings, DocAiDescription } from './types';
 import type { DatabaseConnection } from './types';
 import { normalizeBaseUrl } from './utils/aiDefaults';
 
@@ -28,6 +28,8 @@ export interface ExecutePayload {
   requestSettings?: RequestSettings;
   mongoConnections?: Record<string, { uri: string; database?: string }>;
   databases?: DatabaseConnection[];
+  /** Named response schemas, so scripts can call matchSchema('name'). */
+  schemas?: ResponseSchema[];
 }
 
 export interface ChildRequestLog {
@@ -77,6 +79,9 @@ export interface RunPayload {
   retryOn?: 'failures' | 'errors' | 'both';
   mongoConnections?: Record<string, { uri: string; database?: string }>;
   databases?: DatabaseConnection[];
+  /** Response-schema checks: off | warn (default) | strict. */
+  schemaMode?: SchemaRunMode;
+  schemas?: ResponseSchema[];
 }
 
 export interface TestDatabaseConnectionResponse {
@@ -640,4 +645,23 @@ export async function aiGenerateRequest(payload: AiGenerateRequestPayload, signa
   } catch (err) {
     throw toAiApiError(err);
   }
+}
+
+// ─── Response schemas ────────────────────────────────────────────────────────
+
+/** Infer a JSON Schema from response bodies (strings) or already parsed samples. */
+export async function inferSchema(
+  input: { bodies?: string[]; samples?: unknown[] },
+  options?: SchemaInferenceOptions,
+): Promise<Record<string, unknown>> {
+  const response = await api.post<{ schema: Record<string, unknown> }>('/schemas/infer', { ...input, options });
+  return response.data.schema;
+}
+
+/** Validate a body (string) or parsed data against a schema; `schemas` is the registry for $ref by name. */
+export async function validateSchema(
+  input: { schema: Record<string, unknown>; body?: string; data?: unknown; schemas?: Array<{ name: string; schema: Record<string, unknown> }>; allErrors?: boolean },
+): Promise<SchemaValidationResult> {
+  const response = await api.post<SchemaValidationResult>('/schemas/validate', input);
+  return response.data;
 }

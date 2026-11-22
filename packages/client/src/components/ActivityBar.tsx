@@ -14,11 +14,12 @@ import {
   IconMoon,
   IconMonitor,
   IconDatabase,
+  IconSchema,
 } from './Icons';
 
 const WorkspaceManagerModal = lazy(() => import('./WorkspaceManagerModal'));
 
-type View = 'request' | 'runner' | 'environments' | 'mock' | 'capture' | 'history' | 'database';
+type View = 'request' | 'runner' | 'environments' | 'mock' | 'capture' | 'history' | 'database' | 'schemas';
 
 interface NavItem {
   key: View;
@@ -34,6 +35,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'mock',         label: 'Mock',     icon: IconMock },
   { key: 'capture',      label: 'Capture',  icon: IconCapture },
   { key: 'database',     label: 'Database', icon: IconDatabase },
+  { key: 'schemas',      label: 'Schemas',  icon: IconSchema },
 ];
 
 interface Props {

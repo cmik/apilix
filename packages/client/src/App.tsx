@@ -19,6 +19,7 @@ const RunnerPanel = lazy(() => import('./components/RunnerPanel'));
 const MockServerPanel = lazy(() => import('./components/MockServerPanel'));
 const BrowserCapturePanel = lazy(() => import('./components/BrowserCapturePanel'));
 const DatabasePanel = lazy(() => import('./components/DatabasePanel'));
+const SchemaLibraryPanel = lazy(() => import('./components/SchemaLibraryPanel'));
 const CookieManagerModal = lazy(() => import('./components/CookieManagerModal'));
 const ConflictMergeModal = lazy(() => import('./components/ConflictMergeModal'));
 const SettingsModal = lazy(() => import('./components/SettingsModal'));
@@ -769,6 +770,7 @@ export default function App() {
       mockCollections: state.mockCollections,
       mockRoutes: state.mockRoutes,
       mockPort: state.mockPort,
+      responseSchemas: state.responseSchemas,
     };
   }
 
@@ -1296,6 +1298,13 @@ export default function App() {
           <div className="flex-1 flex flex-col overflow-hidden">
             <Suspense fallback={null}>
               <BrowserCapturePanel />
+            </Suspense>
+          </div>
+        )}
+        {state.view === 'schemas' && (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <Suspense fallback={null}>
+              <SchemaLibraryPanel />
             </Suspense>
           </div>
         )}

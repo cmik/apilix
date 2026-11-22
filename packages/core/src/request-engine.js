@@ -1260,6 +1260,7 @@ async function executeRequest(item, context) {
     if (code.trim()) {
       const scriptDeps = {
         collectionItems,
+        schemaRegistry: context.schemaRegistry || [],
         executeRequestFn: executeRequest,
         context: {
           environment,
@@ -1416,6 +1417,7 @@ async function executeRequest(item, context) {
         if (code.trim()) {
           const scriptDeps = {
             collectionItems,
+            schemaRegistry: context.schemaRegistry || [],
             executeRequestFn: executeRequest,
             context: {
               environment,
@@ -1525,6 +1527,7 @@ async function executeRequest(item, context) {
         if (code.trim()) {
           const scriptDeps = {
             collectionItems,
+            schemaRegistry: context.schemaRegistry || [],
             executeRequestFn: executeRequest,
             context: {
               environment,
@@ -1728,6 +1731,7 @@ async function executeRequest(item, context) {
         };
         const scriptDeps = {
           collectionItems,
+          schemaRegistry: context.schemaRegistry || [],
           executeRequestFn: executeRequest,
           context: {
             environment,

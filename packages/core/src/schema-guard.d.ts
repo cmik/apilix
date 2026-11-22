@@ -1,0 +1,14 @@
+import type { SchemaValidationResult } from '../types';
+export const DEFAULT_TIMEOUT_MS: number;
+export const MIN_TIMEOUT_MS: number;
+export const MAX_TIMEOUT_MS: number;
+export type GuardedSchemaResult = SchemaValidationResult & { timedOut?: boolean; unsafePattern?: boolean };
+export function clampTimeoutMs(v: unknown): number;
+export function setSchemaValidationTimeoutMs(v: unknown): number;
+export function getSchemaValidationTimeoutMs(): number;
+export function validateWithTimeout(nameOrSchema: string | object, data: unknown, opts?: { schemas?: Array<{ name: string; schema: object }>; allErrors?: boolean; timeoutMs?: number }): GuardedSchemaResult;
+export function isRiskyPattern(pattern: string): boolean;
+export function schemaHasRiskyPattern(schema: unknown, registry?: Array<{ name: string; schema: object }>): boolean;
+export function mode(): 'worker' | 'static-check';
+export const TIMEOUT_NOT_ENFORCED_WARNING: string;
+export function getTimeoutWarning(): string | null;

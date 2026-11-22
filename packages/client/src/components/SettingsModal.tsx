@@ -239,6 +239,16 @@ function RequestsTab({ s, u }: { s: AppSettings; u: (p: Partial<AppSettings>) =>
             placeholder="30000"
           />
         </div>
+        <div>
+          <Label>Schema validation time limit (ms), 100 to 10000</Label>
+          <NumberInput
+            value={s.schemaValidationTimeoutMs ?? 2000}
+            onChange={v => u({ schemaValidationTimeoutMs: v })}
+            min={100}
+            placeholder="2000"
+          />
+          <p className="text-xs text-slate-500 mt-1">Stops a response-schema check that takes too long (for example a regular expression that backtracks forever). Values outside the range are clamped.</p>
+        </div>
         <Row label="Follow redirects">
           <Toggle checked={s.followRedirects !== false} onChange={v => u({ followRedirects: v })} />
         </Row>

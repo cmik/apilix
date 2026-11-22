@@ -7,3 +7,7 @@ export { getSystemCAs, makeHttpsAgent } from './tls-utils';
 export { summarizeRun, buildJsonReport, buildJUnitReport } from './runner-reporters';
 // API documentation export (HTML / Markdown / OpenAPI); see ./docs/index.d.ts for the full signatures.
 export { generateDocs, buildDocModel } from './docs';
+// Response schema inference / validation
+export { inferSchema, inferFromSamples, mergeSchemas, detectFormat, isVolatileKey, isSecretKey } from './schema-inference';
+export { validateAgainstSchema, createSchemaValidator, SchemaValidator } from './schema-validator';
+export { validateWithTimeout, setSchemaValidationTimeoutMs, getSchemaValidationTimeoutMs, getTimeoutWarning as getSchemaTimeoutWarning } from './schema-guard';

@@ -235,6 +235,7 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
         mockCollections: state.mockCollections,
         mockRoutes: state.mockRoutes,
         mockPort: state.mockPort,
+        responseSchemas: state.responseSchemas,
       });
     }
     const data = await StorageDriver.readWorkspace(workspace.id) ?? emptyWorkspaceData();
@@ -339,6 +340,7 @@ function WorkspacesTab({ onClose }: { onClose: () => void }) {
         mockCollections: state.mockCollections,
         mockRoutes: state.mockRoutes,
         mockPort: state.mockPort,
+        responseSchemas: state.responseSchemas,
       };
     } else {
       try {
@@ -1333,6 +1335,7 @@ function SyncTab() {
       mockCollections: state.mockCollections,
       mockRoutes: state.mockRoutes,
       mockPort: state.mockPort,
+      responseSchemas: state.responseSchemas,
     };
   }
 
