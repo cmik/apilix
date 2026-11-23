@@ -39,7 +39,7 @@ function paramsOf(fn) {
   if (cur.trim()) parts.push(cur);
   return parts.map(p => p.trim()).filter(Boolean).map((p) => {
     const eq = p.indexOf('=');
-    return eq === -1 ? { name: p.replace(/^\.\.\./, '...') } : { name: p.slice(0, eq).trim(), optional: true };
+    return eq === -1 ? { name: p } : { name: p.slice(0, eq).trim(), optional: true };
   });
 }
 

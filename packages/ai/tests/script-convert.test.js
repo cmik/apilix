@@ -236,3 +236,10 @@ test('a script that declares its own tests array keeps its tests[...] assignment
   assert.equal(r.legacy, 0);
   assert.deepEqual(r.remaining, []);
 });
+
+test('a tests["name"] key holding U+2028/U+2029 is emitted as an escaped string literal', () => {
+  const out = conv('tests["a b c"] = responseCode.code === 200;').script;
+  assert.ok(!out.includes(' ') && !out.includes(' '), 'no raw line separator in the generated code');
+  assert.ok(out.includes('"a\\u2028b\\u2029c"'));
+  assert.doesNotThrow(() => new (require('node:vm').Script)(out));
+});

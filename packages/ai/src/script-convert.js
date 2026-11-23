@@ -251,7 +251,12 @@ function convertTestsLine(line, maskLine, nextLine) {
   }
   if (depth !== 0) return null;
   const name = head[2] !== undefined ? head[2] : head[3];
-  return `${head[1]}apx.test(${JSON.stringify(name)}, function () { apx.expect(${body}).to.be.ok; });${moved ? ` ${moved}` : ''}${tail}`;
+  return `${head[1]}apx.test(${jsString(name)}, function () { apx.expect(${body}).to.be.ok; });${moved ? ` ${moved}` : ''}${tail}`;
+}
+
+/** A JS string literal for `s`: JSON.stringify leaves U+2028/U+2029 raw, which older engines treat as line terminators. */
+function jsString(s) {
+  return JSON.stringify(s).replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
 }
 
 /**
