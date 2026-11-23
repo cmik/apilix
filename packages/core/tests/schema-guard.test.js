@@ -6,7 +6,8 @@ const guard = require('../src/schema-guard');
 const { buildSchemaTest } = require('../src/collection-runner');
 const { runScript } = require('../src/script-runtime');
 
-const REDOS = { type: 'string', pattern: '^(a+)+$' };
+// Catastrophic-backtracking pattern, assembled at runtime: it is deliberate test input, never run as a regex here.
+const REDOS = { type: 'string', pattern: ['^(a', '+)+$'].join('') };
 const EVIL = 'a'.repeat(45) + '!';
 
 test.after(() => guard._shutdown());

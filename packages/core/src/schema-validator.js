@@ -129,6 +129,9 @@ class SchemaValidator {
     try { fn = this._compile(schema); } catch (e) {
       return { valid: false, errors: [], schemaError: String(e && e.message || e).slice(0, 300) };
     }
+    if (typeof fn !== 'function') {
+      return { valid: false, errors: [], schemaError: 'Schema could not be compiled' };
+    }
     const valid = fn(data) === true;
     if (valid) return { valid: true, errors: [] };
     const { errors, truncated } = toErrors(fn.errors);
