@@ -150,7 +150,7 @@ The server decides once (and remembers) in which mode it works, in `resolveDryRu
 | | `isolated` | `parse-only` |
 |---|---|---|
 | Script screen (static) | yes | yes |
-| Syntax check | yes (by running it) | yes: `new vm.Script` **compiles** it, never runs it, in the server process (compiling cannot execute code) |
+| Syntax check | yes (by running it) | yes: the **same dedicated child process** is started in a compile-only mode and calls `new vm.Script` on the text, never a `run*` method or `eval`; the server process itself never compiles user or model text |
 | Script executed | **yes**, in a child process proven to run under the Node permission model | **never, anywhere** |
 | Result | validated / dropped according to its test run | "not executed" in the UI; assertion suggestions are never pre-selected |
 
@@ -162,7 +162,7 @@ The server decides once (and remembers) in which mode it works, in `resolveDryRu
 
 `APILIX_AI_DRY_RUN=force` skips the probe and assumes isolation. It exists for tests and CI only: it trusts the runtime instead of checking it.
 
-**Per runtime.** Plain Node 23.5+ takes `--permission`; Node 22.x takes `--experimental-permission` (22.12 is the minimum Apilix supports). Both only grant reading the worker's own file; nothing else. Electron (desktop) and `pkg` (the CLI binary, which does not run these scripts anyway) are not known to behave like plain Node: Apilix asks the Electron-embedded Node for the same flags and lets the probe decide; `pkg` is always parse-only. **This has been exercised on Node 24 only.** Whether a packaged Electron build or Node 22 passes the probe has not been verified; if they do not, they run in parse-only mode, which is the safe outcome by design. A failed or missing child never makes Apilix run a script in the server process.
+**Per runtime.** Plain Node 23.5+ takes `--permission`; Node 22.x takes `--experimental-permission` (22.12 is the minimum Apilix supports). Both only grant reading the worker's own file; nothing else. Electron (desktop) and `pkg` (the CLI binary, which does not run these scripts anyway) are not known to behave like plain Node: Apilix asks the Electron-embedded Node for the same flags and lets the probe decide; `pkg` is always parse-only (and, because the worker cannot be forked there, a script is then reported "not validated" rather than checked). **This has been exercised on Node 24 only.** Whether a packaged Electron build or Node 22 passes the probe has not been verified; if they do not, they run in parse-only mode, which is the safe outcome by design. A failed or missing child never makes Apilix run **or compile** a script in the server process: with no verdict the script is reported "not validated".
 
 #### What `isolated` does
 
@@ -176,7 +176,7 @@ The server decides once (and remembers) in which mode it works, in `resolveDryRu
 #### What each mode guarantees, and what it does not
 
 - `isolated`: model code never runs in the server process; it runs in a process that Node itself prevents from reading your files or starting programs (when the probe confirmed it). It does **not** guarantee a perfect sandbox: a hand-written screen cannot be proven complete, and the `vm` context and the worker share the Node binary, so a bug in V8 or Node's `vm` or permission model could in principle still be exploited. It can still use CPU for a few seconds and cannot be proven to bound all off-heap memory.
-- `parse-only`: nothing the model wrote runs, so there is nothing to escape from. In exchange there is no assurance that a script works: it may fail on the response it was written for. The screen and a syntax check are all that was done. You review it before you add or apply it.
+- `parse-only`: nothing the model wrote runs, so there is nothing to escape from. The syntax check happens in the same kind of child process (empty environment, 64 MB heap cap, SIGKILL after 3 seconds, the same concurrency ceiling and queue; the text goes over the IPC channel, never the command line), so a pathological script (deep nesting, huge input) can at worst crash or time out that child, which is reported as not validated. A child that cannot be started, times out or is cancelled never counts as "the script compiles". In exchange there is no assurance that a script works: it may fail on the response it was written for. The screen and a syntax check are all that was done. You review it before you add or apply it.
 - Neither mode validates the script against your real API: scripts never run there before you run the request yourself.
 
 Only enable these features with providers you trust. Anything the model writes that is shown as text (titles, warnings) has images, links and HTML neutralised, and unexpected fields are dropped before the answer reaches the interface.
@@ -189,6 +189,7 @@ Only enable these features with providers you trust. Anything the model writes t
 - **The deterministic converter is not a security boundary.** It rewrites text; the screen and the child process remain the barrier.
 - **Local diagnosis ids** are an allow-list on the server (an unknown id is dropped), so the client cannot smuggle free text through that field.
 - **Summaries** are limited by construction to metadata (no body, header or variable value), and the server does not trust the client's grouping: it re-templates URLs, clips, masks and re-scrubs.
+- **No in-process compile (parse-only).** The server process no longer calls `vm.Script` (or any `run*`/`eval`) on user or model text; the syntax check of the parse-only fallback runs in the child described above. Remaining `vm` users in the product are the intended script sandboxes of the request engine, the mock server and the isolated dry-run worker, none of which take AI-assistant text in the server process.
 - **Not verified:** behaviour against a real model (prompt quality, the retry loop with real models), and the isolated dry-run in a packaged Electron build or on Node 22 (parse-only is the safe fallback); see above.
 
 ## Limits
