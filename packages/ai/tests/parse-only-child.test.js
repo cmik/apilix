@@ -80,7 +80,8 @@ test('pathological nesting is reported as invalid, the server survives', async (
 });
 
 test('timeout is reported, not thrown, and fails closed', async () => {
-  const { dir, startup } = startupWith('while (true) {}');
+  // A sleeping child (no CPU burn: other test files run in parallel and have timing-sensitive tests).
+  const { dir, startup } = startupWith('Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20000);');
   try {
     const t = Date.now();
     const v = await parseOnlyVerdict(GOOD, undefined, { startupOptions: startup });
