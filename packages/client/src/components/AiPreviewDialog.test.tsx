@@ -38,4 +38,26 @@ describe('AiPreviewDialog', () => {
     await waitFor(() => expect(aiPreview).toHaveBeenCalled());
     expect('explain' in aiPreview.mock.calls[0][0]).toBe(false);
   });
+
+  it('scripting assistant: previews the script payload only, never the active request or response', async () => {
+    aiPreview.mockResolvedValue({ sections: [{ label: 'Script, error and variable names (as sent)', text: '{}', truncated: false }], estimatedTokens: 1, redactions: 0 });
+    const scriptAssist = { mode: 'fix' as const, kind: 'test' as const, script: 'apx.broken()', error: 'boom' };
+    render(<AiPreviewDialog onClose={() => {}} scriptAssist={scriptAssist} />);
+    expect(await screen.findByText('Script, error and variable names (as sent)')).toBeInTheDocument();
+    const sent = aiPreview.mock.calls[0][0];
+    expect(sent.scriptAssist).toEqual(scriptAssist);
+    expect('item' in sent || 'response' in sent || 'variables' in sent || 'explain' in sent).toBe(false);
+    expect(screen.getByText(/scripting assistant would send/)).toBeInTheDocument();
+  });
+
+  it('run summary: previews the aggregated groups only', async () => {
+    aiPreview.mockResolvedValue({ sections: [{ label: 'Run groups (as sent)', text: '{}', truncated: false }], estimatedTokens: 1, redactions: 0 });
+    const runSummary = { totals: { requests: 2, failedRequests: 2, groups: 1 }, groups: [] };
+    render(<AiPreviewDialog onClose={() => {}} runSummary={runSummary} />);
+    expect(await screen.findByText('Run groups (as sent)')).toBeInTheDocument();
+    const sent = aiPreview.mock.calls[0][0];
+    expect(sent.runSummary).toEqual(runSummary);
+    expect('item' in sent || 'response' in sent || 'scriptAssist' in sent).toBe(false);
+    expect(screen.getByText(/failure groups that would be sent/)).toBeInTheDocument();
+  });
 });

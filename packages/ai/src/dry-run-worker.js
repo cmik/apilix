@@ -243,6 +243,20 @@ function sanitizeResult(raw) {
   return { ok: true, done: raw.done === true, tests, variables };
 }
 
+/**
+ * Compile-only mode (parse-only fallback of the server): `new vm.Script` and nothing else. The script is never run,
+ * no context is created and nothing is evaluated. A RangeError from pathological nesting is an invalid script.
+ */
+function compileOnly(msg) {
+  const code = typeof msg.code === 'string' ? msg.code : '';
+  try {
+    new vm.Script(`(async function(){\n'use strict';\n${code}\n})`, { filename: 'apilix-parse-only.js' }); // eslint-disable-line no-new
+    return { ok: true, compiled: true };
+  } catch (e) {
+    return { ok: false, syntaxError: String((e && e.message) || 'invalid script').slice(0, 160) };
+  }
+}
+
 function run(msg) {
   const code = typeof msg.code === 'string' ? msg.code : '';
   const timeoutMs = Number.isFinite(msg.timeoutMs) && msg.timeoutMs > 0 ? Math.min(msg.timeoutMs, 5000) : 1500;
@@ -289,7 +303,7 @@ function main() {
   process.once('message', (msg) => {
     let out;
     try {
-      out = msg && msg.probe === true ? probe() : run(msg || {});
+      out = msg && msg.probe === true ? probe() : msg && msg.compileOnly === true ? compileOnly(msg) : run(msg || {});
     } catch (e) {
       const m = String(e && e.message).slice(0, 300);
       out = { ok: false, error: /timed out/i.test(m) ? 'timeout' : m };

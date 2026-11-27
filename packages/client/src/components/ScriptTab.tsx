@@ -1,6 +1,7 @@
 import { useRef, useCallback } from 'react';
 import ScriptEditor from './ScriptEditor';
 import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
+import AiScriptAssist, { type AiScriptFixRequest } from './AiScriptAssist';
 
 // ─── Shared ScriptTab component ───────────────────────────────────────────────
 
@@ -16,6 +17,10 @@ export interface ScriptTabProps {
   rows?: number;
   /** Extra Tailwind classes applied to the outer wrapper div. */
   className?: string;
+  /** "Fix with AI" from the console: opens the AI panel on this script with the error (nothing is sent until the user clicks). */
+  aiFixRequest?: AiScriptFixRequest | null;
+  /** The AI panel took the fix request: forget it. */
+  onAiFixConsumed?: (nonce: number) => void;
 }
 
 export default function ScriptTab({
@@ -29,6 +34,8 @@ export default function ScriptTab({
   onSyntaxCheck,
   rows = 14,
   className = '',
+  aiFixRequest,
+  onAiFixConsumed,
 }: ScriptTabProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -57,7 +64,10 @@ export default function ScriptTab({
     <div className={`flex flex-col gap-2 ${className}`}>
       <div className="flex items-center justify-between gap-2">
         <p className="text-slate-500 text-xs">{label}</p>
-        <ScriptSnippetsLibrary target={target} onInsert={handleInsert} />
+        <div className="flex items-center gap-1.5">
+          <AiScriptAssist target={target} value={value} onApply={onChange} fixRequest={aiFixRequest} onFixConsumed={onAiFixConsumed} />
+          <ScriptSnippetsLibrary target={target} onInsert={handleInsert} />
+        </div>
       </div>
       <ScriptEditor
         textareaRef={textareaRef}

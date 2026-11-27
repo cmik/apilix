@@ -11,6 +11,9 @@ const { describeDocs, collectEntries } = require('./doc-describe');
 const { suggestAssertions } = require('./assert-suggest');
 const { explainFailure, describeExplainEvidence } = require('./explain-failure');
 const { generateRequest } = require('./nl-generate');
+const { scriptAssist, describeScriptAssist } = require('./script-assist');
+const { convertPmToApx } = require('./script-convert');
+const { summarizeRun, describeRunSummary } = require('./summarize-run');
 const { dryRunScript } = require('./dry-run');
 const { screenScript } = require('./script-screen');
 
@@ -33,6 +36,11 @@ module.exports = {
   explainFailure,
   describeExplainEvidence,
   generateRequest,
+  scriptAssist,
+  describeScriptAssist,
+  convertPmToApx,
+  summarizeRun,
+  describeRunSummary,
   dryRunScript,
   screenScript,
 };

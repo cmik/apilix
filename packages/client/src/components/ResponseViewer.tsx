@@ -13,6 +13,7 @@ import { truncateForAi } from '../utils/ai/truncate';
 import { aiFeatureReady, collectVariableMeta } from '../utils/ai/nlContext';
 import { buildAllSecretValues } from '../utils/secretMask';
 import { AI_PROVIDER_DEFAULT_BASE } from '../utils/aiDefaults';
+import { diagnoseLocal } from '../utils/diagnoseLocal';
 import TestValueModal from './TestValueModal';
 import UpdateVarModal from './UpdateVarModal';
 import type { VarEntry } from './UpdateVarModal';
@@ -887,8 +888,33 @@ export default function ResponseViewer() {
     };
   }, [activeTab, response, aiSettings, savedTestScript, state.environments, state.globalVariables, state.globalVariableMeta, dispatch]);
   // "Explain with AI" for failed tests (feature flag `diagnose`). Nothing is sent until the user clicks.
-  const explainReady = !!(response && !response.error && !response.isExample && (!response.protocol || response.protocol === 'http')
-    && aiFeatureReady(aiSettings, 'diagnose'));
+  const isHttpResponse = !!(response && !response.isExample && (!response.protocol || response.protocol === 'http'));
+  // Deterministic probable cause (no AI, no network): shown for error responses and, by id only, given to Explain as context.
+  const localDiagnoses = useMemo(() => {
+    if (!response || !isHttpResponse) return [];
+    const sent = response as typeof response & { requestHeaders?: Record<string, string>; requestBody?: string };
+    return diagnoseLocal({
+      method: activeTab?.item.request?.method,
+      url: response.resolvedUrl,
+      requestHeaders: sent.requestHeaders,
+      requestBody: sent.requestBody,
+      status: response.status,
+      error: response.error,
+    });
+  }, [response, isHttpResponse, activeTab?.item.request?.method]);
+  const localDiagnosisIds = useMemo(() => localDiagnoses.map(d => d.id), [localDiagnoses]);
+  // What "Explain" explains: the failed tests or, when there are none, the failed request itself (transport error, or an
+  // HTTP error status with no test at all).
+  const explainFailures = useMemo(() => {
+    if (!response || !isHttpResponse) return [];
+    const failedTests = response.testResults.filter(t => t.passed === false).map(t => ({ name: t.name, error: t.error }));
+    if (failedTests.length) return failedTests;
+    if (response.error || (response.status >= 400 && response.testResults.length === 0)) {
+      return [{ name: 'Request failed', error: response.error ?? `HTTP ${response.status} ${response.statusText}` }];
+    }
+    return [];
+  }, [response, isHttpResponse]);
+  const explainReady = !!(response && isHttpResponse && explainFailures.length > 0 && aiFeatureReady(aiSettings, 'diagnose'));
   const explainSecrets = useMemo(
     () => (explainReady ? buildAllSecretValues(state.environments, state.globalVariables, state.globalVariableMeta) : new Set<string>()),
     [explainReady, state.environments, state.globalVariables, state.globalVariableMeta],
@@ -908,8 +934,9 @@ export default function ResponseViewer() {
     return `${activeTab?.id ?? ''}:${hashString(`${response.status}|${response.responseTime}|${response.size}|${body.length}|${hashString(bodySig)}|${hashString(headerSig)}|${failedSig}`)}`;
   }, [response, activeTab?.id]);
   const explainEvidence = useMemo(() => !explainReady ? undefined : ({
-    failures: (response?.testResults ?? []).filter(t => t.passed === false).map(t => ({ name: t.name, error: t.error })),
+    failures: explainFailures,
     testScript: savedTestScript,
+    localDiagnosis: localDiagnosisIds,
     variableNames: collectVariableMeta({
       environments: state.environments,
       activeEnvironmentId: state.activeEnvironmentId,
@@ -918,7 +945,7 @@ export default function ResponseViewer() {
       collectionVariables: activeTab ? state.collectionVariables?.[activeTab.collectionId] : undefined,
       collection: exampleCollection,
     }).map(v => v.name),
-  }), [explainReady, response, savedTestScript, activeTab, exampleCollection, state.environments, state.activeEnvironmentId, state.globalVariables, state.globalVariableMeta, state.collectionVariables]);
+  }), [explainReady, explainFailures, localDiagnosisIds, response, savedTestScript, activeTab, exampleCollection, state.environments, state.activeEnvironmentId, state.globalVariables, state.globalVariableMeta, state.collectionVariables]);
   const runExplain = useCallback(async (signal: AbortSignal) => {
     if (!activeTab || !response) throw new Error('No response to explain');
     dispatch({ type: 'AI_REQUEST_START', payload: 'diagnose' });
@@ -936,9 +963,10 @@ export default function ResponseViewer() {
         request: activeTab.item.request,
         name: activeTab.item.name,
         response: { status: response.status, statusText: response.statusText, headers: response.headers, body: sentBody, responseTime: response.responseTime },
-        failures: response.testResults.filter(t => t.passed === false).map(t => ({ name: t.name, error: t.error })),
+        failures: explainFailures,
         testScript: savedTestScript,
         variableNames,
+        ...(localDiagnosisIds.length ? { localDiagnosis: localDiagnosisIds } : {}),
         secretValues: Array.from(explainSecrets),
       }, signal);
       dispatch({ type: 'AI_REQUEST_DONE', payload: 'diagnose' });
@@ -952,7 +980,7 @@ export default function ResponseViewer() {
       dispatch({ type: 'AI_REQUEST_FAIL', payload: { feature: 'diagnose', code: e.code, message: e.message } });
       throw e;
     }
-  }, [activeTab, response, savedTestScript, exampleCollection, explainSecrets, state.environments, state.activeEnvironmentId, state.globalVariables, state.globalVariableMeta, state.collectionVariables, dispatch]);
+  }, [activeTab, response, explainFailures, localDiagnosisIds, savedTestScript, exampleCollection, explainSecrets, state.environments, state.activeEnvironmentId, state.globalVariables, state.globalVariableMeta, state.collectionVariables, dispatch]);
   const [exampleSaved, setExampleSaved] = useState(false);
   const exampleSavedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (exampleSavedTimer.current) clearTimeout(exampleSavedTimer.current); }, []);
@@ -1282,6 +1310,34 @@ export default function ResponseViewer() {
           </span>
         )}
       </div>
+
+      {(localDiagnoses.length > 0 || (explainReady && failed === 0)) && (
+        <div className="px-3 py-2 border-b border-slate-700 bg-slate-800/40 shrink-0 space-y-1.5" data-testid="local-diagnosis">
+          {localDiagnoses.length > 0 && (
+            <>
+              <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Probable cause</div>
+              <ul className="space-y-1">
+                {localDiagnoses.map(d => (
+                  <li key={d.id} className="text-xs" data-testid={`local-diagnosis-${d.id}`}>
+                    <span className="text-slate-200 font-medium">{d.title}</span>
+                    <span className="block text-[11px] text-slate-400 break-words">{d.detail}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          {explainReady && failed === 0 && (
+            <ExplainFailurePanel
+              key={explainKey}
+              previewEvidence={explainEvidence}
+              destination={aiSettings.baseUrl || (aiSettings.provider === 'anthropic' ? 'Anthropic' : AI_PROVIDER_DEFAULT_BASE[aiSettings.provider])}
+              shapeOnly={aiSettings.sendResponseBodies === false}
+              secrets={explainSecrets}
+              run={runExplain}
+            />
+          )}
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex border-b border-slate-700 shrink-0">
