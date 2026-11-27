@@ -94,6 +94,17 @@ describe('Postman round-trip of the apilix extension', () => {
     expect(res.version).toBe('2.1');
   });
 
+  it('exports schemas named by matchSchema() in item, folder and collection scripts (plus $ref closure)', () => {
+    const ev = (src: string) => [{ listen: 'test' as const, script: { type: 'text/javascript', exec: [src] } }];
+    const sc = [mk('s1', 'Pet', { type: 'object', properties: { owner: { $ref: 'Owner' } } }), mk('s2', 'Owner'), mk('s3', 'Unused'), mk('s4', 'Folder'), mk('s5', 'Coll')];
+    const items: CollectionItem[] = [{ id: 'f', name: 'F', event: ev('apx.matchSchema("Folder", apx.response.json())'), item: [
+      { id: 'r', name: 'R', request: { method: 'GET', url: 'x' }, event: ev("apx.matchSchema('Pet', body)") },
+    ] }];
+    const c: AppCollection = { ...col, item: items, event: ev("matchSchema('Coll')") };
+    expect(buildPostmanExport(c, sc).apilix!.schemas!.map(s => s.name)).toEqual(['Pet', 'Owner', 'Folder', 'Coll']);
+    expect(schemasUsedByItems(items, sc).map(s => s.name)).toEqual(['Pet', 'Owner', 'Folder']);
+  });
+
   it('omits the extension when nothing is linked', () => {
     const exported = buildPostmanExport({ ...col, item: tree([]) }, schemas);
     expect('apilix' in exported).toBe(false);

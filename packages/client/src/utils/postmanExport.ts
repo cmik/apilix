@@ -7,7 +7,7 @@ import { schemasUsedByItems } from './responseSchemas';
  * those links (transitively) use in the top-level `apilix.schemas`.
  */
 export function buildPostmanExport(col: AppCollection, schemas: ResponseSchema[] = []) {
-  const used = schemasUsedByItems(col.item, schemas);
+  const used = schemasUsedByItems(col.item, schemas, col.event);
   return {
     info: {
       name: col.info.name,

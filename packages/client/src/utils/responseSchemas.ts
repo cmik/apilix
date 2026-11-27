@@ -1,4 +1,4 @@
-import type { CollectionItem, ResponseSchema, ResponseSchemaLink, SchemaRunMode } from '../types';
+import type { CollectionEvent, CollectionItem, ResponseSchema, ResponseSchemaLink, SchemaRunMode } from '../types';
 import { updateItemById, findItemInTree } from './treeHelpers';
 
 export const SCHEMA_HISTORY_CAP = 10;
@@ -187,6 +187,29 @@ function collectLinkedSchemaIds(items: CollectionItem[], out: Set<string>): void
   }
 }
 
+const MATCH_SCHEMA_RE = /matchSchema\s*\(\s*(?:'((?:[^'\\\n]|\\.){1,200})'|"((?:[^"\\\n]|\\.){1,200})")/g;
+const MAX_SCRIPT_SCAN = 200_000;
+
+/** Names passed as a string literal to matchSchema() in item/folder scripts (static scan, bounded). */
+function collectScriptSchemaNames(items: CollectionItem[], events: CollectionEvent[] | undefined, out: Set<string>): void {
+  const scan = (evs: CollectionEvent[] | undefined) => {
+    for (const ev of evs ?? []) {
+      const exec = ev?.script?.exec;
+      const src = (Array.isArray(exec) ? exec.join('\n') : typeof exec === 'string' ? exec : '').slice(0, MAX_SCRIPT_SCAN);
+      for (const m of src.matchAll(MATCH_SCHEMA_RE)) out.add((m[1] ?? m[2]).replace(/\\(.)/g, '$1'));
+    }
+  };
+  scan(events);
+  const walk = (list: CollectionItem[], depth: number) => {
+    if (depth > 64) return;
+    for (const it of list) {
+      scan(it.event);
+      if (it.item) walk(it.item, depth + 1);
+    }
+  };
+  walk(items, 0);
+}
+
 function collectRefNames(node: unknown, out: Set<string>): void {
   if (Array.isArray(node)) { node.forEach(n => collectRefNames(n, out)); return; }
   if (node && typeof node === 'object') {
@@ -197,12 +220,14 @@ function collectRefNames(node: unknown, out: Set<string>): void {
   }
 }
 
-/** Schemas a collection depends on: those linked from its requests plus the ones they `$ref` by name. */
-export function schemasUsedByItems(items: CollectionItem[], all: ResponseSchema[]): ResponseSchema[] {
+/** Schemas a collection depends on: those linked from its requests, those named in matchSchema('Name') script calls, plus the ones they `$ref` by name. */
+export function schemasUsedByItems(items: CollectionItem[], all: ResponseSchema[], collectionEvents?: CollectionEvent[]): ResponseSchema[] {
   const ids = new Set<string>();
   collectLinkedSchemaIds(items, ids);
+  const scriptNames = new Set<string>();
+  collectScriptSchemaNames(items, collectionEvents, scriptNames);
   const picked = new Map<string, ResponseSchema>();
-  const queue = all.filter(s => ids.has(s.id));
+  const queue = all.filter(s => ids.has(s.id) || scriptNames.has(s.name));
   while (queue.length > 0) {
     const s = queue.shift()!;
     if (picked.has(s.id)) continue;
