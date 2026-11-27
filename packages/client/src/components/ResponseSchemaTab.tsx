@@ -221,12 +221,14 @@ export function SchemaBadge({ response }: { response: RequestResponse }) {
   const links = getSchemaLinks(state.activeRequest?.item);
   const link = resolveSchemaLink(links, response.status);
   const schema = link ? allSchemas.find(s => s.id === link.schemaId) : undefined;
-  const [outcome, setOutcome] = useState<{ state: 'ok' | 'bad' | 'error'; count?: number; detail?: string } | null>(null);
+  const [outcome, setOutcome] = useState<{ state: 'ok' | 'bad' | 'error' | 'empty'; count?: number; detail?: string } | null>(null);
   const body = response.body;
   const registrySig = JSON.stringify(toSchemaRegistry(allSchemas));
 
   useEffect(() => {
     if (!schema || state.schemaRunMode === 'off' || link?.mode === 'off' || response.error || response.bodyBase64) { setOutcome(null); return; }
+    // Same as the runner: an empty/whitespace body (204...) is skipped, never a violation.
+    if (typeof body !== 'string' || body.trim() === '') { setOutcome({ state: 'empty', detail: 'empty body, nothing to validate' }); return; }
     let cancelled = false;
     validateSchema({ schema: schema.schema, body, schemas: JSON.parse(registrySig), allErrors: true })
       .then(r => {
@@ -240,6 +242,9 @@ export function SchemaBadge({ response }: { response: RequestResponse }) {
   }, [schema, body, registrySig, state.schemaRunMode, link?.mode, response.error, response.bodyBase64]);
 
   if (!schema || !outcome) return null;
+  if (outcome.state === 'empty') {
+    return <span data-testid="schema-badge" title={outcome.detail} className="text-xs px-2 py-0.5 rounded font-medium bg-slate-700 text-slate-300">{`Schema ${schema.name}: skipped (empty body)`}</span>;
+  }
   const cls = outcome.state === 'ok' ? 'bg-green-800 text-green-200' : outcome.state === 'bad' ? 'bg-amber-800 text-amber-200' : 'bg-red-800 text-red-200';
   const label = outcome.state === 'ok' ? `Schema ${schema.name}: matches` : outcome.state === 'bad' ? `Schema ${schema.name}: ${outcome.count} violation${outcome.count === 1 ? '' : 's'}` : `Schema ${schema.name}: invalid`;
   return (

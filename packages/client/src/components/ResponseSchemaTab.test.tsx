@@ -138,4 +138,12 @@ describe('SchemaBadge', () => {
     render(<SchemaBadge response={response('{"id":"x"}')} />);
     expect(screen.queryByTestId('schema-badge')).not.toBeInTheDocument();
   });
+
+  it('does not validate an empty body: neutral skipped badge, no server call', async () => {
+    schemas = [mk('a', 'User')];
+    activeItem = item([{ schemaId: 'a', match: '2xx' }]);
+    render(<SchemaBadge response={response('  ', 204)} />);
+    expect(await screen.findByTestId('schema-badge')).toHaveTextContent('skipped (empty body)');
+    expect(validateSchema).not.toHaveBeenCalled();
+  });
 });
