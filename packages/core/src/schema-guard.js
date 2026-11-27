@@ -41,6 +41,7 @@ function getSchemaValidationTimeoutMs() { return defaultTimeoutMs; }
  * Heuristic detection of catastrophic-backtracking shapes. Flags:
  *  - a quantified group that itself contains an unbounded quantifier or an alternation (`(a+)+`, `(a|a)*`, `(.*)*`)
  *  - a group with a large counted quantifier (>= 10) whose body is optional/unbounded/alternating (`(a?){30}a{30}`)
+ *  - a group repeated 2+ times by a bounded/open counted quantifier whose body holds an unbounded quantifier (`(a+){2,9}`, `(a*){3}`)
  *  - three or more adjacent unbounded quantifiers over the same atom (`a*a*a*a*b`, polynomial blow-up)
  *  - backreferences and over-long patterns.
  * Conservative on purpose: it may reject a harmless pattern (e.g. `(X+sep)*` shapes such as `^(\d+\.)+\d+$`),
@@ -107,6 +108,8 @@ function isRiskyPattern(p) {
     if (group) {
       const inner = group.unbounded || group.alt;
       if (q.kind === 'unbounded' && inner) return true;
+      // bounded outer repeat ({2,9}, {3}, {2,}) around an unbounded body: `(a+){2,9}`, `(a*){3}` is exponential/high-degree
+      if ((q.kind === 'counted' || q.kind === 'unbounded') && q.max >= 2 && group.unbounded) return true;
       if ((q.kind === 'counted' || q.kind === 'unbounded') && q.max >= COUNTED_GROUP_LIMIT && (inner || group.optional)) return true;
       if (group.unbounded || q.kind === 'unbounded') cur.unbounded = true;
       if (group.optional || q.optional) cur.optional = true;

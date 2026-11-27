@@ -186,3 +186,8 @@ test('registry fingerprint is memoised by array identity', () => {
   } finally { JSON.stringify = orig; }
   assert.equal(fpCalls, 1);
 });
+
+test('isRiskyPattern rejects a bounded outer repeat around an unbounded body', () => {
+  for (const p of ['^(a+){2,9}$', '^(a+){2,}$', '^(a*){3}$', '(a+){1,5}', '^(a+){2}$']) assert.equal(guard.isRiskyPattern(p), true, p);
+  for (const p of ['^(\\d{1,3}\\.){3}\\d{1,3}$', '^(\\d{3}-?){2}$', '^a*b*c*$', '^(a+)$', '^(ab){2,9}$']) assert.equal(guard.isRiskyPattern(p), false, p);
+});
