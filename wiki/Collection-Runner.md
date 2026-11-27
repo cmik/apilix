@@ -28,6 +28,7 @@ The Collection Runner executes multiple requests from a collection in sequence, 
     - [Retry on Failure](#retry-on-failure)
     - [Conditional Execution](#conditional-execution)
     - [Execute Child Requests](#execute-child-requests)
+    - [Response Schema Checks](#response-schema-checks)
     - [Mock Server Mode](#mock-server-mode)
   - [Data-driven Runs](#data-driven-runs)
     - [CSV Files](#csv-files)
@@ -362,6 +363,8 @@ apilix run ./collection.json --reporter junit --out ./artifacts/apilix.junit.xml
 | `--execute-child-requests` | | Execute HTTP calls made inside scripts via `apx.executeRequest()` |
 | `--no-conditional-execution` | | Ignore `setNextRequest()` calls; run requests in listed order |
 | `--bail` | | Stop the run on the first test failure or request error |
+| `--schema-mode <mode>` | | Run-level ceiling for [response schema](Response-Schemas) checks: `off`, `warn` (default), or `strict`. `warn` downgrades `strict` links to warnings; `strict` lets each link's own mode apply (a link set to `off` stays off) |
+| `--schema-timeout <ms>` | | Time limit for one schema validation, `100`–`10000` (default: `2000`; also `APILIX_SCHEMA_TIMEOUT_MS`). Out of range exits with code `2` |
 | `--ssl-verification` | | Enforce TLS certificate verification (disabled by default) |
 | `--ca-cert <path>` | | PEM CA certificate(s) to add to the trust store (requires `--ssl-verification`) |
 | `--client-cert <path>` | | PEM client certificate for mTLS (must be paired with `--client-key`) |
@@ -476,8 +479,10 @@ Use `--client-cert` and `--client-key` together to present a client certificate 
 | Code | Meaning |
 |---|---|
 | `0` | Successful run — no failed assertions and no request errors |
-| `1` | One or more failed assertions, request errors, or runner flow errors |
-| `2` | Invalid CLI usage or unreadable / invalid input file (collection, environment, CSV, JSON data) |
+| `1` | One or more failed assertions, request errors, or runner flow errors (including `strict` response schema violations) |
+| `2` | Invalid CLI usage or unreadable / invalid input file (collection, environment, CSV, JSON data), or an invalid `--schema-mode` / `--schema-timeout` |
+
+Response schema violations in `warn` mode (the default) do not change the exit code; they are counted as `schemaWarnings` in the summary and shown at the end of the completion line.
 
 ---
 
@@ -583,6 +588,12 @@ When disabled, every request executes in the listed order regardless of any `set
 ### Execute Child Requests
 
 When enabled, the runner also executes HTTP requests triggered inside scripts via `apx.executeRequest()`. These appear as **child rows** nested under their parent request in the results panel, tagged `pre` (triggered in a pre-request script) or `test` (triggered in a test script).
+
+### Response Schema Checks
+
+The **Response schemas (limit)** selector sets how the run treats [response schemas](Response-Schemas) linked to requests: **Off** (no checks), **Warn** (default: violations are shown but never fail the run), or **Strict** (each link keeps its own mode, so `strict` links fail the test). The selector is a ceiling over the per-link modes, and your choice is remembered.
+
+For every request with a link that matches the response status, the runner adds a test named `Schema: <status>`. See [Response Schemas](Response-Schemas#schema-checks-in-the-collection-runner) for what counts as a violation (an empty body is skipped, a non-JSON body is a violation).
 
 ### Mock Server Mode
 
@@ -709,7 +720,10 @@ Each test result shows:
 |---|---|
 | `✓` green | Test passed |
 | `✗` red | Test failed — error message shown inline |
-| `~` grey italic | Test skipped via `apx.test.skip()` |
+| `~` grey italic | Test skipped via `apx.test.skip()` (or a schema check skipped because the response body was empty) |
+| `!` amber | Response schema violation in `warn` mode — the test counts as passing and the message is shown inline |
+
+Tests added by the runner itself (`Schema: 200`, ...) carry a `schema` badge. When there are schema warnings, the run summary shows a **Schema warnings** counter.
 
 ### Child Requests
 
@@ -1033,5 +1047,6 @@ The retry behaviour:
 - [Scripting](Scripting) — full `apx.execution.*` and `apx.iterationData` API reference
 - [Variables & Environments](Variables-and-Environments) — scope hierarchy and data row variables
 - [Mock Server](Mock-Server) — run the collection against mock responses
+- [Response Schemas](Response-Schemas) — schema library, per-status links, `--schema-mode`, and reporter output
 - [Collections & Requests](Collections-and-Requests) — managing collections and request scripts
 - [MongoDB Requests](MongoDB-Requests) — MongoDB operations, CLI flags, and mixed-collection patterns

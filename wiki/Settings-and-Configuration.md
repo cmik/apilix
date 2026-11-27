@@ -49,6 +49,7 @@ Controls applied to every request Apilix sends through its local proxy server.
 | **Follow redirects** | On | When enabled, Apilix automatically follows HTTP 3xx redirects. Disable to inspect the raw redirect response. |
 | **SSL certificate verification** | Off | When enabled, the server validates the SSL certificate of the target host. Disable for self-signed certificates in development environments. |
 | **Mask secret variable values in console, logs, and history** | On | Redacts known secret values (from enabled secret rows in the active environment) in Console and Request History UI surfaces. |
+| **Schema validation time limit (ms)** | `2000` | Maximum time for one [response schema](Response-Schemas#validation-time-limit) check, from `100` to `10000`. Values outside the range are clamped. Stops a check that never finishes, for example a `pattern` regular expression that backtracks forever. |
 
 ---
 
@@ -160,6 +161,7 @@ Click **Check for update** to query the [GitHub Releases API](https://api.github
 | `followRedirects` | `boolean` | `true` | Requests tab; executor redirect behaviour |
 | `sslVerification` | `boolean` | `false` | Requests tab; executor TLS check |
 | `maskSecrets` | `boolean` | `true` | Requests tab; redacts known secret values in Console and Request History |
+| `schemaValidationTimeoutMs` | `number` (ms) | `2000` | Requests tab; time limit for one response schema validation (100 to 10000, clamped) |
 | `proxyEnabled` | `boolean` | `false` | Proxy tab; whether proxy settings are applied |
 | `httpProxy` | `string` | `''` | Proxy tab; proxy URL for HTTP targets |
 | `httpsProxy` | `string` | `''` | Proxy tab; proxy URL for HTTPS targets |

@@ -9,6 +9,7 @@
  */
 
 import { buildJsonAccessExpression } from './testSnippetUtils';
+import { FORMATS, STABLE_ENUM_KEYS, CAPTURE_KEY_RE, isVolatileKey } from '@apilix/core/schema-rules';
 
 export type SuggestionKind = 'status' | 'header' | 'body' | 'schema' | 'timing' | 'capture';
 export type SuggestionConfidence = 'high' | 'medium' | 'low';
@@ -49,30 +50,8 @@ const MAX_CAPTURES = 6;
 
 type Path = (string | number)[];
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const URL_RE = /^https?:\/\/[^\s]+$/i;
-
-const FORMATS: { name: string; re: RegExp; source: string; label: string }[] = [
-  { name: 'uuid', re: UUID_RE, source: '/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i', label: 'a UUID' },
-  { name: 'iso-date', re: ISO_DATE_RE, source: '/^\\d{4}-\\d{2}-\\d{2}/', label: 'an ISO date' },
-  { name: 'email', re: EMAIL_RE, source: '/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/', label: 'an email address' },
-  { name: 'url', re: URL_RE, source: '/^https?:\\/\\//i', label: 'a URL' },
-];
-
-// snake/kebab/plain names (case-insensitive) and camelCase suffixes (case-sensitive, so "valid" is not "…Id").
-const VOLATILE_SNAKE_RE = /(^|[_-])(id|uuid|guid|token|jwt|nonce|etag|hash|signature)$|(created|updated|modified|deleted|expires?|issued|timestamp|date)(_?at)?$|(^|[_-])(at|time)$/i;
-const VOLATILE_CAMEL_RE = /[a-z](Id|Uuid|Token|Hash|At|Time|Date)$/;
-const STABLE_ENUM_KEYS = new Set(['status', 'state', 'type', 'kind', 'role', 'currency', 'locale', 'language', 'object']);
-const CAPTURE_KEY_RE = /^(id|uuid|token|access_?token|refresh_?token|id_?token|jwt|session_?id|api_?key)$|(_id|Id)$/;
-
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
-
-function isVolatileKey(key: string): boolean {
-  return VOLATILE_SNAKE_RE.test(key) || VOLATILE_CAMEL_RE.test(key);
 }
 
 function typeOf(v: unknown): 'string' | 'number' | 'boolean' | 'array' | 'object' | 'null' | 'other' {

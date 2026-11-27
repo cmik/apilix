@@ -101,6 +101,7 @@ export function parseWorkspaceExportPackage(raw: unknown): WorkspaceExportPackag
     mockCollections: Array.isArray(d.mockCollections) ? d.mockCollections as WorkspaceData['mockCollections'] : [],
     mockRoutes: Array.isArray(d.mockRoutes) ? d.mockRoutes as WorkspaceData['mockRoutes'] : [],
     mockPort: typeof d.mockPort === 'number' ? d.mockPort : 3002,
+    ...(Array.isArray(d.responseSchemas) ? { responseSchemas: d.responseSchemas as WorkspaceData['responseSchemas'] } : {}),
   };
 
   return { ...raw, data };

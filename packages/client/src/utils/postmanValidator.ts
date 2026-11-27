@@ -2,10 +2,10 @@
  * Validates a Postman Collection JSON against the official v2.0 / v2.1 schemas.
  * Version is detected from `info.schema` / `info._postman_schema`.
  */
-import Ajv from 'ajv';
+import Ajv from 'ajv-draft-04';
+import type { ErrorObject, ValidateFunction } from 'ajv';
 import schemaV20 from '../schemas/postman-v2.0.json';
 import schemaV21 from '../schemas/postman-v2.1.json';
-import draft04MetaSchema from 'ajv/lib/refs/json-schema-draft-04.json';
 
 export type PostmanVersion = '2.0' | '2.1';
 
@@ -34,27 +34,26 @@ function detectVersion(json: Record<string, unknown>): PostmanVersion {
 }
 
 /** Lazily initialised ajv instances (one per schema version). */
-const validators: Partial<Record<PostmanVersion, Ajv.ValidateFunction>> = {};
+const validators: Partial<Record<PostmanVersion, ValidateFunction>> = {};
 
-function getValidator(version: PostmanVersion): Ajv.ValidateFunction {
+function getValidator(version: PostmanVersion): ValidateFunction {
   if (!validators[version]) {
+    // ajv-draft-04 (Ajv 8) understands draft-04 `id` and registers its own meta-schema.
     const ajv = new Ajv({
-      schemaId: 'id',      // draft-04 uses "id", not "$id"
       allErrors: true,
-      meta: false,          // skip meta-schema validation of the schema itself
-      unknownFormats: 'ignore',
+      strict: false,        // the official Postman schemas use non-strict constructs
+      validateFormats: false, // formats were ignored under Ajv 6 (unknownFormats: 'ignore')
+      validateSchema: false,  // skip meta-schema validation of the schema itself
     });
-    // Register draft-04 meta-schema so nested $schema references are recognised
-    ajv.addMetaSchema(draft04MetaSchema);
     const rawSchema = version === '2.0' ? schemaV20 : schemaV21;
     validators[version] = ajv.compile(rawSchema);
   }
   return validators[version]!;
 }
 
-function humanise(err: Ajv.ErrorObject): string {
-  const path = err.dataPath || '';
-  const field = path ? `"${path.replace(/^\./, '')}"` : 'root';
+function humanise(err: ErrorObject): string {
+  const path = err.instancePath || '';
+  const field = path ? `"${path.replace(/^\//, '').replace(/\//g, '.')}"` : 'root';
   return `${field}: ${err.message}`;
 }
 

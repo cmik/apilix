@@ -19,6 +19,7 @@
 
 import type {
   WorkspaceData,
+  ResponseSchema,
   AppCollection,
   AppEnvironment,
   CollectionItem,
@@ -66,11 +67,86 @@ export function mergeWorkspaces(
     mockRoutes: mergeMockRoutes(base.mockRoutes, local.mockRoutes, remote.mockRoutes, localDiff, remoteDiff, conflicts, () => autoMergedCount++),
     mockCollections: local.mockCollections, // last-write-wins (rarely edited by teams)
     mockPort: local.mockPort !== base.mockPort ? local.mockPort : remote.mockPort,
+    ...(base.responseSchemas || local.responseSchemas || remote.responseSchemas
+      ? { responseSchemas: mergeResponseSchemas(base.responseSchemas ?? [], local.responseSchemas ?? [], remote.responseSchemas ?? base.responseSchemas ?? [], conflicts, () => autoMergedCount++) }
+      : {}),
     cookieJar: local.cookieJar, // session-local; don't merge
     activeEnvironmentId: local.activeEnvironmentId,
   };
 
   return { merged, conflicts, autoMergedCount };
+}
+
+// ─── Response schemas ─────────────────────────────────────────────────────────
+
+/** Make schema names unique (case-insensitive) by suffixing " (2)", " (3)"… on later duplicates. */
+export function dedupeSchemaNames(schemas: ResponseSchema[]): ResponseSchema[] {
+  const used = new Set<string>();
+  return schemas.map(pick => {
+    let name = pick.name; let n = 2;
+    while (used.has(name.toLowerCase())) name = `${pick.name} (${n++})`;
+    used.add(name.toLowerCase());
+    return name === pick.name ? pick : { ...pick, name };
+  });
+}
+
+/**
+ * Apply a conflict resolution (JSON of the chosen schema, or '' for "deleted") to `data.responseSchemas`.
+ * Invalid JSON is ignored. Names are kept unique afterwards.
+ */
+export function applySchemaResolution(data: WorkspaceData, schemaId: string, value: string): void {
+  const list = data.responseSchemas ?? [];
+  if (value.trim() === '') {
+    data.responseSchemas = list.filter(s => s.id !== schemaId);
+    return;
+  }
+  let parsed: unknown;
+  try { parsed = JSON.parse(value); } catch { return; }
+  if (!parsed || typeof parsed !== 'object' || typeof (parsed as ResponseSchema).name !== 'string' || typeof (parsed as ResponseSchema).schema !== 'object') return;
+  const next = { ...(parsed as ResponseSchema), id: schemaId };
+  const idx = list.findIndex(s => s.id === schemaId);
+  const replaced = idx >= 0 ? list.map(s => (s.id === schemaId ? next : s)) : [...list, next];
+  data.responseSchemas = dedupeSchemaNames(replaced);
+}
+
+/**
+ * Per-id three-way merge. A side that changed a schema wins over an untouched side. When both sides changed the
+ * same schema differently (or one deleted it while the other edited it) a conflict is recorded so the user picks
+ * local or remote; the merged data keeps the local side meanwhile. Sides are compared on name, description and schema
+ * only. A remote without `responseSchemas` (older client) counts as "no change", not as "deleted everything". Names stay unique (case-insensitive).
+ */
+function mergeResponseSchemas(
+  base: ResponseSchema[],
+  local: ResponseSchema[],
+  remote: ResponseSchema[],
+  conflicts: MergeConflictNode[],
+  onAuto: () => void,
+): ResponseSchema[] {
+  // Only user-visible content counts as a change; updatedAt/version/history differ on every save.
+  const key = (s: ResponseSchema | undefined) => (s ? JSON.stringify([s.name, s.description ?? '', s.schema]) : undefined);
+  const baseMap = new Map(base.map(s => [s.id, s]));
+  const localMap = new Map(local.map(s => [s.id, s]));
+  const remoteMap = new Map(remote.map(s => [s.id, s]));
+  const ids = [...new Set([...local.map(s => s.id), ...remote.map(s => s.id), ...base.map(s => s.id)])];
+  const out: ResponseSchema[] = [];
+  for (const id of ids) {
+    const b = baseMap.get(id); const l = localMap.get(id); const r = remoteMap.get(id);
+    const lChanged = key(l) !== key(b);
+    const rChanged = key(r) !== key(b);
+    let pick: ResponseSchema | undefined;
+    if (!lChanged && !rChanged) pick = l;
+    else if (lChanged && !rChanged) { pick = l; onAuto(); }
+    else if (!lChanged && rChanged) { pick = r; onAuto(); }
+    else if (key(l) === key(r)) pick = l;
+    else {
+      // Both sides changed it differently (edit/edit, add/add with the same id, or delete-vs-edit).
+      pick = l;
+      const kind: ConflictKind = !l || !r ? 'delete-vs-edit' : 'field-overlap';
+      conflicts.push(makeConflict(id, 'responseSchema', kind, (l ?? r)!.name, b, l, r));
+    }
+    if (pick) out.push(pick);
+  }
+  return dedupeSchemaNames(out);
 }
 
 // ─── Collections ──────────────────────────────────────────────────────────────

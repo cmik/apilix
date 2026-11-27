@@ -10,6 +10,7 @@ import {
 import { parseHarFile } from './harUtils';
 import { parseWsdlToCollection, isWsdlContent } from './wsdlUtils';
 import { tryParseInsomniaText } from './insomniaUtils';
+import { mergeImportedSchemas } from './responseSchemas';
 import { useToast } from '../components/Toast';
 
 /**
@@ -198,8 +199,14 @@ export function useImportFile() {
     try {
       const json = JSON.parse(text);
       if (json.info && json.item) {
-        const { collection: col, version, validationWarnings } = await parseCollectionFile(json);
+        const { collection: col, schemas: importedSchemas, version, validationWarnings } = await parseCollectionFile(json);
         dispatch({ type: 'ADD_COLLECTION', payload: col });
+        if (importedSchemas.length > 0) {
+          const merged = mergeImportedSchemas(state.responseSchemas, importedSchemas);
+          if (merged.added > 0) dispatch({ type: 'SCHEMA_SET_ALL', payload: merged.schemas });
+          if (merged.renamed > 0) toast.info(`${merged.renamed} response schema(s) were renamed to avoid a name clash.`);
+          if (merged.skipped > 0) toast.info(`${merged.skipped} response schema(s) were skipped because a schema with the same id already exists: ${merged.skippedNames.slice(0, 5).join(', ')}${merged.skippedNames.length > 5 ? ', ...' : ''}.`);
+        }
         const versionLabel = `Postman Collection v${version}`;
         if (validationWarnings.length > 0) {
           toast.warning(`"${col.info.name}" imported as ${versionLabel} with ${validationWarnings.length} schema warning(s):\n• ${validationWarnings.join('\n• ')}`, 8000);

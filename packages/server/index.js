@@ -18,6 +18,8 @@ const {
 } = require('@apilix/core');
 const dbManager = require('./database-manager');
 const { createAiRouter, isAiPath } = require('./ai-routes');
+const { createSchemaRouter, isSchemaPath } = require('./schema-routes');
+const { setSchemaValidationTimeoutMs } = require('@apilix/core/schema-guard');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -71,7 +73,7 @@ app.use(cors({
 // /api/ai/* has its own 2 MB parser (see ai-routes.js); a parser mounted here would
 // have already consumed the body, so the app-wide 50 MB one skips that prefix.
 const _bigJsonParser = express.json({ limit: '50mb' });
-app.use((req, res, next) => (isAiPath(req.path) ? next() : _bigJsonParser(req, res, next)));
+app.use((req, res, next) => (isAiPath(req.path) || isSchemaPath(req.path) ? next() : _bigJsonParser(req, res, next)));
 app.use(express.urlencoded({ extended: true }));
 
 /**
@@ -93,6 +95,7 @@ function getAiTransport(targetUrl) {
   return transport;
 }
 
+app.use('/api/schemas', createSchemaRouter());
 app.use('/api/ai', createAiRouter({ getTransport: getAiTransport, dataDir: process.env.APILIX_DATA_DIR }));
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -646,7 +649,7 @@ app.get('/api/wsdl', async (req, res) => {
 // ─── App settings ──────────────────────────────────────────────────────────────
 
 app.post('/api/settings', (req, res) => {
-  const { proxy, cors: corsConfig, requests } = req.body ?? {};
+  const { proxy, cors: corsConfig, requests, schemas: schemaSettings } = req.body ?? {};
   if (proxy && typeof proxy === 'object') {
     serverConfig.proxyEnabled = proxy.enabled === true;
     serverConfig.httpProxy = typeof proxy.httpProxy === 'string' ? proxy.httpProxy : '';
@@ -673,6 +676,9 @@ app.post('/api/settings', (req, res) => {
       serverConfig.clientCertificates = normalizeClientCertificates(requests.clientCertificates);
     }
   }
+  if (schemaSettings && typeof schemaSettings === 'object' && schemaSettings.validationTimeoutMs !== undefined) {
+    setSchemaValidationTimeoutMs(schemaSettings.validationTimeoutMs);
+  }
   setExecutorConfig(serverConfig);
   res.json({ ok: true });
 });
@@ -681,7 +687,7 @@ app.post('/api/settings', (req, res) => {
 
 app.post('/api/execute', async (req, res) => {
   try {
-    const { item, environment, collectionVariables, globals, dataRow, collVars, cookies, collectionItems, mockBase, requestSettings, mongoConnections, databases } = req.body;
+    const { item, environment, collectionVariables, globals, dataRow, collVars, cookies, collectionItems, mockBase, requestSettings, mongoConnections, databases, schemas } = req.body;
     if (!item || !item.request) {
       return res.status(400).json({ error: 'Missing item.request in body' });
     }
@@ -704,6 +710,9 @@ app.post('/api/execute', async (req, res) => {
       requestSettings: (requestSettings && typeof requestSettings === 'object') ? requestSettings : null,
       mongoConnections: mongoConnections || {},
       databases: dbList,
+      schemaRegistry: Array.isArray(schemas)
+        ? schemas.filter(s => s && typeof s.name === 'string' && s.schema && typeof s.schema === 'object').map(s => ({ name: s.name, schema: s.schema }))
+        : [],
       dbQueryFn: makeDatabaseQueryFn(dbList, runtimeVars),
       dbMongoQueryFn: makeDatabaseMongoQueryFn(dbList, runtimeVars),
       dbRedisCommandFn: makeDatabaseRedisCommandFn(dbList, runtimeVars),
@@ -885,6 +894,15 @@ app.post('/api/run', upload.single('csvFile'), async (req, res) => {
     const payload = JSON.parse(req.body.data || '{}');
     if (payload.allCollectionItems !== undefined && !Array.isArray(payload.allCollectionItems)) {
       return res.status(400).json({ error: 'allCollectionItems must be an array' });
+    }
+    if (payload.schemaMode !== undefined && !['off', 'warn', 'strict'].includes(payload.schemaMode)) {
+      return res.status(400).json({ error: "schemaMode must be 'off', 'warn' or 'strict'" });
+    }
+    if (payload.schemas !== undefined && !Array.isArray(payload.schemas)) {
+      return res.status(400).json({ error: 'schemas must be an array' });
+    }
+    if (payload.links !== undefined && (typeof payload.links !== 'object' || payload.links === null || Array.isArray(payload.links))) {
+      return res.status(400).json({ error: 'links must be an object keyed by request id' });
     }
     let csvText = null;
     let jsonRows = null;

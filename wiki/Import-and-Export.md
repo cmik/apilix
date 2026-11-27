@@ -378,6 +378,8 @@ Exports each selected collection as a **Postman Collection v2.1** JSON file. Inc
 
 When environments are selected, each is exported as a separate `*.postman_environment.json` file that can be imported directly into Postman, Insomnia, or another Apilix instance.
 
+**Response schemas.** Schema links and schemas travel in `apilix` extension fields that Postman ignores: `request.apilix.schemaLinks` on each request and a top-level `apilix.schemas`. The export writes the schemas linked from the collection's requests plus the schemas they reference by name with `$ref`; unused schemas are left out. On import, those schemas are merged into the workspace's schema library: a schema whose id already exists is skipped, and a schema whose name clashes with a different schema is renamed (with its `$ref`s rewritten). See [Response Schemas](Response-Schemas#postman-import-and-export).
+
 ### HAR
 
 Exports each selected collection as an **HTTP Archive (HAR)** file. HAR files can be loaded into browser DevTools, Charles Proxy, Fiddler, or any HAR-compatible tool for replay or analysis.

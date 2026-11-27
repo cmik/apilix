@@ -16,6 +16,7 @@
 import { useState, useMemo, useCallback } from 'react';
 import type { ConflictPackage, MergeConflictNode, WorkspaceData, AppCollection, AppEnvironment, CollectionItem, MockRoute } from '../types';
 import ConfirmModal from './ConfirmModal';
+import { applySchemaResolution } from '../utils/merge/workspaceMerge';
 
 interface ConflictMergeModalProps {
   conflictPackage: ConflictPackage;
@@ -32,6 +33,7 @@ const DOMAIN_LABELS: Record<string, string> = {
   globalVariables: 'Global Variables',
   collectionVariables: 'Collection Variables',
   mockRoute: 'Mock Routes',
+  responseSchema: 'Response Schemas',
 };
 
 const KIND_LABELS: Record<string, string> = {
@@ -576,6 +578,10 @@ function applyResolution(
       } else if (parsed) {
         patchItemInCollections(data.collections, conflict.id, parsed as CollectionItem);
       }
+      return;
+    }
+    case 'responseSchema': {
+      applySchemaResolution(data, conflict.id, value);
       return;
     }
     case 'mockRoute': {

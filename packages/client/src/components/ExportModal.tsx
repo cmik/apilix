@@ -3,6 +3,7 @@ import { useApp } from '../store';
 import type { AppCollection, AppEnvironment } from '../types';
 import { generateHarFromItems } from '../utils/harUtils';
 import { generateHurlFromItems } from '../utils/hurlUtils';
+import { buildPostmanExport } from '../utils/postmanExport';
 import { useToast } from './Toast';
 
 const ExportDocsModal = lazy(() => import('./ExportDocsModal'));
@@ -78,18 +79,7 @@ export default function ExportModal({ onClose }: ExportModalProps) {
       filename = `${safeName}.hurl`;
       mimeType = 'text/plain';
     } else {
-      const exported = {
-        info: {
-          name: col.info.name,
-          description: col.info.description,
-          schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
-          _postman_id: col._id,
-        },
-        item: col.item,
-        auth: col.auth,
-        event: col.event,
-        variable: col.variable,
-      };
+      const exported = buildPostmanExport(col, state.responseSchemas);
       content = JSON.stringify(exported, null, 2);
       filename = `${safeName}.postman_collection.json`;
       mimeType = 'application/json';

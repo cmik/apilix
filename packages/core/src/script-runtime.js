@@ -7,19 +7,7 @@ const xpathLib = require('xpath');
 const { DOMParser } = require('@xmldom/xmldom');
 const { webcrypto } = require('crypto');
 
-// Lazy-initialised Ajv instance for matchSchema assertions
-let _ajv = null;
-function getAjv() {
-  if (!_ajv) {
-    const AjvModule = require('ajv');
-    const Ajv = AjvModule.default || AjvModule;
-    const addFormatsModule = require('ajv-formats');
-    const addFormats = addFormatsModule.default || addFormatsModule;
-    _ajv = new Ajv({ allErrors: false });
-    addFormats(_ajv);
-  }
-  return _ajv;
-}
+const { validateWithTimeout } = require('./schema-guard');
 
 const httpClient = axios.create({
   httpsAgent: new https.Agent({ rejectUnauthorized: false }),
@@ -136,7 +124,7 @@ function createScriptContext() {
 
 // ─── Chainable expect ────────────────────────────────────────────────────────
 
-function createExpect(value, negated, onFail) {
+function createExpect(value, negated, onFail, schemaRegistry) {
   if (negated === undefined) negated = false;
 
   function assert(condition, message) {
@@ -151,7 +139,7 @@ function createExpect(value, negated, onFail) {
   const obj = {
     // Negation
     get not() {
-      return createExpect(value, !negated, onFail);
+      return createExpect(value, !negated, onFail, schemaRegistry);
     },
 
     // Chainable words (no-op getters)
@@ -421,12 +409,19 @@ function createExpect(value, negated, onFail) {
 
     // ── JSON Schema validation ───────────────────────────────────────────
     matchSchema(schema) {
-      const ajv = getAjv();
-      const valid = ajv.validate(schema, value);
-      const err = ajv.errors && ajv.errors[0];
-      const loc = err && err.instancePath ? err.instancePath : '(root)';
-      const message = `Expected value to ${n}match schema${valid ? '' : `: ${loc} ${err && err.message ? err.message : 'validation failed'}`}`;
-      assert(valid, message);
+      // `schema` is a JSON Schema object or the name of a schema from the schema registry.
+      const registry = Array.isArray(schemaRegistry) ? schemaRegistry : [];
+      if (typeof schema === 'string' && !registry.some(r => r && r.name === schema)) {
+        const known = registry.map(r => r && r.name).filter(Boolean).sort();
+        throw new Error(`matchSchema: unknown schema "${schema}". ${known.length ? `Available schemas: ${known.join(', ')}` : 'No response schemas are defined for this collection.'}`);
+      }
+      const res = validateWithTimeout(schema, value, { schemas: registry, allErrors: false });
+      if (res.timedOut || res.unsafePattern) throw new Error(`matchSchema: ${res.errors[0].message}`);
+      if (res.schemaError) throw new Error(`matchSchema: invalid schema: ${res.schemaError}`);
+      const err = res.errors[0];
+      const loc = err && err.path ? err.path : '(root)';
+      const message = `Expected value to ${n}match schema${res.valid ? '' : `: ${loc} ${err && err.message ? err.message : 'validation failed'}`}`;
+      assert(res.valid, message);
       return obj;
     },
   };
@@ -442,6 +437,7 @@ function createApx(response, variables, updatedVariables, updatedGlobalMutations
   const collectionItems = (deps && deps.collectionItems) || [];
   const executeRequestFn = (deps && deps.executeRequestFn) || null;
   const execContext = (deps && deps.context) || {};
+  const schemaRegistry = (deps && deps.schemaRegistry) || execContext.schemaRegistry || [];
   const requestId = (deps && deps.requestId) || '';
   const iteration = (deps && deps.iteration) || 1;
 
@@ -531,11 +527,11 @@ function createApx(response, variables, updatedVariables, updatedGlobalMutations
     test: testFn,
 
     expect(value) {
-      return createExpect(value);
+      return createExpect(value, false, undefined, schemaRegistry);
     },
 
     softExpect(value) {
-      return createExpect(value, false, (msg) => softFailures.push(msg));
+      return createExpect(value, false, (msg) => softFailures.push(msg), schemaRegistry);
     },
 
     assertAll(label) {

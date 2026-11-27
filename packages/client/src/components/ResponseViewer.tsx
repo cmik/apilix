@@ -6,6 +6,7 @@ import { buildExampleFromResponse, addExampleToItem, exampleSaveBlocker } from '
 import type { TestResult, TlsCertInfo, NetworkTimings, RedirectHop } from '../types';
 import SaveToVarModal from './SaveToVarModal';
 import AssertionSuggestPanel from './AssertionSuggestPanel';
+import { SchemaBadge } from './ResponseSchemaTab';
 import ExplainFailurePanel from './ExplainFailurePanel';
 import type { AiAssistProps } from './AssertionSuggestPanel';
 import { aiSuggestAssertions, aiExplainFailure, toAiApiError } from '../api';
@@ -1299,6 +1300,7 @@ export default function ResponseViewer() {
             <span className="text-slate-400 text-xs">{response.statusText}</span>
             <span className="text-slate-500 text-xs">{response.responseTime} ms</span>
             <span className="text-slate-500 text-xs">{formatSize(response.size)}</span>
+            <SchemaBadge response={response} />
           </>
         )}
         {/* Test summary badge */}

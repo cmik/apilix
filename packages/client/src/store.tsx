@@ -1,12 +1,13 @@
 import React, { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
 import apilixLogo from './assets/apilix2.svg';
-import type { AppState, AppAction, AppSettings, AppCollection, AppEnvironment, CollectionItem, RequestTab, CookieJar, Cookie, MockRoute, MockCollection, Workspace, WorkspaceData, HistoryRequest, SavedRunnerRun, MongoQueryTab, AiKeyStatus } from './types';
+import type { AppState, AppAction, AppSettings, AppCollection, AppEnvironment, CollectionItem, RequestTab, CookieJar, Cookie, MockRoute, MockCollection, Workspace, WorkspaceData, HistoryRequest, SavedRunnerRun, MongoQueryTab, AiKeyStatus, ResponseSchema } from './types';
 import * as StorageDriver from './utils/storageDriver';
 import * as SnapshotEngine from './utils/snapshotEngine';
 import { API_BASE, aiPutConfig, aiClearConfig } from './api';
 import type { PostmanVersion } from './utils/postmanValidator';
 import { buildSecretSet } from './utils/secretMask';
 import { normalizeGlobalState, mergeGlobalMetaWithValues } from './utils/globalVariables';
+import { readImportedSchemas, addSchema, updateSchema, stripSchemaLinks, stripItemSchemaLinks, setRequestSchemaLinks, withSchemaLinks, loadSchemaRunMode, clampSchemaTimeoutMs, DEFAULT_SCHEMA_TIMEOUT_MS } from './utils/responseSchemas';
 import { createAiConfigPusher } from './utils/aiConfigPush';
 import { DEFAULT_AI_SETTINGS, aiDestination, applyAiSettingsPatch, validateAiSettings } from './utils/aiDefaults';
 
@@ -78,6 +79,7 @@ function normalizeWorkspaceDataShape(data: Partial<WorkspaceData>): WorkspaceDat
     mockCollections: data.mockCollections ?? [],
     mockRoutes: data.mockRoutes ?? [],
     mockPort: data.mockPort ?? 3002,
+    responseSchemas: data.responseSchemas ?? [],
   };
 }
 
@@ -116,6 +118,8 @@ export const initialState: AppState = {
   mockRoutes: [],
   mockServerRunning: false,
   mockPort: 3002,
+  responseSchemas: [],
+  schemaRunMode: 'warn',
   runnerPreselection: null,
   captureEntries: [],
   captureRunning: false,
@@ -146,6 +150,7 @@ export const initialState: AppState = {
     requestTimeout: 30000,
     followRedirects: true,
     sslVerification: false,
+    schemaValidationTimeoutMs: DEFAULT_SCHEMA_TIMEOUT_MS,
     proxyEnabled: false,
     httpProxy: '',
     httpsProxy: '',
@@ -700,6 +705,51 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'SET_COOKIE_JAR':
       return { ...state, cookieJar: action.payload };
 
+    case 'SCHEMA_ADD':
+      return { ...state, responseSchemas: addSchema(state.responseSchemas, action.payload) };
+
+    case 'SCHEMA_UPDATE':
+      return { ...state, responseSchemas: updateSchema(state.responseSchemas, action.payload.id, action.payload.patch) };
+
+    case 'SCHEMA_DELETE':
+      return {
+        ...state,
+        responseSchemas: state.responseSchemas.filter(s => s.id !== action.payload),
+        // Links to a deleted schema would dangle: drop them everywhere.
+        collections: state.collections.map(c => ({ ...c, item: stripSchemaLinks(c.item, action.payload) })),
+        // ...including the copies held by open tabs and the active request.
+        tabs: state.tabs.map(t => stripItemSchemaLinks(t.item, action.payload) === t.item ? t : { ...t, item: stripItemSchemaLinks(t.item, action.payload) }),
+        activeRequest: state.activeRequest && stripItemSchemaLinks(state.activeRequest.item, action.payload) !== state.activeRequest.item
+          ? { ...state.activeRequest, item: stripItemSchemaLinks(state.activeRequest.item, action.payload) }
+          : state.activeRequest,
+      };
+
+    case 'SCHEMA_SET_ALL':
+      return { ...state, responseSchemas: action.payload };
+
+    case 'SET_SCHEMA_RUN_MODE':
+      return { ...state, schemaRunMode: action.payload };
+
+    case 'REQUEST_SET_SCHEMA_LINKS': {
+      const { collectionId, requestId, links } = action.payload;
+      const collections = state.collections.map(c =>
+        c._id === collectionId ? { ...c, item: setRequestSchemaLinks(c.item, requestId, links) } : c
+      );
+      const col = collections.find(c => c._id === collectionId);
+      const updatedItem = col ? findItemInTree(col.item, requestId) : null;
+      if (!updatedItem) return state;
+      const tabs = state.tabs.map(t => (t.item.id === requestId && t.collectionId === collectionId ? { ...t, item: withSchemaLinks(t.item, links) } : t));
+      const activeTab = tabs.find(t => t.id === state.activeTabId);
+      return {
+        ...state,
+        collections,
+        tabs,
+        activeRequest: state.activeRequest && state.activeRequest.item.id === requestId && state.activeRequest.collectionId === collectionId
+          ? { ...state.activeRequest, item: activeTab && activeTab.item.id === requestId ? activeTab.item : withSchemaLinks(state.activeRequest.item, links) }
+          : state.activeRequest,
+      };
+    }
+
     case 'ADD_MOCK_COLLECTION':
       return { ...state, mockCollections: [...state.mockCollections, action.payload] };
 
@@ -789,6 +839,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         mockCollections: normalized.mockCollections,
         mockRoutes: normalized.mockRoutes,
         mockPort: normalized.mockPort,
+        responseSchemas: normalized.responseSchemas ?? [],
         terminalSession: { connected: false, sessionId: null, cwd: null, shell: null, pid: null, exitCode: null },
       };
     }
@@ -811,6 +862,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         mockCollections: [],
         mockRoutes: [],
         mockPort: 3002,
+        responseSchemas: [],
         tabs: [],
         activeTabId: null,
         activeRequest: null,
@@ -850,6 +902,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         mockCollections: normalized.mockCollections,
         mockRoutes: normalized.mockRoutes,
         mockPort: normalized.mockPort,
+        responseSchemas: normalized.responseSchemas ?? [],
         tabs: [],
         activeTabId: null,
         activeRequest: null,
@@ -913,6 +966,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         mockCollections: normalized.mockCollections,
         mockRoutes: normalized.mockRoutes,
         mockPort: normalized.mockPort,
+        responseSchemas: normalized.responseSchemas ?? [],
         tabs: [],
         activeTabId: null,
         activeRequest: null,
@@ -960,6 +1014,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         mockCollections: data.mockCollections ?? [],
         mockRoutes: data.mockRoutes ?? [],
         mockPort: data.mockPort ?? 3002,
+        responseSchemas: data.responseSchemas ?? [],
         terminalSession: { connected: false, sessionId: null, cwd: null, shell: null, pid: null, exitCode: null },
       };
     }
@@ -1146,6 +1201,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [aiKeyVersion, setAiKeyVersion] = useState(0);
   const latestAiSettingsRef = useRef(initialState.ai.settings);
 
+  // Schema run mode is a per-device preference (not workspace content): kept in localStorage
+  // (written by the component that changes it, see saveSchemaRunMode).
+  useEffect(() => {
+    dispatch({ type: 'SET_SCHEMA_RUN_MODE', payload: loadSchemaRunMode() });
+  }, []);
+
   // ── Async init ───────────────────────────────────────────────────────────
   useEffect(() => {
     async function init() {
@@ -1269,6 +1330,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         mockCollections: state.mockCollections,
         mockRoutes: state.mockRoutes,
         mockPort: state.mockPort,
+        responseSchemas: state.responseSchemas,
       };
       await StorageDriver.writeWorkspace(state.activeWorkspaceId, workspaceData);
       await StorageDriver.writeManifest({ workspaces: state.workspaces, activeWorkspaceId: state.activeWorkspaceId });
@@ -1278,7 +1340,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSaveTimer(t);
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.collections, state.environments, state.activeEnvironmentId, state.databases, state.activeDatabaseId, state.collectionVariables, state.globalVariables, state.globalVariableMeta, state.cookieJar, state.mockCollections, state.mockRoutes, state.mockPort, state.workspaces, state.activeWorkspaceId, state.storageReady]);
+  }, [state.collections, state.environments, state.activeEnvironmentId, state.databases, state.activeDatabaseId, state.collectionVariables, state.globalVariables, state.globalVariableMeta, state.cookieJar, state.mockCollections, state.mockRoutes, state.mockPort, state.responseSchemas, state.workspaces, state.activeWorkspaceId, state.storageReady]);
   const historyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const historyLoadedWorkspaceRef = useRef<string | null>(null);
   const skipNextHistoryPersistRef = useRef(false);
@@ -1487,7 +1549,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!state.storageReady) return;
     const { proxyEnabled, httpProxy, httpsProxy, noProxy, corsAllowedOrigins,
-            requestTimeout, followRedirects, sslVerification, customCAs, clientCertificates } = state.settings;
+            requestTimeout, followRedirects, sslVerification, customCAs, clientCertificates, schemaValidationTimeoutMs } = state.settings;
     fetch(`${API_BASE}/settings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1495,12 +1557,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         proxy: { enabled: proxyEnabled ?? false, httpProxy: httpProxy ?? '', httpsProxy: httpsProxy ?? '', noProxy: noProxy ?? '' },
         cors: { allowedOrigins: corsAllowedOrigins ?? '' },
         requests: { timeout: requestTimeout ?? 30000, followRedirects: followRedirects !== false, sslVerification: sslVerification ?? false, customCAs: customCAs ?? '', clientCertificates: clientCertificates ?? [] },
+        schemas: { validationTimeoutMs: clampSchemaTimeoutMs(schemaValidationTimeoutMs) },
       }),
     }).catch(() => { /* server may not be up yet; safe to ignore */ });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.settings.proxyEnabled, state.settings.httpProxy, state.settings.httpsProxy, state.settings.noProxy,
       state.settings.corsAllowedOrigins, state.settings.requestTimeout, state.settings.followRedirects,
-      state.settings.sslVerification, state.settings.customCAs, state.settings.clientCertificates, state.storageReady]);
+      state.settings.sslVerification, state.settings.customCAs, state.settings.clientCertificates, state.settings.schemaValidationTimeoutMs, state.storageReady]);
 
   // ── AI configuration ─────────────────────────────────────────────────────
   latestAiSettingsRef.current = state.ai.settings;
@@ -1629,6 +1692,8 @@ export function generateId(): string {
 
 export interface CollectionParseResult {
   collection: AppCollection;
+  /** Response schemas carried by the file's `apilix.schemas` extension (sanitised). */
+  schemas: ResponseSchema[];
   version: PostmanVersion;
   validationWarnings: string[];
 }
@@ -1648,8 +1713,13 @@ export async function parseCollectionFile(json: unknown): Promise<CollectionPars
     }
   }
   const col = json as AppCollection;
+  // `apilix.schemas` moves to the workspace registry; the collection keeps no copy.
+  const schemas = readImportedSchemas(col.apilix);
+  const { apilix, ...rest } = col;
+  const otherExt = apilix ? Object.fromEntries(Object.entries(apilix).filter(([k]) => k !== 'schemas')) : {};
   return {
-    collection: { ...col, _id: generateId() },
+    collection: { ...rest, ...(Object.keys(otherExt).length > 0 ? { apilix: otherExt } : {}), _id: generateId() },
+    schemas,
     version,
     validationWarnings: valid ? [] : errors,
   };

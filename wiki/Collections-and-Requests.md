@@ -23,6 +23,7 @@ Collections are the primary way to organise your API work in Apilix. A collectio
       - [GraphQL](#graphql)
     - [Authentication](#authentication)
     - [Pre-request \& Test Scripts](#pre-request--test-scripts)
+    - [Response Schemas](#response-schemas)
     - [Request Description](#request-description)
       - [MongoDB Requests](#mongodb-requests)
       - [SQL, Redis, and DynamoDB Requests](#sql-redis-and-dynamodb-requests)
@@ -254,6 +255,10 @@ Open the **Pre-req** and **Tests** tabs to write JavaScript scripts for this spe
 Both tabs feature a Monaco editor with `apx.*` API autocomplete and syntax highlighting. See [Scripting](Scripting) for the full API reference.
 
 A **Script Snippets Library** button opens a panel of reusable code snippets (HMAC signing, JWT generation, timestamp injection, etc.) that you can insert with a single click.
+
+### Response Schemas
+
+Open the **Schema** tab to link a JSON Schema from the workspace schema library to each response status of the request (`200`, `4xx`, `default`), create a schema from the last response with **Infer from last response**, and choose a per-link mode (**Run mode**, **Off**, **Warn**, **Strict**). After you send the request, the response status bar shows a badge with the result of the check. The Collection Runner and the CLI use the same links. See [Response Schemas](Response-Schemas).
 
 ### Request Description
 
@@ -571,3 +576,4 @@ The console is scoped to the current session and is cleared when you close the a
 - [Scripting](Scripting) — write pre-request and test scripts
 - [Import & Export](Import-and-Export) — import Postman collections, OpenAPI specs, cURL, and more
 - [Collection Runner](Collection-Runner) — run all requests in a collection automatically
+- [Response Schemas](Response-Schemas) — validate response bodies against linked JSON Schemas

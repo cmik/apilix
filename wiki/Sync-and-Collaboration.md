@@ -171,7 +171,7 @@ The merge modal uses three data sources:
 
 The modal is divided into three columns:
 
-- **Left** — Conflict navigator, grouped by domain (Requests, Collections, Environments, Global Variables, Mock Routes). An "unresolved" badge shows how many conflicts remain.
+- **Left** — Conflict navigator, grouped by domain (Requests, Collections, Environments, Global Variables, Mock Routes, Response Schemas). An "unresolved" badge shows how many conflicts remain.
 - **Centre** — Side-by-side comparison of the local value vs the remote value for the selected conflict, with the base value shown as a hint below.
 - **Right** — Merged preview — the current resolved value. Editable in free-form mode.
 
@@ -830,6 +830,19 @@ Merged as flat key→value maps with the same rule as environment values above.
 #### Mock Routes
 
 Merged by route `id`, with `delete-vs-edit` logic equivalent to requests. Route content conflicts are raised as `field-overlap` at the route level (no sub-field merge for routes).
+
+#### Response Schemas
+
+Merged by schema `id`. Only the name, description, and JSON Schema count as changes (version, timestamps, and history do not):
+
+| Scenario | Result |
+|---|---|
+| Changed only by one side | Take that side (auto) |
+| Changed by both, identical content | Take local (auto) |
+| Changed by both, different content | `field-overlap` conflict on the schema name; local is kept until you resolve it |
+| Deleted by one side, edited by the other | `delete-vs-edit` conflict |
+
+Names stay unique (case-insensitive) after a merge: later duplicates get a "(2)", "(3)" suffix. A remote workspace without a schema list (saved by an older version) counts as "no change", not as "all schemas deleted". See [Response Schemas](Response-Schemas#sync-conflicts).
 
 #### Fields Outside the Merge Pipeline
 

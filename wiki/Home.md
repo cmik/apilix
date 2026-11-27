@@ -34,6 +34,7 @@ Apilix is a lightweight, open-source API development and testing tool built for 
 | 🕸️ | GraphQL with schema introspection | 🏷️ | Network timeline, TLS chain, redirect chain |
 | 🍪 | Cookie manager | 🕐 | Request History with snapshot re-open |
 | ⚡ | Keyboard shortcuts & dark/light theme | 🖥️ | Headless CLI runner — JSON & JUnit reporters, CSV data |
+| 📐 | Response schemas — infer, link per status, validate in Runner/CLI | | |
 
 ---
 
@@ -119,7 +120,7 @@ The Apilix UI is divided into five main zones:
 
 | Zone | Description |
 |---|---|
-| **Activity Bar** (far left) | Switch between Collections, Environments, Request History, Globals, Variables, Runner, Mock Server, Browser Capture, and Database |
+| **Activity Bar** (far left) | Switch between Collections, Environments, Request History, Globals, Variables, Runner, Mock Server, Browser Capture, Database, and Schemas |
 | **Sidebar** | Collection tree — browse, create, and organize collections, folders, and requests |
 | **Tab Bar** | Open requests as tabs; each tab saves independently |
 | **Request Builder** | Main editor — URL bar, method picker, Params / Headers / Body / Auth / Scripts / Settings tabs |
@@ -146,6 +147,7 @@ The Apilix UI is divided into five main zones:
 
 ### Advanced Workflows
 - [Collection Runner](Collection-Runner) — Data-driven runs, pause/resume/stop, performance metrics, headless CLI
+- [Response Schemas](Response-Schemas) — JSON Schema library, inference from a response, per-status links, runner/CLI `--schema-mode`, `matchSchema()`
 - [Mock Server](Mock-Server) — Routes, dynamic responses, WebSocket support, traffic inspector
 - [Request History](Request-History) — Automatic per-workspace request log, day-grouped, snapshot re-open
 - [Sync & Collaboration](Sync-and-Collaboration) — Git, S3, HTTP, Team server sync; conflict resolution

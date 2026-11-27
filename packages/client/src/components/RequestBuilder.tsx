@@ -18,6 +18,7 @@ import CodeEditor from './CodeEditor';
 import type { CodeLanguage } from './CodeEditor';
 import ScriptSnippetsLibrary from './ScriptSnippetsLibrary';
 import ScriptTab from './ScriptTab';
+import ResponseSchemaTab from './ResponseSchemaTab';
 import ScriptEditor from './ScriptEditor';
 import OAuthConfigPanel from './OAuthConfigPanel';
 import { useToast } from './Toast';
@@ -239,7 +240,7 @@ function buildEditStateForMethod(edit: ReturnType<typeof itemToEditState>, metho
   return { ...edit, method };
 }
 
-const TABS = ['Params', 'Auth', 'Headers', 'Body', 'Pre-request', 'Tests', 'Settings', 'Docs'] as const;
+const TABS = ['Params', 'Auth', 'Headers', 'Body', 'Pre-request', 'Tests', 'Schema', 'Settings', 'Docs'] as const;
 type Tab = typeof TABS[number];
 type RawLanguage = NonNullable<NonNullable<NonNullable<CollectionBody['options']>['raw']>['language']>;
 
@@ -1505,6 +1506,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
         collectionItems: authResolvedItems,
         requestSettings: item.request?.requestSettings,
         databases: state.databases,
+        schemas: state.responseSchemas,
       });
 
       dispatch({ type: 'SET_TAB_RESPONSE', payload: { tabId, response: result } });
@@ -1716,6 +1718,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
         collectionItems: authResolvedItems,
         mockBase,
         databases: state.databases,
+        schemas: state.responseSchemas,
       });
       dispatch({ type: 'SET_TAB_RESPONSE', payload: { tabId, response: result } });
 
@@ -2917,6 +2920,14 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             requestItems={flattenRequestItems(col?.item ?? [])}
             aiFixRequest={aiFix && aiFix.tabId === activeTab?.id ? aiFix : null}
             onAiFixConsumed={onAiFixConsumed}
+          />
+        )}
+
+        {activeRequestTab === 'Schema' && activeReq && (
+          <ResponseSchemaTab
+            collectionId={activeReq.collectionId}
+            item={activeTab?.item ?? activeReq.item}
+            response={activeTab?.response ?? null}
           />
         )}
 

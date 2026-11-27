@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import type { CollectionItem, AppCollection, MockCollection, MockRoute } from '../types';
 import { useApp, generateId } from '../store';
 import { renameExampleOnItem, removeExampleFromItem, exampleToResponse, withExamples } from '../utils/exampleUtils';
+import { buildPostmanExport } from '../utils/postmanExport';
 import { buildVarMap, buildCollectionDefinitionVarMap, resolveVariables } from '../utils/variableResolver';
 import { buildVariableSuggestions } from '../utils/variableAutocomplete';
 import {
@@ -1234,18 +1235,7 @@ function CollectionNode({ collection, startRenaming, onRenamingDone, isDragging,
   }
 
   function handleExport() {
-    const exported = {
-      info: {
-        name: collection.info.name,
-        description: collection.info.description,
-        schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
-        _postman_id: collection._id,
-      },
-      item: collection.item,
-      auth: collection.auth,
-      event: collection.event,
-      variable: collection.variable,
-    };
+    const exported = buildPostmanExport(collection, state.responseSchemas);
     const blob = new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

@@ -171,3 +171,15 @@ describe('notes for what was skipped', () => {
     expect(inferAssertions(input())).toEqual(inferAssertionsWithNotes(input()).suggestions);
   });
 });
+
+import { FORMATS as CORE_FORMATS, isVolatileKey as coreIsVolatileKey, VOLATILE_SNAKE_RE, VOLATILE_CAMEL_RE } from '@apilix/core/schema-rules';
+
+describe('assertion inference shares its rules with @apilix/core', () => {
+  it('core exposes the volatile-key rules and format regexes it extracted', () => {
+    expect(CORE_FORMATS.map(f => f.name)).toEqual(['uuid', 'iso-date', 'email', 'url']);
+    expect(VOLATILE_SNAKE_RE.test('created_at')).toBe(true);
+    expect(VOLATILE_CAMEL_RE.test('userId')).toBe(true);
+    expect(coreIsVolatileKey('valid')).toBe(false);
+    expect(coreIsVolatileKey('request_id')).toBe(true);
+  });
+});

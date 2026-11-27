@@ -11,6 +11,94 @@ try {
 }
 const { executeRequest, flattenItemsWithScripts } = require('./request-engine');
 const { createScriptContext } = require('./script-runtime');
+const { validateWithTimeout } = require('./schema-guard');
+
+const SCHEMA_MODES = ['off', 'warn', 'strict'];
+
+/** Normalise a requested schema mode: unknown/absent -> 'warn'. */
+function normalizeSchemaMode(mode) {
+  return SCHEMA_MODES.includes(mode) ? mode : 'warn';
+}
+
+/** Effective mode of one link under the run-level ceiling. */
+function effectiveSchemaMode(runMode, linkMode) {
+  if (runMode === 'off' || linkMode === 'off') return 'off';
+  const own = SCHEMA_MODES.includes(linkMode) ? linkMode : runMode;
+  return runMode === 'warn' && own === 'strict' ? 'warn' : own;
+}
+
+/**
+ * Pick the link for a response status: exact code ('404'), then class ('4xx'), then 'default'.
+ */
+function resolveSchemaLink(links, status) {
+  if (!Array.isArray(links) || links.length === 0 || !Number.isInteger(status)) return null;
+  const exact = String(status);
+  const klass = `${Math.floor(status / 100)}xx`;
+  const norm = l => String(l && l.match || '').toLowerCase();
+  return links.find(l => norm(l) === exact)
+    || links.find(l => norm(l) === klass)
+    || links.find(l => norm(l) === 'default')
+    || null;
+}
+
+/**
+ * Build the synthetic `Schema: <status>` test for a response, or null when nothing is linked / mode is off.
+ * Violation messages never contain response values (see schema-validator).
+ *
+ * `runMode` is a ceiling: 'off' disables everything, 'warn' downgrades strict links to warn, 'strict' lets each
+ * link's own mode apply (a link mode of 'off' still disables that link; a link without a mode inherits the run mode).
+ * `ctx` (optional, per run): `{ registry, timedOut: Map }` so the registry is built once and a schema that timed
+ * out is not re-validated (and does not stall again) for every further request of the run.
+ */
+function buildSchemaTest(result, links, schemas, runMode, ctx) {
+  if (runMode === 'off') return null;
+  if (!result || result.error || !Number.isInteger(result.status)) return null;
+  if (result.protocol && result.protocol !== 'http') return null;
+  const link = resolveSchemaLink(links, result.status);
+  if (!link) return null;
+  const mode = effectiveSchemaMode(runMode, link.mode);
+  if (mode === 'off') return null;
+
+  const name = `Schema: ${result.status}`;
+  const severity = mode === 'strict' ? 'fail' : 'warn';
+  const violation = (message) => ({
+    name, passed: severity === 'fail' ? false : true, error: message, synthetic: true, schemaSeverity: severity,
+  });
+
+  const entry = (Array.isArray(schemas) ? schemas : []).find(s => s && s.id === link.schemaId);
+  if (!entry) return violation(`Linked schema "${String(link.schemaId).slice(0, 80)}" was not found`);
+
+  const body = typeof result.body === 'string' ? result.body : '';
+  if (body.trim() === '') {
+    // Nothing to validate (204 / empty body): a skipped, passing synthetic test rather than a violation.
+    return { name, passed: null, error: 'empty body, nothing to validate', synthetic: true, skipped: true };
+  }
+  let data;
+  try {
+    data = JSON.parse(body);
+  } catch (_) {
+    return violation('Response body is not valid JSON');
+  }
+
+  const cacheKey = String(link.schemaId);
+  const timedOutCache = ctx && ctx.timedOut instanceof Map ? ctx.timedOut : null;
+  if (timedOutCache && timedOutCache.has(cacheKey)) return violation(timedOutCache.get(cacheKey));
+
+  const registry = ctx && Array.isArray(ctx.registry)
+    ? ctx.registry
+    : schemas.filter(s => s && typeof s.name === 'string' && s.schema).map(s => ({ name: s.name, schema: s.schema }));
+  const res = validateWithTimeout(entry.schema, data, { schemas: registry, allErrors: true });
+  if (res.timedOut || res.unsafePattern) {
+    const msg = `Schema "${entry.name}" could not be checked: ${res.errors[0].message}`;
+    if (res.timedOut && timedOutCache) timedOutCache.set(cacheKey, `${msg} (skipped for the rest of this run)`);
+    return violation(msg);
+  }
+  if (res.schemaError) return violation(`Schema "${entry.name}" is invalid: ${res.schemaError}`);
+  if (res.valid) return { name, passed: true, error: null, synthetic: true };
+  const shown = res.errors.slice(0, 5).map(e => `${e.path || '(root)'} ${e.message}`);
+  const more = res.errors.length > 5 || res.truncated ? ` (+${res.truncated ? 'more than ' : ''}${res.errors.length - 5} more)` : '';
+  return violation(`Does not match schema "${entry.name}": ${shown.join('; ')}${more}`);
+}
 
 const MAX_RUN_RUNTIME_MS = 1800 * 1000;
 
@@ -182,6 +270,13 @@ async function executePreparedCollectionRun(prepared, options = {}) {
     dbRedisCommandFn,
     dbDynamoOperationFn,
   } = payload;
+  const schemaMode = normalizeSchemaMode(payload.schemaMode);
+  const schemas = Array.isArray(payload.schemas)
+    ? payload.schemas
+    : (Array.isArray(collection?.apilix?.schemas) ? collection.apilix.schemas : []);
+  const linksByRequestId = (payload.links && typeof payload.links === 'object' && !Array.isArray(payload.links)) ? payload.links : {};
+  const schemaRegistry = schemas.filter(s => s && typeof s.name === 'string' && s.schema).map(s => ({ name: s.name, schema: s.schema }));
+  const schemaCtx = { registry: schemaRegistry, timedOut: new Map() };
   const maxRetries = Math.max(0, Math.min(10, parseInt(payload.maxRetries, 10) || 0));
   const _rawRetryDelay = parseInt(payload.retryDelay, 10);
   const retryDelay = Math.max(0, Math.min(30000, Number.isNaN(_rawRetryDelay) ? 1000 : _rawRetryDelay));
@@ -268,6 +363,7 @@ async function executePreparedCollectionRun(prepared, options = {}) {
         dbMongoQueryFn: dbMongoQueryFn || null,
         dbRedisCommandFn: dbRedisCommandFn || null,
         dbDynamoOperationFn: dbDynamoOperationFn || null,
+        schemaRegistry,
       });
 
       if (result.updatedEnvironment) currentEnv = result.updatedEnvironment;
@@ -313,6 +409,7 @@ async function executePreparedCollectionRun(prepared, options = {}) {
             dbMongoQueryFn: dbMongoQueryFn || null,
             dbRedisCommandFn: dbRedisCommandFn || null,
             dbDynamoOperationFn: dbDynamoOperationFn || null,
+            schemaRegistry,
           });
           if (result.updatedEnvironment) currentEnv = result.updatedEnvironment;
           if (result.updatedCollectionVariables) currentCollVars = result.updatedCollectionVariables;
@@ -321,6 +418,14 @@ async function executePreparedCollectionRun(prepared, options = {}) {
         }
       }
       result._retryAttempts = retryAttempts;
+
+      if (schemaMode !== 'off') {
+        const links = (item.id && Array.isArray(linksByRequestId[item.id]))
+          ? linksByRequestId[item.id]
+          : item.request?.apilix?.schemaLinks;
+        const schemaTest = buildSchemaTest(result, links, schemas, schemaMode, schemaCtx);
+        if (schemaTest) result.testResults = [...(result.testResults || []), schemaTest];
+      }
 
       const resultData = toResultData(item, result, i + 1);
       if (collectResults && iterationRecord) iterationRecord.results.push(resultData);
@@ -439,4 +544,9 @@ module.exports = {
   InputError,
   prepareCollectionRun,
   executePreparedCollectionRun,
+  resolveSchemaLink,
+  buildSchemaTest,
+  effectiveSchemaMode,
+  normalizeSchemaMode,
+  SCHEMA_MODES,
 };
