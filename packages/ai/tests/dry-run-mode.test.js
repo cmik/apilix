@@ -87,7 +87,7 @@ test('the decision is memoised for definitive answers', async () => {
   });
 });
 
-test('parse-only: a valid script spawns NO child and is never executed (canary)', async () => {
+test('parse-only: a valid script is only COMPILED, in a compile-only child, and never executed (canary)', async () => {
   await withEnv('off', async () => {
     const spawned = [];
     const onSpawn = (pid) => spawned.push(pid);
@@ -100,17 +100,18 @@ test('parse-only: a valid script spawns NO child and is never executed (canary)'
     const long = await dryRunScript(`let n = 0; for (let i = 0; i < 1e12; i++) { n = n + i; }`, { response: RESPONSE, onSpawn });
     assert.equal(boom.ok, true);
     assert.equal(long.ok, true);
-    assert.ok(Date.now() - t0 < 500, 'nothing was run');
-    assert.equal(spawned.length, 0, 'no execution child in parse-only mode');
+    assert.ok(Date.now() - t0 < 2500, 'nothing was run');
+    assert.equal(spawned.length, 3, 'one compile-only child per compiled script (ok, boom, long)');
     assert.equal(liveChildren(), 0);
     // Syntax errors and refused scripts are still rejected.
     const bad = await dryRunScript(`apx.test('x', () => {`, { response: RESPONSE, onSpawn });
     assert.equal(bad.ok, false);
     assert.match(bad.reason, /^syntax error/);
+    assert.equal(spawned.length, 4);
     const refused = await dryRunScript(`Object['constructor']('x')()`, { response: RESPONSE, onSpawn });
     assert.equal(refused.ok, false);
     assert.equal(refused.screened, false);
-    assert.equal(spawned.length, 0);
+    assert.equal(spawned.length, 4, 'a refused script never reaches any child');
   });
 });
 

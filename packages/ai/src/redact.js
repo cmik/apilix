@@ -48,15 +48,19 @@ function scrubSecretValues(text, secretValues) {
   return out;
 }
 
+// The literal body is `(?:\\.|(?!Q)[^\\\n])*`: the two alternatives are disjoint (a backslash only matches the first), so an
+// unclosed quote followed by many escapes cannot backtrack exponentially.
 // obj.set('name', 'literal') — apx.environment.set / globals.set / variables.set …
-const SET_CALL = new RegExp(String.raw`(\.set\(\s*)(['"\`])([^'"\`]+)\2(\s*,\s*)(['"\`])((?:\\.|(?!\5).)*)\5`, 'g');
+const SET_CALL = new RegExp(String.raw`(\.set\(\s*)(['"\`])([^'"\`]+)\2(\s*,\s*)(['"\`])((?:\\.|(?!\5)[^\\\n\r\u2028\u2029])*)\5`, 'g');
 // "Authorization": "literal" / headers.add('X-Api-Key', 'literal') style header literals
 const HEADER_LITERAL = new RegExp(
-  String.raw`((['"\`])(?:authorization|proxy-authorization|cookie|x-api-key|api-key|x-auth-token|x-access-token)\2\s*[:,]\s*)(['"\`])((?:\\.|(?!\3).)*)\3`,
+  String.raw`((['"\`])(?:authorization|proxy-authorization|cookie|x-api-key|api-key|x-auth-token|x-access-token)\2\s*[:,]\s*)(['"\`])((?:\\.|(?!\3)[^\\\n\r\u2028\u2029])*)\3`,
   'gi',
 );
 // key: 'literal' / key = 'literal' with a sensitive key
-const ASSIGN_LITERAL = new RegExp(String.raw`(['"]?)([A-Za-z_][\w-]*)\1(\s*[:=]\s*)(['"\`])((?:\\.|(?!\4).)*)\4`, 'g');
+// The key is only tried at the START of an identifier run (or right after leading hyphens: `--token='x'`), so a long run is scanned
+// once, not from every position (quadratic).
+const ASSIGN_LITERAL = new RegExp(String.raw`(?:(?<![\w-])|(?<=(?<![\w-])-{1,4}))(['"]?)([A-Za-z_\d][\w-]*)\1(\s*[:=]\s*)(['"\`])((?:\\.|(?!\4)[^\\\n\r\u2028\u2029])*)\4`, 'g');
 const AUTH_SCHEME_LITERAL = /\b(Bearer|Basic|Token|Digest)\s+(?!\{\{)[A-Za-z0-9._~+/=-]{8,}/g;
 
 /** Mask credential literals in a pre-request / test script. */

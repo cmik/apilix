@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { neutralizeAiText } from '@apilix/core/docs';
 import type { CollectionAuth, CollectionItem } from '../types';
-import type { AiGenerateRequestResult } from '../utils/ai/aiTypes';
+import type { AiGenerateRequestResult, AiScriptAssistResult, AiScriptKind } from '../utils/ai/aiTypes';
+import { maskSecrets } from '../utils/secretMask';
 import { draftToItem, preservedNotes } from '../utils/ai/draftToItem';
 import { effectiveAuth, exfiltrationRisk } from '../utils/ai/hostGuard';
 import { diffLines, diffViews, itemToView, type DiffLine, type ItemView } from '../utils/ai/itemDiff';
@@ -224,6 +225,136 @@ export default function AiProposalDialog({ mode, result, base, targetLabel, busy
           >
             {validated ? 'Apply' : 'Apply anyway'}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Scripting assistant proposal ────────────────────────────────────────────
+
+export interface AiScriptProposalDialogProps {
+  result: AiScriptAssistResult;
+  /** The script in the editor right now: the diff is against this, and nothing is replaced without a click. */
+  current: string;
+  kind: AiScriptKind;
+  /** Secret values to mask again in displayed model text. */
+  secrets: Set<string>;
+  busy?: boolean;
+  onApply: (script: string) => void;
+  onSaveSnippet?: (script: string) => void;
+  onDiscard: () => void;
+  /** Absent for a conversion done without a model. */
+  onRegenerate?: () => void;
+}
+
+const MODE_TITLE = { generate: 'Generated script', explain: 'Explanation', fix: 'Proposed fix', convert: 'Converted script' } as const;
+
+/**
+ * Shows what the scripting assistant proposes as a diff against the current script. Nothing is applied, saved
+ * or run before a click; "Replace" only changes the editor (the request is saved by the user as usual).
+ */
+export function AiScriptProposalDialog({ result, current, kind, secrets, busy, onApply, onSaveSnippet, onDiscard, onRegenerate }: AiScriptProposalDialogProps) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => { closeRef.current?.focus(); }, []);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onDiscard(); } };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [onDiscard]);
+
+  const safe = (t: string) => maskSecrets(neutralizeAiText(t), secrets);
+  const script = result.script;
+  const diff = useMemo(() => (script === undefined ? [] : diffLines(current, script)), [current, script]);
+  const v = result.validation;
+  const validated = !!v && v.validated && !result.maskedInput;
+  const unchanged = script !== undefined && script === current;
+  const remaining = result.converted?.remaining ?? [];
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60" onClick={e => { if (e.target === e.currentTarget) onDiscard(); }}>
+      <div role="dialog" aria-label="AI script proposal" className="bg-slate-900 border border-slate-700 rounded-lg shadow-2xl w-full max-w-3xl mx-4 max-h-[88vh] flex flex-col">
+        <div className="flex items-start justify-between px-4 py-3 border-b border-slate-700 shrink-0">
+          <div>
+            <div className="flex items-center gap-2">
+              <IconSparkle className="w-4 h-4 text-orange-400" />
+              <h2 className="text-sm font-semibold text-slate-100">{MODE_TITLE[result.mode]}</h2>
+              {result.usedModel
+                ? <span className="text-[10px] text-orange-400 border border-orange-500/40 rounded px-1.5 py-0.5" title="Written by an AI model: review before applying">AI-generated</span>
+                : <span className="text-[10px] text-slate-300 border border-slate-600 rounded px-1.5 py-0.5" title="Converted by built-in rules, no AI involved">Converted without AI</span>}
+              <span className="text-[10px] text-slate-500">{kind === 'prerequest' ? 'Pre-request script' : 'Test script'}</span>
+            </div>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {script === undefined ? 'Nothing will be changed.' : 'Applying replaces the script in the editor only; your saved request changes when you save. The script is not run.'}
+            </p>
+          </div>
+          <button type="button" ref={closeRef} onClick={onDiscard} aria-label="Close" className="text-slate-500 hover:text-slate-200 text-xl leading-none px-1">×</button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+          {v?.refused && (
+            <div role="alert" className="text-xs text-red-300 border border-red-500/40 bg-red-500/10 rounded px-2 py-1.5 space-y-1">
+              <p className="font-medium">{script === undefined ? 'Refused for security: the script was removed from this proposal. Nothing was run.' : 'This script uses constructs a validated script may not use. It was not run.'}</p>
+              <p>{safe(v.refused)}</p>
+              {v.flags.length > 0 && <p>Flagged: {v.flags.map(f => <span key={f} className="font-mono mr-1">{safe(f)}</span>)}</p>}
+            </div>
+          )}
+          {script !== undefined && !v?.refused && v && (
+            v.validated ? (
+              <p role="status" className="text-xs text-green-400 border border-green-600/30 bg-green-500/5 rounded px-2 py-1.5">
+                Test-run in the sandbox on a stand-in response: it parses and uses only known APIs. It has not run against your API.
+              </p>
+            ) : !v.executed && v.errors.length === 0 ? (
+              <p role="alert" className="text-xs text-amber-300 border border-amber-500/30 bg-amber-500/5 rounded px-2 py-1.5">
+                <span className="font-medium">Not executed.</span> This build cannot run scripts in an isolated process: it only passed the security screen and a syntax check. Review it carefully.
+              </p>
+            ) : (
+              <div role="alert" className="text-xs text-amber-300 border border-amber-500/30 bg-amber-500/5 rounded px-2 py-1.5 space-y-1">
+                <p className="font-medium">Not validated: review it carefully before applying.</p>
+                <ul className="list-disc ml-4">{v.errors.map((e, i) => <li key={i}>{safe(e.reason)}</li>)}</ul>
+              </div>
+            )
+          )}
+          {result.maskedInput && script !== undefined && (
+            <p role="alert" className="text-xs text-amber-300 border border-amber-500/30 bg-amber-500/5 rounded px-2 py-1.5">
+              Shape-only mode: the model worked from a copy of your script with its string and number values replaced by placeholders. The diff below is against your real script: check that no value was lost or invented.
+            </p>
+          )}
+          {result.warnings.map((w, i) => <p key={i} role="note" className="text-xs text-amber-400">{safe(w)}</p>)}
+
+          <p className="text-xs text-slate-200 whitespace-pre-wrap break-words" data-testid="script-explanation">{safe(result.explanation)}</p>
+
+          {remaining.length > 0 && (
+            <div role="note" className="text-xs text-slate-300">
+              <p className="font-medium text-slate-400">Postman members apx does not have (left as they are or rewritten by the model):</p>
+              <ul className="list-disc ml-4 font-mono text-[11px]">{remaining.map(r => <li key={r.path}>{safe(r.path)} (line {r.line})</li>)}</ul>
+            </div>
+          )}
+
+          {script !== undefined && (unchanged
+            ? <p className="text-xs text-slate-400">The proposal is identical to the current script.</p>
+            : <DiffBlock title="Script (current to proposed)" lines={diff} />)}
+        </div>
+
+        <div className="px-4 py-3 border-t border-slate-700 flex items-center justify-end gap-2 shrink-0">
+          <button type="button" onClick={onDiscard} className="px-3 py-1.5 text-xs rounded bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 font-medium transition-colors">
+            {script === undefined ? 'Close' : 'Ignore'}
+          </button>
+          {onRegenerate && (
+            <button type="button" onClick={onRegenerate} disabled={busy} className="px-3 py-1.5 text-xs rounded bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+              {busy ? 'Regenerating…' : 'Regenerate'}
+            </button>
+          )}
+          {script !== undefined && onSaveSnippet && (
+            <button type="button" onClick={() => onSaveSnippet(script)} className="px-3 py-1.5 text-xs rounded bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-slate-100 font-medium transition-colors">
+              Save as snippet
+            </button>
+          )}
+          {script !== undefined && (
+            <button type="button" onClick={() => onApply(script)} disabled={busy || unchanged} className="px-3 py-1.5 text-xs rounded bg-orange-600 hover:bg-orange-500 text-white font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+              {validated ? 'Replace script' : 'Replace anyway'}
+            </button>
+          )}
         </div>
       </div>
     </div>

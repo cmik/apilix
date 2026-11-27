@@ -1055,4 +1055,5 @@ async function runScript(code, response, variables, deps, vmContext) {
   return { tests, updatedVariables, updatedEnvMutations, updatedCollVarMutations, updatedGlobalMutations, consoleLogs, childRequests, skipRequest: executionSignals.skipRequest, nextRequest: executionSignals.nextRequest, nextRequestById: executionSignals.nextRequestById };
 }
 
-module.exports = { runScript, createScriptContext };
+// createApx is exported for tooling only (scripts/gen-apx-reference.js introspects the real API surface).
+module.exports = { runScript, createScriptContext, createApx };

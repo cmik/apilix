@@ -127,6 +127,8 @@ test('an aborted request kills its child immediately', async () => {
   let pid = 0;
   // Passes the filter (no loop keyword) yet never finishes: a promise storm.
   const running = dryRunScript(`Promise.resolve().then(function loop(){ Promise.resolve().then(loop); });`, { response: RESPONSE, signal: ac.signal, onSpawn: (p) => { pid = p; } });
+  // The capability probe may start first (slow on a loaded machine): wait for the script's child, then let it run a moment.
+  for (let i = 0; i < 100 && !pid; i++) await new Promise(r => setTimeout(r, 50));
   await new Promise(r => setTimeout(r, 200));
   assert.ok(pid > 0 && alive(pid), 'child should be running');
   const t0 = Date.now();

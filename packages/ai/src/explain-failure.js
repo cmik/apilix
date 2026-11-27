@@ -33,6 +33,31 @@ const MAX_VARIABLE_NAME_CHARS = 100;
 const OUTPUT_RESERVE_TOKENS = 1500;
 const MIN_BODY_TOKENS = 50;
 
+/**
+ * Rule-based findings computed by the client (diagnoseLocal.ts) travel BY ID ONLY: each id maps to a fixed
+ * sentence owned by this file, so nothing a request can contain (variable names, hosts, token claims) rides
+ * along on this channel and an unknown id is dropped.
+ */
+const LOCAL_DIAGNOSIS_LABELS = {
+  'unresolved-variable': 'The URL still contains an unresolved {{variable}} placeholder.',
+  'connection-refused': 'The connection was refused (nothing listens on that host and port).',
+  'dns-failure': 'The host name could not be resolved (DNS failure).',
+  'tls-error': 'The TLS handshake or certificate verification failed.',
+  'jwt-expired': 'The bearer token sent in Authorization is a JWT whose exp claim is in the past.',
+  'missing-content-type': 'The request has a body but no Content-Type header.',
+  'double-slash-404': 'The status is 404 and the URL path contains a double slash.',
+};
+const MAX_LOCAL_DIAGNOSIS = 7;
+
+function normalizeLocalDiagnosis(list) {
+  const out = [];
+  for (const id of Array.isArray(list) ? list : []) {
+    if (typeof id === 'string' && Object.prototype.hasOwnProperty.call(LOCAL_DIAGNOSIS_LABELS, id) && !out.includes(id)) out.push(id);
+    if (out.length >= MAX_LOCAL_DIAGNOSIS) break;
+  }
+  return out;
+}
+
 function tryParse(text) {
   try { return { ok: true, value: JSON.parse(text) }; } catch { return { ok: false }; }
 }
@@ -61,7 +86,7 @@ function finalizeText(text, { secretValues, redactSecrets }) {
  * What the feature sends besides the request and response, for the preview dialog. Built with the
  * same helpers as the real payload so the preview cannot drift from what is sent.
  */
-function describeExplainEvidence({ request, name, response, failures, testScript, variableNames, secretValues, redactSecrets, sendResponseBodies }) {
+function describeExplainEvidence({ request, name, response, failures, testScript, variableNames, localDiagnosis, secretValues, redactSecrets, sendResponseBodies }) {
   const shapeOnly = sendResponseBodies === false;
   const list = prepareFailures(normalizeFailures(failures), shapeOnly);
   const script = prepareScript(typeof testScript === 'string' ? testScript : '', { redactSecrets, shapeOnly });
@@ -81,10 +106,12 @@ function describeExplainEvidence({ request, name, response, failures, testScript
     section('Test script', script !== undefined ? script : (shapeOnly ? '(not sent in shape-only mode)' : '(none)')),
     section('Variable names (never values)', names.length ? names.join(', ') : '(none)'),
   ];
+  const local = normalizeLocalDiagnosis(localDiagnosis);
+  if (local.length) sections.push(section('Local diagnosis (rule-based, fixed wording)', local.map(id => LOCAL_DIAGNOSIS_LABELS[id]).join('\n')));
   return sections;
 }
 
-function buildData({ request, name, response, failures, testScript, variableNames, secretValues, redactSecrets, sendResponseBodies, bodyTokens, includeScript }) {
+function buildData({ request, name, response, failures, testScript, variableNames, localDiagnosis, secretValues, redactSecrets, sendResponseBodies, bodyTokens, includeScript }) {
   const redReq = redactRequest(request || {}, { secretValues, redactSecrets });
   const redRes = redactResponse(response || {}, { secretValues, redactSecrets });
   const data = {
@@ -115,6 +142,8 @@ function buildData({ request, name, response, failures, testScript, variableName
     data.testScript = prepareScript(testScript, { redactSecrets, shapeOnly: false });
   }
   if (variableNames.length) data.variableNames = variableNames;
+  const local = normalizeLocalDiagnosis(localDiagnosis);
+  if (local.length) data.localDiagnosis = local.map(id => LOCAL_DIAGNOSIS_LABELS[id]);
   return { text: finalizeText(JSON.stringify(data, null, 1), { secretValues, redactSecrets }), truncated };
 }
 
@@ -203,7 +232,7 @@ async function explainFailure(input) {
   const variableNames = (Array.isArray(input.variableNames) ? input.variableNames : [])
     .filter(n => typeof n === 'string' && n).slice(0, MAX_VARIABLE_NAMES).map(n => clip(n, MAX_VARIABLE_NAME_CHARS));
   const { prompt, truncated } = fitPrompt({
-    request, name, response, failures, testScript: testScript || '', variableNames, secretValues,
+    request, name, response, failures, testScript: testScript || '', variableNames, localDiagnosis: input.localDiagnosis, secretValues,
     redactSecrets: input.redactSecrets !== false, sendResponseBodies: input.sendResponseBodies !== false,
   }, language, maxContextTokens);
   const r = await provider.complete({
@@ -218,4 +247,4 @@ async function explainFailure(input) {
   return { ...explanation, truncated, shapeOnly: input.sendResponseBodies === false, usage: r.usage, model: r.model, latencyMs: r.latencyMs };
 }
 
-module.exports = { explainFailure, sanitizeExplanation, buildData, fitPrompt, maskLiterals, describeExplainEvidence };
+module.exports = { LOCAL_DIAGNOSIS_LABELS, normalizeLocalDiagnosis, explainFailure, sanitizeExplanation, buildData, fitPrompt, maskLiterals, describeExplainEvidence };

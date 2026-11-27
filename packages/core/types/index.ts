@@ -1262,6 +1262,8 @@ export interface RequestTab {
 export interface ConsoleEntry {
   id: string;
   timestamp: number;
+  /** Request tab that produced the entry (lets the console offer "Fix with AI" on that tab's script). */
+  tabId?: string;
   method: string;
   url: string;
   requestHeaders: Array<{ key: string; value: string }>;
