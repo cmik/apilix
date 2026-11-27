@@ -98,10 +98,11 @@ test('runner: timeout is a warning in warn mode and a failure in strict mode', (
 test('sandbox matchSchema: timeout surfaces as a script error, not a crash', async () => {
   guard.setSchemaValidationTimeoutMs(200);
   try {
+    // The input and the schema reach the script as data (response body, variable), never spliced into its source.
     const out = await runScript(
-      `apx.test('slow', () => { apx.expect(${JSON.stringify(EVIL)}).to.matchSchema(${JSON.stringify(REDOS)}); });`,
-      { response: { code: 200, status: 'OK', headers: [], body: '' } },
-      {},
+      "apx.test('slow', () => { apx.expect(apx.response.text()).to.matchSchema(JSON.parse(apx.variables.get('schema'))); });",
+      { code: 200, status: 'OK', headers: [], body: EVIL },
+      { schema: JSON.stringify(REDOS) },
     );
     const t = (out.tests || out.testResults || [])[0];
     assert.ok(t, JSON.stringify(out).slice(0, 300));

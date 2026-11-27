@@ -353,6 +353,8 @@ apx.test("Error body is not a User", () => {
 | `.matchSchema({ ... })` | Validates against an inline schema. Named `$ref`s resolve against the library. |
 | `.not.matchSchema(...)` | Passes when the value does **not** match. |
 
+When you export a collection to Postman JSON, library schemas referenced from scripts are included automatically, but only when the name is a plain string literal (`matchSchema("User")`). Names built from template literals, variables or concatenation are not detected, so the exported collection would fail with an unknown-schema error until you link the schema to the request.
+
 Behavior to know:
 
 - The failure message shows the first violation with its path, for example `Expected value to match schema: /email must match format "email"`.

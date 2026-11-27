@@ -108,7 +108,7 @@ function isRiskyPattern(p) {
     if (group) {
       const inner = group.unbounded || group.alt;
       if (q.kind === 'unbounded' && inner) return true;
-      // bounded outer repeat ({2,9}, {3}, {2,}) around an unbounded body: `(a+){2,9}`, `(a*){3}` is exponential/high-degree
+      // bounded outer repeat ({2,9}, {3}, {2,}) around an unbounded body: `(a+){2,9}`, `(a*){3}` backtracks heavily (polynomial for small counts, exponential when nested)
       if ((q.kind === 'counted' || q.kind === 'unbounded') && q.max >= 2 && group.unbounded) return true;
       if ((q.kind === 'counted' || q.kind === 'unbounded') && q.max >= COUNTED_GROUP_LIMIT && (inner || group.optional)) return true;
       if (group.unbounded || q.kind === 'unbounded') cur.unbounded = true;
