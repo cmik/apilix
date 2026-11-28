@@ -192,3 +192,18 @@ test('resolveVariables is linear on unterminated or malformed openers', () => {
     assert.ok(Date.now() - t < 500, `slow on ${s.slice(0, 8)}`);
   }
 });
+
+test('dynamic tokens do not use Math.random()', () => {
+  const original = Math.random;
+  Math.random = () => { throw new Error('Math.random must not be used'); };
+  try {
+    assert.match(resolveVariables('{{$guid}}', {}), UUID_PATTERN);
+    assert.match(resolveVariables('{{$randomInt}}', {}), /^\d{1,4}$/);
+    const n = Number(resolveVariables('{{$randomInt(5,10)}}', {}));
+    assert.ok(n >= 5 && n <= 10);
+    assert.match(resolveVariables('{{$randomFloat(1,2)}}', {}), /^[12]\.\d\d$/);
+    assert.ok(['a', 'b', 'c'].includes(resolveVariables('{{$randomItem(a,b,c)}}', {})));
+  } finally {
+    Math.random = original;
+  }
+});

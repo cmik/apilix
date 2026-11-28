@@ -1,6 +1,17 @@
 'use strict';
 
 /**
+ * Uniform random number in [0, 1) backed by the Web Crypto API (Node >= 19 and browsers),
+ * so generated dynamic values (`$guid`, `$randomInt`, …) never rely on random01().
+ */
+function random01() {
+  const buf = new Uint32Array(2);
+  globalThis.crypto.getRandomValues(buf);
+  // 53 random bits → double in [0, 1)
+  return ((buf[0] >>> 5) * 67108864 + (buf[1] >>> 6)) / 9007199254740992;
+}
+
+/**
  * Resolve a $-prefixed dynamic token to a generated value.
  * Returns the generated string, or null if the token is not recognised.
  *
@@ -18,17 +29,17 @@ function resolveDynamic(token) {
       const parsedMax = parseInt(parts[1], 10);
       const min = isNaN(parsedMin) ? 0 : parsedMin;
       const max = isNaN(parsedMax) ? 9999 : parsedMax;
-      return String(Math.floor(Math.random() * (max - min + 1)) + min);
+      return String(Math.floor(random01() * (max - min + 1)) + min);
     }
     if (fn === 'randomFloat') {
       const parsedMin = parseFloat(parts[0]);
       const parsedMax = parseFloat(parts[1]);
       const min = isNaN(parsedMin) ? 0 : parsedMin;
       const max = isNaN(parsedMax) ? 1 : parsedMax;
-      return (Math.random() * (max - min) + min).toFixed(2);
+      return (random01() * (max - min) + min).toFixed(2);
     }
     if (fn === 'randomItem') {
-      return parts[Math.floor(Math.random() * parts.length)] ?? '';
+      return parts[Math.floor(random01() * parts.length)] ?? '';
     }
     return null;
   }
@@ -37,7 +48,7 @@ function resolveDynamic(token) {
     case '$guid':
     case '$uuid':
       return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-        const r = Math.random() * 16 | 0;
+        const r = Math.floor(random01() * 16);
         return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
       });
     case '$timestamp':
@@ -46,7 +57,7 @@ function resolveDynamic(token) {
     case '$isoDate':
       return new Date().toISOString();
     case '$randomInt':
-      return String(Math.floor(Math.random() * 10000));
+      return String(Math.floor(random01() * 10000));
     default:
       return null;
   }
