@@ -15,6 +15,8 @@ export interface ScriptTabProps {
   requestItems?: Array<{ id: string; name: string }>;
   onSyntaxCheck?: (hasError: boolean) => void;
   rows?: number;
+  /** Editor fills the available height of the parent (flex column) instead of using `rows`. */
+  fill?: boolean;
   /** Extra Tailwind classes applied to the outer wrapper div. */
   className?: string;
   /** "Fix with AI" from the console: opens the AI panel on this script with the error (nothing is sent until the user clicks). */
@@ -33,6 +35,7 @@ export default function ScriptTab({
   requestItems,
   onSyntaxCheck,
   rows = 14,
+  fill = false,
   className = '',
   aiFixRequest,
   onAiFixConsumed,
@@ -61,7 +64,7 @@ export default function ScriptTab({
   }, [value, onChange]);
 
   return (
-    <div className={`flex flex-col gap-2 ${className}`}>
+    <div className={`flex flex-col gap-2 ${fill ? 'flex-1' : ''} ${className}`}>
       <div className="flex items-center justify-between gap-2">
         <p className="text-slate-500 text-xs">{label}</p>
         <div className="flex items-center gap-1.5">
@@ -75,6 +78,7 @@ export default function ScriptTab({
         onChange={onChange}
         onSyntaxCheck={onSyntaxCheck}
         rows={rows}
+        fill={fill}
         placeholder={placeholder}
         requestNames={requestNames}
         requestItems={requestItems}

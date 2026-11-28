@@ -64,6 +64,12 @@ function EnvQuickPanel({ env, onClose }: { env: AppEnvironment; onClose: () => v
   const [showBackdropWarning, setShowBackdropWarning] = useState(false);
   const [pendingFocusRow, setPendingFocusRow] = useState<number | null>(null);
   const keyInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
+  const [filter, setFilter] = useState('');
+  const filterInputRef = useRef<HTMLInputElement>(null);
+  const filterTerm = filter.trim().toLowerCase();
+
+  // Focus the filter field as soon as the panel opens
+  useEffect(() => { filterInputRef.current?.focus(); }, []);
 
   useEffect(() => {
     setRows(env.values.map(v => ({ ...v })));
@@ -83,6 +89,13 @@ function EnvQuickPanel({ env, onClose }: { env: AppEnvironment; onClose: () => v
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  /** Match on key or (non-secret) value; rows still being created (empty key) always stay visible. */
+  function matchesFilter(row: { key: string; value: string; secret?: boolean }) {
+    if (!filterTerm || !row.key) return true;
+    return row.key.toLowerCase().includes(filterTerm)
+      || (!row.secret && row.value.toLowerCase().includes(filterTerm));
+  }
 
   function update(i: number, field: 'key' | 'value', val: string) {
     setRows(r => r.map((row, idx) => idx === i ? { ...row, [field]: val } : row));
@@ -150,12 +163,43 @@ function EnvQuickPanel({ env, onClose }: { env: AppEnvironment; onClose: () => v
           </div>
         </div>
 
+        {/* filter */}
+        <div className="px-3 py-2 border-b border-slate-800 shrink-0">
+          <div className="relative">
+            <input
+              ref={filterInputRef}
+              type="text"
+              value={filter}
+              onChange={e => setFilter(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Escape' && filter) { e.stopPropagation(); setFilter(''); } }}
+              placeholder="Filter variables…"
+              aria-label="Filter variables"
+              spellCheck={false}
+              className="w-full bg-slate-800 border border-slate-700 focus:border-orange-500 rounded px-2 py-1 pr-6 text-xs font-mono text-slate-200 placeholder:text-slate-500 focus:outline-none"
+            />
+            {filter && (
+              <button
+                type="button"
+                onClick={() => { setFilter(''); filterInputRef.current?.focus(); }}
+                aria-label="Clear filter"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-200 text-sm leading-none"
+              >
+                ×
+              </button>
+            )}
+          </div>
+        </div>
+
         {/* variables list */}
         <div className="flex-1 overflow-y-auto px-3 py-2">
           {rows.length === 0 && (
             <p className="text-slate-600 text-xs text-center py-6 italic">No variables yet</p>
           )}
+          {rows.length > 0 && filterTerm && !rows.some(matchesFilter) && (
+            <p className="text-slate-600 text-xs text-center py-6 italic">No variable matches “{filter.trim()}”</p>
+          )}
           {rows.map((row, i) => {
+            if (!matchesFilter(row)) return null;
             const keyErr = storageKeyError(row.key);
             return (
               <div key={i} className="mb-1.5 group">

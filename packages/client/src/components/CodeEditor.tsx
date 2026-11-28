@@ -23,6 +23,8 @@ export interface CodeEditorProps
   value: string;
   language?: CodeLanguage;
   variableSuggestions?: VariableSuggestion[];
+  /** Stretch to fill the height of the parent flex column (give it a `flex-1 min-h-[…]` className) instead of using `rows`. */
+  fill?: boolean;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -119,7 +121,7 @@ const EDITOR_STYLE: React.CSSProperties = {
  * Press Cmd+F / Ctrl+F to open the find bar; Cmd+H / Ctrl+H for find+replace.
  */
 const CodeEditor = forwardRef<HTMLTextAreaElement, CodeEditorProps>(
-  function CodeEditor({ value, language = 'text', className, onChange, onScroll, onKeyDown, onMouseUp, variableSuggestions, style, ...rest }, ref) {
+  function CodeEditor({ value, language = 'text', className, onChange, onScroll, onKeyDown, onMouseUp, variableSuggestions, style, fill, ...rest }, ref) {
     const preRef = useRef<HTMLDivElement>(null);
     // Internal ref so search/replace can call setSelectionRange
     const taRef = useRef<HTMLTextAreaElement>(null);
@@ -426,7 +428,7 @@ const CodeEditor = forwardRef<HTMLTextAreaElement, CodeEditorProps>(
 
         {/* ── Editor area ── */}
         <div
-          className="code-editor relative bg-slate-900 border border-slate-600 focus-within:border-orange-500 w-full"
+          className={`code-editor relative bg-slate-900 border border-slate-600 focus-within:border-orange-500 w-full ${fill ? 'flex-1 min-h-0' : ''}`}
           style={{ borderRadius: editorRadius }}
         >
           {/* Read-only highlighted overlay — sits behind the textarea */}
@@ -461,7 +463,7 @@ const CodeEditor = forwardRef<HTMLTextAreaElement, CodeEditorProps>(
               color: 'transparent',
               caretColor: '#e2e8f0',   // slate-200 caret
             }}
-            className="relative z-10 w-full resize-y focus:outline-none bg-transparent selection:bg-sky-500/30"
+            className={`z-10 w-full focus:outline-none bg-transparent selection:bg-sky-500/30 ${fill ? 'absolute inset-0 h-full resize-none' : 'relative resize-y'}`}
           />
 
           {variableAc && (
