@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../store';
 import type { AppCollection, DocsExportOptions, DocsFormat, DocsResult, DocsTheme } from '../types';
 import { DOC_SNIPPET_LANGUAGES } from '../utils/docsCodeGenAdapter';
@@ -49,6 +49,15 @@ export default function ExportDocsModal({ collection, folder, onClose }: ExportD
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiNotes, setAiNotes] = useState<string[]>([]);
   const [tab, setTab] = useState<'preview' | 'ai'>('preview');
+  const [aiElapsed, setAiElapsed] = useState(0);
+  const aiAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => aiAbortRef.current?.abort(), []);
+  useEffect(() => {
+    if (!aiBusy) { setAiElapsed(0); return; }
+    const started = Date.now();
+    const id = setInterval(() => setAiElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [aiBusy]);
   const aiDestination = ai.baseUrl || (ai.provider === 'anthropic' ? 'Anthropic' : AI_PROVIDER_DEFAULT_BASE[ai.provider]);
   const aiDescriptions = useMemo(() => rowsToDescriptions(aiRows), [aiRows]);
 
@@ -88,6 +97,9 @@ export default function ExportDocsModal({ collection, folder, onClose }: ExportD
   async function handleGenerateAi() {
     setAiError(null);
     setAiNotes([]);
+    aiAbortRef.current?.abort();
+    const ac = new AbortController();
+    aiAbortRef.current = ac;
     dispatch({ type: 'AI_REQUEST_START', payload: 'docDescribe' });
     try {
       const r = await aiDescribeDocs({
@@ -95,7 +107,8 @@ export default function ExportDocsModal({ collection, folder, onClose }: ExportD
         folder: folder?.id,
         language: ai.outputLanguage || undefined,
         secretValues: [...secretSet],
-      });
+      }, ac.signal);
+      if (ac.signal.aborted) return;
       dispatch({ type: 'AI_REQUEST_DONE', payload: 'docDescribe' });
       const rows = buildAiRows(collection, folder?.id, r.descriptions);
       setAiRows(rows);
@@ -103,10 +116,17 @@ export default function ExportDocsModal({ collection, folder, onClose }: ExportD
       if (rows.length) setTab('ai');
       else setAiError(r.requested === 0 ? 'Nothing to describe: every entry already has a description.' : 'The model returned no usable descriptions.');
     } catch (err) {
+      if (ac.signal.aborted) return;
       const e = toAiApiError(err);
       dispatch({ type: 'AI_REQUEST_FAIL', payload: { feature: 'docDescribe', code: e.code, message: e.message } });
       setAiError(`${e.message} (${e.code})`);
     }
+  }
+
+  function handleCancelAi() {
+    aiAbortRef.current?.abort();
+    dispatch({ type: 'AI_REQUEST_DONE', payload: 'docDescribe' });
+    setAiError(null);
   }
 
   function updateAiRow(id: string, patch: Partial<AiDescriptionRow>) {
@@ -241,8 +261,11 @@ export default function ExportDocsModal({ collection, folder, onClose }: ExportD
                     className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs rounded border border-orange-500/60 text-orange-300 hover:bg-orange-500/10 font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <IconSparkle className="w-3.5 h-3.5" />
-                    {aiBusy ? 'Generating…' : aiRows.length ? 'Regenerate' : 'Generate missing descriptions'}
+                    {aiBusy ? `Generating… ${aiElapsed}s` : aiRows.length ? 'Regenerate' : 'Generate missing descriptions'}
                   </button>
+                  {aiBusy && (
+                    <button type="button" onClick={handleCancelAi} className="w-full text-xs text-slate-400 hover:text-slate-200">Cancel generation</button>
+                  )}
                   <p className="text-xs text-slate-500">
                     Sends the request structure of undocumented entries to {aiDestination}. Credentials and secret values are redacted first; existing descriptions are never changed.
                   </p>

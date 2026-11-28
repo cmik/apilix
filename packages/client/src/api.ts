@@ -577,9 +577,9 @@ export async function aiDescribeDocs(payload: {
   folder?: string;
   language?: string;
   secretValues?: string[];
-}): Promise<AiDescribeDocsResult> {
+}, signal?: AbortSignal): Promise<AiDescribeDocsResult> {
   try {
-    const res = await api.post<AiDescribeDocsResult>('/ai/describe-docs', payload, { timeout: 300000 });
+    const res = await api.post<AiDescribeDocsResult>('/ai/describe-docs', payload, { timeout: 300000, signal });
     return res.data;
   } catch (err) {
     throw toAiApiError(err);

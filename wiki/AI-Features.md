@@ -93,6 +93,10 @@ When a request fails (no response, or an HTTP error status), the Response tab sh
 
 With *Explain and diagnose failures* on, **Explain with AI** is also offered for a failed request that has no failed test (a transport failure, or an HTTP error status with no test at all). The local findings are given to the model as context **by rule id only**: the server maps each id to its own fixed sentence and drops any other value, so nothing derived from your request (a variable name, a host, a token claim) travels through that channel, and a hostile id cannot inject text. **Preview what is sent** lists those sentences.
 
+In the **Collection Runner**, a failed request (a failed test, a transport error or an HTTP error status with no test) shows **Explain with AI** when you expand its row. It works like the Response tab button, with one difference: the request sent is the collection's template (`{{variables}}` unresolved), never the resolved URL, headers or body of the run. The test script is included only when the request can be identified without ambiguity (same name, method and URL). Requests that are not HTTP (SQL, MongoDB...) are not offered.
+
+In **Export documentation**, a running *Generate missing descriptions* can be stopped with **Cancel generation**; the late answer is ignored and the model call is aborted.
+
 ### Generate a request from a sentence
 
 Press `Ctrl/Cmd+I` in the request builder, or choose **Generate request here…** in a folder's menu, and describe the request: *“POST /users with name and email, check 201 and that the id is a UUID”*.
