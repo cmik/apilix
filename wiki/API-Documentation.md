@@ -166,6 +166,7 @@ APILIX_AI_MODEL=<model> APILIX_AI_API_KEY=<key> apilix docs ./collection.json --
 | `--no-images` | HTML only: do not render images; they become text links and the CSP is `img-src 'none'` (default: images are rendered) |
 | `--ai-describe` | Fill missing descriptions with an LLM and mark them as AI-written. Configured with `APILIX_AI_MODEL`, `APILIX_AI_API_KEY`, and optionally `APILIX_AI_PROVIDER` (`anthropic` default, or `openai-compat`) and `APILIX_AI_BASE_URL`. Secret environment rows from `-e` are masked before anything is sent. If the AI call fails, a warning is printed and the docs are generated without it |
 | `--ai-language <lang>` | Language of the AI-written descriptions (e.g. `French`). A plain name only: letters, spaces, parentheses and hyphens, up to 40 characters |
+| `--ai-shape-only` | Send only the structure to the model: URLs without query values, request bodies and saved responses reduced to their field names and types, no example values. The default sends (redacted) examples, because the CLI has no settings file |
 | `--no-ai-mark` | Do not mark AI-written descriptions in the output |
 | `--ai-strict` | Exit with code `1` when the AI step fails or is incomplete (an authentication error, or at least one batch that could not be described). The documentation is still written, without the missing descriptions. Use it in CI so a broken AI step does not go unnoticed |
 | `--out <file>` | Write to a file instead of stdout (missing parent folders are created) |

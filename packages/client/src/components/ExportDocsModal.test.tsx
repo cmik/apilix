@@ -123,4 +123,23 @@ describe('ExportDocsModal AI descriptions', () => {
     fireEvent.click(screen.getByText('Generate missing descriptions'));
     await waitFor(() => expect(screen.getByText(/every entry already has a description/)).toBeInTheDocument());
   });
+  it('Cancel aborts the request, ignores a late answer and frees the button', async () => {
+    let signal: AbortSignal | undefined;
+    let resolve!: (v: unknown) => void;
+    aiDescribeDocs.mockImplementation((_p: unknown, s: AbortSignal) => { signal = s; return new Promise(r => { resolve = r; }); });
+    const view = open();
+    fireEvent.click(screen.getByText('Generate missing descriptions'));
+    await waitFor(() => expect(aiDescribeDocs).toHaveBeenCalledTimes(1));
+    expect(signal?.aborted).toBe(false);
+    ai = { ...ai, inFlight: { docDescribe: true } };
+    view.rerender(<ExportDocsModal collection={collection} onClose={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel generation' }));
+    expect(signal?.aborted).toBe(true);
+    expect(dispatch).toHaveBeenCalledWith({ type: 'AI_REQUEST_DONE', payload: 'docDescribe' });
+    dispatch.mockClear();
+    resolve({ descriptions: { r1: { description: 'Late answer.' } }, warnings: [], requested: 1 });
+    await new Promise(r => setTimeout(r, 0));
+    expect(screen.queryByText(/Late answer\./)).not.toBeInTheDocument();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
 });

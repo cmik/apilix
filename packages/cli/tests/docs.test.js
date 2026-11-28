@@ -382,3 +382,29 @@ test('docs --ai-describe --ai-strict: entries skipped (shared ids) make strict e
     assert.equal(lax.code, 0, lax.stderr);
   } finally { await ok.close(); }
 });
+
+test('docs --ai-describe --ai-shape-only: sends structure only, no query or body values', async () => {
+  const dir = await fixtures();
+  const full = await fakeLlm(llmReply([]));
+  const shape = await fakeLlm(llmReply([]));
+  try {
+    const env = (f) => ({ APILIX_AI_PROVIDER: 'openai-compat', APILIX_AI_MODEL: 'm', APILIX_AI_BASE_URL: f.url });
+    const a = await runAi(['docs', 'c.json', '--format', 'md', '--ai-describe'], dir, env(full));
+    const b = await runAi(['docs', 'c.json', '--format', 'md', '--ai-describe', '--ai-shape-only'], dir, env(shape));
+    assert.equal(a.code, 0, a.stderr);
+    assert.equal(b.code, 0, b.stderr);
+    const sentFull = JSON.stringify(full.calls[0].body);
+    const sentShape = JSON.stringify(shape.calls[0].body);
+    assert.match(sentFull, /name=x|\\"a\\":1/, 'default mode keeps example values');
+    assert.ok(!/name=x/.test(sentShape), 'query value must not be sent');
+    assert.ok(!/\\"a\\":\s*1/.test(sentShape), 'body value must not be sent');
+  } finally { await full.close(); await shape.close(); }
+});
+
+test('docs: --ai-shape-only without --ai-describe warns that it is ignored; usage documents it', async () => {
+  const dir = await fixtures();
+  const r = await runAi(['docs', 'c.json', '--format', 'md', '--ai-shape-only'], dir, {});
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stderr, /--ai-shape-only has no effect without --ai-describe/);
+  assert.match(usage(), /--ai-shape-only/);
+});

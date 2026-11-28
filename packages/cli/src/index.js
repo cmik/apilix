@@ -99,6 +99,7 @@ function usage() {
     '                               Configure with APILIX_AI_MODEL, APILIX_AI_API_KEY, APILIX_AI_PROVIDER (anthropic|openai-compat),',
     '                               APILIX_AI_BASE_URL. If the AI call fails, the docs are still generated.',
     '  --ai-language <lang>         Language of AI-written descriptions (e.g. French)',
+    '  --ai-shape-only              Send only the structure: URLs without query values, bodies and saved responses as types, no example values',
     '  --no-ai-mark                 Do not mark AI-written descriptions in the output',
     '  --ai-strict                  Exit with code 1 when the AI step fails or is incomplete (docs are still written)',
     '  --out <file>                 Write to a file instead of stdout',
@@ -650,6 +651,7 @@ function createProgram(io) {
     .option('--no-images', 'HTML only: render images as text links instead of loading them')
     .option('--ai-describe', 'Fill missing descriptions with an LLM (configure with APILIX_AI_* env vars)')
     .option('--ai-language <lang>', 'Language of AI-written descriptions')
+    .option('--ai-shape-only', 'Send only the structure of requests and saved responses (no values) to the model')
     .option('--no-ai-mark', 'Do not mark AI-written descriptions in the output')
     .option('--ai-strict', 'Exit with code 1 when the AI step fails or is incomplete (the docs are still written)')
     .option('--out <file>', 'Write output to a file instead of stdout')
@@ -670,6 +672,7 @@ function createProgram(io) {
         renderImages: opts.images !== false,
         aiDescribe: opts.aiDescribe === true,
         aiLanguage: opts.aiLanguage,
+        aiShapeOnly: opts.aiShapeOnly === true,
         aiMark: opts.aiMark !== false,
         aiStrict: opts.aiStrict === true,
         outPath: opts.out,
@@ -871,7 +874,7 @@ function isLocalHost(url) {
  * Ask the model to describe what the collection leaves undocumented.
  * A failing AI call is only a warning: the documentation is still generated.
  */
-async function describeWithAi({ collection, folder, includeExamples, language, secretValues, io }) {
+async function describeWithAi({ collection, folder, includeExamples, language, secretValues, shapeOnly, io }) {
   const cfg = readAiEnv(io.env);
   for (const w of cfg.warnings) io.stderr.write(`Warning: ${w}\n`);
   let ai;
@@ -882,7 +885,7 @@ async function describeWithAi({ collection, folder, includeExamples, language, s
   const model = buildDocModel(collection, { folder, includeCredentials: false, includeExamples });
   io.stderr.write(`AI: describing undocumented entries with ${cfg.model} (credentials are redacted before sending)\n`);
   try {
-    const r = await ai.describeDocs({ provider, model, language, secretValues });
+    const r = await ai.describeDocs({ provider, model, language, secretValues, ...(shapeOnly ? { sendResponseBodies: false } : {}) });
     const n = Object.keys(r.descriptions).length;
     io.stderr.write(`AI: ${n} description${n === 1 ? '' : 's'} generated (${r.usage.inputTokens} input / ${r.usage.outputTokens} output tokens)\n`);
     return { descriptions: r.descriptions, warnings: r.warnings, failed: r.failedBatches > 0 || r.skipped > 0 };
@@ -953,6 +956,7 @@ async function runDocs(args, io) {
   if (!d.aiDescribe) {
     const ignored = [];
     if (d.aiLanguage !== undefined) ignored.push('--ai-language');
+    if (d.aiShapeOnly) ignored.push('--ai-shape-only');
     if (d.aiMark === false) ignored.push('--no-ai-mark');
     if (d.aiStrict) ignored.push('--ai-strict');
     for (const flag of ignored) aiWarnings.push(`${flag} has no effect without --ai-describe.`);
@@ -963,7 +967,7 @@ async function runDocs(args, io) {
       if (row && row.secret === true && typeof row.value === 'string' && row.value) secretValues.push(row.value);
     }
     const ai = await describeWithAi({
-      collection, folder: d.folder, includeExamples: d.includeExamples, language: d.aiLanguage, secretValues, io,
+      collection, folder: d.folder, includeExamples: d.includeExamples, language: d.aiLanguage, secretValues, shapeOnly: d.aiShapeOnly === true, io,
     });
     aiDescriptions = ai.descriptions;
     aiFailed = ai.failed === true;

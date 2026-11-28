@@ -3,11 +3,13 @@ import { useApp, generateId } from '../store';
 import { saveSchemaRunMode } from '../utils/responseSchemas';
 import type { SchemaRunMode } from '../types';
 import { runCollectionStream, pauseRun, resumeRun, stopRun } from '../api';
-import type { RunnerIteration, RunnerIterationResult, CollectionItem, ConditionalFlowRecord, SavedRunnerRun, RunnerRunSummary, RunnerRunConfig } from '../types';
+import type { AppCollection, RunnerIteration, RunnerIterationResult, CollectionItem, ConditionalFlowRecord, SavedRunnerRun, RunnerRunSummary, RunnerRunConfig } from '../types';
 import { applyInheritedAuth, getAllRequestIds, exportWorkflowCollection } from '../utils/treeHelpers';
 import { useToast } from './Toast';
 import { IconFile } from './Icons';
 import RunSummaryPanel from './RunSummaryPanel';
+import RunResultExplain from './RunResultExplain';
+import { runResultFailures } from '../utils/ai/runResultExplain';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -292,8 +294,10 @@ function ChildRow({ child, isLast }: { child: ChildEntry; isLast: boolean }) {
   );
 }
 
-function ResultRow({ result }: { result: RunnerIterationResult }) {
+function ResultRow({ result, collection }: { result: RunnerIterationResult; collection?: AppCollection }) {
+  const { state } = useApp();
   const [expanded, setExpanded] = useState(false);
+  const explainable = !!state.ai?.settings?.enabled && runResultFailures(result).length > 0;
   const passed = result.testResults.filter(t => t.passed === true).length;
   const total = result.testResults.filter(t => !t.skipped).length;
   const hasFailed = result.testResults.some(t => t.passed === false);
@@ -304,7 +308,7 @@ function ResultRow({ result }: { result: RunnerIterationResult }) {
   ];
   const hasChildren = children.length > 0;
   const hasMongoBody = result.protocol === 'mongodb' && result.body;
-  const canExpand = total > 0 || hasChildren || hasMongoBody;
+  const canExpand = total > 0 || hasChildren || hasMongoBody || explainable;
 
   return (
     <div className="border-b border-slate-700">
@@ -366,6 +370,7 @@ function ResultRow({ result }: { result: RunnerIterationResult }) {
               ))}
             </div>
           )}
+          {explainable && <RunResultExplain result={result} collection={collection} />}
           {/* MongoDB response body viewer */}
           {result.protocol === 'mongodb' && result.body && (
             <div className="px-4 pb-2 bg-slate-900/40">
@@ -389,7 +394,7 @@ function ResultRow({ result }: { result: RunnerIterationResult }) {
   );
 }
 
-function IterationBlock({ iter }: { iter: RunnerIteration }) {
+function IterationBlock({ iter, collection }: { iter: RunnerIteration; collection?: AppCollection }) {
   const [open, setOpen] = useState(true);
   const allChildren = iter.results.flatMap(r => [
     ...(r.preChildRequests ?? []),
@@ -459,7 +464,7 @@ function IterationBlock({ iter }: { iter: RunnerIteration }) {
             const flowRecord = (iter.conditionalFlowRecords ?? []).find(rec => rec.afterName === r.name);
             return (
               <div key={i}>
-                <ResultRow result={r} />
+                <ResultRow result={r} collection={collection} />
                 {jump && (
                   <div className="flex items-center gap-2 px-4 py-1 bg-violet-900/20 border-y border-violet-700/30 text-xs text-violet-400 select-none">
                     <span>↪</span>
@@ -1785,7 +1790,7 @@ export default function RunnerPanel() {
           {results.length === 0 ? (
             <p className="text-slate-500 text-sm">No results — collection may be empty.</p>
           ) : (
-            results.map(iter => <IterationBlock key={iter.iteration} iter={iter} />)
+            results.map(iter => <IterationBlock key={iter.iteration} iter={iter} collection={selectedCollection} />)
           )}
         </div>
       )}
