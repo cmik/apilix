@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, Fragment } from 'react';
 
 // ─── Completion model ─────────────────────────────────────────────────────────
 
@@ -460,6 +460,8 @@ export interface ScriptEditorProps {
   /** Called whenever a syntax check runs; receives true if there is an error */
   onSyntaxCheck?: (hasError: boolean) => void;
   rows?: number;
+  /** Fill the available height of the parent flex column instead of using `rows`. */
+  fill?: boolean;
   placeholder?: string;
   /** Forward an external ref so the parent can read selectionStart/End for snippet insertion */
   textareaRef?: React.RefObject<HTMLTextAreaElement | null>;
@@ -483,12 +485,17 @@ function checkJsSyntax(code: string): string | null {
   }
 }
 
+function FillWrapper({ children }: { children: React.ReactNode }) {
+  return <div className="flex flex-col flex-1 min-h-[160px]">{children}</div>;
+}
+
 export default function ScriptEditor({
   value,
   onChange,
   onSave,
   onSyntaxCheck,
   rows = 14,
+  fill = false,
   placeholder,
   textareaRef,
   className,
@@ -620,10 +627,12 @@ export default function ScriptEditor({
 
   const textareaClass =
     className ??
-    'w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-y';
+    `w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 ${fill ? 'flex-1 min-h-0 resize-none' : 'resize-y'}`;
+
+  const Wrapper = fill ? FillWrapper : Fragment;
 
   return (
-    <>
+    <Wrapper>
       <textarea
         ref={ref}
         value={value}
@@ -695,6 +704,6 @@ export default function ScriptEditor({
           ))}
         </div>
       )}
-    </>
+    </Wrapper>
   );
 }

@@ -86,13 +86,15 @@ interface JsonTextareaProps {
   value: string;
   placeholder?: string;
   rows?: number;
+  /** Stretch to the available height (several fill fields share the space). */
+  fill?: boolean;
   hint?: string;
   noValidate?: boolean;
   onChange: (v: string) => void;
   variableSuggestions?: VariableSuggestion[];
 }
 
-function JsonTextarea({ label, labelNode, value, placeholder, rows = 3, hint, noValidate, onChange, variableSuggestions }: JsonTextareaProps) {
+function JsonTextarea({ label, labelNode, value, placeholder, rows = 3, fill, hint, noValidate, onChange, variableSuggestions }: JsonTextareaProps) {
   const [invalid, setInvalid] = useState(false);
 
   function handleChange(v: string) {
@@ -102,7 +104,7 @@ function JsonTextarea({ label, labelNode, value, placeholder, rows = 3, hint, no
   }
 
   return (
-    <div>
+    <div className={fill ? 'flex flex-col flex-1 min-h-[140px]' : undefined}>
       <div className="flex items-center justify-between mb-1">
         {labelNode ?? <span className="text-xs text-slate-400">{label}</span>}
         <div className="flex items-center gap-2">
@@ -115,10 +117,11 @@ function JsonTextarea({ label, labelNode, value, placeholder, rows = 3, hint, no
         language="json"
         onChange={e => handleChange((e.target as HTMLTextAreaElement).value)}
         rows={rows}
+        fill={fill}
         spellCheck={false}
         placeholder={placeholder}
         variableSuggestions={variableSuggestions}
-        className={`w-full bg-slate-700 border rounded text-xs font-mono text-slate-200 focus:outline-none resize-y ${
+        className={`w-full bg-slate-700 border rounded text-xs font-mono text-slate-200 focus:outline-none ${fill ? 'flex-1' : 'resize-y'} ${
           invalid ? 'border-red-500' : 'border-slate-600 focus:border-orange-500'
         }`}
       />
@@ -296,7 +299,7 @@ export default function MongoPanel({ value, onChange, variableSuggestions, datab
   }
 
   return (
-    <div className="flex flex-col gap-4 p-3">
+    <div className="flex flex-col gap-4 p-3 flex-1">
 
       {/* ── Database & Collection ─────────────────────────── */}
       <div className={`grid gap-3 ${needsCollection ? 'grid-cols-2' : 'grid-cols-1'}`}>
@@ -363,6 +366,7 @@ export default function MongoPanel({ value, onChange, variableSuggestions, datab
         <>
           <JsonTextarea
             label="Filter"
+            fill
             value={cfg.filter ?? '{}'}
             placeholder='{ "status": "active", "createdAt": { "$gte": { "$date": "2024-01-01T00:00:00Z" } } }'
             rows={3}
@@ -419,6 +423,7 @@ export default function MongoPanel({ value, onChange, variableSuggestions, datab
       {op === 'aggregate' && (
         <>
           <JsonTextarea
+            fill
             labelNode={
               <div className="flex items-center gap-2">
                 <span className="text-xs text-slate-400">Pipeline</span>
@@ -450,6 +455,7 @@ export default function MongoPanel({ value, onChange, variableSuggestions, datab
       {/* INSERT */}
       {op === 'insert' && (
         <JsonTextarea
+            fill
           label="Documents"
           value={cfg.documents ?? '[]'}
           placeholder={'[{ "name": "{{name}}", "email": "{{email}}" }]'}
@@ -465,6 +471,7 @@ export default function MongoPanel({ value, onChange, variableSuggestions, datab
         <>
           <JsonTextarea
             label="Filter"
+            fill
             value={cfg.filter ?? '{}'}
             placeholder='{ "_id": "{{docId}}" }'
             rows={3}
@@ -475,6 +482,7 @@ export default function MongoPanel({ value, onChange, variableSuggestions, datab
           />
           <JsonTextarea
             label="Update"
+            fill
             value={cfg.update ?? '{}'}
             placeholder='{ "$set": { "status": "active", "updatedAt": { "$date": "2024-01-01T00:00:00Z" } } }'
             rows={3}
@@ -508,6 +516,7 @@ export default function MongoPanel({ value, onChange, variableSuggestions, datab
         <>
           <JsonTextarea
             label="Filter"
+            fill
             value={cfg.filter ?? '{}'}
             placeholder='{ "status": "deleted" }'
             rows={3}
@@ -541,6 +550,7 @@ export default function MongoPanel({ value, onChange, variableSuggestions, datab
       {op === 'count' && (
         <JsonTextarea
           label="Filter"
+            fill
           value={cfg.filter ?? '{}'}
           placeholder='{ "status": "active" }'
           rows={3}
@@ -566,6 +576,7 @@ export default function MongoPanel({ value, onChange, variableSuggestions, datab
           </div>
           <JsonTextarea
             label="Filter (optional)"
+            fill
             value={cfg.filter ?? '{}'}
             placeholder='{}'
             rows={2}
@@ -577,7 +588,7 @@ export default function MongoPanel({ value, onChange, variableSuggestions, datab
 
       {/* SCRIPT */}
       {op === 'script' && (
-        <div>
+        <div className="flex flex-col flex-1 min-h-[160px]">
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs text-slate-400">Script</span>
             <span className="text-[10px] text-slate-600 italic">
@@ -587,10 +598,9 @@ export default function MongoPanel({ value, onChange, variableSuggestions, datab
           <textarea
             value={cfg.script ?? ''}
             onChange={e => update({ script: e.target.value })}
-            rows={8}
             spellCheck={false}
             placeholder={'const docs = await db.collection(\'users\').find({ active: true }).toArray();\nresult = docs.map(d => d.email);'}
-            className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-orange-500 resize-y"
+            className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-orange-500 flex-1 min-h-0 resize-none"
           />
         </div>
       )}

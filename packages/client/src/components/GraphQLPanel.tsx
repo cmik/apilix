@@ -403,7 +403,7 @@ export default function GraphQLPanel({
   ] : [];
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-3 flex-1">
       {/* Introspection toolbar */}
       <div className="flex items-center gap-2 flex-wrap">
         <button
@@ -560,10 +560,12 @@ export default function GraphQLPanel({
       )}
 
       {/* Query editor */}
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-1 flex-1 min-h-[160px]">
         <label className="text-xs text-slate-400 font-medium">Query</label>
-        <div className="relative">
+        <div className="relative flex flex-col flex-1">
           <CodeEditor
+            fill
+            className="flex-1"
             ref={textareaRef}
             value={query}
             onChange={handleQueryChange}
@@ -574,7 +576,6 @@ export default function GraphQLPanel({
               }
             }}
             onScroll={() => setAcSuggestions([])}
-            rows={8}
             language="graphql"
             placeholder={'query {\n  ...\n}'}
           />

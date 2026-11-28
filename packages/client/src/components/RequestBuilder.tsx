@@ -13,6 +13,7 @@ import { openAuthorizationWindow, openAuthorizationWindowPlain } from '../utils/
 import GraphQLPanel from './GraphQLPanel';
 import SoapPanel from './SoapPanel';
 import MongoRequestPanel from './MongoRequestPanel';
+import { RequestUsedVariables } from './UsedVariablesSection';
 import SqlRequestPanel from './SqlRequestPanel';
 import CodeEditor from './CodeEditor';
 import type { CodeLanguage } from './CodeEditor';
@@ -609,7 +610,7 @@ function KvTable({
 
   if (bulkMode) {
     return (
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-2 flex-1">
         <div className="flex items-center justify-between">
           <span className="text-xs text-slate-400">One <code className="text-orange-400">key: value</code> per line. Prefix a line with <code className="text-orange-400">#</code> to disable it.</span>
           <button
@@ -622,10 +623,9 @@ function KvTable({
         <textarea
           value={bulkText}
           onChange={e => setBulkText(e.target.value)}
-          rows={8}
           spellCheck={false}
           placeholder={`${keyPlaceholder}: ${valuePlaceholder}\n...`}
-          className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-orange-500 resize-y"
+          className="w-full flex-1 min-h-[160px] bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-orange-500 resize-none"
         />
       </div>
     );
@@ -2344,20 +2344,6 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
           requestNames={flattenRequestNames(col?.item ?? [])}
           requestItems={flattenRequestItems(col?.item ?? [])}
           resolvedVars={allVars}
-          envVars={envVars}
-          collVars={collVars}
-          globals={state.globalVariables}
-          collectionDefinitionVars={collectionDefinitionVars}
-          hasActiveEnv={!!state.activeEnvironmentId}
-          onVarEdit={(name, value, scope) => {
-            if (scope === 'env') {
-              dispatch({ type: 'UPDATE_ACTIVE_ENV_VARS', payload: { [name]: value } });
-            } else if (scope === 'coll') {
-              dispatch({ type: 'UPDATE_COLLECTION_VARS', payload: { collectionId: activeReq.collectionId, vars: { [name]: value } } });
-            } else {
-              dispatch({ type: 'UPDATE_GLOBAL_VARS', payload: { [name]: value } });
-            }
-          }}
           onBodyChange={v => setEdit(x => x ? { ...x, bodyRaw: v } : x)}
           onPreRequestChange={v => setEdit(x => x ? { ...x, preRequestScript: v } : x)}
           onTestChange={v => setEdit(x => x ? { ...x, testScript: v } : x)}
@@ -2437,9 +2423,9 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
       )}
 
       {/* Tab content (HTTP only — not WS/MONGO/database) */}
-      {edit.method !== 'WS' && edit.method !== 'MONGO' && !isDatabaseMethod(edit.method) && <div className="flex-1 overflow-y-auto p-3 bg-slate-800/50 min-h-0">
+      {edit.method !== 'WS' && edit.method !== 'MONGO' && !isDatabaseMethod(edit.method) && <div className="flex-1 flex flex-col overflow-y-auto p-3 bg-slate-800/50 min-h-0">
         {activeRequestTab === 'Params' && (
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-4 flex-1">
             <KvTable
               key={activeTabId + '-params'}
               rows={edit.queryParams}
@@ -2487,7 +2473,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
         )}
 
         {activeRequestTab === 'Body' && (
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3 flex-1">
             <div className="flex items-center gap-3 flex-wrap">
               {(['none', 'raw', 'urlencoded', 'formdata', 'graphql', 'soap', 'file'] as const).map(m => (
                 <label key={m} className="flex items-center gap-1.5 cursor-pointer">
@@ -2565,10 +2551,11 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             </div>
             {bodyPreviewMode === 'edit' && edit.bodyMode === 'raw' && (
               <CodeEditor
+                fill
+                className="flex-1 min-h-[200px]"
                 value={edit.bodyRaw}
                 onChange={e => setEdit(x => x ? { ...x, bodyRaw: e.target.value } : x)}
                 language={edit.bodyRawLang as CodeLanguage}
-                rows={10}
                 variableSuggestions={variableSuggestions}
                 placeholder={edit.bodyRawLang === 'json' ? '{\n  "key": "value"\n}' : 'Request body...'}
               />
@@ -2901,6 +2888,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             onSyntaxCheck={setPreRequestHasError}
             placeholder={`// Pre-request script\napx.environment.set('timestamp', Date.now().toString());`}
             target="prerequest"
+            fill
             requestNames={flattenRequestNames(col?.item ?? [])}
             requestItems={flattenRequestItems(col?.item ?? [])}
             aiFixRequest={aiFix && aiFix.tabId === activeTab?.id ? aiFix : null}
@@ -2916,6 +2904,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
             onSyntaxCheck={setTestHasError}
             placeholder={`apx.test("Status is 200", () => {\n  apx.response.to.have.status(200);\n});\n\napx.test("Response has id", () => {\n  const json = apx.response.json();\n  apx.expect(json.id).to.exist;\n});`}
             target="test"
+            fill
             requestNames={flattenRequestNames(col?.item ?? [])}
             requestItems={flattenRequestItems(col?.item ?? [])}
             aiFixRequest={aiFix && aiFix.tabId === activeTab?.id ? aiFix : null}
@@ -3067,7 +3056,7 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
         )}
 
         {activeRequestTab === 'Docs' && (
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3 flex-1">
             <div className="flex items-center justify-between">
               <p className="text-xs text-slate-500">Add notes or documentation for this request. Supports Markdown.</p>
               <div className="flex rounded overflow-hidden border border-slate-600 text-xs">
@@ -3085,9 +3074,8 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
               <textarea
                 value={edit.description}
                 onChange={e => setEdit(x => x ? { ...x, description: e.target.value } : x)}
-                rows={16}
                 spellCheck={false}
-                className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-y"
+                className="w-full flex-1 min-h-[200px] bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-none"
                 placeholder={'# My Request\n\nDescribe what this request does, its parameters, and expected responses.'}
               />
             ) : (
@@ -3513,6 +3501,21 @@ export default function RequestBuilder({ onDirtyChange, urlBarPortalTarget }: Re
           />
         </Suspense>
       )}
+
+      {/* Used Variables — pinned to the bottom, opens upward (all request types) */}
+      <RequestUsedVariables
+        text={JSON.stringify([
+          edit.url, edit.headers, edit.queryParams, edit.pathParams,
+          edit.bodyRaw, edit.bodyFormData, edit.bodyUrlEncoded,
+          edit.bodyGraphqlQuery, edit.bodyGraphqlVariables, edit.bodySoapAction, edit.bodySoapWsdlUrl,
+          edit.authBearer, edit.authBasicUser, edit.authBasicPass, edit.authApiKeyName, edit.authApiKeyValue,
+          edit.authOAuth2Config,
+        ])}
+        collectionId={activeReq.collectionId}
+        envVars={envVars}
+        collVars={collVars}
+        collectionDefinitionVars={collectionDefinitionVars}
+      />
 
       {aiBar && activeTab && (
         <Suspense fallback={null}>

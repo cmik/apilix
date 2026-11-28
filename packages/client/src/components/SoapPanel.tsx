@@ -107,7 +107,7 @@ export default function SoapPanel({
     envelope || defaultEnvelope(version);
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-3 flex-1">
 
       {/* ── Collapsible settings (version / action / WSDL) ── */}
       <div className="border border-slate-700 rounded overflow-hidden">
@@ -201,7 +201,7 @@ export default function SoapPanel({
       </div>
 
       {/* ── Envelope textarea ── */}
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-1 flex-1 min-h-[200px]">
         <div className="flex items-center justify-between">
           <label className="text-xs text-slate-400">Envelope (XML)</label>
           <button
@@ -212,9 +212,10 @@ export default function SoapPanel({
           </button>
         </div>
         <CodeEditor
+          fill
+          className="flex-1"
           value={effectiveEnvelope}
           onChange={e => onEnvelopeChange(e.target.value)}
-          rows={12}
           language="xml"
           variableSuggestions={variableSuggestions}
           placeholder={'<?xml version="1.0" encoding="utf-8"?>\n<soap:Envelope ...>'}

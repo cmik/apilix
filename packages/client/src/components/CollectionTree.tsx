@@ -344,11 +344,7 @@ function BulkDeleteModal({ candidates, initialSelectedId, onConfirm, onCancel }:
 
   const q = filter.trim().toLowerCase();
   const filtered = q
-    ? candidates.filter(c =>
-        c.name.toLowerCase().includes(q) ||
-        c.path.toLowerCase().includes(q) ||
-        c.collectionName.toLowerCase().includes(q)
-      )
+    ? candidates.filter(c => matchesAllWords([c.name, c.path, c.collectionName].join(' '), q))
     : candidates;
 
   const allVisible = filtered.length > 0 && filtered.every(c => selected.has(c.id));
@@ -1535,17 +1531,33 @@ function flattenAll(collections: AppCollection[]): FlatRequest[] {
   return results;
 }
 
+/** Split a search query into lowercase words (whitespace-separated). */
+function searchWords(query: string): string[] {
+  return query.toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+/** True when every word of `query` appears somewhere in `haystack`, in any order. */
+function matchesAllWords(haystack: string, query: string): boolean {
+  const lh = haystack.toLowerCase();
+  return searchWords(query).every(w => lh.includes(w));
+}
+
 function Highlight({ text, query }: { text: string; query: string }) {
-  if (!query) return <>{text}</>;
-  const lc = text.toLowerCase();
-  const lq = query.toLowerCase();
-  const idx = lc.indexOf(lq);
-  if (idx === -1) return <>{text}</>;
+  const words = searchWords(query);
+  if (words.length === 0) return <>{text}</>;
+  const pattern = new RegExp(
+    `(${[...new Set(words)].sort((a, b) => b.length - a.length).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`,
+    'gi',
+  );
+  const parts = text.split(pattern);
+  if (parts.length === 1) return <>{text}</>;
   return (
     <>
-      {text.slice(0, idx)}
-      <mark className="bg-orange-500/30 text-orange-300 not-italic rounded-sm">{text.slice(idx, idx + query.length)}</mark>
-      {text.slice(idx + query.length)}
+      {parts.map((part, i) =>
+        i % 2 === 1
+          ? <mark key={i} className="bg-orange-500/30 text-orange-300 not-italic rounded-sm">{part}</mark>
+          : part,
+      )}
     </>
   );
 }
@@ -1812,11 +1824,9 @@ export default function CollectionTree({ filter = '', renamingCollectionId, onRe
   if (trimmed) {
     const all = flattenAll(state.collections);
     const matched = all.filter(r => {
-      const lq = trimmed.toLowerCase();
-      const name = r.item.name.toLowerCase();
-      const url = getUrlShort(r.item.request?.url).toLowerCase();
-      const crumb = [r.collectionName, r.breadcrumb].filter(Boolean).join(' / ').toLowerCase();
-      return name.includes(lq) || url.includes(lq) || crumb.includes(lq);
+      const url = getUrlShort(r.item.request?.url);
+      const crumb = [r.collectionName, r.breadcrumb].filter(Boolean).join(' / ');
+      return matchesAllWords(`${r.item.name} ${url} ${crumb}`, trimmed);
     });
 
     if (matched.length === 0) {

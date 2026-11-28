@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom/vitest';
-import { UsedVariablesSection } from './MongoRequestPanel';
+import { UsedVariablesSection } from './UsedVariablesSection';
 import type { MongoUsedVariable } from '../utils/variableResolver';
 
 afterEach(() => {

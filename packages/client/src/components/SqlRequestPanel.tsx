@@ -182,7 +182,7 @@ export default function SqlRequestPanel({
         ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto min-h-0">
+      <div className="flex-1 flex flex-col overflow-y-auto min-h-0">
         {activeTab === 'Connection' && (
           <div className="p-3 flex flex-col gap-3">
             <div>
@@ -241,14 +241,15 @@ export default function SqlRequestPanel({
         )}
 
         {activeTab === 'Query' && isSqlMethod(method) && isSqlConfig(cfg) && (
-          <div className="p-3 flex flex-col gap-3">
-            <div>
+          <div className="p-3 flex flex-col gap-3 flex-1">
+            <div className="flex flex-col flex-1">
               <p className="text-xs text-slate-400 mb-1">SQL Query</p>
               <CodeEditor
+                fill
+                className="flex-1 min-h-[160px]"
                 value={cfg.query}
                 onChange={e => updateConfig({ query: e.target.value })}
                 language="text"
-                rows={10}
                 variableSuggestions={variableSuggestions}
                 placeholder={DEFAULT_QUERY[method]}
               />
@@ -269,7 +270,7 @@ export default function SqlRequestPanel({
         )}
 
         {activeTab === 'Query' && method === 'REDIS' && isRedisConfig(cfg) && (
-          <div className="p-3 flex flex-col gap-3">
+          <div className="p-3 flex flex-col gap-3 flex-1">
             <div>
               <p className="text-xs text-slate-400 mb-1">Redis Command</p>
               <VarInput
@@ -280,13 +281,14 @@ export default function SqlRequestPanel({
                 className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500"
               />
             </div>
-            <div>
+            <div className="flex flex-col flex-1">
               <p className="text-xs text-slate-400 mb-1">Arguments (JSON array)</p>
               <CodeEditor
+                fill
+                className="flex-1 min-h-[120px]"
                 value={cfg.args || '[]'}
                 onChange={e => updateConfig({ args: e.target.value })}
                 language="json"
-                rows={5}
                 variableSuggestions={variableSuggestions}
                 placeholder='[] or ["my-key", "{{value}}"]'
               />
@@ -295,7 +297,7 @@ export default function SqlRequestPanel({
         )}
 
         {activeTab === 'Query' && method === 'DYNAMODB' && isDynamoConfig(cfg) && (
-          <div className="p-3 flex flex-col gap-3">
+          <div className="p-3 flex flex-col gap-3 flex-1">
             <div>
               <p className="text-xs text-slate-400 mb-1">Operation</p>
               <select
@@ -308,13 +310,14 @@ export default function SqlRequestPanel({
                 ))}
               </select>
             </div>
-            <div>
+            <div className="flex flex-col flex-1">
               <p className="text-xs text-slate-400 mb-1">Input (JSON object)</p>
               <CodeEditor
+                fill
+                className="flex-1 min-h-[160px]"
                 value={cfg.input || '{\n  "TableName": ""\n}'}
                 onChange={e => updateConfig({ input: e.target.value })}
                 language="json"
-                rows={10}
                 variableSuggestions={variableSuggestions}
                 placeholder='{"TableName":"Users"}'
               />
@@ -333,7 +336,7 @@ export default function SqlRequestPanel({
             target="prerequest"
             requestNames={requestNames}
             requestItems={requestItems}
-            rows={10}
+            fill
             className="p-3"
           />
         )}
@@ -351,13 +354,13 @@ export default function SqlRequestPanel({
             target="test"
             requestNames={requestNames}
             requestItems={requestItems}
-            rows={10}
+            fill
             className="p-3"
           />
         )}
 
         {activeTab === 'Docs' && (
-          <div className="p-3 flex flex-col gap-3">
+          <div className="p-3 flex flex-col gap-3 flex-1">
             <div className="flex items-center justify-between">
               <p className="text-xs text-slate-500">Add notes for this {docsLabel}. Supports Markdown.</p>
               <div className="flex rounded overflow-hidden border border-slate-600 text-xs">
@@ -375,9 +378,8 @@ export default function SqlRequestPanel({
               <textarea
                 value={description}
                 onChange={e => onDescriptionChange(e.target.value)}
-                rows={16}
                 spellCheck={false}
-                className="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-y"
+                className="w-full flex-1 min-h-[200px] bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-orange-500 resize-none"
                 placeholder={`# ${docsLabel}\n\nDocument what this request does and what response shape it expects.`}
               />
             ) : (
